@@ -1,0 +1,8 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\Modules.Tenancy.Domain\Modules.Tenancy.Domain.csproj" />
+  </ItemGroup>
+</Project>

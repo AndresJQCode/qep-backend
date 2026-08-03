@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <UserSecretsId>c6b22e64-61eb-4b17-bb64-c1146556cdec</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bootstrapper\Bootstrapper.csproj" />
+    <ProjectReference Include="..\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Storage\Modules.Storage.Api\Modules.Storage.Api.csproj" />
+    <ProjectReference Include="..\Modules\Storage\Modules.Storage.Infrastructure\Modules.Storage.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.OpenApi" />
+    <PackageReference Include="Scalar.AspNetCore" />
+  </ItemGroup>
+</Project>

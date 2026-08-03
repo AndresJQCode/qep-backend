@@ -1,0 +1,41 @@
+trigger:
+  branches:
+    include:
+      - main
+
+resources:
+  repositories:
+    - repository: k8sTemplates
+      type: git
+      name: devops/pipeline-templates
+      ref: main
+
+variables:
+  - name: env
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: 'prod'
+    ${{ elseif or(startsWith(variables['Build.SourceBranch'], 'refs/heads/test'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release')) }}:
+      value: 'test'
+    ${{ else }}:
+      value: 'dev'
+  - group: Backend-${{ variables.env }}-qep
+  - name: dockerHubRepo
+    value: ${{ variables.env }}-qep-backend
+
+stages:
+  - stage: Build
+    displayName: Build image
+    jobs:
+      - template: k8s/docker-build.yml@k8sTemplates
+        parameters:
+          dockerRepository: $(dockerHubRepo)
+
+  - stage: Deploy
+    displayName: Deploy to Kubernetes
+    dependsOn: Build
+    jobs:
+      - template: k8s/deploy.yml@k8sTemplates
+        parameters:
+          environmentName: $(env)
+          manifestDirectory: k8s
+          imageTag: $(Build.BuildId)

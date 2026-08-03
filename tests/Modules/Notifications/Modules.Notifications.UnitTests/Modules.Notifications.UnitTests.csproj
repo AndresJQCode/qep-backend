@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Notifications\Modules.Notifications.Application\Modules.Notifications.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Notifications\Modules.Notifications.Domain\Modules.Notifications.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

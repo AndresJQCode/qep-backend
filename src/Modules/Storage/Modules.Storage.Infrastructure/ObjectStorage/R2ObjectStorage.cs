@@ -1,0 +1,104 @@
+﻿using System.Net;
+using Amazon.S3;
+using Amazon.S3.Model;
+using Microsoft.Extensions.Options;
+using Modules.Storage.Application;
+
+namespace Modules.Storage.Infrastructure.ObjectStorage;
+
+// Cloudflare R2 adapter over the S3-compatible AWSSDK.S3 client (ADR 0020). Presigned URLs
+// are issued directly by R2; the client never sees credentials.
+internal sealed class R2ObjectStorage(IAmazonS3 client, IOptions<StorageOptions> options)
+    : IObjectStorage
+{
+    private string Bucket => options.Value.R2.Bucket;
+
+    private TimeSpan Expiry => TimeSpan.FromMinutes(options.Value.PresignedUrlMinutes);
+
+    public async Task<Uri> CreatePresignedUploadUrlAsync(
+        string key, string contentType, CancellationToken cancellationToken)
+    {
+        var request = new GetPreSignedUrlRequest
+        {
+            BucketName = Bucket,
+            Key = key,
+            Verb = HttpVerb.PUT,
+            ContentType = contentType,
+            Expires = DateTime.UtcNow.Add(Expiry),
+        };
+        request.Headers["If-None-Match"] = "*";
+        var url = await client.GetPreSignedURLAsync(request);
+        return new Uri(url);
+    }
+
+    public async Task<Uri> CreatePresignedDownloadUrlAsync(
+        string key, CancellationToken cancellationToken)
+    {
+        var url = await client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
+        {
+            BucketName = Bucket,
+            Key = key,
+            Verb = HttpVerb.GET,
+            Expires = DateTime.UtcNow.Add(Expiry),
+        });
+        return new Uri(url);
+    }
+
+    public async Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var metadata = await client.GetObjectMetadataAsync(Bucket, key, cancellationToken);
+            var checksum = (metadata.ETag ?? string.Empty).Trim('"');
+            return new StoredObject(metadata.ContentLength, checksum);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken) =>
+        client.DeleteObjectAsync(Bucket, key, cancellationToken);
+
+    public async Task PromoteAsync(
+        string sourceKey,
+        string destinationKey,
+        string expectedChecksum,
+        CancellationToken cancellationToken)
+    {
+        await client.CopyObjectAsync(
+            new CopyObjectRequest
+            {
+                SourceBucket = Bucket,
+                SourceKey = sourceKey,
+                DestinationBucket = Bucket,
+                DestinationKey = destinationKey,
+                ETagToMatch = expectedChecksum,
+            },
+            cancellationToken);
+    }
+
+    public async Task<byte[]> DownloadAsync(string key, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetObjectAsync(Bucket, key, cancellationToken);
+        using var buffer = new MemoryStream();
+        await response.ResponseStream.CopyToAsync(buffer, cancellationToken);
+        return buffer.ToArray();
+    }
+
+    public async Task UploadAsync(
+        string key, byte[] content, string contentType, CancellationToken cancellationToken)
+    {
+        using var stream = new MemoryStream(content);
+        await client.PutObjectAsync(
+            new PutObjectRequest
+            {
+                BucketName = Bucket,
+                Key = key,
+                InputStream = stream,
+                ContentType = contentType,
+            },
+            cancellationToken);
+    }
+}

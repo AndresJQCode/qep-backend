@@ -1,0 +1,23 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lulocrm-wildcard
+  namespace: prod-qep-backend
+  labels:
+    app.kubernetes.io/name: qep-backend
+    app.kubernetes.io/part-of: qep
+    app.kubernetes.io/environment: prod
+spec:
+  secretName: lulocrm-wildcard-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io
+  dnsNames:
+    - "*.lulocrm.com"
+  privateKey:
+    rotationPolicy: Always
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth

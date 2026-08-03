@@ -1,0 +1,12 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Tenancy.Domain\Modules.Tenancy.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Application\Modules.Audit.Application.csproj" />
+    <ProjectReference Include="..\..\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+</Project>

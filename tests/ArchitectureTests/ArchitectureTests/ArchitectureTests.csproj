@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Application\Modules.Audit.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Authorization\Modules.Authorization.Application\Modules.Authorization.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Domain\Modules.Identity.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Application\Modules.Notifications.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Domain\Modules.Notifications.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Storage\Modules.Storage.Api\Modules.Storage.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Storage\Modules.Storage.Application\Modules.Storage.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Storage\Modules.Storage.Domain\Modules.Storage.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Storage\Modules.Storage.Infrastructure\Modules.Storage.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Tenancy\Modules.Tenancy.Api\Modules.Tenancy.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Tenancy\Modules.Tenancy.Domain\Modules.Tenancy.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Tenancy\Modules.Tenancy.Infrastructure\Modules.Tenancy.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qep-backend-config
+  namespace: prod-qep-backend
+  labels:
+    app.kubernetes.io/name: qep-backend
+    app.kubernetes.io/part-of: qep
+    app.kubernetes.io/environment: prod
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  # Standard OTLP env vars read directly by the SDK exporter, not through
+  # IConfiguration — see src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
+  # Do not set OpenTelemetry__Endpoint here, it would take precedence over these.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
+  OTEL_SERVICE_NAME: "qep-backend"
+  OTEL_RESOURCE_ATTRIBUTES: "service.namespace=qep"
+  # Authentication__Authority is left unset: it defaults to Google's own issuer
+  # (https://accounts.google.com) in QepServiceCollectionExtensions.AddAuthentication.
+  # Only the audience (Google OAuth client id) must be provided per environment.
+  Authentication__Audience: "#{AUTHENTICATION_GOOGLE_CLIENT_ID}#"
+  Registration__PublicTenantSignupEnabled: "true"
+  DataProtection__KeysPath: "/var/lib/qep/data-protection"
+  Notifications__EmailProvider: "infobip"
+  Notifications__LoginUrl: "#{NOTIFICATIONS_LOGIN_URL}#"
+  Notifications__Infobip__BaseUrl: "#{NOTIFICATIONS_INFOBIP_BASE_URL}#"
+  Notifications__Infobip__SenderEmail: "#{NOTIFICATIONS_INFOBIP_SENDER_EMAIL}#"
+  Audit__SecurityRetentionDays: "2555"
+  Audit__OperationalRetentionDays: "730"
+  Storage__PresignedUrlMinutes: "5"
+  Storage__R2__AccountId: "#{STORAGE_R2_ACCOUNT_ID}#"
+  Storage__R2__Bucket: "#{STORAGE_R2_BUCKET}#"
+  Storage__R2__PublicBucket: "#{STORAGE_R2_PUBLIC_BUCKET}#"
+  Storage__R2__PublicBaseUrl: "#{STORAGE_R2_PUBLIC_BASE_URL}#"
+  Storage__R2__Endpoint: "#{STORAGE_R2_ENDPOINT}#"

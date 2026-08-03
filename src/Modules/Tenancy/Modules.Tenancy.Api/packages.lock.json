@@ -1,0 +1,64 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "buildingblocks.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "buildingblocks.domain": {
+        "type": "Project"
+      },
+      "modules.audit.application": {
+        "type": "Project",
+        "dependencies": {
+          "Modules.Audit.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.audit.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.identity.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Identity.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.identity.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.tenancy.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Audit.Application": "[1.0.0, )",
+          "Modules.Identity.Application": "[1.0.0, )",
+          "Modules.Tenancy.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.tenancy.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "FluentValidation": {
+        "type": "CentralTransitive",
+        "requested": "[12.1.1, )",
+        "resolved": "12.1.1",
+        "contentHash": "EPpkIe1yh1a0OXyC100oOA8WMbZvqUu5plwhvYcb7oSELfyUZzfxV48BLhvs3kKo4NwG7MGLNgy1RJiYtT8Dpw=="
+      }
+    }
+  }
+}

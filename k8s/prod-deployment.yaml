@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qep-backend
+  namespace: prod-qep-backend
+  labels:
+    app.kubernetes.io/name: qep-backend
+    app.kubernetes.io/part-of: qep
+    app.kubernetes.io/environment: prod
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  minReadySeconds: 5
+  selector:
+    matchLabels:
+      app: qep-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: qep-backend
+        app.kubernetes.io/name: qep-backend
+        app.kubernetes.io/part-of: qep
+        app.kubernetes.io/environment: prod
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+        - name: qep-backend
+          image: index.docker.io/qcodeco/prod-qep-backend:TAG
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: qep-backend-config
+            - secretRef:
+                name: qep-backend-secrets
+          env:
+            # Discrete keys from the platform Postgres secret (ansible/playbooks/86-postgres-app-database.yml),
+            # composed into the single ADO.NET connection string the app expects via k8s $(VAR) expansion.
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: qep-postgres
+                  key: host
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: qep-postgres
+                  key: port
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: qep-postgres
+                  key: database
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: qep-postgres
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: qep-postgres
+                  key: password
+            - name: ConnectionStrings__QepDatabase
+              value: "Host=$(DB_HOST);Port=$(DB_PORT);Database=$(DB_NAME);Username=$(DB_USER);Password=$(DB_PASSWORD)"
+          volumeMounts:
+            - name: data-protection-keys
+              mountPath: /var/lib/qep/data-protection
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: data-protection-keys
+          persistentVolumeClaim:
+            claimName: qep-data-protection-keys

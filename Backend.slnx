@@ -1,0 +1,70 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Api/Api.csproj" />
+    <Project Path="src/Bootstrapper/Bootstrapper.csproj" />
+  </Folder>
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/BuildingBlocks.Application/BuildingBlocks.Application.csproj" />
+    <Project Path="src/BuildingBlocks/BuildingBlocks.Domain/BuildingBlocks.Domain.csproj" />
+    <Project Path="src/BuildingBlocks/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj" />
+    <Project Path="src/BuildingBlocks/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/" />
+  <Folder Name="/src/Modules/Audit/">
+    <Project Path="src/Modules/Audit/Modules.Audit.Application/Modules.Audit.Application.csproj" />
+    <Project Path="src/Modules/Audit/Modules.Audit.Domain/Modules.Audit.Domain.csproj" />
+    <Project Path="src/Modules/Audit/Modules.Audit.Infrastructure/Modules.Audit.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Authorization/">
+    <Project Path="src/Modules/Authorization/Modules.Authorization.Application/Modules.Authorization.Application.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Identity/">
+    <Project Path="src/Modules/Identity/Modules.Identity.Application/Modules.Identity.Application.csproj" />
+    <Project Path="src/Modules/Identity/Modules.Identity.Domain/Modules.Identity.Domain.csproj" />
+    <Project Path="src/Modules/Identity/Modules.Identity.Infrastructure/Modules.Identity.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Notifications/">
+    <Project Path="src/Modules/Notifications/Modules.Notifications.Application/Modules.Notifications.Application.csproj" />
+    <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
+    <Project Path="src/Modules/Notifications/Modules.Notifications.Infrastructure/Modules.Notifications.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Storage/">
+    <Project Path="src/Modules/Storage/Modules.Storage.Api/Modules.Storage.Api.csproj" />
+    <Project Path="src/Modules/Storage/Modules.Storage.Application/Modules.Storage.Application.csproj" />
+    <Project Path="src/Modules/Storage/Modules.Storage.Domain/Modules.Storage.Domain.csproj" />
+    <Project Path="src/Modules/Storage/Modules.Storage.Infrastructure/Modules.Storage.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Tenancy/">
+    <Project Path="src/Modules/Tenancy/Modules.Tenancy.Api/Modules.Tenancy.Api.csproj" />
+    <Project Path="src/Modules/Tenancy/Modules.Tenancy.Application/Modules.Tenancy.Application.csproj" />
+    <Project Path="src/Modules/Tenancy/Modules.Tenancy.Domain/Modules.Tenancy.Domain.csproj" />
+    <Project Path="src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Modules.Tenancy.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/ArchitectureTests/">
+    <Project Path="tests/ArchitectureTests/ArchitectureTests/ArchitectureTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/" />
+  <Folder Name="/tests/Modules/Audit/">
+    <Project Path="tests/Modules/Audit/Modules.Audit.UnitTests/Modules.Audit.UnitTests.csproj" />
+    <Project Path="tests/Modules/Audit/Modules.Audit.IntegrationTests/Modules.Audit.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Storage/">
+    <Project Path="tests/Modules/Storage/Modules.Storage.UnitTests/Modules.Storage.UnitTests.csproj" />
+    <Project Path="tests/Modules/Storage/Modules.Storage.IntegrationTests/Modules.Storage.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Authorization/">
+    <Project Path="tests/Modules/Authorization/Modules.Authorization.UnitTests/Modules.Authorization.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Identity/">
+    <Project Path="tests/Modules/Identity/Modules.Identity.UnitTests/Modules.Identity.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Notifications/">
+    <Project Path="tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj" />
+    <Project Path="tests/Modules/Notifications/Modules.Notifications.IntegrationTests/Modules.Notifications.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Tenancy/">
+    <Project Path="tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/Modules.Tenancy.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Tenancy/Modules.Tenancy.UnitTests/Modules.Tenancy.UnitTests.csproj" />
+  </Folder>
+</Solution>
