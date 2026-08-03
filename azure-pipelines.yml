@@ -18,7 +18,7 @@ variables:
       value: "test"
     ${{ else }}:
       value: "dev"
-  - group: Backend-${{ variables.env }}-qep
+  - group: Backend-${{ variables.env }}
   - name: dockerHubRepo
     value: ${{ variables.env }}-#{APP_NAME}#
 
