@@ -13,14 +13,14 @@ resources:
 variables:
   - name: env
     ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
-      value: 'prod'
+      value: "prod"
     ${{ elseif or(startsWith(variables['Build.SourceBranch'], 'refs/heads/test'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release')) }}:
-      value: 'test'
+      value: "test"
     ${{ else }}:
-      value: 'dev'
+      value: "dev"
   - group: Backend-${{ variables.env }}-qep
   - name: dockerHubRepo
-    value: ${{ variables.env }}-qep-backend
+    value: ${{ variables.env }}-#{APP_NAME}#
 
 stages:
   - stage: Build
@@ -29,6 +29,7 @@ stages:
       - template: k8s/docker-build.yml@k8sTemplates
         parameters:
           dockerRepository: $(dockerHubRepo)
+          removeAppsettingsPath: $(Build.SourcesDirectory)/Api/appsettings.json
 
   - stage: Deploy
     displayName: Deploy to Kubernetes

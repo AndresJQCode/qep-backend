@@ -1,10 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: qep-backend
-  namespace: prod-qep-backend
+  name: #{APP_NAME}#
+  namespace: prod-#{APP_NAME}#
   labels:
-    app.kubernetes.io/name: qep-backend
+    app.kubernetes.io/name: #{APP_NAME}#
     app.kubernetes.io/part-of: qep
     app.kubernetes.io/environment: prod
 spec:
@@ -13,7 +13,7 @@ spec:
   minReadySeconds: 5
   selector:
     matchLabels:
-      app: qep-backend
+      app: #{APP_NAME}#
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -22,16 +22,16 @@ spec:
   template:
     metadata:
       labels:
-        app: qep-backend
-        app.kubernetes.io/name: qep-backend
+        app: #{APP_NAME}#
+        app.kubernetes.io/name: #{APP_NAME}#
         app.kubernetes.io/part-of: qep
         app.kubernetes.io/environment: prod
     spec:
       imagePullSecrets:
         - name: regcred
       containers:
-        - name: qep-backend
-          image: index.docker.io/qcodeco/prod-qep-backend:TAG
+        - name: #{APP_NAME}#
+          image: index.docker.io/qcodeco/prod-#{APP_NAME}#:TAG
           imagePullPolicy: Always
           ports:
             - name: http
@@ -39,9 +39,9 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: qep-backend-config
+                name: #{APP_NAME}#-config
             - secretRef:
-                name: qep-backend-secrets
+                name: #{APP_NAME}#-secrets
           env:
             # Discrete keys from the platform Postgres secret (ansible/playbooks/86-postgres-app-database.yml),
             # composed into the single ADO.NET connection string the app expects via k8s $(VAR) expansion.

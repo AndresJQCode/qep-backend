@@ -29,6 +29,7 @@ data:
   Audit__OperationalRetentionDays: "730"
   Storage__PresignedUrlMinutes: "5"
   Storage__R2__AccountId: "#{STORAGE_R2_ACCOUNT_ID}#"
+  Storage__R2__SecretAccessKey: "#{STORAGE_R2_SECRET_ACCESS_KEY}#"
   Storage__R2__Bucket: "#{STORAGE_R2_BUCKET}#"
   Storage__R2__PublicBucket: "#{STORAGE_R2_PUBLIC_BUCKET}#"
   Storage__R2__PublicBaseUrl: "#{STORAGE_R2_PUBLIC_BASE_URL}#"

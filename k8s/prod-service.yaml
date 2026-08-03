@@ -1,16 +1,16 @@
 kind: Service
 apiVersion: v1
 metadata:
-  name: qep-backend
-  namespace: prod-qep-backend
+  name: #{APP_NAME}#
+  namespace: prod-#{APP_NAME}#
   labels:
-    app.kubernetes.io/name: qep-backend
+    app.kubernetes.io/name: #{APP_NAME}#
     app.kubernetes.io/part-of: qep
     app.kubernetes.io/environment: prod
 spec:
   type: ClusterIP
   selector:
-    app: qep-backend
+    app: #{APP_NAME}#
   ports:
     - name: http
       protocol: TCP
