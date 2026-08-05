@@ -72,9 +72,6 @@ spec:
                   key: password
             - name: ConnectionStrings__QepDatabase
               value: "Host=$(DB_HOST);Port=$(DB_PORT);Database=$(DB_NAME);Username=$(DB_USER);Password=$(DB_PASSWORD)"
-          volumeMounts:
-            - name: data-protection-keys
-              mountPath: /var/lib/qep/data-protection
           startupProbe:
             httpGet:
               path: /health/live
@@ -103,7 +100,3 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
-      volumes:
-        - name: data-protection-keys
-          persistentVolumeClaim:
-            claimName: qep-data-protection-keys

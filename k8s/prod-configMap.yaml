@@ -20,7 +20,6 @@ data:
   # Only the audience (Google OAuth client id) must be provided per environment.
   Authentication__Audience: "#{AUTHENTICATION_GOOGLE_CLIENT_ID}#"
   Registration__PublicTenantSignupEnabled: "true"
-  DataProtection__KeysPath: "/var/lib/qep/data-protection"
   Notifications__EmailProvider: "infobip"
   Notifications__LoginUrl: "#{NOTIFICATIONS_LOGIN_URL}#"
   Notifications__Infobip__BaseUrl: "#{NOTIFICATIONS_INFOBIP_BASE_URL}#"
