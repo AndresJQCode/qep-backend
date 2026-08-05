@@ -3,7 +3,9 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY Directory.Build.props Directory.Packages.props global.json ./
+# .editorconfig is build input: it marks EF migrations as generated code, so the
+# analyzers stay off them under TreatWarningsAsErrors.
+COPY Directory.Build.props Directory.Packages.props global.json .editorconfig ./
 COPY src/ src/
 
 RUN dotnet restore src/Api/Api.csproj --locked-mode
