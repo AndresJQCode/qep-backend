@@ -20,7 +20,7 @@ variables:
       value: "dev"
   - group: Backend-${{ variables.env }}
   - name: dockerHubRepo
-    value: ${{ variables.env }}-#{APP_NAME}#
+    value: ${{ variables.env }}-qep-backend
 
 stages:
   - stage: Build
