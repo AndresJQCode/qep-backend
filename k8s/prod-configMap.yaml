@@ -9,6 +9,11 @@ metadata:
     app.kubernetes.io/environment: prod
 data:
   ASPNETCORE_ENVIRONMENT: "Production"
+  # Full ADO.NET connection string, supplied as a single variable. It cannot be
+  # composed from discrete host/port/user parts here: k8s $(VAR) expansion only
+  # resolves variables declared in the container's own "env" block, never keys
+  # arriving through envFrom.
+  ConnectionStrings__QepDatabase: "#{DATABASE_CONNECTION_STRING}#"
   # Standard OTLP env vars read directly by the SDK exporter, not through
   # IConfiguration — see src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
   # Do not set OpenTelemetry__Endpoint here, it would take precedence over these.
@@ -23,11 +28,13 @@ data:
   Notifications__EmailProvider: "infobip"
   Notifications__LoginUrl: "#{NOTIFICATIONS_LOGIN_URL}#"
   Notifications__Infobip__BaseUrl: "#{NOTIFICATIONS_INFOBIP_BASE_URL}#"
+  Notifications__Infobip__ApiKey: "#{NOTIFICATIONS_INFOBIP_API_KEY}#"
   Notifications__Infobip__SenderEmail: "#{NOTIFICATIONS_INFOBIP_SENDER_EMAIL}#"
   Audit__SecurityRetentionDays: "2555"
   Audit__OperationalRetentionDays: "730"
   Storage__PresignedUrlMinutes: "5"
   Storage__R2__AccountId: "#{STORAGE_R2_ACCOUNT_ID}#"
+  Storage__R2__AccessKeyId: "#{STORAGE_R2_ACCESS_KEY_ID}#"
   Storage__R2__SecretAccessKey: "#{STORAGE_R2_SECRET_ACCESS_KEY}#"
   Storage__R2__Bucket: "#{STORAGE_R2_BUCKET}#"
   Storage__R2__PublicBucket: "#{STORAGE_R2_PUBLIC_BUCKET}#"

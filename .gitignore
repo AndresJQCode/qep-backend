@@ -9,6 +9,3 @@ coverage/
 *.suo
 .env
 artifacts/
-
-k8s/prod-secret.yaml
-!k8s/prod-secret.example.yaml
