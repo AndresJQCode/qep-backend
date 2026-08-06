@@ -9,6 +9,12 @@ metadata:
     app.kubernetes.io/environment: prod
 data:
   ASPNETCORE_ENVIRONMENT: "Production"
+  # The outbox publisher and the three inbox relays poll every 2-3s, and EF Core
+  # logs every command at Information, so the default level floods the pod with
+  # "Executed DbCommand" lines even when there is nothing to process. Raising
+  # this category to Warning keeps SQL failures visible and drops the polling
+  # noise. Left out of appsettings.json on purpose: local runs still show SQL.
+  Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command: "Warning"
   # Full ADO.NET connection string, supplied as a single variable. It cannot be
   # composed from discrete host/port/user parts here: k8s $(VAR) expansion only
   # resolves variables declared in the container's own "env" block, never keys
