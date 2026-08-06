@@ -18,10 +18,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - api-qep.qcode.co
-      secretName: api-qep-qcode-co-tls
+        - qep-api.qcode.co
+      secretName: qep-api-qcode-co-tls
   rules:
-    - host: api-qep.qcode.co
+    - host: qep-api.qcode.co
       http:
         paths:
           - path: /
