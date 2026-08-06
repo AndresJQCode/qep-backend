@@ -33,10 +33,9 @@ builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
 
-// Public/unauthenticated surfaces (any future public read or webhook endpoint): per-IP
-// fixed window, generous enough for real traffic but bounded against abuse. Not attached
-// to any endpoint yet in this template — attach with .RequireRateLimiting(RateLimiterPolicies.Public)
-// once a public endpoint is added.
+// Public/unauthenticated surfaces: per-IP fixed window, generous enough for real traffic
+// but bounded against abuse. Currently attached to the OpenAPI document and the Scalar
+// API reference; attach it to any further public read or webhook endpoint as it is added.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -67,14 +66,21 @@ if (!QepAuthenticationMode.UseDevelopmentStub(builder.Configuration, builder.Env
 app.UseAuthentication();
 app.UseAuthorization();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    // Literal prefix so the reference lives at /scalar/v1, the URL the launch profiles
-    // open. The package default is /scalar; the prefix rejects a "{documentName}"
-    // placeholder, and there is only the single "v1" OpenAPI document to serve.
-    app.MapScalarApiReference("/scalar/v1");
-}
+// Served in every environment, Production included: the deployed API is meant to be
+// self-documenting. Both endpoints are anonymous and internet-reachable — the ingress
+// routes "/" to this service without any path filtering — so the OpenAPI document
+// publishes the full API surface (routes, request shapes, error codes) to whoever asks.
+// Rate-limited per IP to bound scraping. To take the reference private again, wrap this
+// block in an environment or authorization check.
+app.MapOpenApi()
+    .AllowAnonymous()
+    .RequireRateLimiting(RateLimiterPolicies.Public);
+// Literal prefix so the reference lives at /scalar/v1, the URL the launch profiles
+// open. The package default is /scalar; the prefix rejects a "{documentName}"
+// placeholder, and there is only the single "v1" OpenAPI document to serve.
+app.MapScalarApiReference("/scalar/v1")
+    .AllowAnonymous()
+    .RequireRateLimiting(RateLimiterPolicies.Public);
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }))
     .AllowAnonymous();
