@@ -213,6 +213,65 @@ public sealed class Membership
     }
 
     /// <summary>
+    /// Renews a lapsed invitation in place, with a fresh window and the roles given now.
+    /// </summary>
+    /// <remarks>
+    /// In place, and not by creating a second membership: (UserId, TenantId) is a UNIQUE
+    /// index, so one user holds exactly one membership per tenant. See SDD-CT-15.
+    ///
+    /// Exists because expiry is lazy — only <see cref="Accept"/> transitions an invitation
+    /// to <see cref="MembershipState.Expired"/>, and that only happens when the person
+    /// tries to sign in. Someone who never tries stays <see cref="MembershipState.Invited"/>
+    /// with a ExpiresAt in the past forever, and re-inviting them used to return that dead
+    /// row untouched: no new invitation, no failure, no warning. See SDD-OD-04.
+    ///
+    /// A still-valid invitation is refused rather than renewed: extending a live window
+    /// silently invalidates the link already in someone's inbox.
+    /// </remarks>
+    public void Reinvite(
+        IEnumerable<string> roles,
+        DateTimeOffset occurredAt,
+        TimeSpan timeToLive)
+    {
+        if (timeToLive <= TimeSpan.Zero)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.ttl_invalid",
+                "Invitation time-to-live must be positive.");
+        }
+
+        if (State == MembershipState.Invited && occurredAt <= ExpiresAt)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.invitation_still_valid",
+                "The invitation has not expired yet.");
+        }
+
+        if (State is not (MembershipState.Invited or MembershipState.Expired))
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.not_reinvitable",
+                "Only a lapsed or expired invitation can be re-invited.");
+        }
+
+        _roles.Clear();
+        _roles.AddRange(NormalizeRoles(roles));
+        State = MembershipState.Invited;
+        InvitedAt = occurredAt;
+        ExpiresAt = occurredAt + timeToLive;
+        AcceptedAt = null;
+        Version++;
+        UpdatedAt = occurredAt;
+        _domainEvents.Add(new MembershipInvitedDomainEvent(
+            Guid.CreateVersion7(),
+            occurredAt,
+            Id,
+            TenantId,
+            UserId,
+            ExpiresAt));
+    }
+
+    /// <summary>
     /// Suspends an active membership, blocking access without discarding it.
     /// Only valid from <see cref="MembershipState.Active"/>; there is no
     /// reactivation path in v1 (per ADR 0016, states are real, audited

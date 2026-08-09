@@ -420,7 +420,14 @@ public sealed class RealAuthenticationApiTests
             // Not "Development": UseDevelopmentStub defaults off outside it, so this
             // exercises the real GoogleBearer/QepSession branch — see
             // QepServiceCollectionExtensions.AddAuthentication.
-            builder.UseEnvironment("Local");
+            //
+            // Not "Local" either, which is what this used to be: that name makes Program
+            // load user-secrets (src/Api/Program.cs:23-26) *after* the UseSetting values
+            // below, so a developer's ConnectionStrings:QepDatabase secret silently won
+            // and these tests ran against the real development database — failing when it
+            // was down and writing to it when it was up. Any name outside "Development"
+            // and "Local" keeps the real auth branch without that override. SDD-CT-14.
+            builder.UseEnvironment("IntegrationTests");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");

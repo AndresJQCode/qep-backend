@@ -53,11 +53,9 @@ public sealed class InviteMemberHandler(
             userId,
             command.TenantId,
             cancellationToken);
-        if (existing is not null &&
-            existing.State is MembershipState.Invited or MembershipState.Active)
+        if (existing is not null)
         {
-            // Already invited or active: inviting again is a no-op.
-            return existing.ToDto();
+            return await ReinviteExistingAsync(existing, command, cancellationToken);
         }
 
         var membership = Membership.Invite(
@@ -87,6 +85,59 @@ public sealed class InviteMemberHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return membership.ToDto();
+    }
+
+    /// <summary>
+    /// Decides what a second invitation means for a membership that already exists.
+    /// </summary>
+    /// <remarks>
+    /// Renewal happens on the existing row, never by inserting a second one:
+    /// (UserId, TenantId) is UNIQUE (TenancyDbContext.cs:105). Creating a new membership
+    /// here — as this handler did for any state other than Invited/Active — violates that
+    /// index and surfaces as a 500. See SDD-CT-15.
+    /// </remarks>
+    private async Task<MembershipDto> ReinviteExistingAsync(
+        Membership existing,
+        InviteMemberCommand command,
+        CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
+
+        // A live invitation and an active membership are both no-ops. Renewing a live
+        // invitation would move a deadline someone is counting on and invalidate the link
+        // already in their inbox.
+        var invitationIsLive =
+            existing.State == MembershipState.Invited && now <= existing.ExpiresAt;
+        if (invitationIsLive || existing.State == MembershipState.Active)
+        {
+            return existing.ToDto();
+        }
+
+        // Everything else is either a lapsed invitation (still Invited, because expiry is
+        // lazy and nobody tried to sign in) or one already marked Expired. Both are
+        // renewable; Reinvite refuses the states that are not. SDD-OD-04.
+        existing.Reinvite(command.Roles, now, Membership.DefaultInvitationTimeToLive);
+
+        auditRecorder.Record(
+            command.TenantId.Value,
+            executionContext.SubjectId,
+            "tenancy.membership.invited",
+            "membership",
+            existing.Id.ToString(),
+            "success",
+            [],
+            now);
+
+        // The renewal only reaches the person through the outbox: InvitationDeliveryWorker
+        // sends the email off this event. Persisting without emitting it renews nothing
+        // that the invitee can see.
+        foreach (var domainEvent in existing.PullDomainEvents())
+        {
+            outboxWriter.Add(domainEvent, command.CorrelationId);
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return existing.ToDto();
     }
 
     private void EnsureKnownRoles(IReadOnlyCollection<string> roles)
