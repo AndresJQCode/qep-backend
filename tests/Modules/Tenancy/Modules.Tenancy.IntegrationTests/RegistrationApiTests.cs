@@ -218,6 +218,13 @@ public sealed class RegistrationApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Pinned, not inherited: appsettings.json carries whatever provider the product
+            // is deployed with, and an integration suite that depends on that ends up
+            // depending on the credentials of whoever runs it. With "infobip" and the
+            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
+            // at startup and every test in the file dies before reaching its assertion.
+            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            builder.UseSetting("Notifications:EmailProvider", "log");
             builder.UseSetting(
                 "Registration:PublicTenantSignupEnabled",
                 signupEnabled ? "true" : "false");

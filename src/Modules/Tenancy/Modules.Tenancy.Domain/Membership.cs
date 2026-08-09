@@ -298,6 +298,44 @@ public sealed class Membership
     }
 
     /// <summary>
+    /// Returns a suspended membership to <see cref="MembershipState.Active"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only from <see cref="MembershipState.Suspended"/>. Not from `Expired`, which is a
+    /// lapsed invitation and belongs to `Reinvite`: mixing them would erase the difference
+    /// between "their window ran out" and "somebody decided to suspend them".
+    ///
+    /// `AcceptedAt` survives untouched. The person accepted their invitation once already,
+    /// and asking them to accept again would be asking them to confirm what they confirmed.
+    ///
+    /// Added by AUTH-11. Until then a suspension was a dead end — `Reinvite` refuses a
+    /// suspended membership and nothing else could move it — so someone suspended by
+    /// mistake had no way back through the product. The owner chose a separate operation
+    /// over letting a re-invitation restore, because they are two different intentions: if
+    /// inviting also restored, an administrator could undo somebody else's suspension
+    /// without ever realising they had. See SDD-OD-13.
+    /// </remarks>
+    public void Reactivate(DateTimeOffset occurredAt)
+    {
+        if (State != MembershipState.Suspended)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.not_reactivatable",
+                "Only a suspended membership can be reactivated.");
+        }
+
+        State = MembershipState.Active;
+        Version++;
+        UpdatedAt = occurredAt;
+        _domainEvents.Add(new MembershipReactivatedDomainEvent(
+            Guid.CreateVersion7(),
+            occurredAt,
+            Id,
+            TenantId,
+            UserId));
+    }
+
+    /// <summary>
     /// Removes a membership, permanently revoking it. Valid from any
     /// non-terminal state (<see cref="MembershipState.Invited"/>,
     /// <see cref="MembershipState.Active"/> or <see cref="MembershipState.Suspended"/>).

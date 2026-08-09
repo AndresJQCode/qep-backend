@@ -415,6 +415,138 @@ public sealed class MembershipApiTests
         Assert.Equal("Suspended", state![0]);
     }
 
+    /// <summary>
+    /// AUTH-11. Hasta este slice una suspensión era un callejón sin salida: `Reinvite`
+    /// rechaza `Suspended` y no había operación que la moviera, así que alguien suspendido
+    /// por error no tenía forma de volver desde el producto.
+    /// </summary>
+    [Fact]
+    public async Task ReactivateReturnsASuspendedMemberToActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var invited = await InviteAsync(client, TenantId, email);
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        var response = await ReactivateAsync(client, TenantId, membership.Id);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var reactivated = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(reactivated);
+        Assert.Equal("Active", reactivated!.State);
+        Assert.True(reactivated.Version > membership.Version);
+    }
+
+    /// <summary>
+    /// El estado persistido, la auditoría y el evento de outbox, no sólo el status HTTP:
+    /// `AGENTS.md` §7b lo exige, y una reactivación sin rastro es justamente lo que la
+    /// operación separada venía a evitar.
+    /// </summary>
+    [Fact]
+    public async Task ReactivateWritesAuditEntryAndOutboxEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var invited = await InviteAsync(client, TenantId, NewEmail());
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        var response = await ReactivateAsync(client, TenantId, membership.Id);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        var state = await QueryRowAsync(
+            connection,
+            "SELECT state FROM tenancy.memberships WHERE id = @id",
+            ("id", membership.Id));
+        Assert.NotNull(state);
+        Assert.Equal("Active", state![0]);
+
+        var audit = await QueryRowAsync(
+            connection,
+            """
+            SELECT actor_id::text, outcome FROM audit.entries
+            WHERE action = 'tenancy.membership.reactivated' AND resource_id = @membershipId
+            """,
+            ("membershipId", membership.Id.ToString()));
+        Assert.NotNull(audit);
+        Assert.Equal(SubjectId, audit![0]);
+        Assert.Equal("success", audit[1]);
+
+        var outbox = await ScalarAsync(
+            connection,
+            """
+            SELECT COUNT(*) FROM platform.outbox_messages
+            WHERE event_name = 'tenancy.membership-reactivated.v1'
+              AND payload::text LIKE '%' || @membershipId || '%'
+            """,
+            ("membershipId", membership.Id.ToString()));
+        Assert.Equal(1, outbox);
+    }
+
+    [Fact]
+    public async Task ReactivateRejectsAMemberThatIsNotSuspended()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var invited = await InviteAsync(client, TenantId, NewEmail());
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+
+        // Sigue en Invited: nunca fue suspendida.
+        var response = await ReactivateAsync(client, TenantId, membership!.Id);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReactivateRequiresTheManagePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var invited = await InviteAsync(client, TenantId, NewEmail());
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        using var readerOnly = CreateClient(factory, SubjectId, TenantId);
+        readerOnly.DefaultRequestHeaders.Add("X-Permissions", "tenancy.membership.read");
+
+        var response = await ReactivateAsync(readerOnly, TenantId, membership.Id);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private static async Task<HttpResponseMessage> ReactivateAsync(
+        HttpClient client,
+        string tenantId,
+        Guid membershipId)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/reactivate");
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
     private static async Task SetStateAsync(
         PostgreSqlContainer database,
         Guid membershipId,
@@ -580,6 +712,13 @@ public sealed class MembershipApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Pinned, not inherited: appsettings.json carries whatever provider the product
+            // is deployed with, and an integration suite that depends on that ends up
+            // depending on the credentials of whoever runs it. With "infobip" and the
+            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
+            // at startup and every test in the file dies before reaching its assertion.
+            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }
 }
