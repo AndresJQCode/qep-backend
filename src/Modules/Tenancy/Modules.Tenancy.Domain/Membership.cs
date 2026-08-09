@@ -213,6 +213,65 @@ public sealed class Membership
     }
 
     /// <summary>
+    /// Renews a lapsed invitation in place, with a fresh window and the roles given now.
+    /// </summary>
+    /// <remarks>
+    /// In place, and not by creating a second membership: (UserId, TenantId) is a UNIQUE
+    /// index, so one user holds exactly one membership per tenant. See SDD-CT-15.
+    ///
+    /// Exists because expiry is lazy — only <see cref="Accept"/> transitions an invitation
+    /// to <see cref="MembershipState.Expired"/>, and that only happens when the person
+    /// tries to sign in. Someone who never tries stays <see cref="MembershipState.Invited"/>
+    /// with a ExpiresAt in the past forever, and re-inviting them used to return that dead
+    /// row untouched: no new invitation, no failure, no warning. See SDD-OD-04.
+    ///
+    /// A still-valid invitation is refused rather than renewed: extending a live window
+    /// silently invalidates the link already in someone's inbox.
+    /// </remarks>
+    public void Reinvite(
+        IEnumerable<string> roles,
+        DateTimeOffset occurredAt,
+        TimeSpan timeToLive)
+    {
+        if (timeToLive <= TimeSpan.Zero)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.ttl_invalid",
+                "Invitation time-to-live must be positive.");
+        }
+
+        if (State == MembershipState.Invited && occurredAt <= ExpiresAt)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.invitation_still_valid",
+                "The invitation has not expired yet.");
+        }
+
+        if (State is not (MembershipState.Invited or MembershipState.Expired))
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.not_reinvitable",
+                "Only a lapsed or expired invitation can be re-invited.");
+        }
+
+        _roles.Clear();
+        _roles.AddRange(NormalizeRoles(roles));
+        State = MembershipState.Invited;
+        InvitedAt = occurredAt;
+        ExpiresAt = occurredAt + timeToLive;
+        AcceptedAt = null;
+        Version++;
+        UpdatedAt = occurredAt;
+        _domainEvents.Add(new MembershipInvitedDomainEvent(
+            Guid.CreateVersion7(),
+            occurredAt,
+            Id,
+            TenantId,
+            UserId,
+            ExpiresAt));
+    }
+
+    /// <summary>
     /// Suspends an active membership, blocking access without discarding it.
     /// Only valid from <see cref="MembershipState.Active"/>; there is no
     /// reactivation path in v1 (per ADR 0016, states are real, audited
@@ -231,6 +290,44 @@ public sealed class Membership
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new MembershipSuspendedDomainEvent(
+            Guid.CreateVersion7(),
+            occurredAt,
+            Id,
+            TenantId,
+            UserId));
+    }
+
+    /// <summary>
+    /// Returns a suspended membership to <see cref="MembershipState.Active"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only from <see cref="MembershipState.Suspended"/>. Not from `Expired`, which is a
+    /// lapsed invitation and belongs to `Reinvite`: mixing them would erase the difference
+    /// between "their window ran out" and "somebody decided to suspend them".
+    ///
+    /// `AcceptedAt` survives untouched. The person accepted their invitation once already,
+    /// and asking them to accept again would be asking them to confirm what they confirmed.
+    ///
+    /// Added by AUTH-11. Until then a suspension was a dead end — `Reinvite` refuses a
+    /// suspended membership and nothing else could move it — so someone suspended by
+    /// mistake had no way back through the product. The owner chose a separate operation
+    /// over letting a re-invitation restore, because they are two different intentions: if
+    /// inviting also restored, an administrator could undo somebody else's suspension
+    /// without ever realising they had. See SDD-OD-13.
+    /// </remarks>
+    public void Reactivate(DateTimeOffset occurredAt)
+    {
+        if (State != MembershipState.Suspended)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.not_reactivatable",
+                "Only a suspended membership can be reactivated.");
+        }
+
+        State = MembershipState.Active;
+        Version++;
+        UpdatedAt = occurredAt;
+        _domainEvents.Add(new MembershipReactivatedDomainEvent(
             Guid.CreateVersion7(),
             occurredAt,
             Id,

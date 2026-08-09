@@ -217,6 +217,365 @@ public sealed class MembershipApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
+    /// <summary>
+    /// AUTH-05 / SDD-OD-04. Expiry is lazy: only an attempted sign-in transitions an
+    /// invitation to Expired. Someone who never tries stays Invited with a past ExpiresAt,
+    /// and re-inviting them returned that dead row unchanged — no new invitation, no
+    /// failure, no warning, and no way for that person to ever join.
+    ///
+    /// The window is forced past in the database rather than by moving a clock: the API
+    /// resolves time through the real IClock, and the point under test is what the handler
+    /// does with a row whose window has already lapsed.
+    /// </summary>
+    [Fact]
+    public async Task ReinvitingALapsedInvitationIssuesAFreshOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var first = await InviteAsync(client, TenantId, email);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        var original = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(original);
+
+        await LapseInvitationAsync(database, original!.Id);
+
+        var second = await InviteAsync(client, TenantId, email);
+
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var renewed = await second.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(renewed);
+        Assert.Equal("Invited", renewed!.State);
+        Assert.True(
+            renewed.ExpiresAt > DateTimeOffset.UtcNow,
+            "A renewed invitation must expire in the future.");
+        Assert.True(renewed.Version > original.Version);
+
+        // Renewed in place: (user_id, tenant_id) is UNIQUE, so a second row is impossible.
+        // See SDD-CT-15.
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var rows = await ScalarAsync(
+            connection,
+            "SELECT COUNT(*) FROM tenancy.memberships WHERE user_id = @userId AND tenant_id = @tenantId",
+            ("userId", original.UserId),
+            ("tenantId", Guid.Parse(TenantId)));
+        Assert.Equal(1, rows);
+        Assert.Equal(original.Id, renewed.Id);
+    }
+
+    /// <summary>
+    /// The renewal has to reach the person: InvitationDeliveryWorker sends the email off
+    /// the outbox event, so a renewal that persists without re-emitting it is a silent
+    /// no-op from the invitee's point of view.
+    /// </summary>
+    [Fact]
+    public async Task ReinvitingALapsedInvitationEmitsTheInvitedEventAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var first = await InviteAsync(client, TenantId, email);
+        var original = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(original);
+        await LapseInvitationAsync(database, original!.Id);
+
+        var second = await InviteAsync(client, TenantId, email);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        var events = await ScalarAsync(
+            connection,
+            """
+            SELECT COUNT(*) FROM platform.outbox_messages
+            WHERE event_name = 'tenancy.membership-invited.v1'
+              AND payload::text LIKE '%' || @membershipId || '%'
+            """,
+            ("membershipId", original.Id.ToString()));
+        Assert.Equal(2, events);
+
+        var audit = await ScalarAsync(
+            connection,
+            """
+            SELECT COUNT(*) FROM audit.entries
+            WHERE action = 'tenancy.membership.invited' AND resource_id = @membershipId
+            """,
+            ("membershipId", original.Id.ToString()));
+        Assert.Equal(2, audit);
+    }
+
+    /// <summary>
+    /// CA-AUTH-05-12: a live invitation stays untouched. Renewing it would invalidate the
+    /// link already sitting in someone's inbox and silently move the deadline.
+    /// </summary>
+    [Fact]
+    public async Task ReinvitingALiveInvitationRemainsAnIdempotentNoOp()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var first = await InviteAsync(client, TenantId, email);
+        var original = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(original);
+
+        var second = await InviteAsync(client, TenantId, email);
+
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var repeated = await second.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(repeated);
+        Assert.Equal(original!.Id, repeated!.Id);
+        Assert.Equal(original.Version, repeated.Version);
+        // Compared to the microsecond: the first response carries the in-memory value and
+        // the second one comes back from Postgres, which stores microseconds. A stricter
+        // comparison fails on sub-microsecond ticks and proves nothing about the no-op.
+        Assert.True(
+            (repeated.ExpiresAt - original.ExpiresAt).Duration() < TimeSpan.FromMilliseconds(1),
+            "A no-op must not move the expiry window.");
+    }
+
+    /// <summary>
+    /// CA-AUTH-05-12 through the real path. The unit test for an Active membership calls
+    /// Reinvite() directly, which the handler never does for that state — it short-circuits
+    /// first. Without this, the criterion looked covered and the production behaviour was
+    /// untested. Found by the AUTH-05 review.
+    /// </summary>
+    [Fact]
+    public async Task ReinvitingAnActiveMemberIsAnIdempotentNoOp()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var first = await InviteAsync(client, TenantId, email);
+        var original = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(original);
+
+        // Activated in the database rather than by signing in: acceptance is a side effect
+        // of a real login, and this test is about what a second invitation does to an
+        // already-active member.
+        await SetStateAsync(database, original!.Id, "Active");
+
+        var second = await InviteAsync(client, TenantId, email);
+
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var repeated = await second.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(repeated);
+        Assert.Equal(original.Id, repeated!.Id);
+        Assert.Equal("Active", repeated.State);
+        Assert.Equal(original.Version, repeated.Version);
+    }
+
+    /// <summary>
+    /// A membership an administrator suspended is not reopened by inviting the person
+    /// again. Before AUTH-05 this path inserted a second row and died on the
+    /// (user_id, tenant_id) UNIQUE index, surfacing as a 500; now it is a stated 422.
+    /// Whether re-inviting *should* restore them is SDD-OD-13, a product decision.
+    /// </summary>
+    [Fact]
+    public async Task ReinvitingASuspendedMemberIsRefusedWithoutRestoringThem()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var first = await InviteAsync(client, TenantId, email);
+        var original = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(original);
+        await SetStateAsync(database, original!.Id, "Suspended");
+
+        var second = await InviteAsync(client, TenantId, email);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var state = await QueryRowAsync(
+            connection,
+            "SELECT state FROM tenancy.memberships WHERE id = @id",
+            ("id", original.Id));
+        Assert.NotNull(state);
+        Assert.Equal("Suspended", state![0]);
+    }
+
+    /// <summary>
+    /// AUTH-11. Hasta este slice una suspensión era un callejón sin salida: `Reinvite`
+    /// rechaza `Suspended` y no había operación que la moviera, así que alguien suspendido
+    /// por error no tenía forma de volver desde el producto.
+    /// </summary>
+    [Fact]
+    public async Task ReactivateReturnsASuspendedMemberToActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var invited = await InviteAsync(client, TenantId, email);
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        var response = await ReactivateAsync(client, TenantId, membership.Id);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var reactivated = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(reactivated);
+        Assert.Equal("Active", reactivated!.State);
+        Assert.True(reactivated.Version > membership.Version);
+    }
+
+    /// <summary>
+    /// El estado persistido, la auditoría y el evento de outbox, no sólo el status HTTP:
+    /// `AGENTS.md` §7b lo exige, y una reactivación sin rastro es justamente lo que la
+    /// operación separada venía a evitar.
+    /// </summary>
+    [Fact]
+    public async Task ReactivateWritesAuditEntryAndOutboxEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var invited = await InviteAsync(client, TenantId, NewEmail());
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        var response = await ReactivateAsync(client, TenantId, membership.Id);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        var state = await QueryRowAsync(
+            connection,
+            "SELECT state FROM tenancy.memberships WHERE id = @id",
+            ("id", membership.Id));
+        Assert.NotNull(state);
+        Assert.Equal("Active", state![0]);
+
+        var audit = await QueryRowAsync(
+            connection,
+            """
+            SELECT actor_id::text, outcome FROM audit.entries
+            WHERE action = 'tenancy.membership.reactivated' AND resource_id = @membershipId
+            """,
+            ("membershipId", membership.Id.ToString()));
+        Assert.NotNull(audit);
+        Assert.Equal(SubjectId, audit![0]);
+        Assert.Equal("success", audit[1]);
+
+        var outbox = await ScalarAsync(
+            connection,
+            """
+            SELECT COUNT(*) FROM platform.outbox_messages
+            WHERE event_name = 'tenancy.membership-reactivated.v1'
+              AND payload::text LIKE '%' || @membershipId || '%'
+            """,
+            ("membershipId", membership.Id.ToString()));
+        Assert.Equal(1, outbox);
+    }
+
+    [Fact]
+    public async Task ReactivateRejectsAMemberThatIsNotSuspended()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var invited = await InviteAsync(client, TenantId, NewEmail());
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+
+        // Sigue en Invited: nunca fue suspendida.
+        var response = await ReactivateAsync(client, TenantId, membership!.Id);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReactivateRequiresTheManagePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var invited = await InviteAsync(client, TenantId, NewEmail());
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        using var readerOnly = CreateClient(factory, SubjectId, TenantId);
+        readerOnly.DefaultRequestHeaders.Add("X-Permissions", "tenancy.membership.read");
+
+        var response = await ReactivateAsync(readerOnly, TenantId, membership.Id);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private static async Task<HttpResponseMessage> ReactivateAsync(
+        HttpClient client,
+        string tenantId,
+        Guid membershipId)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/reactivate");
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task SetStateAsync(
+        PostgreSqlContainer database,
+        Guid membershipId,
+        string state)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE tenancy.memberships SET state = @state WHERE id = @id",
+            connection);
+        command.Parameters.AddWithValue("state", state);
+        command.Parameters.AddWithValue("id", membershipId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task LapseInvitationAsync(
+        PostgreSqlContainer database,
+        Guid membershipId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE tenancy.memberships SET expires_at = @expiresAt WHERE id = @id",
+            connection);
+        command.Parameters.AddWithValue("expiresAt", DateTimeOffset.UtcNow.AddHours(-1));
+        command.Parameters.AddWithValue("id", membershipId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string NewEmail() => $"invitee-{Guid.NewGuid():N}@example.com";
 
     private static async Task<HttpResponseMessage> InviteAsync(
@@ -353,6 +712,13 @@ public sealed class MembershipApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Pinned, not inherited: appsettings.json carries whatever provider the product
+            // is deployed with, and an integration suite that depends on that ends up
+            // depending on the credentials of whoever runs it. With "infobip" and the
+            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
+            // at startup and every test in the file dies before reaching its assertion.
+            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }
 }

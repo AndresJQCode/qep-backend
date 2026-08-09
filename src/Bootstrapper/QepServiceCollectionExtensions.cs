@@ -54,6 +54,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<RemoveMemberCommand, MembershipListItemDto>,
             RemoveMemberHandler>();
         services.AddScoped<
+            ICommandHandler<ReactivateMemberCommand, MembershipListItemDto>,
+            ReactivateMemberHandler>();
+        services.AddScoped<
             ICommandHandler<UpdateMemberRolesCommand, MembershipListItemDto>,
             UpdateMemberRolesHandler>();
         services.AddScoped<

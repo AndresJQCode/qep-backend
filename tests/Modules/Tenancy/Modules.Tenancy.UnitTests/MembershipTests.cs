@@ -209,6 +209,242 @@ public sealed class MembershipTests
         Assert.Equal("tenancy.membership.user_required", exception.Code);
     }
 
+
+    /// <summary>
+    /// AUTH-05 / SDD-OD-04. An invitation that lapses without the person ever trying to
+    /// sign in stays in <see cref="MembershipState.Invited"/> with a past ExpiresAt,
+    /// because expiry is lazy: only Accept transitions it. Re-inviting used to return that
+    /// dead row unchanged, leaving the person permanently un-invitable while the admin
+    /// believed the invitation had been sent.
+    ///
+    /// Renewal happens in place, not by inserting a second row: (UserId, TenantId) is a
+    /// UNIQUE index (TenancyDbContext.cs:105), so one user has exactly one membership per
+    /// tenant. See SDD-CT-15.
+    /// </summary>
+    [Fact]
+    public void ReinviteAfterExpiryRenewsInPlaceWithAFreshWindow()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var originalId = membership.Id;
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        membership.Reinvite(["tenancy.admin"], lapsed, Ttl);
+
+        Assert.Equal(originalId, membership.Id);
+        Assert.Equal(MembershipState.Invited, membership.State);
+        Assert.Equal(lapsed, membership.InvitedAt);
+        Assert.Equal(lapsed + Ttl, membership.ExpiresAt);
+        Assert.True(membership.ExpiresAt > lapsed);
+        Assert.Null(membership.AcceptedAt);
+        Assert.Equal(["tenancy.admin"], membership.Roles);
+    }
+
+    [Fact]
+    public void ReinviteRaisesTheInvitedEventSoTheEmailIsSentAgain()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.PullDomainEvents();
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        membership.Reinvite(["tenancy.member"], lapsed, Ttl);
+
+        var domainEvent = Assert.Single(membership.DomainEvents);
+        var invited = Assert.IsType<MembershipInvitedDomainEvent>(domainEvent);
+        Assert.Equal(membership.Id, invited.MembershipId);
+        Assert.Equal(membership.ExpiresAt, invited.ExpiresAt);
+    }
+
+    [Fact]
+    public void ReinviteWorksFromTheExpiredStateToo()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+        Assert.True(membership.Expire(lapsed));
+
+        membership.Reinvite(["tenancy.member"], lapsed, Ttl);
+
+        Assert.Equal(MembershipState.Invited, membership.State);
+        Assert.Equal(lapsed + Ttl, membership.ExpiresAt);
+    }
+
+    /// <summary>
+    /// CA-AUTH-05-12: a live invitation is not disturbed. Renewing one would silently
+    /// extend a window somebody is counting on, and invalidate the link already sent.
+    /// </summary>
+    [Fact]
+    public void ReinviteRejectsAStillValidInvitation()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var withinWindow = InvitedAt + TimeSpan.FromHours(1);
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reinvite(["tenancy.member"], withinWindow, Ttl));
+
+        Assert.Equal("tenancy.membership.invitation_still_valid", error.Code);
+        Assert.Equal(MembershipState.Invited, membership.State);
+        Assert.Equal(InvitedAt + Ttl, membership.ExpiresAt);
+    }
+
+    [Fact]
+    public void ReinviteRejectsAnActiveMembership()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Accept(InvitedAt + TimeSpan.FromHours(1));
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reinvite(
+                ["tenancy.member"],
+                InvitedAt + Ttl + TimeSpan.FromHours(1),
+                Ttl));
+
+        Assert.Equal("tenancy.membership.not_reinvitable", error.Code);
+        Assert.Equal(MembershipState.Active, membership.State);
+    }
+
+    /// <summary>
+    /// The security boundary the AUTH-05 review found untested. Suspending and removing are
+    /// deliberate acts by an administrator; re-inviting must not undo either of them
+    /// silently. Whether re-inviting *should* restore a suspended member is a product
+    /// question, open as SDD-OD-13 — until it is answered, refusing is the safe answer.
+    /// </summary>
+    [Fact]
+    public void ReinviteRejectsASuspendedMembership()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Accept(InvitedAt + TimeSpan.FromHours(1));
+        membership.Suspend(InvitedAt + TimeSpan.FromHours(2));
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reinvite(
+                ["tenancy.member"],
+                InvitedAt + Ttl + TimeSpan.FromHours(1),
+                Ttl));
+
+        Assert.Equal("tenancy.membership.not_reinvitable", error.Code);
+        Assert.Equal(MembershipState.Suspended, membership.State);
+    }
+
+    [Fact]
+    public void ReinviteRejectsARemovedMembership()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Accept(InvitedAt + TimeSpan.FromHours(1));
+        membership.Remove(InvitedAt + TimeSpan.FromHours(2));
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reinvite(
+                ["tenancy.member"],
+                InvitedAt + Ttl + TimeSpan.FromHours(1),
+                Ttl));
+
+        Assert.Equal("tenancy.membership.not_reinvitable", error.Code);
+        Assert.Equal(MembershipState.Removed, membership.State);
+    }
+
+    /// <summary>
+    /// A rejected re-invitation must leave the aggregate exactly as it was: refusing while
+    /// having already replaced the roles would hand out permissions nobody granted.
+    /// </summary>
+    [Fact]
+    public void ARejectedReinviteLeavesRolesUntouched()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Accept(InvitedAt + TimeSpan.FromHours(1));
+
+        Assert.Throws<TenantDomainException>(
+            () => membership.Reinvite(
+                ["tenancy.admin"],
+                InvitedAt + Ttl + TimeSpan.FromHours(1),
+                Ttl));
+
+        Assert.Equal(["tenancy.member"], membership.Roles);
+    }
+
+    /// <summary>
+    /// AUTH-11. Suspender bloquea el acceso sin descartar la membresía, pero hasta ahora no
+    /// había forma de volver: `Reinvite` rechaza `Suspended` y no existía operación propia.
+    /// El owner eligió una operación separada y no que re-invitar restaure, porque son dos
+    /// intenciones distintas — ver `SDD-OD-13`.
+    /// </summary>
+    [Fact]
+    public void ReactivateReturnsASuspendedMembershipToActive()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Accept(InvitedAt + TimeSpan.FromHours(1));
+        membership.Suspend(InvitedAt + TimeSpan.FromHours(2));
+        var versionWhileSuspended = membership.Version;
+        membership.PullDomainEvents();
+
+        membership.Reactivate(InvitedAt + TimeSpan.FromHours(3));
+
+        Assert.Equal(MembershipState.Active, membership.State);
+        Assert.True(membership.Version > versionWhileSuspended);
+        var domainEvent = Assert.Single(membership.DomainEvents);
+        var reactivated = Assert.IsType<MembershipReactivatedDomainEvent>(domainEvent);
+        Assert.Equal(membership.Id, reactivated.MembershipId);
+        Assert.Equal(membership.UserId, reactivated.UserId);
+    }
+
+    /// <summary>
+    /// La persona ya aceptó su invitación una vez: `AcceptedAt` se conserva. Volver a
+    /// pedirle que acepte sería pedirle que confirme algo que ya confirmó.
+    /// </summary>
+    [Fact]
+    public void ReactivateKeepsTheOriginalAcceptance()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var acceptedAt = InvitedAt + TimeSpan.FromHours(1);
+        membership.Accept(acceptedAt);
+        membership.Suspend(InvitedAt + TimeSpan.FromHours(2));
+
+        membership.Reactivate(InvitedAt + TimeSpan.FromHours(3));
+
+        Assert.Equal(acceptedAt, membership.AcceptedAt);
+    }
+
+    [Theory]
+    [InlineData(MembershipState.Active)]
+    [InlineData(MembershipState.Invited)]
+    [InlineData(MembershipState.Removed)]
+    public void ReactivateRejectsEveryStateThatIsNotSuspended(MembershipState state)
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        if (state is MembershipState.Active or MembershipState.Removed)
+        {
+            membership.Accept(InvitedAt + TimeSpan.FromHours(1));
+        }
+
+        if (state == MembershipState.Removed)
+        {
+            membership.Remove(InvitedAt + TimeSpan.FromHours(2));
+        }
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reactivate(InvitedAt + TimeSpan.FromHours(3)));
+
+        Assert.Equal("tenancy.membership.not_reactivatable", error.Code);
+        Assert.Equal(state, membership.State);
+    }
+
+    /// <summary>
+    /// Reactivar no revive una invitación vencida: eso es re-invitar, y tiene su propio
+    /// camino. Mezclarlos borraría la diferencia entre "se le venció el plazo" y "alguien
+    /// decidió suspenderla".
+    /// </summary>
+    [Fact]
+    public void ReactivateRejectsAnExpiredMembership()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+        Assert.True(membership.Expire(lapsed));
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reactivate(lapsed + TimeSpan.FromHours(1)));
+
+        Assert.Equal("tenancy.membership.not_reactivatable", error.Code);
+        Assert.Equal(MembershipState.Expired, membership.State);
+    }
+
     private static Membership Invite(Guid userId) =>
         Membership.Invite(
             MembershipId.New(),

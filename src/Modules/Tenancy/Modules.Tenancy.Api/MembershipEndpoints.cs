@@ -42,6 +42,15 @@ public static class MembershipEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Sin If-Match, igual que suspend y remove: el backend no verifica precondición en
+        // estas operaciones y agregarla acá inventaría una que nada comprueba. AUTH-11.
+        group.MapPost("/{membershipId:guid}/reactivate", ReactivateAsync)
+            .RequireAuthorization(TenancyPermissions.MembershipManage)
+            .Produces<MembershipListItemResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPatch("/{membershipId:guid}/roles", UpdateRolesAsync)
             .RequireAuthorization(TenancyPermissions.MembershipManage)
             .Accepts<MembershipRolesUpdateRequest>("application/json")
@@ -91,6 +100,22 @@ public static class MembershipEndpoints
     {
         var membership = await dispatcher.SendAsync(
             new SuspendMemberCommand(
+                new TenantId(tenantId),
+                new MembershipId(membershipId),
+                httpContext.TraceIdentifier),
+            cancellationToken);
+        return Results.Ok(ToListItemResponse(membership));
+    }
+
+    private static async Task<IResult> ReactivateAsync(
+        Guid tenantId,
+        Guid membershipId,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var membership = await dispatcher.SendAsync(
+            new ReactivateMemberCommand(
                 new TenantId(tenantId),
                 new MembershipId(membershipId),
                 httpContext.TraceIdentifier),
