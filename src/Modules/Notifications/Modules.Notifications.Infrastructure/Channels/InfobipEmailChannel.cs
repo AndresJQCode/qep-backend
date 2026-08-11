@@ -12,10 +12,10 @@ public sealed class InfobipOptions
     public string SenderEmail { get; init; } = string.Empty;
 }
 
-// Production email channel over the Infobip HTTP Email API (ADR 0018). Credentials
-// are per-environment secrets bound into NotificationsOptions. The exact endpoint/
-// shape may need alignment with the current Infobip API version; the log channel is
-// the default until credentials are provisioned.
+// Canal de email de producción sobre la API HTTP Email de Infobip (ADR 0018). Las
+// credenciales son secretos por entorno ligados a NotificationsOptions. El endpoint y la
+// forma exactos pueden necesitar alinearse con la versión actual de la API de Infobip; el
+// canal de log es el default hasta que se aprovisionen las credenciales.
 internal sealed class InfobipEmailChannel(
     HttpClient httpClient,
     IOptions<NotificationsOptions> options)

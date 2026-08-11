@@ -13,6 +13,8 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
+using Modules.Catalog.Application;
+using Modules.Catalog.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
@@ -80,12 +82,29 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListFilesQuery, PagedFilesDto>,
             ListFilesHandler>();
+        services.AddScoped<
+            IQueryHandler<ListProductsQuery, IReadOnlyList<ProductDto>>,
+            ListProductsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetProductQuery, ProductDto>,
+            GetProductHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateProductCommand, ProductDto>,
+            CreateProductHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateProductCommand, ProductDto>,
+            UpdateProductHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateProductCommand, ProductDto>,
+            DeactivateProductHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
         services.AddNotificationsInfrastructure(configuration);
         services.AddStorageInfrastructure(configuration);
+        services.AddCatalogInfrastructure(configuration);
         AddAuthorizationCapability(services);
         services.AddQepObservability(configuration, environment);
         AddAuthentication(services, configuration, environment);
@@ -93,9 +112,9 @@ public static class QepServiceCollectionExtensions
         return services;
     }
 
-    // Registers the Authorization capability and the tenancy system-role catalog.
-    // Role definitions are code-versioned; membership role references (ADR 0016) map
-    // to these permission sets. Custom/DB roles and global platform roles are later.
+    // Registra la capacidad Authorization y el catálogo de roles de sistema de tenancy.
+    // Las definiciones de rol se versionan en código; las referencias de rol de la membresía
+    // (ADR 0016) mapean a estos permisos. Los roles custom/de base y los globales van después.
     private static void AddAuthorizationCapability(IServiceCollection services)
     {
         services.AddSingleton<IRoleCatalog, RoleCatalog>();
@@ -119,7 +138,9 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileUpload,
                 StoragePermissions.FileRead,
                 StoragePermissions.FileDelete,
-                StoragePermissions.FilePublish
+                StoragePermissions.FilePublish,
+                CatalogPermissions.ProductRead,
+                CatalogPermissions.ProductManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -129,7 +150,8 @@ public static class QepServiceCollectionExtensions
             "medium",
             [
                 TenancyPermissions.SettingsRead,
-                TenancyPermissions.MembershipRead
+                TenancyPermissions.MembershipRead,
+                CatalogPermissions.ProductRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -185,6 +207,18 @@ public static class QepServiceCollectionExtensions
             "Permite publicar y despublicar imágenes y sus variantes.",
             "Storage",
             "high"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductRead,
+            "Leer productos",
+            "Permite consultar el catálogo de productos del tenant.",
+            "Catalog",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductManage,
+            "Gestionar productos",
+            "Permite crear, editar e inactivar productos.",
+            "Catalog",
+            "medium"));
     }
 
     private static void AddAuthentication(
@@ -194,11 +228,11 @@ public static class QepServiceCollectionExtensions
     {
         var useDevelopmentStub = QepAuthenticationMode.UseDevelopmentStub(configuration, environment);
 
-        // Hard fail-closed (ADR 0001, required item #2): the stub trusts caller-supplied
-        // headers as identity and self-asserted permissions, so it must be impossible to
-        // enable outside Development, even via an explicit config override. Refusing to
-        // start beats silently falling back to the real provider, which would mask the
-        // misconfiguration instead of surfacing it.
+        // Fail-closed duro (ADR 0001, ítem requerido #2): el stub confía en los headers que
+        // manda el llamador como identidad y permisos auto-declarados, así que tiene que ser
+        // imposible habilitarlo fuera de Development, incluso con un override explícito de
+        // configuración. Negarse a arrancar es mejor que caer en silencio al proveedor real,
+        // que taparía la mala configuración en vez de exponerla.
         if (useDevelopmentStub && !environment.IsDevelopment())
         {
             throw new InvalidOperationException(
@@ -217,10 +251,10 @@ public static class QepServiceCollectionExtensions
             return;
         }
 
-        // Resource-server validation of the external provider's JWT (ADR 0014/0015,
-        // implementation-baseline). Google is the first provider; its client id is
-        // the audience. Explicit non-empty Authority/Audience config overrides the
-        // Google defaults.
+        // Validación como resource server del JWT del proveedor externo (ADR 0014/0015,
+        // línea base de implementación). Google es el primer proveedor; su client id es
+        // la audiencia. Una configuración Authority/Audience explícita y no vacía pisa los
+        // valores por defecto de Google.
         var authority = Coalesce(
             configuration["Authentication:Authority"],
             "https://accounts.google.com");
@@ -230,14 +264,14 @@ public static class QepServiceCollectionExtensions
             ?? throw new InvalidOperationException(
                 "Authentication:Audience or Authentication:Google:ClientId is required outside Development.");
 
-        // Default scheme is the session cookie — it is what every endpoint except
-        // POST /auth/session authenticates against. "GoogleBearer" is registered but
-        // deliberately NOT the default and NOT reachable via any header-sniffing
-        // fallback: it is only ever requested explicitly by /auth/session's own
-        // authorization policy (see AuthSessionEndpoints). A still-valid Google id
-        // token must never be usable to authenticate any other endpoint, or it would
-        // bypass session revocation (suspending a tenant / removing a member revokes
-        // the session row, not the underlying ~1h-lived Google token).
+        // El esquema por defecto es la cookie de sesión — es contra lo que autentica todo
+        // endpoint salvo POST /auth/session. "GoogleBearer" está registrado pero
+        // deliberadamente NO es el default y NO es alcanzable por ningún fallback que
+        // olfatee headers: sólo lo pide explícitamente la política de autorización propia
+        // de /auth/session (ver AuthSessionEndpoints). Un id token de Google todavía válido
+        // nunca debe servir para autenticar otro endpoint, o eso saltearía la revocación de
+        // sesión (suspender un tenant / quitar un miembro revoca la fila de sesión, no el
+        // token de Google subyacente, que vive ~1h).
         services
             .AddAuthentication(SessionCookieAuthenticationHandler.AuthenticationSchemeName)
             .AddScheme<AuthenticationSchemeOptions, SessionCookieAuthenticationHandler>(
@@ -246,8 +280,8 @@ public static class QepServiceCollectionExtensions
             .AddJwtBearer("GoogleBearer", options =>
             {
                 options.Audience = audience;
-                // Keep provider claim names (sub, email, email_verified) intact so the
-                // /auth/session endpoint can read them directly.
+                // Mantener intactos los nombres de claim del proveedor (sub, email, email_verified)
+                // para que el endpoint /auth/session pueda leerlos directo.
                 options.MapInboundClaims = false;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
@@ -259,11 +293,11 @@ public static class QepServiceCollectionExtensions
                     ValidateLifetime = true
                 };
 
-                // Test-only escape hatch (never set outside integration tests): a
-                // symmetric signing key lets tests self-issue a Google-shaped JWT
-                // without hitting Google's real OIDC discovery endpoint. Real
-                // deployments never set Authentication:TestSigningKey, so Authority
-                // stays wired to Google's discovery document as before.
+                // Escotilla sólo para pruebas (nunca se setea fuera de las de integración): una
+                // clave de firma simétrica deja que las pruebas se auto-emitan un JWT con forma
+                // de Google sin pegarle al endpoint de discovery OIDC real de Google. Los
+                // despliegues reales nunca setean Authentication:TestSigningKey, así que Authority
+                // queda cableada al documento de discovery de Google como antes.
                 var testSigningKey = configuration["Authentication:TestSigningKey"];
                 if (string.IsNullOrEmpty(testSigningKey))
                 {
@@ -277,8 +311,8 @@ public static class QepServiceCollectionExtensions
             });
     }
 
-    // Returns the first non-empty value, treating whitespace-only config (e.g. the
-    // placeholder "" in appsettings.json) as absent.
+    // Devuelve el primer valor no vacío, tratando como ausente la configuración que sólo
+    // tiene espacios (por ejemplo el placeholder "" de appsettings.json).
     private static string? Coalesce(params string?[] values) =>
         values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
@@ -321,7 +355,13 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, StoragePermissions.FileDelete))
             .AddPolicy(
                 StoragePermissions.FilePublish,
-                policy => AddPermissionRequirement(policy, StoragePermissions.FilePublish));
+                policy => AddPermissionRequirement(policy, StoragePermissions.FilePublish))
+            .AddPolicy(
+                CatalogPermissions.ProductRead,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductRead))
+            .AddPolicy(
+                CatalogPermissions.ProductManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage));
     }
 
     private static void AddPermissionRequirement(

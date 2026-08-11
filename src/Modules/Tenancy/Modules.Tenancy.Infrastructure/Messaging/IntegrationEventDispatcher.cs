@@ -9,10 +9,10 @@ internal interface IIntegrationEventDispatcher
     Task<int> DispatchAsync(OutboxMessage message, CancellationToken cancellationToken);
 }
 
-// Routes an Outbox message to every handler that consumes its event and guards
-// each handler with an Inbox row keyed by (consumer, message id). A redelivered
-// message finds the Inbox row already present and skips the effect, so the
-// consumer stays idempotent under at-least-once delivery.
+// Rutea un mensaje del Outbox a cada handler que consume su evento y protege a
+// cada handler con una fila de Inbox con clave (consumidor, id de mensaje). Un mensaje
+// reentregado encuentra la fila de Inbox ya presente y saltea el efecto, así que el
+// consumidor queda idempotente bajo entrega at-least-once.
 internal sealed class IntegrationEventDispatcher(
     TenancyDbContext dbContext,
     IEnumerable<IIntegrationEventHandler> handlers,

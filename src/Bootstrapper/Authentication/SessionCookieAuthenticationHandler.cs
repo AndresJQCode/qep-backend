@@ -8,13 +8,13 @@ using Modules.Identity.Infrastructure;
 
 namespace Bootstrapper.Authentication;
 
-// Default authentication scheme for the real (non-dev-stub) provider. Reads the
-// opaque session cookie, looks it up against identity.sessions (ISessionService),
-// and — unlike a self-contained encrypted cookie — can be invalidated instantly from
-// the server side (see docs/decisions on session-cookie strategy). Deliberately the
-// ONLY scheme most endpoints ever see: the Google bearer scheme is pinned exclusively
-// to POST /auth/session (see QepServiceCollectionExtensions.AddAuthentication) so a
-// still-valid Google id token can never be used to bypass a revoked session.
+// Esquema de autenticación por defecto para el proveedor real (sin stub). Lee la
+// cookie de sesión opaca, la busca contra identity.sessions (ISessionService) y
+// —a diferencia de una cookie cifrada autocontenida— se puede invalidar al instante
+// desde el servidor (ver los docs/decisions sobre la cookie de sesión). Es
+// deliberadamente el ÚNICO esquema que ve la mayoría de los endpoints: el bearer de
+// Google está fijado sólo a POST /auth/session (QepServiceCollectionExtensions.AddAuthentication),
+// así que un id token de Google todavía válido nunca puede saltear una sesión revocada.
 internal sealed class SessionCookieAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     IOptions<QepSessionOptions> sessionOptions,
@@ -27,8 +27,8 @@ internal sealed class SessionCookieAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        // No cookie: this is the common case for anonymous/health-check traffic.
-        // Return immediately without touching the database.
+        // Sin cookie: éste es el caso común del tráfico anónimo/de health-check.
+        // Vuelve de inmediato sin tocar la base.
         if (!Request.Cookies.TryGetValue(sessionOptions.Value.CookieName, out var rawToken)
             || string.IsNullOrEmpty(rawToken))
         {

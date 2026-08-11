@@ -3,9 +3,9 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Storage.Application;
 
-// Handler-level authorization (defense in depth beyond the endpoint policy): the caller's
-// active tenant must match the target tenant, and the required permission must be present.
-// This enforces the cross-tenant isolation invariant inside the use case.
+// Autorización a nivel handler (defensa en profundidad más allá de la política del endpoint):
+// el tenant activo del llamador tiene que coincidir con el destino, y el permiso estar presente.
+// Esto hace cumplir el invariante de aislamiento entre tenants dentro del caso de uso.
 internal static class StorageAuthorization
 {
     public static void EnsureAuthorized(

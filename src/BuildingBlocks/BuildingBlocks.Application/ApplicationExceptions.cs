@@ -10,10 +10,10 @@ public sealed class RequestForbiddenException(string code, string message) : Exc
     public string Code { get; } = code;
 }
 
-// Distinct from RequestForbiddenException (403): signals a failed authentication,
-// not a denied authorization. Used by webhook endpoints whose authenticity rests on
-// an HMAC signature — Shopify's mandatory compliance webhooks require a 401 (not 403)
-// when the signature is invalid or the caller cannot be authenticated.
+// Distinta de RequestForbiddenException (403): señala una autenticación fallida,
+// no una autorización denegada. La usan los endpoints de webhook cuya autenticidad se
+// apoya en una firma HMAC — los webhooks de cumplimiento obligatorios de Shopify exigen
+// un 401 (no un 403) cuando la firma es inválida o no se puede autenticar al llamador.
 public sealed class RequestUnauthorizedException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;

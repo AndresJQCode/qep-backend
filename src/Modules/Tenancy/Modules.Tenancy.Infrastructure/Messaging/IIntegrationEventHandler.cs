@@ -2,15 +2,15 @@
 
 namespace Modules.Tenancy.Infrastructure.Messaging;
 
-// A consumer of a single integration event. Consumer must be stable and unique;
-// it is the dedupe key together with the message id in the Inbox.
+// Un consumidor de un único evento de integración. Consumer tiene que ser estable y único;
+// es la clave de deduplicación junto con el id de mensaje en el Inbox.
 internal interface IIntegrationEventHandler
 {
     string Consumer { get; }
 
     string EventName { get; }
 
-    // Stages the consumer's effect on the shared DbContext. The dispatcher owns
-    // the Inbox guard and the caller owns the transaction and SaveChanges.
+    // Prepara el efecto del consumidor sobre el DbContext compartido. El dispatcher es dueño
+    // de la guarda del Inbox y el llamador es dueño de la transacción y del SaveChanges.
     Task HandleAsync(OutboxMessage message, CancellationToken cancellationToken);
 }

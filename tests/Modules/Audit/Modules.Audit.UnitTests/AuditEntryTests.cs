@@ -51,7 +51,7 @@ public sealed class AuditEntryTests
             DateTimeOffset.UtcNow);
 
         Assert.Null(entry.TenantId);
-        // Empty changed fields normalize to an empty JSON array.
+        // Los campos cambiados vacíos se normalizan a un array JSON vacío.
         Assert.Equal("[]", entry.ChangedFieldsJson);
     }
 }

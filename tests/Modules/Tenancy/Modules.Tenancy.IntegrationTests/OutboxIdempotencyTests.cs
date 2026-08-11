@@ -7,10 +7,10 @@ using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
 
-// Acceptance #6: reprocessing the integration event must not duplicate effects.
-// The Outbox worker publishes the tenant-settings event to the change-log
-// projection (an append-only, non-idempotent effect). Redelivering the same
-// message must still leave a single projection row thanks to the Inbox guard.
+// Aceptación #6: reprocesar el evento de integración no debe duplicar efectos.
+// El worker del Outbox publica el evento de tenant-settings a la proyección del
+// change-log (un efecto append-only, no idempotente). Reentregar el mismo mensaje
+// igual tiene que dejar una sola fila de proyección, gracias a la guarda del Inbox.
 public sealed class OutboxIdempotencyTests
 {
     private const string EventName = "tenancy.tenant-settings-updated.v1";
@@ -24,7 +24,7 @@ public sealed class OutboxIdempotencyTests
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
 
-        // Creating a client starts the host, which runs the Outbox worker.
+        // Crear un cliente arranca el host, que corre el worker del Outbox.
         using var client = factory.CreateClient();
 
         var eventId = Guid.CreateVersion7();
@@ -35,17 +35,17 @@ public sealed class OutboxIdempotencyTests
 
         await SeedOutboxMessageAsync(connection, eventId, tenantId);
 
-        // First delivery: the worker applies the effect exactly once.
+        // Primera entrega: el worker aplica el efecto exactamente una vez.
         await WaitUntilAsync(
             async () => await CountChangeLogAsync(connection, eventId) == 1);
         Assert.Equal(1, await CountInboxAsync(connection, eventId));
 
-        // Redelivery: reset processed_at so the worker claims the row again.
+        // Reentrega: se resetea processed_at para que el worker reclame la fila de nuevo.
         await ResetProcessedAtAsync(connection, eventId);
         await WaitUntilAsync(
             async () => await IsProcessedAsync(connection, eventId));
 
-        // The Inbox guard suppressed the duplicate effect.
+        // La guarda del Inbox suprimió el efecto duplicado.
         Assert.Equal(1, await CountChangeLogAsync(connection, eventId));
         Assert.Equal(1, await CountInboxAsync(connection, eventId));
     }
@@ -156,12 +156,12 @@ public sealed class OutboxIdempotencyTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

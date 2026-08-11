@@ -18,6 +18,12 @@
   <Folder Name="/src/Modules/Authorization/">
     <Project Path="src/Modules/Authorization/Modules.Authorization.Application/Modules.Authorization.Application.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Catalog/">
+    <Project Path="src/Modules/Catalog/Modules.Catalog.Api/Modules.Catalog.Api.csproj" />
+    <Project Path="src/Modules/Catalog/Modules.Catalog.Application/Modules.Catalog.Application.csproj" />
+    <Project Path="src/Modules/Catalog/Modules.Catalog.Domain/Modules.Catalog.Domain.csproj" />
+    <Project Path="src/Modules/Catalog/Modules.Catalog.Infrastructure/Modules.Catalog.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Identity/">
     <Project Path="src/Modules/Identity/Modules.Identity.Application/Modules.Identity.Application.csproj" />
     <Project Path="src/Modules/Identity/Modules.Identity.Domain/Modules.Identity.Domain.csproj" />
@@ -55,6 +61,10 @@
   </Folder>
   <Folder Name="/tests/Modules/Authorization/">
     <Project Path="tests/Modules/Authorization/Modules.Authorization.UnitTests/Modules.Authorization.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Catalog/">
+    <Project Path="tests/Modules/Catalog/Modules.Catalog.UnitTests/Modules.Catalog.UnitTests.csproj" />
+    <Project Path="tests/Modules/Catalog/Modules.Catalog.IntegrationTests/Modules.Catalog.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Identity/">
     <Project Path="tests/Modules/Identity/Modules.Identity.UnitTests/Modules.Identity.UnitTests.csproj" />

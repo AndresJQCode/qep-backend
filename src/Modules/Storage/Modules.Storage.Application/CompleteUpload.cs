@@ -142,7 +142,7 @@ public sealed class CompleteUploadHandler(
 
         if (resource.TenantId != tenantId)
         {
-            // Do not leak existence across tenants.
+            // No filtrar la existencia entre tenants.
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");
         }

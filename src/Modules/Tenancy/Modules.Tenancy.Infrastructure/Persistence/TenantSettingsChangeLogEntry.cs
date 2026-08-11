@@ -1,8 +1,8 @@
 ﻿namespace Modules.Tenancy.Infrastructure.Persistence;
 
-// Append-only projection fed by the tenant-settings integration event. It is
-// deliberately non-idempotent on its own (each apply inserts a row) so that the
-// Inbox guard is what makes reprocessing produce a single effect.
+// Proyección append-only alimentada por el evento de integración de tenant-settings. Es
+// deliberadamente no idempotente por sí sola (cada aplicación inserta una fila) para que
+// la guarda del Inbox sea lo que hace que reprocesar produzca un solo efecto.
 internal sealed class TenantSettingsChangeLogEntry
 {
     public Guid Id { get; init; }

@@ -1,14 +1,14 @@
 ﻿namespace Modules.Tenancy.Application;
 
 /// <summary>
-/// Published cross-module contract that accepts a user's pending tenant invitations
-/// on login. Per ADR 0016 the first successful external login transitions the user's
-/// <c>Invited</c> memberships to <c>Active</c>. Expired invitations are skipped (and
-/// marked expired). Consumed by the composition-root <c>/auth/session</c> endpoint.
+/// Contrato publicado entre módulos que acepta las invitaciones pendientes de un usuario al
+/// hacer login. Según el ADR 0016, el primer login externo exitoso pasa las membresías
+/// <c>Invited</c> del usuario a <c>Active</c>. Las invitaciones vencidas se saltean (y se
+/// marcan vencidas). Lo consume el endpoint <c>/auth/session</c> de la raíz de composición.
 /// </summary>
 public interface IMembershipActivation
 {
-    /// <returns>The tenant ids the user is active in after acceptance.</returns>
+    /// <returns>Los ids de tenant en los que el usuario queda activo tras la aceptación.</returns>
     Task<IReadOnlyCollection<Guid>> AcceptInvitedMembershipsAsync(
         Guid userId,
         string correlationId,

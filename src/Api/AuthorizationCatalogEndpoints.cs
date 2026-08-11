@@ -22,12 +22,12 @@ public static class AuthorizationCatalogEndpoints
             .Produces<AuthorizationCatalogResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
-        // Authentication only, deliberately no permission requirement: demanding one to
-        // learn which permissions you hold is circular, and it would make the answer
-        // unreachable for exactly the subjects whose answer is "almost nothing" — the case
-        // a client most needs in order to render correctly. Reads nothing but the claims
-        // the request already carries, so it exposes no data the caller did not bring.
-        // Added by AUTH-04 (SDD-OD-10): nothing else exposed effective permissions.
+        // Sólo autenticación, deliberadamente sin requerir permiso: exigir uno para saber qué
+        // permisos tenés es circular, y volvería la respuesta inalcanzable justo para los sujetos
+        // cuya respuesta es "casi nada" — el caso que un cliente más necesita para renderizar
+        // bien. No lee más que los claims que el request ya trae, así que no expone ningún dato
+        // que el llamador no haya traído.
+        // Lo agregó AUTH-04 (SDD-OD-10): nada más exponía los permisos efectivos.
         endpoints
             .MapGet("/api/v1/tenants/{tenantId:guid}/authorization/me", GetEffectivePermissions)
             .WithTags("Authorization")
@@ -43,10 +43,10 @@ public static class AuthorizationCatalogEndpoints
     {
         var user = httpContext.User;
 
-        // Read the claims directly rather than through IExecutionContext: its TenantId
-        // throws when the claim is absent, and absent is a normal outcome here — a caller
-        // with no active membership in the requested tenant never gets the claim resolved
-        // (ExternalClaimsTransformation.cs:112-118). That deserves a 403, not a 500.
+        // Se leen los claims directo y no por IExecutionContext: su TenantId tira excepción
+        // cuando el claim no está, y que no esté es un resultado normal acá — un llamador
+        // sin membresía activa en el tenant pedido nunca consigue que se le resuelva el claim
+        // (ExternalClaimsTransformation.cs:112-118). Eso merece un 403, no un 500.
         var claimedTenant = user.FindFirstValue(QepClaimTypes.TenantId);
         if (!Guid.TryParse(claimedTenant, out var authenticatedTenant) ||
             authenticatedTenant != tenantId)
@@ -65,8 +65,8 @@ public static class AuthorizationCatalogEndpoints
                 "The subject is not linked to a QEP user.");
         }
 
-        // Ordinal sort so the response is stable across requests: an unstable order would
-        // churn client caches and make the payload useless as a change signal.
+        // Orden ordinal para que la respuesta sea estable entre requests: un orden inestable
+        // haría girar los cachés del cliente y volvería el payload inútil como señal de cambio.
         var permissions = user.Claims
             .Where(claim => claim.Type == QepClaimTypes.Permission)
             .Select(claim => claim.Value)
@@ -132,9 +132,9 @@ public sealed record PermissionCatalogItemResponse(
     string RiskLevel);
 
 /// <summary>
-/// What the caller may actually do in this tenant, as opposed to what roles exist.
-/// Consumed by the SPA to hide actions it cannot perform — a usability control. The
-/// backend still authorizes every request regardless of what this returned.
+/// Lo que el llamador realmente puede hacer en este tenant, a diferencia de qué roles existen.
+/// La SPA lo consume para ocultar acciones que no puede ejecutar — un control de usabilidad.
+/// El backend igual autoriza cada request sin importar lo que esto haya devuelto.
 /// </summary>
 public sealed record EffectivePermissionsResponse(
     Guid TenantId,

@@ -1,10 +1,10 @@
 ﻿namespace Modules.Storage.Application;
 
-// Operational audit (ADR 0019 outbox path): buffers an audit event to be committed with
-// the file operation in the same unit of work; the Audit module's projection worker writes
-// it to audit.entries. Storage uses the outbox path (not the atomic IAuditRecorder, which is
-// bound to a producer's own DbContext) because its operations are operational, not
-// security-critical-synchronous.
+// Auditoría operativa (ADR 0019, camino de outbox): acumula un evento de auditoría para
+// commitear con la operación de archivo en la misma unidad de trabajo; el worker de
+// proyección del módulo Audit lo escribe en audit.entries. Storage usa el camino de outbox
+// (y no el IAuditRecorder atómico, que está ligado al DbContext de un productor) porque sus
+// operaciones son operativas, no críticas-de-seguridad-síncronas.
 public interface IStorageAuditPublisher
 {
     void Publish(

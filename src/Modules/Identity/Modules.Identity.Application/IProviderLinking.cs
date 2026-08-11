@@ -1,8 +1,8 @@
 ﻿namespace Modules.Identity.Application;
 
 /// <summary>
-/// Outcome of an external-login link attempt. Exactly one of <see cref="UserId"/> or
-/// <see cref="DenialReason"/> is set.
+/// Resultado de un intento de vincular un login externo. Se setea exactamente uno de
+/// <see cref="UserId"/> o <see cref="DenialReason"/>.
 /// </summary>
 public sealed record ProviderLinkOutcome(Guid? UserId, string? DenialReason)
 {
@@ -14,10 +14,10 @@ public sealed record ProviderLinkOutcome(Guid? UserId, string? DenialReason)
 }
 
 /// <summary>
-/// Published cross-module contract that resolves an external provider identity to an
-/// internal user, applying the ADR 0015 rules: invitation-only provisioning, link on
-/// a verified-email match, deny for unknown or unverified emails. Used by the
-/// composition-root <c>/auth/session</c> endpoint on first login.
+/// Contrato publicado entre módulos que resuelve una identidad de proveedor externo a un
+/// usuario interno, aplicando las reglas del ADR 0015: aprovisionamiento sólo-por-invitación,
+/// vincular cuando coincide un email verificado, denegar para emails desconocidos o no
+/// verificados. Lo usa el endpoint <c>/auth/session</c> de composición en el primer login.
 /// </summary>
 public interface IProviderLinking
 {

@@ -1,8 +1,8 @@
 ﻿namespace Modules.Storage.Infrastructure.Persistence;
 
-// Write projection of the platform Outbox (owned by Tenancy). Storage inserts operational
-// audit events here in the same transaction as the file operation; the Audit module's
-// projection worker consumes them. Mapped ExcludeFromMigrations.
+// Proyección de escritura del Outbox de plataforma (propiedad de Tenancy). Storage inserta
+// acá los eventos de auditoría operativa en la misma transacción que la operación de archivo;
+// los consume el worker de proyección del módulo Audit. Mapeado como ExcludeFromMigrations.
 internal sealed class StorageOutboxMessage
 {
     public Guid Id { get; init; }

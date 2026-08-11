@@ -1,11 +1,11 @@
 ﻿namespace Modules.Audit.Domain;
 
 /// <summary>
-/// An append-only record of an audited action: who did what, on which resource, in which
-/// tenant, with what outcome. Created through <see cref="Create"/> and never mutated
-/// afterwards. The queryable audit store owned by the Audit capability (schema
-/// <c>audit</c>); producer modules write entries atomically within their own transaction
-/// (ADR 0019, atomic path) or via the audit outbox projection (operational path).
+/// Un registro append-only de una acción auditada: quién hizo qué, sobre qué recurso, en
+/// qué tenant y con qué resultado. Se crea con <see cref="Create"/> y nunca se muta
+/// después. Es el almacén de auditoría consultable de la capacidad Audit (esquema
+/// <c>audit</c>); los módulos productores escriben entradas atómicamente dentro de su
+/// propia transacción (ADR 0019, camino atómico) o vía la proyección del outbox (operativo).
 /// </summary>
 public sealed class AuditEntry
 {

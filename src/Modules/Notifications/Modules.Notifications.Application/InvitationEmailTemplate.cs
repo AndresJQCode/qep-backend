@@ -1,9 +1,9 @@
 ﻿namespace Modules.Notifications.Application;
 
 /// <summary>
-/// Renders the tenant invitation email. Published templates are immutable and use an
-/// allowlisted variable set (recipient, tenant, login url); localization is Spanish
-/// for v1. The template reference is stable for auditing.
+/// Renderiza el email de invitación al tenant. Las plantillas publicadas son inmutables y
+/// usan un set de variables en allowlist (destinatario, tenant, url de login); la
+/// localización es español para la v1. La referencia de plantilla es estable para auditar.
 /// </summary>
 public static class InvitationEmailTemplate
 {

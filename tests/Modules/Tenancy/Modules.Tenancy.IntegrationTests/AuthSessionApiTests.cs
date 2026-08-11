@@ -21,14 +21,14 @@ public sealed class AuthSessionApiTests
         var email = NewEmail();
         var googleSubject = Guid.CreateVersion7().ToString();
 
-        // An admin invites the email into the seeded tenant.
+        // Un admin invita el email al tenant sembrado.
         using (var admin = CreateAdminClient(factory))
         {
             var invite = await InviteAsync(admin, email);
             Assert.Equal(HttpStatusCode.Created, invite.StatusCode);
         }
 
-        // The invited user logs in with Google (simulated verified email).
+        // El usuario invitado entra con Google (email verificado simulado).
         using var client = CreateLoginClient(factory, googleSubject, email, verified: true);
         var response = await client.PostAsync(
             "/api/v1/auth/session",
@@ -204,8 +204,8 @@ public sealed class AuthSessionApiTests
         bool verified)
     {
         var client = factory.CreateClient();
-        // X-Subject-Id carries the provider subject; X-Tenant-Id is a dummy required
-        // by the development auth stub. Login itself is tenant-agnostic.
+        // X-Subject-Id lleva el subject del proveedor; X-Tenant-Id es un dummy que exige
+        // el stub de auth de desarrollo. El login en sí es agnóstico del tenant.
         client.DefaultRequestHeaders.Add("X-Subject-Id", googleSubject);
         client.DefaultRequestHeaders.Add("X-Tenant-Id", SeededTenantId);
         client.DefaultRequestHeaders.Add("X-Email", email);
@@ -230,12 +230,12 @@ public sealed class AuthSessionApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

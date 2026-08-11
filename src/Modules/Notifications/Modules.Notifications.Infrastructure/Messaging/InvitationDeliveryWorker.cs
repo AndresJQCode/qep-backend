@@ -12,10 +12,10 @@ using Modules.Notifications.Infrastructure.Persistence;
 
 namespace Modules.Notifications.Infrastructure.Messaging;
 
-// Consumes the membership-invited integration event from the platform Outbox and
-// delivers the invitation email. Idempotent via this module's own inbox keyed by
-// (consumer, outbox message id): a redelivered message is skipped. Each message is
-// committed independently so one failure does not block the batch.
+// Consume del Outbox de plataforma el evento de integración de membresía invitada y
+// entrega el email de invitación. Es idempotente por el inbox propio de este módulo, con
+// clave (consumidor, id de mensaje de outbox): un mensaje reentregado se saltea. Cada
+// mensaje se commitea independiente, así que una falla no bloquea el lote.
 internal sealed partial class InvitationDeliveryWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<NotificationsOptions> options,

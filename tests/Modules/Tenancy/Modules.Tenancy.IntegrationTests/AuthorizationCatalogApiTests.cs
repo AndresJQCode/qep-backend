@@ -7,13 +7,13 @@ using Testcontainers.PostgreSql;
 namespace Modules.Tenancy.IntegrationTests;
 
 /// <summary>
-/// Covers the authorization surface the SPA reads to decide what to render.
+/// Cubre la superficie de autorización que la SPA lee para decidir qué renderizar.
 ///
-/// The catalog endpoint already existed; <c>/authorization/me</c> is added by AUTH-04
-/// because nothing exposed the caller's *effective* permissions: the catalog returns role
-/// and permission definitions, and the session response carries only user, email and
-/// tenants. Without it a client can only discover what it may do by attempting it and
-/// reading the 403 — which cannot hide an action before it is attempted. See SDD-OD-10.
+/// El endpoint del catálogo ya existía; <c>/authorization/me</c> lo agrega AUTH-04
+/// porque nada exponía los permisos *efectivos* del llamador: el catálogo devuelve las
+/// definiciones de rol y permiso, y la respuesta de sesión lleva sólo usuario, email y
+/// tenants. Sin eso un cliente sólo puede descubrir qué le está permitido intentándolo y
+/// leyendo el 403 — que no puede ocultar una acción antes de que se intente. Ver SDD-OD-10.
 /// </summary>
 public sealed class AuthorizationCatalogApiTests
 {
@@ -57,9 +57,9 @@ public sealed class AuthorizationCatalogApiTests
     }
 
     /// <summary>
-    /// Asking "what may I do here" must not itself require a permission: requiring one
-    /// makes the answer unreachable for exactly the subjects whose answer is "almost
-    /// nothing", which is the case the UI most needs to render correctly.
+    /// Preguntar "qué puedo hacer acá" no tiene que requerir un permiso en sí mismo: exigir uno
+    /// vuelve la respuesta inalcanzable justo para los sujetos cuya respuesta es "casi nada",
+    /// que es el caso que la UI más necesita renderizar bien.
     /// </summary>
     [Fact]
     public async Task EffectivePermissionsNeedsNoPermissionOfItsOwn()
@@ -87,7 +87,7 @@ public sealed class AuthorizationCatalogApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
 
-        // Authenticated for OtherTenant, asking about the seeded tenant.
+        // Autenticado para OtherTenant, preguntando por el tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
         var response = await client.GetAsync(
@@ -145,12 +145,12 @@ public sealed class AuthorizationCatalogApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

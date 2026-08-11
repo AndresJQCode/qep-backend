@@ -7,15 +7,15 @@ using Modules.Identity.Application;
 namespace Bootstrapper.Authentication;
 
 /// <summary>
-/// Enriches an externally-authenticated principal (a validated provider token) with
-/// the internal QEP identity and access claims the application expects:
+/// Enriquece un principal autenticado externamente (un token de proveedor ya validado) con
+/// los claims internos de identidad y acceso de QEP que la aplicación espera:
 /// <list type="bullet">
-/// <item>resolves the provider <c>sub</c> to the internal user id (<c>qep_sub</c>);</item>
-/// <item>validates the active tenant from the <c>X-Tenant-Id</c> header against a live
-/// membership and adds the <c>tenant_id</c> and permission claims resolved by the
-/// Authorization capability.</item>
+/// <item>resuelve el <c>sub</c> del proveedor al id interno de usuario (<c>qep_sub</c>);</item>
+/// <item>valida el tenant activo que viene en el header <c>X-Tenant-Id</c> contra una
+/// membresía viva y agrega los claims <c>tenant_id</c> y de permisos que resuelve la
+/// capacidad Authorization.</item>
 /// </list>
-/// The development stub principal is left untouched.
+/// El principal del stub de desarrollo queda intacto.
 /// </summary>
 internal sealed class ExternalClaimsTransformation(
     IHttpContextAccessor httpContextAccessor,
@@ -23,7 +23,7 @@ internal sealed class ExternalClaimsTransformation(
     IAuthorizationService authorizationService)
     : IClaimsTransformation
 {
-    // First (and only) external provider, per ADR 0014.
+    // Primer (y único) proveedor externo, según el ADR 0014.
     private const string Provider = "google";
 
     public async Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
@@ -38,17 +38,17 @@ internal sealed class ExternalClaimsTransformation(
         var cancellationToken =
             httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None;
 
-        // Two independent steps, each guarded by its own claim check — not a single
-        // combined early-return. This has to work for two different callers:
-        //  - the Google-bearer principal (used only by POST /auth/session) has no
-        //    qep_sub yet and needs step 1 to resolve it;
-        //  - the session-cookie principal (used by every other endpoint) already has
-        //    qep_sub set directly by SessionCookieAuthenticationHandler and must still
-        //    run step 2 to get tenant/permission claims. A single early-return on
-        //    "already has qep_sub" — as this method used to be — would skip step 2 for
-        //    the cookie path entirely and silently break authorization on every
-        //    endpoint. The per-claim guards also keep this idempotent if
-        //    AuthenticateAsync happens to run twice for the same request.
+        // Dos pasos independientes, cada uno con su propia verificación de claim — no un
+        // único early-return combinado. Esto tiene que funcionar para dos llamadores distintos:
+        //  - el principal de bearer de Google (que sólo usa POST /auth/session) todavía no
+        //    tiene qep_sub y necesita el paso 1 para resolverlo;
+        //  - el principal de cookie de sesión (que usa todo el resto de los endpoints) ya tiene
+        //    qep_sub, puesto directo por SessionCookieAuthenticationHandler, y aun así tiene
+        //    que correr el paso 2 para obtener los claims de tenant y permisos. Un único
+        //    early-return sobre "ya tiene qep_sub" —como era este método antes— saltearía el
+        //    paso 2 para el camino de cookie por completo y rompería en silencio la
+        //    autorización de todos los endpoints. Las verificaciones por claim además lo
+        //    mantienen idempotente si AuthenticateAsync corre dos veces para el mismo request.
         if (!identity.HasClaim(claim => claim.Type == QepClaimTypes.QepSubject))
         {
             await ResolveSubjectAsync(identity, principal, cancellationToken);
@@ -80,9 +80,9 @@ internal sealed class ExternalClaimsTransformation(
             cancellationToken);
         if (userId is null)
         {
-            // Authenticated with the provider but not linked to any QEP user yet
-            // (e.g. before /auth/session). Leave unenriched; authorized endpoints
-            // will refuse.
+            // Autenticado con el proveedor pero todavía sin vincular a ningún usuario QEP
+            // (por ejemplo antes de /auth/session). Se deja sin enriquecer; los endpoints
+            // autorizados van a rechazar.
             return;
         }
 
@@ -106,9 +106,9 @@ internal sealed class ExternalClaimsTransformation(
             return;
         }
 
-        // Permissions come from the Authorization capability (deny-by-default,
-        // sourced from the active membership's roles). A null result means no
-        // active membership in that tenant.
+        // Los permisos vienen de la capacidad Authorization (deny por defecto,
+        // sacados de los roles de la membresía activa). Un resultado nulo significa que no
+        // hay membresía activa en ese tenant.
         var permissions = await authorizationService.ResolvePermissionsAsync(
             parsedUserId,
             tenantId,

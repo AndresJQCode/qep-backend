@@ -2,8 +2,8 @@
 
 namespace Modules.Storage.Infrastructure;
 
-// Fails fast at startup (ValidateOnStart). R2 is the only runtime provider, so all
-// required credentials must be present in every environment.
+// Falla rápido al arrancar (ValidateOnStart). R2 es el único proveedor de runtime, así que
+// todas las credenciales requeridas tienen que estar presentes en todos los entornos.
 internal sealed class StorageOptionsValidator : IValidateOptions<StorageOptions>
 {
     public ValidateOptionsResult Validate(string? name, StorageOptions options)

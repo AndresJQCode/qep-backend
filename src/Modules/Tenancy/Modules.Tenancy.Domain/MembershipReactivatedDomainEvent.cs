@@ -3,11 +3,11 @@ using BuildingBlocks.Domain;
 namespace Modules.Tenancy.Domain;
 
 /// <summary>
-/// A suspended membership was returned to active by an administrator.
+/// Un administrador devolvió a activa una membresía suspendida.
 ///
-/// Its own event, not a reuse of the invitation one: what happened here is that somebody
-/// undid a suspension, and an audit trail that cannot tell that apart from a fresh
-/// invitation loses the only fact worth keeping.
+/// Es su propio evento, no una reutilización del de invitación: lo que pasó acá es que
+/// alguien deshizo una suspensión, y un rastro de auditoría que no puede distinguir eso de
+/// una invitación nueva pierde el único hecho que valía la pena guardar.
 /// </summary>
 public sealed record MembershipReactivatedDomainEvent(
     Guid EventId,

@@ -4,8 +4,8 @@ using Modules.Identity.Infrastructure;
 
 namespace Api;
 
-// Shared by every endpoint that issues a session cookie (login, tenant registration)
-// so the cookie flags never drift between them.
+// Compartido por todo endpoint que emite una cookie de sesión (login, registro de tenant)
+// para que los flags de la cookie nunca se desincronicen entre ellos.
 internal static class SessionCookieWriter
 {
     public static void Append(
@@ -14,9 +14,9 @@ internal static class SessionCookieWriter
         IHostEnvironment environment,
         SessionIssueResult issued)
     {
-        // "Local" runs the real (non-stub) auth flow over plain http on purpose, so a
-        // developer can exercise it without a local TLS cert (see Program.cs). Every
-        // other environment must set Secure — the cookie is worthless without it.
+        // "Local" corre el flujo de auth real (sin stub) sobre http plano a propósito, para que
+        // un developer pueda ejercitarlo sin un certificado TLS local (ver Program.cs). Todos
+        // los demás entornos tienen que setear Secure — sin eso la cookie no vale nada.
         var allowInsecureCookie = environment.IsDevelopment() || environment.IsEnvironment("Local");
         httpContext.Response.Cookies.Append(
             sessionOptions.CookieName,

@@ -1,9 +1,9 @@
 ﻿namespace Modules.Identity.Application;
 
 /// <summary>
-/// Read-only lookup of basic user attributes for other modules (e.g. Notifications
-/// resolving an invited user's email). Exposes only non-authoritative basic claims,
-/// per the Identity/Authorization boundary (ADR 0015).
+/// Consulta de sólo lectura de atributos básicos de usuario para otros módulos (por ejemplo
+/// Notifications resolviendo el email de un usuario invitado). Expone sólo claims básicos no
+/// autoritativos, según la frontera Identity/Authorization (ADR 0015).
 /// </summary>
 public interface IUserDirectory
 {

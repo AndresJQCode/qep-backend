@@ -11,19 +11,19 @@ public sealed record ReactivateMemberCommand(
     string CorrelationId) : ICommand<MembershipListItemDto>;
 
 /// <summary>
-/// Returns a suspended membership to active.
+/// Devuelve una membresía suspendida a activa.
 /// </summary>
 /// <remarks>
-/// Deliberately its own use case rather than a side effect of inviting again (SDD-OD-13):
-/// re-inviting and reinstating are different intentions, and if the first did the second an
-/// administrator could undo somebody else's suspension while believing they were only
-/// sending an invitation.
+/// Deliberadamente es su propio caso de uso y no un efecto lateral de volver a invitar
+/// (SDD-OD-13): re-invitar y reinstaurar son intenciones distintas, y si lo primero hiciera
+/// lo segundo un administrador podría deshacer la suspensión que puso otro creyendo que
+/// sólo estaba mandando una invitación.
 ///
-/// No `cannot_target_self` guard here, unlike Suspend and Remove. Those two protect against
-/// locking yourself out; this one only restores access, and a subject who is suspended
-/// cannot reach this endpoint anyway — their permission claims are resolved from an active
-/// membership. No `last_active_manager` guard either: adding a manager never leaves the
-/// tenant without one.
+/// Acá no hay guarda `cannot_target_self`, a diferencia de Suspend y Remove. Esas dos
+/// protegen contra dejarte afuera; ésta sólo restaura acceso, y un sujeto suspendido no
+/// puede llegar a este endpoint de todos modos — sus claims de permiso se resuelven desde
+/// una membresía activa. Tampoco hay guarda `last_active_manager`: agregar un manager nunca
+/// deja al tenant sin ninguno.
 /// </remarks>
 public sealed class ReactivateMemberHandler(
     IMembershipRepository membershipRepository,

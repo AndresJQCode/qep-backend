@@ -1,10 +1,10 @@
 ﻿namespace Modules.Identity.Domain;
 
 /// <summary>
-/// Internal identity of an authenticatable person. Per ADR 0015 a user exists only
-/// after being invited to a tenant (invitation-only provisioning); external logins
-/// never auto-create users. Identity owns the user, its status and its provider
-/// links; it does not own membership or evaluate authorization.
+/// Identidad interna de una persona que puede autenticarse. Según el ADR 0015 un usuario
+/// existe sólo después de ser invitado a un tenant (aprovisionamiento sólo por invitación);
+/// los logins externos nunca crean usuarios solos. Identity es dueño del usuario, su estado
+/// y sus vínculos con proveedores; no es dueño de la membresía ni evalúa autorización.
 /// </summary>
 public sealed class User
 {
@@ -36,16 +36,16 @@ public sealed class User
     public IReadOnlyCollection<ProviderLink> ProviderLinks => _providerLinks.AsReadOnly();
 
     /// <summary>
-    /// Creates a user in <see cref="UserStatus.Invited"/>. This is the only entry
-    /// point for a new user; activation happens on the first successful external
-    /// login with a matching verified email.
+    /// Crea un usuario en <see cref="UserStatus.Invited"/>. Es el único punto de
+    /// entrada para un usuario nuevo; la activación pasa en el primer login externo
+    /// exitoso con un email verificado que coincida.
     /// </summary>
     public static User CreateInvited(UserId id, string email, DateTimeOffset createdAt) =>
         new(id, email, UserStatus.Invited, createdAt);
 
     /// <summary>
-    /// Transitions an invited user to <see cref="UserStatus.Active"/>. Idempotent for
-    /// an already-active user.
+    /// Pasa un usuario invitado a <see cref="UserStatus.Active"/>. Es idempotente para
+    /// un usuario que ya está activo.
     /// </summary>
     public void Activate(DateTimeOffset occurredAt)
     {
@@ -59,10 +59,10 @@ public sealed class User
     }
 
     /// <summary>
-    /// Links an external provider subject to this user. Per ADR 0015 the caller must
-    /// have already proven ownership of the email (Google <c>email_verified</c>).
-    /// Idempotent: re-linking the same (provider, subject) is a no-op; a different
-    /// subject for the same provider is rejected.
+    /// Vincula el subject de un proveedor externo a este usuario. Según el ADR 0015 el
+    /// llamador ya tiene que haber probado que el email es suyo (<c>email_verified</c> de Google).
+    /// Es idempotente: volver a vincular el mismo (proveedor, subject) no hace nada; un
+    /// subject distinto para el mismo proveedor se rechaza.
     /// </summary>
     public ProviderLink LinkProvider(string provider, string subject, DateTimeOffset occurredAt)
     {

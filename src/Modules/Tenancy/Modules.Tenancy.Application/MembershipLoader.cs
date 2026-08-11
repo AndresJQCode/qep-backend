@@ -5,8 +5,8 @@ namespace Modules.Tenancy.Application;
 
 internal static class MembershipLoader
 {
-    // Loads a membership scoped to the tenant. A mismatched tenant is reported as
-    // not found so membership existence is never leaked across tenants.
+    // Carga una membresía acotada al tenant. Un tenant que no coincide se reporta como
+    // no encontrado, para nunca filtrar la existencia de membresías entre tenants.
     public static async Task<Membership> LoadAsync(
         IMembershipRepository repository,
         MembershipId id,
