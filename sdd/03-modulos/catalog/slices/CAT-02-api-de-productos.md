@@ -533,3 +533,152 @@ en un catálogo en español es una sorpresa esperando a alguien. Queda como obse
 defecto de este slice.
 
 **Runtime ejecutado el 2026-08-11.** Falta la revisión de riesgo de 4 lentes para el DoD.
+
+### Tramo 6 — revisión adversarial de 4 lentes y su corrección (2026-08-11)
+
+Los cuatro lentes son obligatorios por dos razones independientes: el diff autorado mide
+**1870 líneas en 41 archivos** —contra el umbral de 400— y toca permisos. Objetivo de
+revisión: `git diff 4677d59..3c2c9ec -- src/ tests/`, o sea `968c4a8` y `3c2c9ec` juntos.
+Excluidos los generados (`packages.lock.json`, `*.Designer.cs`, `*ModelSnapshot.cs`).
+
+Los cuatro corrieron **en paralelo y ciegos entre sí**, para que ninguno viera los hallazgos
+de los otros antes de emitir los suyos.
+
+#### Hallazgos
+
+| # | Lente | Severidad | Qué |
+|---|---|---|---|
+| **A** | fiabilidad **y** resiliencia | bloqueante | `Product` sin token de concurrencia |
+| **B** | legibilidad | relevante | Permisos de `tax_rate` publicados sin implementación |
+| **C** | fiabilidad | relevante | El `search` no escapa los comodines de `LIKE` |
+| **D** | riesgo | relevante | El validador corría antes que la autorización |
+| **E** | resiliencia | relevante | Un mensaje veneno bloquea la proyección de auditoría |
+| **F** | resiliencia | menor | `GetProduct` usa `FindAsync` con tracking sin mutar |
+
+**`A` lo encontraron dos lentes por separado**, y eso le subió el peso: fiabilidad lo describió
+como *lost update* silencioso; resiliencia fue más lejos y describió la violación de invariante.
+La convergencia de dos lecturas independientes sobre la misma causa raíz es lo que lo movió de
+"relevante" a bloqueante.
+
+#### Corrección — una sola transacción, según `ciclo-de-trabajo.md`
+
+Entraron **A, B, C y D**. `A` entra **por decisión explícita del owner**: esta revisión lo
+planteó como candidato a slice propio —columna, migración, traducción y prueba son más que una
+corrección— y el owner resolvió incluirlo. Queda escrito porque cambia dónde estaba el límite
+de la transacción, no por trámite.
+
+`E` y `F` van a seguimiento, que es lo que el método manda para lo que aparece después.
+
+##### Tramo 6a — `B`, `C` y `D`
+
+- **RED**, tres pruebas nuevas en `ProductWriteApiTests`:
+
+  ```txt
+  Assert.DoesNotContain() Failure: Sub-string found
+                                     ↓ (pos 258)
+  String: ···"["catalog.product.read","catalog.tax_rate.read","t"···
+  Found:  "catalog.tax_rate"
+
+  Assert.Single() Failure: The collection contained 3 items
+  ```
+
+  El primero es `B`; el segundo es `C`, con `?search=_` devolviendo el catálogo entero.
+
+- **`D` obligó a corregir la prueba antes que el código.** La primera versión —un lector sin
+  `catalog.product.manage` mandando un cuerpo inválido— **pasó en verde sin tocar nada**, y ese
+  verde era la respuesta correcta a la pregunta equivocada: a quien le falta el permiso lo frena
+  la política del endpoint, antes de que el handler exista, así que el validador nunca corre.
+  El escenario real es el **cruce de tenants**: la política pasa porque el permiso está, y quien
+  rechaza es la revalidación del handler. Reescrita así, dio el RED que corresponde:
+
+  ```txt
+  Assert.Equal() Failure: Values differ
+  Expected: Forbidden
+  Actual:   UnprocessableEntity
+  ```
+
+  Vale registrarlo: el lente de riesgo acertó el defecto y erró el escenario. Sin el RED
+  fallando por el motivo correcto, la corrección se habría escrito contra un caso que ya
+  funcionaba.
+
+- **GREEN:** `Correctas! - Con error: 0, Superado: 18, Omitido: 0, Total: 18` (eran 15).
+
+##### Tramo 6b — `A`, la concurrencia
+
+- **RED**, con el competidor pasando por la API y no por SQL —así atraviesa el dominio, que es
+  quien incrementa la versión, y la prueba no nombra la columna— e intercalado en vez de en
+  paralelo, porque una carrera de dos requests no falla de forma reproducible:
+
+  ```txt
+  Assert.Throws() Failure: No exception was thrown
+  Expected: typeof(BuildingBlocks.Application.RequestConcurrencyException)
+  ```
+
+  La escritura vieja se comitteó pisando la inactivación, en silencio. El defecto, reproducido.
+
+- **GREEN:** `Correctas! - Con error: 0, Superado: 19, Omitido: 0, Total: 19`.
+
+**Decisión de alcance, declarada:** se implementó el **token interno**, no el contrato
+`ETag`/`If-Match` que usan `Tenant` y `Membership`. El hallazgo `A` era el *lost update*
+silencioso, y el token lo cierra: el handler lee y escribe dentro del mismo request, así que
+un commit ajeno en el medio hace que el `UPDATE` no encuentre su fila y falle. Exponer `ETag`
+obligaría al frontend a mandar `If-Match`, que es trabajo cruzado con `CAT-01` y una respuesta
+más (`412`) en un contrato que este spec ya declaró. **Queda como seguimiento**, no como
+omisión.
+
+La migración `20260811174846_ProductConcurrencyToken` agrega `version bigint not null`. Se
+corrigió el `defaultValue` que genera EF, de `0` a `1`: `Product.Create` nace en `1`, y con `0`
+las filas ya existentes quedaban fuera de ese invariante para siempre.
+
+#### Regresión de toda la solución
+
+`dotnet build Backend.slnx` → `Compilación correcta. 0 Advertencia(s), 0 Errores`.
+
+`dotnet test Backend.slnx`, **203 pruebas**:
+
+```txt
+Correctas! - Con error: 0, Superado:  13, Total:  13 - Modules.Catalog.UnitTests
+Correctas! - Con error: 0, Superado:   5, Total:   5 - Modules.Identity.UnitTests
+Correctas! - Con error: 0, Superado:  32, Total:  32 - Modules.Tenancy.UnitTests
+Correctas! - Con error: 0, Superado:   6, Total:   6 - Modules.Audit.UnitTests
+Correctas! - Con error: 0, Superado:   6, Total:   6 - Modules.Authorization.UnitTests
+Correctas! - Con error: 0, Superado:   8, Total:   8 - Modules.Notifications.UnitTests
+Correctas! - Con error: 0, Superado:  36, Total:  36 - Modules.Storage.UnitTests
+Correctas! - Con error: 0, Superado:  16, Total:  16 - ArchitectureTests
+Correctas! - Con error: 0, Superado:   1, Total:   1 - Modules.Notifications.IntegrationTests
+Correctas! - Con error: 0, Superado:   2, Total:   2 - Modules.Storage.IntegrationTests
+Correctas! - Con error: 0, Superado:   2, Total:   2 - Modules.Audit.IntegrationTests
+Correctas! - Con error: 0, Superado:  19, Total:  19 - Modules.Catalog.IntegrationTests
+Con error! - Con error: 5, Superado:  52, Total:  57 - Modules.Tenancy.IntegrationTests
+```
+
+**Los 5 fallos son los de `SDD-CT-14`, verificados por nombre y no por conteo** — un conteo
+igual no prueba nada, porque un fallo nuevo puede tapar uno viejo:
+
+```txt
+Con error Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.LogoutRevokesTheSessionCookie
+Con error Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.RoleDowngradeRemovesPermissionsOnTheNextRequest
+Con error Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken
+Con error Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.MutatingRequestWithoutCsrfHeaderIsRejected
+Con error Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.SuspendingMembershipRevokesTheMembersActiveSession
+```
+
+Los cinco de siempre, los cinco en `RealAuthenticationApiTests`. **Cero fallos nuevos**, y eso
+importa especialmente acá: la corrección tocó `QepServiceCollectionExtensions` —roles, permisos
+y políticas, compartidos por todos los módulos—, así que `Tenancy` y `Storage` en verde es la
+prueba de que quitar `catalog.tax_rate` no arrastró nada.
+
+`ArchitectureTests` sigue en `16/16`: la traducción de `DbUpdateConcurrencyException` quedó en
+Infrastructure y no se filtró a Application.
+
+#### Deuda preexistente que la revisión destapó
+
+`dotnet format --verify-no-changes` falla en **22 archivos** de todo el repositorio —
+`SessionService.cs`, `InvitationDeliveryWorker.cs`, `TenancyUnitOfWork.cs`,
+`StorageEndpoints.cs` y otros que ni `CAT-02` ni esta corrección tocaron. Es sistémico y
+anterior: el comando nunca se corrió en CI.
+
+Se formatearon **sólo los archivos de `CAT-02`**, que es lo que el DoD pide ("formato limpio
+**en el diff**"). Formatear los otros 18 habría metido un diff enorme y ajeno dentro de la
+transacción de corrección, que es exactamente lo que la regla de transacción única existe para
+evitar.

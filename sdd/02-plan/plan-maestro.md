@@ -26,18 +26,29 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **`CAT-02b` — escrituras de productos**, código y pruebas listos el 2026-08-10. **Runtime ejecutado el 2026-08-11: 12 de 12 criterios verificados contra la API local.** Falta **sólo la revisión de riesgo de 4 lentes**. `CAT-02` se partió al medir 1043 líneas autoradas; `a` y `b` ejecutan en secuencia, así que el repo sigue con un solo slice activo |
-| Último slice completado | Ninguno en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
+| Slice activo | **Ninguno.** `CAT-02` cerró el 2026-08-11 con `CAT-02a` y `CAT-02b` en `Complete`: runtime de 12/12 criterios, revisión de 4 lentes y su transacción de corrección. El próximo es `CAT-03`, que todavía no tiene spec |
+| Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Árbol limpio salvo `CLAUDE.md`, que **nunca estuvo versionado** y sigue sin estarlo por decisión no tomada |
 | Decisiones abiertas | Ninguna. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
 | Contradicciones abiertas | `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
 
 ### Próxima acción ejecutable
 
-**Ejecutar el ciclo TDD de `CAT-02`.** Sin decisiones abiertas: el gate está cerrado, el
-contrato y los permisos están ratificados, y `code` es único por tenant.
+**Abrir `CAT-03` — API de tasas de impuesto.** Empieza por su spec, que todavía no existe. Lo
+que ya está decidido: el porcentaje es **entero de 0 decimales** (`P-008`, owner, 2026-08-10),
+y sus dos permisos —`catalog.tax_rate.read` y `.manage`— **los trae `CAT-03` con su
+implementación**. Estaban registrados desde `CAT-02` sin nada que los consumiera y la revisión
+de 4 lentes los hizo retirar; volver a agregarlos es parte de este slice, no un pendiente
+suelto.
 
-Orden de trabajo, con RED antes que GREEN en cada tramo:
+Antes de arrancar, tres seguimientos abiertos por la revisión de `CAT-02` (tramo 6 del spec):
+el mensaje veneno de `AuditProjectionWorker`, que merece `SDD-CT` y no lo introdujo `CAT-02`;
+el `ETag`/`If-Match` de productos, que es trabajo cruzado con `CAT-01`; y los **22 archivos**
+donde `dotnet format` falla en todo el repositorio. Ninguno bloquea `CAT-03`.
+
+#### Historia de `CAT-02`, cerrado el 2026-08-11
+
+Orden de trabajo que se ejecutó, con RED antes que GREEN en cada tramo:
 
 1. ~~**Andamiaje**: cuatro `.csproj` de `Modules.Catalog.*` en `Backend.slnx`, más
    `CatalogLayerTests.cs`.~~ **Hecho el 2026-08-10.** RED literal `error CS0234: ... 'Catalog'
@@ -59,9 +70,16 @@ Orden de trabajo, con RED antes que GREEN en cada tramo:
    MethodNotAllowed`; GREEN `Superado: 15, Total: 15`. **Los 12 criterios de aceptación
    cubiertos por prueba.** Sin regresión.
 
-**Lo que queda de `CAT-02` para el DoD:** ~~runtime del owner contra la API local~~ **hecho el
-2026-08-11, 12 de 12 criterios** (evidencia literal en el tramo 5 del spec) — queda **sólo la
-revisión de riesgo de 4 lentes**. Sin ella, ni `CAT-02a` ni `CAT-02b` pasan a `Complete`.
+5. ~~**Runtime contra la API local.**~~ **Hecho el 2026-08-11**, los 12 criterios endpoint por
+   endpoint, con la auditoría verificada en base y no por status HTTP. Tramo 5 del spec.
+6. ~~**Revisión adversarial de 4 lentes y su transacción de corrección.**~~ **Hecha el
+   2026-08-11.** Seis hallazgos, cuatro corregidos: token de concurrencia —al que llegaron dos
+   lentes por separado—, permisos de `tax_rate` retirados, comodines de `LIKE` escapados y
+   autorización antes que validación. Regresión de **203 pruebas** con los 5 fallos de
+   `SDD-CT-14` verificados por nombre. Tramo 6 del spec.
+
+**`CAT-02` cumple el DoD y está `Complete`.** Los ítems de UI van `N/A` con razón: es un slice
+de backend, y su interfaz es `CAT-01`, en el otro repositorio.
 
 **Antes de cualquier `dotnet build`, `dotnet test` o comando `ef`: verificar que `Api.exe` no
 esté corriendo.** Si lo está, los tres fallan por archivo bloqueado. El nombre del proceso es
@@ -79,11 +97,54 @@ Owner: Andres Jaramillo
 | ID | Resultado revisable | Depende de | Estado | Evidencia / commit / PR |
 | --- | --- | --- | --- | --- |
 | `CAT-02` | **API de productos** — fila padre, ya no es unidad ejecutable | `CAT-00` (gate cerrado) | Partido el 2026-08-10 | Se partió al medir **1043 líneas autoradas** con un endpoint de cinco, contra el umbral de ~400 de `convenciones-de-id.md`. No se renumera nada y los commits que citan `feat(CAT-02)` siguen válidos: el ID padre no se toca. Spec único en [`03-modulos/catalog/slices/CAT-02-api-de-productos.md`](../03-modulos/catalog/slices/CAT-02-api-de-productos.md) |
-| `CAT-02a` | Andamiaje del módulo, dominio `Product`, persistencia con `InitialCatalog` y `GET /products` | `CAT-00` | Código listo, runtime verificado | Tres tramos con RED y GREEN literales en el spec. `ArchitectureTests` 16/16, unitarias 13/13, integración 3/3 contra PostgreSQL real; `Tenancy` sin regresión, con los mismos 5 fallos de `SDD-CT-14` verificados por nombre. Commits `968c4a8` y `594ee11`. Runtime cubierto por el tramo 5 el 2026-08-11. **Falta la revisión de riesgo de 4 lentes**, así que no es `Complete` |
-| `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y pruebas de auditoría y outbox | `CAT-02a` | **In Progress** | Abierto el 2026-08-10, código en `3c2c9ec`. Cubre `CA-CAT-02-03` a `-09`, `-11`, `-12` y las mitades pendientes de `-01` y `-10`. **Runtime del 2026-08-11: los 12 criterios verificados contra la API local**, con `422 catalog.product.code_taken` confirmado en vivo —el `500` de `SDD-CT-06` que este slice existía para cerrar— y la atomicidad del outbox probada por lo que **no** dejó rastro: el `403` y los tres `422` no escribieron fila. **Falta la revisión de riesgo de 4 lentes** |
+| `CAT-02a` | Andamiaje del módulo, dominio `Product`, persistencia con `InitialCatalog` y `GET /products` | `CAT-00` | **Complete** | Tres tramos con RED y GREEN literales en el spec. Commits `968c4a8` y `594ee11`. Runtime en el tramo 5 y revisión de 4 lentes en el tramo 6, ambos el 2026-08-11 |
+| `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y pruebas de auditoría y outbox | `CAT-02a` | **Complete** | Código en `3c2c9ec`. Cubre `CA-CAT-02-03` a `-09`, `-11`, `-12` y las mitades pendientes de `-01` y `-10`. **Runtime del 2026-08-11: los 12 criterios verificados contra la API local**, con `422 catalog.product.code_taken` confirmado en vivo —el `500` de `SDD-CT-06` que este slice existía para cerrar— y la atomicidad del outbox probada por lo que **no** dejó rastro: el `403` y los tres `422` no escribieron fila. **Revisión de 4 lentes y su corrección** en el tramo 6: token de concurrencia, permisos de `tax_rate` retirados, comodines de `LIKE` escapados y autorización antes que validación. Regresión de 203 pruebas, con los 5 fallos de `SDD-CT-14` verificados **por nombre** |
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | Pending | Sin spec todavía. Se separa de `CAT-02` porque es otro recurso, con otros permisos y otra migración, y juntos pasarían holgado el umbral de 400 líneas. El porcentaje es **entero de 0 decimales** (`P-008`, decidido por el owner el 2026-08-10): no admite retenciones con fracción, y eso está declarado como límite de alcance en el gate |
 
 ## Handoff
+
+### 2026-08-11 — Revisión de 4 lentes de `CAT-02` y su corrección
+
+Corrieron los cuatro lentes **en paralelo y ciegos entre sí** sobre
+`git diff 4677d59..3c2c9ec -- src/ tests/` (1870 líneas autoradas, 41 archivos). Obligatorios
+por dos razones independientes: superan las 400 líneas y tocan permisos. Evidencia literal en
+el **tramo 6** del spec.
+
+Seis hallazgos. **Dos lentes independientes convergieron en el mismo** —`Product` sin token de
+concurrencia—, uno describiéndolo como *lost update* silencioso y el otro como violación de la
+invariante `EnsureActive()`. Esa convergencia es lo que lo movió a bloqueante.
+
+**Corregidos en la transacción única:** el token de concurrencia (`A`), los permisos de
+`tax_rate` publicados sin implementación (`B`), los comodines de `LIKE` sin escapar (`C`) y el
+orden validador/autorización (`D`).
+
+**`A` entró por decisión explícita del owner.** La revisión lo planteó como candidato a slice
+propio —columna, migración, traducción y prueba son más que una corrección— y el owner resolvió
+incluirlo. Se registra porque corrió el límite de la transacción, no por trámite.
+
+**Seguimiento, no corregido acá:**
+
+- **`E` — mensaje veneno en `AuditProjectionWorker`.** Aborta el lote entero ante el primer
+  mensaje que no parsea, y como ese mensaje sigue siendo el primero por `OccurredAt` en cada
+  tick, reprime la cola para siempre. El comentario del propio archivo afirma lo contrario.
+  **No lo introdujo `CAT-02`**: vive en el módulo `Audit` y es anterior. Lo que `CAT-02` hizo
+  fue ampliar el radio, porque agregó un segundo productor a una cola compartida que antes sólo
+  alimentaba `Storage`. Merece `SDD-CT`.
+- **`F` — `GetProduct` lee con tracking** sin mutar nada. Menor.
+- **`ETag`/`If-Match` en productos.** La corrección puso el token **interno**, que cierra el
+  *lost update*; exponer el contrato como en `Tenant` y `Membership` obliga al frontend a mandar
+  `If-Match` y agrega un `412` al contrato que el spec declaró. Es trabajo cruzado con `CAT-01`.
+- **`dotnet format` falla en 22 archivos del repositorio**, casi todos ajenos a `CAT-02`
+  (`SessionService.cs`, `TenancyUnitOfWork.cs`, `StorageEndpoints.cs`…). Es sistémico y
+  anterior: el comando nunca corrió en CI. Se formatearon **sólo los de `CAT-02`**, que es lo
+  que pide el DoD.
+
+**Una lección que vale más que los hallazgos:** la primera prueba RED de `D` **pasó en verde
+sin tocar el código**. El lente de riesgo acertó el defecto y erró el escenario — describió un
+llamador sin permiso, a quien frena la política del endpoint antes de que el handler exista.
+El escenario real era el cruce de tenants. Sin exigir que el RED falle **por el motivo
+correcto**, la corrección se habría escrito contra un caso que ya funcionaba, y el defecto
+seguiría ahí con una prueba en verde encima.
 
 ### 2026-08-11 — Runtime de `CAT-02` y hallazgos
 
