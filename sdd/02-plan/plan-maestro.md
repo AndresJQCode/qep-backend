@@ -129,6 +129,43 @@ Owner: Andres Jaramillo
 
 ## Handoff
 
+### 2026-08-11 — El deploy corta al aplicar el Secret: falta RBAC, no es el manifiesto
+
+Con el build ya verde tras fijar el SDK, el `Deploy` falla en el paso del `Secret`:
+
+```
+Error from server (Forbidden): error when retrieving current configuration of:
+Resource: "/v1, Resource=secrets", Kind: "Secret"
+Name: "qep-backend-secret", Namespace: "prod-qep-backend"
+secrets "qep-backend-secret" is forbidden: User
+"system:serviceaccount:azure-devops-agent:azure-devops-agent" cannot get resource
+"secrets" in API group "" in the namespace "prod-qep-backend"
+```
+
+**El manifiesto está bien.** `kubectl apply --dry-run=client -f k8s/prod-secret.yaml` responde
+`secret/qep-backend-secret created (dry run)`. Lo que falta es permiso: la service account del
+agente puede ConfigMaps y Deployments —se aplican hoy— pero no Secrets.
+
+**Detalle que importa para el arreglo:** falla en el **`get`**, no en el `create`. `kubectl
+apply` primero recupera la configuración actual para decidir entre crear y parchear, así que
+dar sólo `create` no destraba nada.
+
+**Corrección propuesta, sin aplicar:** `ops/rbac-deployer-secrets.yaml`, un `Role` +
+`RoleBinding` en `prod-qep-backend`. Dos reglas, no una: `create` va ancho porque RBAC no
+admite `resourceNames` en ese verbo —la autorización ocurre antes de que el objeto exista—, y
+`get`/`patch`/`update` van acotados a `qep-backend-secret`. Eso evita que un agente de CI
+comprometido pueda leer cualquier otro Secret del namespace.
+
+**Vive en `ops/` y no en `k8s/` a propósito:** la misma service account tampoco puede crear
+Roles, así que esto no se puede aplicar desde el pipeline. Lo aplica alguien con admin del
+clúster, una vez. `ops/` además queda fuera del alcance de la plantilla, que sólo lee
+`manifestDirectory: k8s`.
+
+**Antes de aplicarlo hay que preguntar a devops si ya existe un Role** que le da a esa SA
+acceso a configmaps y deployments en este namespace — tiene que existir. Si existe, lo correcto
+es agregarle las dos reglas y **no** crear un Role paralelo: los permisos de dos Roles sobre el
+mismo sujeto se suman, así que restringir uno después no restringe nada.
+
 ### 2026-08-11 — El build de Docker rompió solo: tag flotante contra `global.json` fijo
 
 **El primer deploy tras publicar `main` falló en el `Build`, no en el despliegue.** Literal:
