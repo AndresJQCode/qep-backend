@@ -49,7 +49,13 @@ disponible, un contrato **no** se transcribe de memoria: se registra `DECISIÓN-
   sesión, en un log o en una captura. Lo que se filtre se rota. Precedente: el 2026-08-09 se
   imprimió la API key de Infobip completa al verificar si estaba configurada. Qué secretos usa
   el repo y cómo se cargan: [README § Secretos de usuario](README.md#secretos-de-usuario).
-- **Sin spec no hay código.** Todo cambio pertenece a un slice con ID.
+- **Sin spec no hay código.** Todo cambio pertenece a un slice con ID, **salvo infraestructura
+  y despliegue**, que el owner declaró fuera del alcance del método el 2026-08-11
+  (`DECISIÓN-PENDIENTE-INFRA-01`). El corte es **por efecto, no por carpeta**: la pregunta es
+  si cambia el comportamiento observable de la API. Mover un valor entre `appsettings.json`,
+  ConfigMap y Secret está fuera; cambiar lo que ese valor **hace**, no. La tabla completa está
+  en [`sdd/02-plan/plan-maestro.md` § Alcance del método](sdd/02-plan/plan-maestro.md). La
+  exención no alcanza al handoff: el ledger se actualiza igual.
 - **Sin gate cerrado no hay implementación.** Un módulo `Propuesto` o `Definido` no recibe
   código, aunque su spec parezca completo.
 - **TDD obligatorio.** RED antes que GREEN, con evidencia literal de ambos en el spec.

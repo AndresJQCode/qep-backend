@@ -29,7 +29,7 @@ historial de chat.
 | Slice activo | **Ninguno.** `CAT-02` cerró el 2026-08-11 con `CAT-02a` y `CAT-02b` en `Complete`: runtime de 12/12 criterios, revisión de 4 lentes y su transacción de corrección. El próximo es `CAT-03`, que todavía no tiene spec |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
-| Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01`, abierta el 2026-08-11: qué ID lleva el trabajo de configuración y despliegue.** Los ocho prefijos reservados en `convenciones-de-id.md` son todos de módulo de producto y reservar uno nuevo es parte de G1 —apertura de módulo con gate—, así que el cambio de forma de la configuración de k8s de esta sesión quedó **sin slice**. Precedente que la sostiene: `ec5540e` (`fix(config)`) también se commiteó sin ID. Las salidas son dos y las decide el owner: abrir un módulo de plataforma por `apertura-de-modulo.md`, o declarar explícitamente que infraestructura y despliegue quedan fuera del alcance del método. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
+| Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01` cerrada el 2026-08-11 por el owner: infraestructura y despliegue quedan explícitamente fuera del alcance del método.** No se abre módulo de plataforma ni se reserva prefijo. El corte es **por efecto, no por carpeta** —ver «Alcance del método» abajo—, y la obligación que **no** desaparece es la entrada de handoff en este ledger. Pendiente que deja: es una decisión estructural, así que `convenciones-de-id.md` pide que produzca un `SDD-ADR-*` en `qep-frontend/sdd/01-contexto/decisiones-de-arquitectura.md`, que es autoridad del otro repositorio. **Ese registro ya arrastra deuda: `SDD-ADR-08` se cita en tres archivos de este repo y no tiene entrada; el índice termina en `SDD-ADR-07`.** **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
 | Contradicciones abiertas | `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
 
 ### Próxima acción ejecutable
@@ -88,6 +88,32 @@ esté corriendo.** Si lo está, los tres fallan por archivo bloqueado. El nombre
 **La factory de integración debe fijar `Notifications:EmailProvider`** (`SDD-CT-17`): sin eso
 las pruebas mueren al arrancar con `OptionsValidationException`, heredando el `infobip` con
 credenciales vacías del `appsettings.json`.
+
+## Alcance del método
+
+Cerrado por el owner el 2026-08-11 (`DECISIÓN-PENDIENTE-INFRA-01`). **Infraestructura y
+despliegue quedan fuera del alcance del método.** No requieren slice, spec, gate ni prefijo.
+
+**El corte es por efecto, no por carpeta.** Definirlo por ruta sería un agujero: un cambio en
+`src/Api/appsettings.json` puede tumbar el arranque, y una migración vive en `src/` pero se
+parece a infraestructura. La pregunta que decide es una sola: **¿cambia el comportamiento
+observable de la API?**
+
+| Fuera del método — sin slice | Dentro — exige slice con ID |
+| --- | --- |
+| Manifiestos de `k8s/`, `azure-pipelines.yml`, `Dockerfile`, `compose.yaml` | Contratos HTTP: rutas, cuerpos, códigos de estado, códigos de error |
+| Dónde vive un valor de configuración: `appsettings.json` ↔ ConfigMap ↔ Secret ↔ user-secrets | Dominio, invariantes, permisos, políticas de autorización |
+| Secretos, observabilidad de plataforma, recursos y probes del pod | Migraciones de base y forma del esquema |
+| Comentarios, README, y este ledger | Cualquier cambio de configuración que **altere** comportamiento, no sólo lo mueva |
+
+La última fila es la que hay que mirar con cuidado. Mover `ConnectionStrings__QepDatabase` del
+ConfigMap a un Secret está fuera. Cambiar `Registration__PublicTenantSignupEnabled` de `false`
+a `true` **no**: eso es una decisión de producto que se ejecuta por configuración.
+
+**Lo que la exención NO exime:** la entrada de handoff en este ledger, con evidencia literal y
+comandos con su resultado real. Sigue siendo obligatoria. El precedente es la sesión del
+2026-08-11: sin ese handoff se habría perdido que la plantilla de deploy aplica una lista
+blanca y no el directorio, que es lo que evitó una caída de producción.
 
 ## Ledger de slices — Módulo `catalog`
 
