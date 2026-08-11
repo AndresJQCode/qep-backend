@@ -28,8 +28,8 @@ historial de chat.
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
 | Slice activo | **Ninguno.** `CAT-02` cerró el 2026-08-11 con `CAT-02a` y `CAT-02b` en `Complete`: runtime de 12/12 criterios, revisión de 4 lentes y su transacción de corrección. El próximo es `CAT-03`, que todavía no tiene spec |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
-| Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Árbol limpio salvo `CLAUDE.md`, que **nunca estuvo versionado** y sigue sin estarlo por decisión no tomada |
-| Decisiones abiertas | Ninguna. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
+| Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
+| Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01`, abierta el 2026-08-11: qué ID lleva el trabajo de configuración y despliegue.** Los ocho prefijos reservados en `convenciones-de-id.md` son todos de módulo de producto y reservar uno nuevo es parte de G1 —apertura de módulo con gate—, así que el cambio de forma de la configuración de k8s de esta sesión quedó **sin slice**. Precedente que la sostiene: `ec5540e` (`fix(config)`) también se commiteó sin ID. Las salidas son dos y las decide el owner: abrir un módulo de plataforma por `apertura-de-modulo.md`, o declarar explícitamente que infraestructura y despliegue quedan fuera del alcance del método. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
 | Contradicciones abiertas | `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
 
 ### Próxima acción ejecutable
@@ -102,6 +102,103 @@ Owner: Andres Jaramillo
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | Pending | Sin spec todavía. Se separa de `CAT-02` porque es otro recurso, con otros permisos y otra migración, y juntos pasarían holgado el umbral de 400 líneas. El porcentaje es **entero de 0 decimales** (`P-008`, decidido por el owner el 2026-08-10): no admite retenciones con fracción, y eso está declarado como límite de alcance en el gate |
 
 ## Handoff
+
+### 2026-08-11 — Forma de la configuración en k8s: híbrida, con Secret propio
+
+**Sin slice.** Ver `DECISIÓN-PENDIENTE-INFRA-01` en Estado global. Se registra acá porque el
+cierre de sesión es obligatorio aunque el trabajo no tenga ID, no para darle uno por la puerta
+de atrás.
+
+**La pregunta que lo originó:** reemplazar el `appsettings.json` entero desde un ConfigMap
+—como en otro proyecto del owner— contra inyectar variables de entorno. Gana la segunda, por
+precedencia: `appsettings.json` < `appsettings.{Env}.json` < variables de entorno. El archivo
+reemplazado es todo-o-nada y duplica el contrato de configuración fuera del repositorio; una
+clave nueva en código queda borrada en silencio por un ConfigMap viejo. Las variables se
+superponen clave por clave y dejan la imagen como dueña de los valores por defecto.
+
+**El hallazgo que lo volvió urgente.** `azure-pipelines.yml` pasaba
+`removeAppsettingsPath: $(Build.SourcesDirectory)/Api/appsettings.json` — vestigio del enfoque
+de reemplazo, **con la ruta mal**: el archivo real es `src/Api/appsettings.json`, así que era un
+no-op silencioso. El híbrido ya funcionaba por accidente, no por decisión.
+
+**Qué cambió:**
+
+- `k8s/prod-secret.yaml` **nuevo**, con las cuatro credenciales que estaban en texto plano en
+  el ConfigMap: `ConnectionStrings__QepDatabase` (lleva la contraseña),
+  `Notifications__Infobip__ApiKey`, `Storage__R2__AccessKeyId` y `__SecretAccessKey`.
+- `k8s/prod-deployment.yaml` suma un `secretRef` **después** del `configMapRef`: ante colisión
+  de claves gana la fuente posterior.
+- `k8s/prod-configMap.yaml` pierde esas cuatro y además las cinco que sólo repetían el valor
+  por defecto de la imagen (`Notifications__EmailProvider`, los dos `Audit__*`,
+  `Storage__PresignedUrlMinutes`). `Registration__PublicTenantSignupEnabled` se conserva
+  duplicada **a propósito**: que un anónimo pueda crear un tenant es decisión de seguridad y
+  producción la declara explícita.
+- `src/Api/appsettings.json` pierde 18 líneas: la sección `Authentication` completa, el bloque
+  `R2` entero, los dos `""` de Infobip y **`DataProtection`, que era configuración muerta** —
+  `rg DataProtection` sobre todo el repositorio devolvía esa única línea del propio archivo.
+- `README.md` y `CLAUDE.md` decían que la cadena de conexión la fija `prod-configMap.yaml`.
+  Corregidos: gana el código (`SDD-ADR-01`).
+
+**El defecto que casi llega a producción.** La plantilla `k8s/deploy.yml@k8sTemplates` **no
+aplica el directorio**: `manifestDirectory` sólo dice dónde buscar. Recorre una lista blanca
+—`namespace`, `configMap`, `service`, `deployment`, `ingress`— y aplica
+`<dir>/<env>-<entrada>.yaml` uno por uno. `secret` no está en ella. Sin declararla explícita,
+`prod-secret.yaml` **nunca se habría aplicado**, y con la cadena de conexión ya fuera del
+ConfigMap los pods quedaban en `CreateContainerConfigError` de forma permanente. Corregido
+declarando `manifests` en `azure-pipelines.yml`, con `secret` antes que `deployment`.
+
+**Evidencia:**
+
+```
+dotnet build Backend.slnx -c Release
+Compilación correcta.
+    0 Advertencia(s)
+    0 Errores
+```
+
+```
+dotnet test Backend.slnx -c Release --no-build
+Con error!  - Con error: 5, Superado: 52, Total: 57 - Modules.Tenancy.IntegrationTests.dll
+Correctas!  - Con error: 0, Superado: 19, Total: 19 - Modules.Catalog.IntegrationTests.dll
+(resto de los ensamblados, todos en verde)
+```
+
+Los 5 fallos son los de `SDD-CT-14`, verificados **por nombre** y no por conteo:
+`RoleDowngradeRemovesPermissionsOnTheNextRequest`, `MutatingRequestWithoutCsrfHeaderIsRejected`,
+`SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken`,
+`SuspendingMembershipRevokesTheMembersActiveSession`, `LogoutRevokesTheSessionCookie`.
+Cero regresión.
+
+Comportamiento idéntico al quitar los `""`, confirmado en código y no por suposición:
+`Coalesce` (`QepServiceCollectionExtensions.cs:316`) filtra por `IsNullOrWhiteSpace`, y
+`StorageOptions.R2` y `NotificationsOptions.Infobip` tienen `= new()` con `string.Empty` en
+cada campo. Ausente y `""` se comportan igual.
+
+**Lo que NO se verificó: el pipeline nunca corrió.** Todo lo de arriba es lectura de la
+plantilla más build y pruebas locales. El primer deploy es la prueba real.
+
+**Cuatro seguimientos abiertos:**
+
+- **`prod-wildcard-certificate.yaml` no lo aplica nadie.** No está en la lista por defecto ni
+  en la nueva. Se dejó así: agregarlo lo re-aplicaría en cada deploy, y eso es un cambio de
+  comportamiento que nadie pidió. Confirmar con el owner si se aplicó a mano.
+- **El `sed` del tag corre sobre credenciales ya sustituidas.** En `deploy.yml` el reemplazo de
+  tokens es el paso previo al `find prod-*.yaml -exec sed -i "s|TAG|<buildId>|g"`. Una
+  credencial que contenga la cadena literal `TAG` en mayúsculas se corrompe en silencio, y el
+  síntoma es "credencial inválida" sin ninguna pista. Ya pasaba con el ConfigMap.
+- **El enmascarado en logs no vive en este repositorio.** `replacetokens@5` está sin `logLevel`
+  explícito; depende de que las variables del grupo `Backend-prod` estén marcadas como *secret*
+  en Azure DevOps. Verificar antes del primer deploy.
+- **Data Protection sin persistir.** Al borrar la sección muerta quedó a la vista que no hay
+  `PersistKeysToFileSystem` en ningún lado: las claves son efímeras por pod, así que cada deploy
+  desloguea a todo el mundo y con más de una réplica se rompe. `replicas: 1` lo tapa hoy. Es
+  trabajo propio, no forma de la configuración.
+
+**Estado al cerrar:** commiteado en **`84ebc5c`**, sobre `feature/catalog-api`, sin publicar.
+Siete archivos: `azure-pipelines.yml`, `k8s/prod-configMap.yaml`, `k8s/prod-deployment.yaml`,
+`k8s/prod-secret.yaml` (nuevo), `src/Api/appsettings.json`, `README.md` y `CLAUDE.md`. Este
+último **nunca estuvo versionado** y entra por decisión explícita del owner tomada en esta
+sesión, con lo que se cierra el pendiente que el ledger arrastraba desde el 2026-08-11.
 
 ### 2026-08-11 — Revisión de 4 lentes de `CAT-02` y su corrección
 
