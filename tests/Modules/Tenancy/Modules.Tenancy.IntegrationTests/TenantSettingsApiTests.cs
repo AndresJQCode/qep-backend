@@ -37,7 +37,7 @@ public sealed class TenantSettingsApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
 
-        // Authenticated as OtherTenant, attempting to reach the seeded tenant.
+        // Autenticado como OtherTenant, intentando alcanzar el tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
         var getResponse = await client.GetAsync(
@@ -84,7 +84,7 @@ public sealed class TenantSettingsApiTests
         Assert.Equal(HttpStatusCode.OK, firstPatch.StatusCode);
         Assert.NotEqual(staleEtag, firstPatch.Headers.ETag?.Tag);
 
-        // Second update reuses the now-stale ETag captured before the first update.
+        // La segunda actualización reutiliza el ETag ya viejo, capturado antes de la primera.
         var secondPatch = await PatchAsync(client, TenantId, staleEtag, NewDisplayName());
         Assert.Equal(HttpStatusCode.PreconditionFailed, secondPatch.StatusCode);
     }
@@ -103,7 +103,7 @@ public sealed class TenantSettingsApiTests
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
-        // Audit entry records the action, actor and the changed field.
+        // La entrada de auditoría registra la acción, el actor y el campo cambiado.
         var audit = await QueryRowAsync(
             connection,
             """
@@ -119,8 +119,8 @@ public sealed class TenantSettingsApiTests
         Assert.Equal("success", audit[1]);
         Assert.Contains("displayName", audit[2], StringComparison.Ordinal);
 
-        // Outbox event carries the integration-event name, a correlation id and
-        // the tenant in its payload — created in the same unit of work.
+        // El evento de outbox lleva el nombre del evento de integración, un id de correlación y
+        // el tenant en su payload — creado en la misma unidad de trabajo.
         var outbox = await QueryRowAsync(
             connection,
             """
@@ -226,22 +226,22 @@ public sealed class TenantSettingsApiTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
-            // UseSetting lands in builder.Configuration before Program reads the
-            // connection string at service-registration time. ConfigureAppConfiguration
-            // runs too late for that eager read and the app would silently fall back
-            // to appsettings.json.
+            // UseSetting cae en builder.Configuration antes de que Program lea la cadena de
+            // conexión al momento de registrar servicios. ConfigureAppConfiguration corre
+            // demasiado tarde para esa lectura ansiosa y la app caería en silencio a
+            // appsettings.json.
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

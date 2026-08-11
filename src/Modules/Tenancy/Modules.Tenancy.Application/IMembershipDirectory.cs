@@ -1,15 +1,15 @@
 ﻿namespace Modules.Tenancy.Application;
 
 /// <summary>
-/// Read-only lookup used on each request to validate that a user has an active
-/// membership in the requested tenant and to obtain its role references. A tenant id
-/// carried by a token or header is only a signal; access is validated here against a
-/// live membership (per the tenancy deep-dives).
+/// Consulta de sólo lectura que se usa en cada request para validar que un usuario tiene una
+/// membresía activa en el tenant pedido y para obtener sus referencias de rol. Un id de
+/// tenant que llega en un token o header es sólo una señal; el acceso se valida acá contra
+/// una membresía viva (según los deep-dives de tenancy).
 /// </summary>
 public interface IMembershipDirectory
 {
-    /// <returns>The active membership's role references, or <c>null</c> if the user
-    /// has no active membership in the tenant.</returns>
+    /// <returns>Las referencias de rol de la membresía activa, o <c>null</c> si el usuario
+    /// no tiene membresía activa en el tenant.</returns>
     Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(
         Guid userId,
         Guid tenantId,

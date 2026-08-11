@@ -1,11 +1,12 @@
 ﻿using System.Threading.RateLimiting;
-using Microsoft.AspNetCore.RateLimiting;
 using Api;
 using Bootstrapper;
 using Bootstrapper.Authentication;
 using Bootstrapper.Csrf;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
+using Modules.Catalog.Api;
+using Modules.Catalog.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Storage.Api;
@@ -18,14 +19,6 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Logging.AddQepLogging();
 
-// The "Local" environment runs the real Google JwtBearer scheme (not the dev stub)
-// while still reading the Google client id from local user-secrets, so a developer
-// can exercise the real login flow without committing any configuration.
-if (builder.Environment.IsEnvironment("Local"))
-{
-    builder.Configuration.AddUserSecrets<Program>(optional: true);
-}
-
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddOpenApi();
@@ -33,9 +26,9 @@ builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
 
-// Public/unauthenticated surfaces: per-IP fixed window, generous enough for real traffic
-// but bounded against abuse. Currently attached to the OpenAPI document and the Scalar
-// API reference; attach it to any further public read or webhook endpoint as it is added.
+// Superficies públicas/sin autenticar: ventana fija por IP, generosa para tráfico real
+// pero acotada contra el abuso. Hoy está atada al documento OpenAPI y a la referencia de
+// API de Scalar; atarla a todo endpoint público de lectura o webhook que se agregue.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -55,9 +48,9 @@ builder.Services.AddRateLimiter(options =>
 var app = builder.Build();
 app.UseExceptionHandler();
 app.UseRateLimiter();
-// The CSRF defense protects the cookie-authenticated session (see AddAuthentication);
-// the dev-stub trusts caller-supplied headers instead of a cookie, so there is no
-// session to protect and no browser-mediated attack surface to defend against here.
+// La defensa CSRF protege la sesión autenticada por cookie (ver AddAuthentication);
+// el stub de desarrollo confía en los headers que manda el llamador en vez de en una
+// cookie, así que acá no hay sesión que proteger ni superficie de ataque del navegador.
 if (!QepAuthenticationMode.UseDevelopmentStub(builder.Configuration, builder.Environment))
 {
     app.UseQepCsrfProtection();
@@ -66,18 +59,18 @@ if (!QepAuthenticationMode.UseDevelopmentStub(builder.Configuration, builder.Env
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Served in every environment, Production included: the deployed API is meant to be
-// self-documenting. Both endpoints are anonymous and internet-reachable — the ingress
-// routes "/" to this service without any path filtering — so the OpenAPI document
-// publishes the full API surface (routes, request shapes, error codes) to whoever asks.
-// Rate-limited per IP to bound scraping. To take the reference private again, wrap this
-// block in an environment or authorization check.
+// Se sirve en todos los entornos, Production incluido: la API desplegada está pensada
+// para auto-documentarse. Los dos endpoints son anónimos y alcanzables desde internet
+// —el ingress rutea "/" a este servicio sin filtrar path— así que el documento OpenAPI
+// publica toda la superficie de la API (rutas, formas de request, códigos de error) a
+// quien la pida. Limitada por IP para acotar el scraping. Para volver privada la
+// referencia, envolver este bloque en una verificación de entorno o de autorización.
 app.MapOpenApi()
     .AllowAnonymous()
     .RequireRateLimiting(RateLimiterPolicies.Public);
-// Literal prefix so the reference lives at /scalar/v1, the URL the launch profiles
-// open. The package default is /scalar; the prefix rejects a "{documentName}"
-// placeholder, and there is only the single "v1" OpenAPI document to serve.
+// Prefijo literal para que la referencia viva en /scalar/v1, la URL que abren los perfiles
+// de lanzamiento. El default del paquete es /scalar; el prefijo rechaza un placeholder
+// "{documentName}", y hay un único documento OpenAPI "v1" para servir.
 app.MapScalarApiReference("/scalar/v1")
     .AllowAnonymous()
     .RequireRateLimiting(RateLimiterPolicies.Public);
@@ -90,12 +83,13 @@ app.MapAuthorizationCatalogEndpoints();
 app.MapTenantSettingsEndpoints();
 app.MapMembershipEndpoints();
 app.MapStorageEndpoints();
+app.MapCatalogEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
     app.Lifetime.ApplicationStopping);
-// After Tenancy: Tenancy relinquishes the audit table (DropAuditOwnership) before the
-// Audit module's migration becomes its sole owner (ADR 0019).
+// Después de Tenancy: Tenancy suelta la tabla de auditoría (DropAuditOwnership) antes de
+// que la migración del módulo Audit pase a ser su única dueña (ADR 0019).
 await app.Services.InitializeAuditDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeIdentityDatabaseAsync(
@@ -103,6 +97,8 @@ await app.Services.InitializeIdentityDatabaseAsync(
 await app.Services.InitializeNotificationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeStorageDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+await app.Services.InitializeCatalogDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.RunAsync();
 

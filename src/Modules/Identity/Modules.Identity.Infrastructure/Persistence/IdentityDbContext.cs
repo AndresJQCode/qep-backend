@@ -23,9 +23,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ConfigureUser(modelBuilder);
         ConfigureProviderLink(modelBuilder);
         ConfigureSession(modelBuilder);
-        // audit.entries is owned by the Audit module; map it here as an
-        // ExcludeFromMigrations write projection so session issue/revoke audits commit
-        // atomically in this context's transaction (ADR 0019), same as Tenancy does.
+        // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
+        // escritura ExcludeFromMigrations para que las auditorías de emisión/revocación de sesión
+        // commiteen atómicas en la transacción de este contexto (ADR 0019), igual que Tenancy.
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureInbox(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
@@ -124,7 +124,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
     {
-        // Read-only view over the platform Outbox owned by the producing module.
+        // Vista de sólo lectura sobre el Outbox de plataforma, propiedad del módulo productor.
         var outbox = modelBuilder.Entity<OutboxRecord>();
         outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
         outbox.HasKey(value => value.Id);

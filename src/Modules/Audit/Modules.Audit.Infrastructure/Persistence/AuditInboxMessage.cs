@@ -1,7 +1,7 @@
 ﻿namespace Modules.Audit.Infrastructure.Persistence;
 
-// Per-consumer idempotency guard for the operational audit projection: a processed
-// outbox message id for this module's consumer. (consumer, message_id) is unique.
+// Guarda de idempotencia por consumidor para la proyección de auditoría operativa: un id de
+// mensaje de outbox ya procesado por este módulo. (consumer, message_id) es único.
 internal sealed class AuditInboxMessage
 {
     public string Consumer { get; init; } = string.Empty;
@@ -11,8 +11,8 @@ internal sealed class AuditInboxMessage
     public DateTimeOffset ProcessedAt { get; init; }
 }
 
-// Read-only projection of the platform Outbox, consumed independently by this module to
-// project operational audit events into audit.entries.
+// Proyección de sólo lectura del Outbox de plataforma, consumida de forma independiente por
+// este módulo para proyectar eventos de auditoría operativa en audit.entries.
 internal sealed class OutboxRecord
 {
     public Guid Id { get; init; }

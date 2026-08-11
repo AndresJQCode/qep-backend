@@ -75,7 +75,7 @@ public sealed class StorageDbContext(DbContextOptions<StorageDbContext> options)
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
     {
-        // Write projection of the platform Outbox owned by Tenancy.
+        // Proyección de escritura del Outbox de plataforma, propiedad de Tenancy.
         var outbox = modelBuilder.Entity<StorageOutboxMessage>();
         outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
         outbox.HasKey(value => value.Id);

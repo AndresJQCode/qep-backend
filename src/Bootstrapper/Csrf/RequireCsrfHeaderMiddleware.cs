@@ -11,13 +11,13 @@ public static class CsrfApplicationBuilderExtensions
         app.UseMiddleware<RequireCsrfHeaderMiddleware>();
 }
 
-// Minimal CSRF defense for the cookie-authenticated session (see the session-cookie
-// ADR). Every mutating request must carry this header; the frontend sends it
-// unconditionally. This works because the API has no CORS policy at all — a
-// cross-origin page cannot make a browser attach a custom header without a
-// successful CORS preflight, and none exists, so the browser refuses to send the
-// real request. If CORS with AllowCredentials is ever added for some integration,
-// this defense silently stops working and must be revisited together with it.
+// Defensa CSRF mínima para la sesión autenticada por cookie (ver el ADR de la cookie
+// de sesión). Todo request que muta tiene que llevar este header; el frontend lo manda
+// incondicionalmente. Esto funciona porque la API no tiene ninguna política CORS — una
+// página cross-origin no puede hacer que el navegador adjunte un header custom sin un
+// preflight CORS exitoso, y no existe ninguno, así que el navegador se niega a mandar el
+// request real. Si alguna vez se agrega CORS con AllowCredentials para una integración,
+// esta defensa deja de funcionar en silencio y hay que revisarla junto con eso.
 internal sealed class RequireCsrfHeaderMiddleware(
     RequestDelegate next,
     IProblemDetailsService problemDetailsService)

@@ -2,7 +2,7 @@
 
 namespace Modules.Storage.Infrastructure.Scanning;
 
-// Explicit local-development fallback. Production enables Storage:ClamAv:Enabled.
+// Fallback explícito para desarrollo local. Producción habilita Storage:ClamAv:Enabled.
 internal sealed class NoopFileScanner : IFileScanner
 {
     public Task<FileScanResult> ScanAsync(

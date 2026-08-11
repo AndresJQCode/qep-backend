@@ -337,6 +337,39 @@
           "Modules.Tenancy.Application": "[1.0.0, )"
         }
       },
+      "modules.catalog.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Catalog.Application": "[1.0.0, )",
+          "Modules.Catalog.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.catalog.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Catalog.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.catalog.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.catalog.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.9, )",
+          "Modules.Catalog.Application": "[1.0.0, )",
+          "Modules.Catalog.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
+        }
+      },
       "modules.identity.application": {
         "type": "Project",
         "dependencies": {

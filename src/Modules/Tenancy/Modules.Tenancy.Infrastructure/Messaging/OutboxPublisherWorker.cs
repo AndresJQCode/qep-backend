@@ -4,8 +4,8 @@ using Microsoft.Extensions.Logging;
 
 namespace Modules.Tenancy.Infrastructure.Messaging;
 
-// Background poller that drains the Outbox on a fixed interval. Each tick runs in
-// its own scope so the scoped DbContext and handlers are fresh.
+// Poller de fondo que drena el Outbox a intervalo fijo. Cada tick corre en su
+// propio scope para que el DbContext scoped y los handlers estén frescos.
 internal sealed partial class OutboxPublisherWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<OutboxPublisherWorker> logger) : BackgroundService

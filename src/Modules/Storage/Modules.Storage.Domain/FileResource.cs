@@ -1,10 +1,10 @@
 ﻿namespace Modules.Storage.Domain;
 
 /// <summary>
-/// The logical record in QEP of a file or binary resource; the physical object lives in
-/// S3-compatible object storage (ADR 0020) at <see cref="StorageKey"/>. Metadata is
-/// tenant-scoped. The upload lifecycle is PendingUpload → PendingScan → Available (or
-/// Quarantined); only Available resources are downloadable; soft delete precedes purge.
+/// El registro lógico en QEP de un archivo o recurso binario; el objeto físico vive en
+/// almacenamiento de objetos compatible con S3 (ADR 0020) en <see cref="StorageKey"/>. La
+/// metadata está acotada al tenant. El ciclo de subida es PendingUpload → PendingScan →
+/// Available (o Quarantined); sólo los Available se descargan; el borrado lógico precede al purgado.
 /// </summary>
 public sealed class FileResource
 {
@@ -97,9 +97,9 @@ public sealed class FileResource
             storageKey,
             createdAt);
 
-    // Called after the client PUTs the object. Verifies the stored size and records the
-    // checksum, then moves to PendingScan. Idempotent inputs are rejected: complete only
-    // applies to a PendingUpload resource.
+    // Se llama después de que el cliente hace PUT del objeto. Verifica el tamaño almacenado y
+    // registra el checksum, y después pasa a PendingScan. Las entradas idempotentes se rechazan:
+    // completar sólo aplica a un recurso PendingUpload.
     public void CompleteUpload(string checksum, long verifiedSizeBytes, DateTimeOffset occurredAt)
     {
         if (Status is not FileResourceStatus.PendingUpload)
@@ -274,7 +274,7 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
-    // Only an Available resource may have a download URL issued for it (capability invariant).
+    // Sólo a un recurso Available se le emite una URL de descarga (invariante de la capacidad).
     public void EnsureDownloadable()
     {
         if (Status is not FileResourceStatus.Available)

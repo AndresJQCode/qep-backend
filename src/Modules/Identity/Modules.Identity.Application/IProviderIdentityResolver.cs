@@ -1,9 +1,9 @@
 ﻿namespace Modules.Identity.Application;
 
 /// <summary>
-/// Resolves an external provider subject to the internal user id, for use on every
-/// authenticated request (the API is a resource server validating the provider's
-/// token; the token's <c>sub</c> is the provider subject, never the internal id).
+/// Resuelve el subject de un proveedor externo al id interno de usuario, para usar en cada
+/// request autenticado (la API es un resource server que valida el token del proveedor; el
+/// <c>sub</c> del token es el subject del proveedor, nunca el id interno).
 /// </summary>
 public interface IProviderIdentityResolver
 {

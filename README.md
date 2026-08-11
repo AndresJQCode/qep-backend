@@ -6,12 +6,17 @@ modular sobre .NET 10.
 El alcance ejecutable actual incluye:
 
 - el corte vertical de configuración de tenants, con lectura y actualización;
-- invitación de memberships con aprovisionamiento de usuarios en Identity;
+- ciclo de vida completo de memberships: invitación con aprovisionamiento de
+  usuarios en Identity, listado, suspensión, remoción, reactivación y roles;
+- registro público de tenants, sesión por cookie y catálogo de autorización;
+- catálogo de productos, con listado, alta, edición y desactivación;
+- biblioteca de archivos sobre Cloudflare R2, con carga firmada, escaneo
+  antimalware, variantes y publicación;
+- notificaciones por email con proveedor conmutable;
 - aislamiento por tenant y autorización basada en permisos;
 - control de concurrencia optimista mediante `ETag` e `If-Match`;
 - persistencia PostgreSQL con migraciones de Entity Framework Core;
 - auditoría transaccional y publicación mediante Outbox/Inbox idempotente;
-- base del módulo Identity para usuarios y vínculos con proveedores externos;
 - trazas y métricas con OpenTelemetry;
 - pruebas unitarias, de arquitectura e integración.
 
@@ -35,8 +40,18 @@ Desde este directorio:
 ```powershell
 docker compose up -d
 dotnet restore --locked-mode
+
+# Requerido una sola vez: la cadena de conexión no vive en appsettings.json.
+dotnet user-secrets set "ConnectionStrings:QepDatabase" "Host=localhost;Port=5432;Database=qep;Username=qep;Password=qep_dev" --project src/Api
+
 dotnet run --project src/Api --launch-profile http
 ```
+
+Los valores del ejemplo son los que crea [`compose.yaml`](compose.yaml). Si omite
+ese paso, la API falla al iniciar con
+`InvalidOperationException: Connection string 'QepDatabase' is required.` — un
+error que dice exactamente qué falta, en lugar de un fallo de conexión contra una
+base que no existe.
 
 Al iniciar, la API aplica automáticamente las migraciones de los módulos
 Tenancy e Identity. En `Development`, si aún no existen tenants, también crea el
@@ -66,13 +81,19 @@ La configuración base está en `src/Api/appsettings.json` y puede
 sobrescribirse con variables de entorno, secretos de usuario o los mecanismos
 estándar de configuración de ASP.NET Core.
 
+`ConnectionStrings:QepDatabase` **no está en `appsettings.json`**, a propósito:
+lleva una contraseña, y la regla de este repositorio es que una credencial nunca
+se compromete en un `appsettings*.json`. Se provee por secretos de usuario en
+local y por variable de entorno en k8s
+([`prod-secret.yaml`](k8s/prod-secret.yaml), no el ConfigMap: lleva contraseña).
+
 | Clave | Valor local | Uso |
 |---|---|---|
-| `ConnectionStrings:QepDatabase` | PostgreSQL en `localhost:5432/qep` | Conexión compartida por los módulos |
+| `ConnectionStrings:QepDatabase` | **sin valor por defecto — requerido** | Conexión compartida por los módulos. Ausente ⇒ la API no inicia |
 | `OpenTelemetry:Endpoint` | `http://localhost:4317` | Exportación OTLP de trazas y métricas |
 | `OTEL_SERVICE_NAME` | sin definir (cae a `qep-api`) | `service.name` del recurso; en k8s lo fija el Deployment |
-| `Authentication:Authority` | vacío | Emisor OIDC requerido fuera de Development |
-| `Authentication:Audience` | `qep-api` | Audiencia JWT requerida fuera de Development |
+| `Authentication:Authority` | ausente (cae a `https://accounts.google.com`) | Emisor OIDC; sólo se define para pisar el de Google |
+| `Authentication:Audience` | ausente | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId` |
 
 Ejemplo con variables de entorno:
 
@@ -215,6 +236,28 @@ dotnet run --project src/Api --launch-profile http
 
 ## API implementada
 
+Inventario completo de la superficie HTTP. Las secciones siguientes desarrollan
+sólo la configuración del tenant y la invitación de memberships, con ejemplos
+ejecutables; el resto se documenta en el spec de su slice y en el documento
+OpenAPI (`/openapi/v1.json`, sólo en `Development`).
+
+| Grupo de rutas | Operaciones | Autorización |
+|---|---|---|
+| `/health/live` | `GET` | anónimo |
+| `/api/v1/auth/registration-policy` | `GET` | anónimo |
+| `/api/v1/auth/register-tenant` | `POST` | token del proveedor OIDC |
+| `/api/v1/auth/session` | `POST` | token del proveedor OIDC |
+| `/api/v1/auth/me`, `/api/v1/auth/logout` | `GET`, `POST` | sólo autenticación |
+| `/api/v1/tenants/{tenantId}/authorization/me` | `GET` | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
+| `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET` | `tenancy.membership.read` |
+| `/api/v1/tenants/{tenantId}/settings` | `GET`, `PATCH` | `tenancy.settings.read` / `.update` |
+| `/api/v1/tenants/{tenantId}/memberships` | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles` por membership | `tenancy.membership.invite` / `.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/catalog/products` | `GET`, `POST`, `PUT`, y `deactivate` por producto | `catalog.product.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/files` | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete` |
+
+Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
+**403, nunca 404**, cuando el recurso pertenece a otro tenant.
+
 ### Health check
 
 ```http
@@ -341,32 +384,42 @@ validación también incluyen un mapa `errors`.
 
 ```txt
 src/
-  Api/                         # Host HTTP y manejo de errores
+  Api/                         # Host HTTP, manejo de errores, auth y registro
   Bootstrapper/                # Composición, autenticación y autorización
   BuildingBlocks/                  # Domain, Application, Infrastructure y Observability
   Modules/
-    Tenancy/                       # Api, Application, Domain e Infrastructure
+    Audit/                         # Application, Domain e Infrastructure
+    Authorization/                 # Application
+    Catalog/                       # Api, Application, Domain e Infrastructure
     Identity/                      # Application, Domain e Infrastructure
+    Notifications/                 # Application, Domain e Infrastructure
+    Storage/                       # Api, Application, Domain e Infrastructure
+    Tenancy/                       # Api, Application, Domain e Infrastructure
 tests/
   ArchitectureTests/
-  Modules/Identity/
-    Modules.Identity.UnitTests/
-  Modules/Tenancy/
-    Modules.Tenancy.UnitTests/
-    Modules.Tenancy.IntegrationTests/
+  Modules/<Modulo>/
+    Modules.<Modulo>.UnitTests/          # los siete módulos
+    Modules.<Modulo>.IntegrationTests/   # Audit, Catalog, Notifications, Storage y Tenancy
 ```
 
-PostgreSQL separa los datos por esquemas:
+Sólo `Catalog`, `Storage` y `Tenancy` tienen capa `Api`: los demás no exponen
+endpoints propios. Los de sesión, registro y catálogo de autorización viven en
+`src/Api`.
+
+PostgreSQL separa los datos por esquemas, uno por módulo con estado propio:
 
 - `tenancy`: tenants, memberships y proyección del historial de cambios;
-- `identity`: usuarios y vínculos con proveedores;
+- `identity`: usuarios, vínculos con proveedores y sesiones;
+- `catalog`: productos;
+- `storage`: recursos de archivo y sus variantes;
+- `notifications`: notificaciones emitidas;
 - `audit`: entradas de auditoría;
 - `platform`: mensajes Outbox e Inbox.
 
-Tenancy e Identity usan `DbContext` independientes sobre `QepDatabase`.
-Tenancy registra su historial de migraciones en
-`platform.__ef_migrations_history` e Identity en
-`identity.__ef_migrations_history`, evitando colisiones entre ambos módulos.
+Cada módulo con persistencia usa un `DbContext` independiente sobre
+`QepDatabase` y su propia tabla de historial `__ef_migrations_history`, en su
+esquema, evitando colisiones entre módulos. La excepción es **Tenancy**, que
+registra el suyo en `platform` por ser el primero que se creó.
 
 Una actualización efectiva de la configuración incrementa su versión y guarda,
 en la misma unidad de trabajo, la auditoría y el evento
@@ -375,10 +428,11 @@ dos segundos. El Inbox evita repetir los efectos si el mismo evento se vuelve a
 entregar. Actualmente este despacho es interno al monolito y no utiliza un
 broker externo.
 
-El módulo Identity ya contiene dominio, persistencia y el servicio para obtener
-o aprovisionar usuarios invitados, pero todavía no expone endpoints HTTP.
-Tenancy consume ese servicio mediante un contrato de Application al procesar
-una invitación.
+El módulo Identity contiene dominio, persistencia —usuarios, vínculos con
+proveedores y sesiones— y el servicio para obtener o aprovisionar usuarios
+invitados, pero **no tiene capa `Api` propia**: los endpoints de sesión y
+registro que lo consumen viven en `src/Api`. Tenancy consume ese mismo servicio
+mediante un contrato de Application al procesar una invitación.
 
 ### Consistencia de la invitación entre módulos
 
@@ -445,10 +499,12 @@ sección [Activar y desactivar el modo de desarrollo](#activar-y-desactivar-el-m
 
 ### Arquitectura por capas, con reglas ejecutables
 
-Monolito modular con Clean Architecture estricta por módulo. Cada módulo
-(`Tenancy`, `Identity`, `Authorization`, `Notifications`, `Audit`, `Storage`)
-se compone de cuatro assemblies: `Domain` →
-`Application` → `Infrastructure` → `Api`. `tests/ArchitectureTests` contiene
+Monolito modular con Clean Architecture estricta por módulo. Los siete módulos
+son `Audit`, `Authorization`, `Catalog`, `Identity`, `Notifications`, `Storage`
+y `Tenancy`, y se componen de hasta cuatro assemblies: `Domain` →
+`Application` → `Infrastructure` → `Api`. Un módulo sólo trae las capas que
+necesita: `Authorization` es sólo `Application`, y únicamente `Catalog`,
+`Storage` y `Tenancy` tienen `Api`. `tests/ArchitectureTests` contiene
 un test xUnit por módulo que usa `Assembly.GetReferencedAssemblies()` para
 verificar que `Domain` no referencia capas externas, `Application` no
 referencia `Infrastructure`/`Api`, e `Infrastructure` no referencia `Api`. La
@@ -602,3 +658,81 @@ La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones
 repetidas, concurrencia con `ETag`, escritura de auditoría/Outbox e idempotencia
 de Inbox.
+
+## Glosario SDD
+
+Este repositorio trabaja con **Spec-Driven Development (SDD)**: ningún cambio de código
+existe fuera de un spec con ID. El método es autoridad única y vive en
+`qep-frontend/sdd/00-metodo/`; acá sólo se resume el vocabulario que aparece en commits,
+specs, PRs y en el ledger de este repo ([`sdd/`](sdd/)).
+
+### Unidades de trabajo
+
+| Término | Qué es |
+|---|---|
+| **Slice** | Rebanada vertical entregable y revisable: dominio, API, autorización, auditoría, UI y pruebas de una capacidad concreta. Unidad de ejecución del método. Máximo ~400 líneas autoradas de diff. |
+| **Slice partido** | Slice que superó el tamaño revisable y se dividió con sufijo de letra (`CAT-02a`, `CAT-02b`). El ID padre permanece como fila en el ledger; los IDs siguientes **no** se renumeran. |
+| **Módulo** | Frontera de negocio con responsabilidad, dueños y contratos propios (`catalog`, `auth`, `customers`). Un módulo por carpeta en `03-modulos/`. |
+| **Ficha de módulo** | `03-modulos/<modulo>/README.md`: qué posee, qué **no** posee, de qué depende, qué expone. Sin ficha no hay slice. |
+| **Capability de plataforma** | Infraestructura que varios módulos consumen igual (Identity, Tenancy, Authorization, Audit, Storage, Notifications). Se consume, no se reimplementa; tocarla exige registrar la decisión. |
+
+### Gobierno y estado
+
+| Término | Qué es |
+|---|---|
+| **Gate** | Punto de autorización que un módulo debe cerrar para avanzar de estado. Se documenta en `03-modulos/<modulo>/gate.md` y reserva el ID `<PREFIJO>-00`. Sin gate cerrado no hay código. |
+| **G1 → G4** | Las cuatro transiciones de un módulo: **G1** ficha escrita, **G2** gate cerrado, **G3** primer slice, **G4** cierre. Procedimiento en `00-metodo/apertura-de-modulo.md`. |
+| **Estados de módulo** | `Propuesto` (sin frontera escrita) → `Definido` (ficha lista) → `Autorizado` (gate cerrado) → `En curso` (hay slices) → `Estable` (lo planificado cerró). Viven en `01-contexto/registro-de-modulos.md`. |
+| **Estados de slice** | `Pending`, `In Progress` (uno solo a la vez por repositorio), `Blocked` (con ID de decisión), `Complete` (DoD cumplido con evidencia). |
+| **Ledger** | [`sdd/02-plan/plan-maestro.md`](sdd/02-plan/plan-maestro.md): registro único de slices, estado, evidencia, commits y decisiones. Cada repo tiene el suyo y **una fila de slice vive en un solo ledger**. |
+| **Handoff** | Entrada de cierre de sesión en el ledger: qué quedó hecho, qué falta y cuál es la próxima acción segura. Se escribe siempre, incluso si el trabajo quedó bloqueado o sin commit. |
+| **Autoridad** | Qué gana ante una discrepancia. El código de los dos repos manda sobre cualquier documento; el documento se corrige (`SDD-ADR-01`). |
+
+### IDs y trazabilidad
+
+| ID | Qué identifica | Dónde vive |
+|---|---|---|
+| `<PREFIJO>-<NN>` | Slice (`CAT-02`, `AUTH-03`) | `03-modulos/<modulo>/slices/` |
+| `<PREFIJO>-00` | Gate del módulo (`CLI-00`) | `03-modulos/<modulo>/gate.md` |
+| `CA-<PREFIJO>-<NN>-<MM>` | **Criterio de aceptación** verificable de un slice | dentro del spec del slice |
+| `SDD-OD-<NN>` | **Decisión abierta**: pregunta sin responder que puede bloquear trabajo | ledger |
+| `SDD-CT-<NN>` | **Contradicción**: dos fuentes que se contradicen, o un defecto conocido sin cerrar | ledger |
+| `SDD-ADR-<NN>` | **Decisión de arquitectura** ya tomada, con evidencia | `01-contexto/decisiones-de-arquitectura.md` |
+| `RN-<NNN>` / `RF-<NNN>` | Regla de negocio / requisito funcional | `04-requisitos/` (nunca se implementa leyendo desde ahí; se cita por ID) |
+
+Cerrar un `SDD-OD-*` de efecto estructural produce un `SDD-ADR-*`; la fila original se
+conserva apuntando a él. **Un ID emitido nunca cambia y nunca se reutiliza.**
+
+La cadena de trazabilidad exigida:
+
+```txt
+commit -> slice (PREFIJO-NN) -> criterio (CA-PREFIJO-NN-MM) -> regla del módulo
+       -> requisito de negocio (RN-* / RF-*) | decisión (SDD-ADR-*)
+       | contrato existente (código, con archivo y línea)
+```
+
+### Ciclo de ejecución
+
+| Término | Qué es |
+|---|---|
+| **RED** | Prueba escrita antes de la implementación, que falla **por la razón esperada**. |
+| **GREEN** | Mínimo código que la pasa, sin adelantar el slice siguiente. |
+| **Evidencia literal** | El mensaje de fallo real y el conteo real (`8/8`), copiados al ledger. `"las pruebas pasan"` no es evidencia. |
+| **DoD** (*Definition of Done*) | Checklist de cierre de un slice: contrato, pruebas, build, seguridad, datos, auditoría, revisión y trazabilidad. Un ítem que no aplica se marca `N/A` **con la razón**. Vive en `00-metodo/definition-of-done.md`. |
+| **DECISIÓN-PENDIENTE** | Marca lo que falta en vez de inventarlo. Campos, estados, rutas, permisos y códigos de error deben existir en el código o en el spec; lo que no, se registra, no se asume. |
+
+### Revisión
+
+**Revisión adversarial**: lectura del diff buscando que falle, no que apruebe. Se elige el
+**lente** según el riesgo dominante:
+
+| Señal dominante en el diff | Lente |
+|---|---|
+| Nombres, estructura, mantenibilidad | **legibilidad** |
+| Comportamiento, estado, pruebas, regresiones | **fiabilidad** |
+| Fallos parciales, recuperación, dependencias degradadas | **resiliencia** |
+| Seguridad, permisos, exposición de datos, arquitectura | **riesgo** |
+
+Un diff que toca auth, permisos o pagos, o que supera 400 líneas, corre los cuatro lentes.
+Se admite **una sola transacción de corrección** por revisión: los hallazgos posteriores van
+a un slice de seguimiento, no reabren la revisión.

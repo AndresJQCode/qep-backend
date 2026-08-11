@@ -28,13 +28,13 @@ public sealed class InvitationNotificationTests
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
-        // The background worker consumes the membership-invited Outbox event and
-        // delivers the invitation email through the dev log channel.
+        // El worker de fondo consume el evento de Outbox de membresía invitada y
+        // entrega el email de invitación por el canal de log de desarrollo.
         var status = await WaitForNotificationStatusAsync(connection, email);
         Assert.Equal("Sent", status);
 
-        // Idempotent: the worker's inbox prevents a second notification for the same
-        // Outbox message even across further polling ticks.
+        // Idempotente: el inbox del worker impide una segunda notificación para el mismo
+        // mensaje de Outbox, incluso a través de ticks de sondeo posteriores.
         await Task.Delay(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
         var count = await CountNotificationsAsync(connection, email);
         Assert.Equal(1L, count);
@@ -119,12 +119,12 @@ public sealed class InvitationNotificationTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

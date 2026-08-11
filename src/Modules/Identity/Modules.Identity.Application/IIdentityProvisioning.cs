@@ -1,17 +1,17 @@
 ﻿namespace Modules.Identity.Application;
 
 /// <summary>
-/// Published cross-module contract of the Identity module. Other modules depend on
-/// this interface (not on Identity internals) to obtain an internal user id for an
-/// invited email. It returns a plain <see cref="Guid"/> so callers reference users by
-/// id only, per ADR 0016.
+/// Contrato publicado entre módulos del módulo Identity. Otros módulos dependen de esta
+/// interfaz (no de los internos de Identity) para obtener un id interno de usuario a partir
+/// de un email invitado. Devuelve un <see cref="Guid"/> pelado para que los llamadores
+/// referencien usuarios sólo por id, según el ADR 0016.
 /// </summary>
 public interface IIdentityProvisioning
 {
     /// <summary>
-    /// Returns the id of the user for <paramref name="email"/>, creating an invited
-    /// user if none exists. Idempotent: repeated calls for the same email return the
-    /// same user id and never create duplicates.
+    /// Devuelve el id del usuario de <paramref name="email"/>, creando un usuario invitado
+    /// si no existe. Es idempotente: llamadas repetidas para el mismo email devuelven el
+    /// mismo id de usuario y nunca crean duplicados.
     /// </summary>
     Task<Guid> GetOrProvisionInvitedUserAsync(string email, CancellationToken cancellationToken);
 }

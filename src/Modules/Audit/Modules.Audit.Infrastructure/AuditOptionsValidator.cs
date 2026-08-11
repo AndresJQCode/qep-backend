@@ -2,8 +2,8 @@
 
 namespace Modules.Audit.Infrastructure;
 
-// Fails fast at startup (ValidateOnStart) so a misconfigured Audit section is caught on
-// boot: retention windows must be positive.
+// Falla rápido al arrancar (ValidateOnStart) para que una sección Audit mal configurada se
+// detecte en el boot: las ventanas de retención tienen que ser positivas.
 internal sealed class AuditOptionsValidator : IValidateOptions<AuditOptions>
 {
     public ValidateOptionsResult Validate(string? name, AuditOptions options)

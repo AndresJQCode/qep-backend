@@ -11,13 +11,13 @@ using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
 
-// Exercises the real (non-dev-stub) authentication branch — every other integration
-// test in this project runs with Authentication:UseDevelopmentStub defaulted on
-// (Development environment), so none of them ever touch SessionCookieAuthenticationHandler,
-// the GoogleBearer scheme pinning, RequireCsrfHeaderMiddleware, or
-// SessionRevocationWorker for real. This suite self-issues a Google-shaped JWT
-// (Authentication:TestSigningKey — see QepServiceCollectionExtensions.AddAuthentication)
-// so it never depends on Google's live OIDC discovery endpoint.
+// Ejercita la rama de autenticación real (sin el stub de desarrollo) — todas las demás
+// pruebas de integración de este proyecto corren con Authentication:UseDevelopmentStub
+// en true por defecto (entorno Development), así que ninguna toca de verdad
+// SessionCookieAuthenticationHandler, el pinning del esquema GoogleBearer,
+// RequireCsrfHeaderMiddleware ni SessionRevocationWorker. Esta suite se auto-emite un JWT
+// con forma de Google (Authentication:TestSigningKey — ver QepServiceCollectionExtensions.AddAuthentication)
+// así que nunca depende del endpoint de discovery OIDC vivo de Google.
 public sealed class RealAuthenticationApiTests
 {
     private const string Issuer = "https://accounts.google.com";
@@ -53,9 +53,9 @@ public sealed class RealAuthenticationApiTests
 
         var (_, tenantId) = await RegisterOwnerAndTenantAsync(factory);
 
-        // A fresh client with no cookie, only a still-valid Google bearer token —
-        // this is exactly the bypass the GoogleBearer/QepSession scheme split
-        // (QepServiceCollectionExtensions.AddAuthentication) exists to prevent.
+        // Un cliente nuevo sin cookie, sólo con un bearer token de Google todavía válido —
+        // este es exactamente el bypass que la separación de esquemas GoogleBearer/QepSession
+        // (QepServiceCollectionExtensions.AddAuthentication) existe para impedir.
         using var bearerOnlyClient = factory.CreateClient();
         var token = IssueGoogleIdToken(Guid.NewGuid().ToString(), NewEmail(), emailVerified: true);
         using var request = new HttpRequestMessage(
@@ -138,10 +138,10 @@ public sealed class RealAuthenticationApiTests
 
         var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
 
-        // Owner invites a second real user, who then logs in for real (also
-        // through the GoogleBearer-pinned /auth/session, establishing their own
-        // session cookie) — the dev-stub's "trust any header" shortcut doesn't
-        // exist on this branch, so this is a full, real invite+accept+login.
+        // El owner invita a un segundo usuario real, que después entra de verdad (también
+        // por el /auth/session fijado a GoogleBearer, estableciendo su propia
+        // cookie de sesión) — el atajo "confiar en cualquier header" del stub de desarrollo
+        // no existe en esta rama, así que esto es un invitar+aceptar+entrar completo y real.
         var memberEmail = NewEmail();
         using var inviteRequest = new HttpRequestMessage(
             HttpMethod.Post,
@@ -175,7 +175,7 @@ public sealed class RealAuthenticationApiTests
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
 
-        // Confirm the member's session is live before suspending them.
+        // Confirmar que la sesión del miembro está viva antes de suspenderlo.
         var beforeSuspend = await member.GetAsync(
             "/api/v1/auth/me",
             TestContext.Current.CancellationToken);
@@ -191,9 +191,9 @@ public sealed class RealAuthenticationApiTests
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, suspendResponse.StatusCode);
 
-        // SessionRevocationWorker consumes tenancy.membership-suspended.v1 off the
-        // outbox on a timer (see SessionRevocationWorker) — poll until the
-        // member's session cookie stops authenticating.
+        // SessionRevocationWorker consume tenancy.membership-suspended.v1 del
+        // outbox por temporizador (ver SessionRevocationWorker) — sondear hasta que la
+        // cookie de sesión del miembro deje de autenticar.
         await WaitUntilAsync(async () =>
         {
             var response = await member.GetAsync(
@@ -417,16 +417,16 @@ public sealed class RealAuthenticationApiTests
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            // Not "Development": UseDevelopmentStub defaults off outside it, so this
-            // exercises the real GoogleBearer/QepSession branch — see
+            // No "Development": fuera de ese entorno UseDevelopmentStub queda apagado por
+            // defecto, así que esto ejercita la rama real GoogleBearer/QepSession — ver
             // QepServiceCollectionExtensions.AddAuthentication.
             //
-            // Not "Local" either, which is what this used to be: that name makes Program
-            // load user-secrets (src/Api/Program.cs:23-26) *after* the UseSetting values
-            // below, so a developer's ConnectionStrings:QepDatabase secret silently won
-            // and these tests ran against the real development database — failing when it
-            // was down and writing to it when it was up. Any name outside "Development"
-            // and "Local" keeps the real auth branch without that override. SDD-CT-14.
+            // Tampoco "Local", que es lo que era antes: ese nombre hace que Program cargue
+            // los user-secrets (src/Api/Program.cs:23-26) *después* de los valores de UseSetting
+            // de abajo, así que el secreto ConnectionStrings:QepDatabase de un developer ganaba
+            // en silencio y estas pruebas corrían contra la base de desarrollo real — fallando
+            // cuando estaba caída y escribiéndole cuando estaba arriba. Cualquier nombre fuera de
+            // "Development" y "Local" mantiene la rama de auth real sin ese override. SDD-CT-14.
             builder.UseEnvironment("IntegrationTests");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
@@ -434,12 +434,12 @@ public sealed class RealAuthenticationApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
             builder.UseSetting("Registration:PublicTenantSignupEnabled", "true");
             builder.UseSetting("Authentication:Audience", Audience);

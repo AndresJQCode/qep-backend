@@ -3,8 +3,8 @@ using Modules.Notifications.Application;
 
 namespace Modules.Notifications.Infrastructure.Channels;
 
-// Development email channel: records the message instead of sending it, so the full
-// notification flow is exercised without an external provider (ADR 0018).
+// Canal de email de desarrollo: registra el mensaje en vez de enviarlo, para ejercitar todo
+// el flujo de notificación sin un proveedor externo (ADR 0018).
 internal sealed partial class LogEmailChannel(ILogger<LogEmailChannel> logger) : IEmailChannel
 {
     [LoggerMessage(

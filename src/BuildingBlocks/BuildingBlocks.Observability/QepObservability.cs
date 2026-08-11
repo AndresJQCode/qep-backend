@@ -27,8 +27,8 @@ public static class QepObservability
         IConfiguration configuration,
         IHostEnvironment environment)
     {
-        // OTEL_SERVICE_NAME is injected by the k8s Deployment; the constant is only a
-        // local/dev fallback so the service name is never hardcoded for a real environment.
+        // OTEL_SERVICE_NAME lo inyecta el Deployment de k8s; la constante es sólo un
+        // fallback local/de desarrollo, para no hardcodear el nombre en un entorno real.
         var serviceName = configuration["OTEL_SERVICE_NAME"] ?? ServiceName;
         var endpoint = configuration["OpenTelemetry:Endpoint"];
 
@@ -51,9 +51,9 @@ public static class QepObservability
                     .AddAspNetCoreInstrumentation(options => options.RecordException = true)
                     .AddHttpClientInstrumentation()
                     .AddNpgsql();
-                // OtlpExporterOptions falls back to OTEL_EXPORTER_OTLP_ENDPOINT (or its own
-                // default) when no explicit endpoint is set, so the exporter must always be
-                // registered even if "OpenTelemetry:Endpoint" is not configured.
+                // OtlpExporterOptions cae a OTEL_EXPORTER_OTLP_ENDPOINT (o a su propio default)
+                // cuando no hay endpoint explícito seteado, así que el exportador siempre tiene
+                // que registrarse aunque "OpenTelemetry:Endpoint" no esté configurado.
                 tracing.AddOtlpExporter(options =>
                 {
                     if (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
@@ -83,8 +83,8 @@ public static class QepObservability
     }
 
     /// <summary>
-    /// Stdout JSON logging with TraceId/SpanId included so Grafana can jump from a trace to
-    /// its correlated logs (Loki) without any external enricher.
+    /// Logging JSON a stdout con TraceId/SpanId incluidos para que Grafana pueda saltar de una
+    /// traza a sus logs correlacionados (Loki) sin ningún enricher externo.
     /// </summary>
     public static ILoggingBuilder AddQepLogging(this ILoggingBuilder logging)
     {

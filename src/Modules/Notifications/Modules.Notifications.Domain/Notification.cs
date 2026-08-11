@@ -1,11 +1,11 @@
 ﻿namespace Modules.Notifications.Domain;
 
 /// <summary>
-/// A record of an outbound communication request processed by the Notifications
-/// capability. Created in <see cref="NotificationStatus.Pending"/> and transitioned
-/// to <see cref="NotificationStatus.Sent"/> or <see cref="NotificationStatus.Failed"/>
-/// by the delivery worker. Idempotent processing is guarded by the inbox, not by this
-/// aggregate.
+/// El registro de una solicitud de comunicación saliente procesada por la capacidad
+/// Notifications. Se crea en <see cref="NotificationStatus.Pending"/> y el worker de
+/// entrega la pasa a <see cref="NotificationStatus.Sent"/> o a
+/// <see cref="NotificationStatus.Failed"/>. El procesamiento idempotente lo garantiza el
+/// inbox, no este agregado.
 /// </summary>
 public sealed class Notification
 {

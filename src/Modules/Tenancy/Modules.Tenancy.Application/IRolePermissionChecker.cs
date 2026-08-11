@@ -1,12 +1,12 @@
 ﻿namespace Modules.Tenancy.Application;
 
 /// <summary>
-/// Resolves whether any of a set of membership role references grants a given
-/// permission. Owned by Tenancy so membership invariants (e.g. a tenant must retain
-/// a member able to manage memberships) can be enforced without Tenancy depending on
-/// Authorization's role catalog internals; implemented by Authorization against its
-/// own <c>IRoleCatalog</c>, mirroring the <see cref="IMembershipDirectory"/> contract
-/// direction (ADR 0016 module boundaries).
+/// Resuelve si alguna de un conjunto de referencias de rol de membresía concede un permiso
+/// dado. Es propiedad de Tenancy para que los invariantes de membresía (por ejemplo, que un
+/// tenant conserve un miembro capaz de gestionar membresías) se puedan hacer cumplir sin que
+/// Tenancy dependa de los internos del catálogo de roles de Authorization; lo implementa
+/// Authorization contra su propio <c>IRoleCatalog</c>, en la misma dirección del contrato
+/// <see cref="IMembershipDirectory"/> (fronteras de módulo del ADR 0016).
 /// </summary>
 public interface IRolePermissionChecker
 {

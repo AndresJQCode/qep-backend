@@ -14,6 +14,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Authorization\Modules.Authorization.Application\Modules.Authorization.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Catalog\Modules.Catalog.Api\Modules.Catalog.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Catalog\Modules.Catalog.Application\Modules.Catalog.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Catalog\Modules.Catalog.Domain\Modules.Catalog.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Catalog\Modules.Catalog.Infrastructure\Modules.Catalog.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Domain\Modules.Identity.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />

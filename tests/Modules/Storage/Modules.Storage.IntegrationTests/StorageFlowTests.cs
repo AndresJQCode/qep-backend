@@ -31,19 +31,19 @@ public sealed class StorageFlowTests
 
         var payload = Encoding.UTF8.GetBytes("%PDF-1.7\nhello storage");
 
-        // 1. Create the upload session (resource is PendingUpload).
+        // 1. Crear la sesión de subida (el recurso queda en PendingUpload).
         var session = await CreateSessionAsync(client, payload.Length);
         Assert.NotEqual(Guid.Empty, session.FileResourceId);
         Assert.StartsWith("https://r2.test/", session.UploadUrl, StringComparison.Ordinal);
 
-        // 2. Simulate R2 accepting the bytes through its presigned URL.
+        // 2. Simular que R2 acepta los bytes por su URL prefirmada.
         factory.ObjectStorage.Upload(session.StorageKey, payload);
 
-        // 3. Complete the upload: verified, scanned (no-op clean), becomes Available.
+        // 3. Completar la subida: verificada, escaneada (no-op limpio), pasa a Available.
         var completed = await CompleteAsync(client, session.FileResourceId);
         Assert.Equal("Available", completed.Status);
 
-        // 4. Issue a download URL only after the resource becomes Available.
+        // 4. Emitir una URL de descarga recién cuando el recurso queda Available.
         var download = await IssueDownloadAsync(client, session.FileResourceId);
         Assert.StartsWith("https://r2.test/", download.Url, StringComparison.Ordinal);
         var finalKey = new Uri(download.Url).AbsolutePath.TrimStart('/');
@@ -75,13 +75,13 @@ public sealed class StorageFlowTests
         Assert.NotNull(filtered);
         Assert.Single(filtered.Items);
 
-        // 5. Operational audit lands in audit.entries via the projection worker.
+        // 5. La auditoría operativa aterriza en audit.entries por el worker de proyección.
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         var auditCount = await WaitForAuditAsync(connection, session.FileResourceId.ToString());
         Assert.Equal(1L, auditCount);
 
-        // 6. Soft delete; the resource is no longer downloadable.
+        // 6. Borrado lógico; el recurso deja de ser descargable.
         var deleted = await DeleteAsync(client, session.FileResourceId);
         Assert.True(deleted.Deleted);
 
@@ -100,7 +100,7 @@ public sealed class StorageFlowTests
         using var client = CreateClient(factory);
 
         var session = await CreateSessionAsync(client, sizeBytes: 16);
-        // No PUT: the object was never uploaded.
+        // Sin PUT: el objeto nunca se subió.
         var complete = await client.PostAsync(
             $"/api/v1/tenants/{SeededTenantId}/files/{session.FileResourceId}/complete",
             content: null,

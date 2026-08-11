@@ -3,9 +3,9 @@ using Modules.Storage.Domain;
 
 namespace Modules.Storage.Application;
 
-// Opaque, tenant-scoped physical object key (implementation-baseline Storage):
-// The key is not a path the client controls. Browser uploads only receive a staging key;
-// validated objects are promoted to a separate immutable final key.
+// Clave física de objeto, opaca y acotada al tenant (Storage, línea base de implementación):
+// La clave no es un path que el cliente controle. Las subidas del navegador sólo reciben una
+// clave de staging; los objetos validados se promueven a una clave final inmutable aparte.
 internal static class StorageKey
 {
     public static string StagingFor(Guid tenantId, FileResourceId resourceId) =>

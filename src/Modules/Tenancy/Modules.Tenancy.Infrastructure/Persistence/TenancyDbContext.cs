@@ -25,9 +25,9 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
     {
         ConfigureTenant(modelBuilder);
         ConfigureMembership(modelBuilder);
-        // audit.entries is owned by the Audit module; map it here as an
-        // ExcludeFromMigrations write projection so critical audits commit atomically in
-        // this context's transaction (ADR 0019).
+        // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
+        // escritura ExcludeFromMigrations para que las auditorías críticas commiteen atómicas en
+        // la transacción de este contexto (ADR 0019).
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureOutbox(modelBuilder);
         ConfigureInbox(modelBuilder);

@@ -7,41 +7,39 @@ metadata:
     app.kubernetes.io/name: qep-backend
     app.kubernetes.io/part-of: qep
     app.kubernetes.io/environment: prod
+# Únicamente el delta por entorno. appsettings.json viaja dentro de la imagen y sigue
+# siendo la línea base versionada de valores por defecto; las variables de entorno tienen
+# precedencia sobre él, así que una clave que sólo repita el valor por defecto no va acá:
+# quedaría desactualizada en cuanto ese valor cambie en el repositorio. Las credenciales
+# viven en prod-secret.yaml, nunca en este ConfigMap: su contenido es texto plano para
+# cualquiera que pueda leer ConfigMaps en el namespace.
 data:
   ASPNETCORE_ENVIRONMENT: "Production"
-  # The outbox publisher and the three inbox relays poll every 2-3s, and EF Core
-  # logs every command at Information, so the default level floods the pod with
-  # "Executed DbCommand" lines even when there is nothing to process. Raising
-  # this category to Warning keeps SQL failures visible and drops the polling
-  # noise. Left out of appsettings.json on purpose: local runs still show SQL.
+  # El publicador del outbox y los tres relays del inbox consultan cada 2-3s, y EF Core
+  # registra cada comando en nivel Information, así que el nivel por defecto inunda el pod
+  # de líneas "Executed DbCommand" incluso cuando no hay nada que procesar. Subir esta
+  # categoría a Warning mantiene visibles los fallos de SQL y elimina el ruido del sondeo.
+  # Queda fuera de appsettings.json a propósito: las ejecuciones locales sí muestran SQL.
   Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command: "Warning"
-  # Full ADO.NET connection string, supplied as a single variable. It cannot be
-  # composed from discrete host/port/user parts here: k8s $(VAR) expansion only
-  # resolves variables declared in the container's own "env" block, never keys
-  # arriving through envFrom.
-  ConnectionStrings__QepDatabase: "#{DATABASE_CONNECTION_STRING}#"
-  # Standard OTLP env vars read directly by the SDK exporter, not through
-  # IConfiguration — see src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
-  # Do not set OpenTelemetry__Endpoint here, it would take precedence over these.
+  # Variables OTLP estándar que el exportador del SDK lee directamente, no a través de
+  # IConfiguration — ver src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
+  # No definir OpenTelemetry__Endpoint acá: tendría precedencia sobre estas.
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
   OTEL_SERVICE_NAME: "qep-backend"
   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=qep"
-  # Authentication__Authority is left unset: it defaults to Google's own issuer
-  # (https://accounts.google.com) in QepServiceCollectionExtensions.AddAuthentication.
-  # Only the audience (Google OAuth client id) must be provided per environment.
+  # Authentication__Authority queda sin definir: por defecto toma el emisor propio de
+  # Google (https://accounts.google.com) en QepServiceCollectionExtensions.AddAuthentication.
+  # Sólo la audiencia (el client id de OAuth de Google) debe proveerse por entorno.
   Authentication__Audience: "#{AUTHENTICATION_GOOGLE_CLIENT_ID}#"
+  # Repite el valor por defecto de la imagen a propósito: que un visitante anónimo pueda
+  # crear un tenant es una decisión de seguridad, y producción la declara de forma
+  # explícita en lugar de heredarla en silencio.
   Registration__PublicTenantSignupEnabled: "true"
-  Notifications__EmailProvider: "infobip"
   Notifications__LoginUrl: "#{NOTIFICATIONS_LOGIN_URL}#"
   Notifications__Infobip__BaseUrl: "#{NOTIFICATIONS_INFOBIP_BASE_URL}#"
-  Notifications__Infobip__ApiKey: "#{NOTIFICATIONS_INFOBIP_API_KEY}#"
   Notifications__Infobip__SenderEmail: "#{NOTIFICATIONS_INFOBIP_SENDER_EMAIL}#"
-  Audit__SecurityRetentionDays: "2555"
-  Audit__OperationalRetentionDays: "730"
-  Storage__PresignedUrlMinutes: "5"
+  # Identificadores, no credenciales. El par de claves de R2 está en prod-secret.yaml.
   Storage__R2__AccountId: "#{STORAGE_R2_ACCOUNT_ID}#"
-  Storage__R2__AccessKeyId: "#{STORAGE_R2_ACCESS_KEY_ID}#"
-  Storage__R2__SecretAccessKey: "#{STORAGE_R2_SECRET_ACCESS_KEY}#"
   Storage__R2__Bucket: "#{STORAGE_R2_BUCKET}#"
   Storage__R2__PublicBucket: "#{STORAGE_R2_PUBLIC_BUCKET}#"
   Storage__R2__PublicBaseUrl: "#{STORAGE_R2_PUBLIC_BASE_URL}#"

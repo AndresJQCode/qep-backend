@@ -2,10 +2,10 @@
 
 namespace Modules.Notifications.Infrastructure;
 
-// Strongly-typed binding of the "Notifications" appsettings section, replacing
-// ad-hoc configuration["Notifications:..."] string lookups. Consumers inject
-// IOptions<NotificationsOptions>; validation runs at startup
-// (see NotificationsOptionsValidator).
+// Binding fuertemente tipado de la sección "Notifications" de appsettings, en reemplazo
+// de las búsquedas ad-hoc configuration["Notifications:..."]. Los consumidores inyectan
+// IOptions<NotificationsOptions>; la validación corre al arrancar
+// (ver NotificationsOptionsValidator).
 public sealed class NotificationsOptions
 {
     public const string SectionName = "Notifications";
@@ -14,7 +14,7 @@ public sealed class NotificationsOptions
 
     public const string InfobipProvider = "infobip";
 
-    // "log" (default development channel) or "infobip" (ADR 0018).
+    // "log" (canal de desarrollo por defecto) o "infobip" (ADR 0018).
     public string EmailProvider { get; init; } = LogProvider;
 
     public string LoginUrl { get; init; } = "http://localhost:3002/login";

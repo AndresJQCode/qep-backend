@@ -4,10 +4,10 @@ using Modules.Audit.Domain;
 
 namespace Modules.Tenancy.Infrastructure.Persistence;
 
-// Atomic audit path (ADR 0019) for Tenancy: buffers the audit entry in TenancyDbContext
-// so it commits or rolls back together with the business change in the same unit of work.
-// audit.entries is owned by the Audit module's migrations; TenancyDbContext maps it as an
-// ExcludeFromMigrations write projection.
+// Camino de auditoría atómica (ADR 0019) para Tenancy: acumula la entrada de auditoría en
+// TenancyDbContext para que commitee o revierta junto con el cambio de negocio, en la misma
+// unidad de trabajo. audit.entries es propiedad de las migraciones del módulo Audit;
+// TenancyDbContext la mapea como proyección de escritura ExcludeFromMigrations.
 internal sealed class TenancyAuditRecorder(TenancyDbContext dbContext) : IAuditRecorder
 {
     public void Record(
@@ -36,7 +36,7 @@ internal sealed class TenancyAuditRecorder(TenancyDbContext dbContext) : IAuditR
         dbContext.AuditEntries.Add(entry);
     }
 
-    // Default source is the module prefix of the action code (`<module>.<resource>.<verb>`).
+    // La fuente por defecto es el prefijo de módulo del código de acción (`<module>.<resource>.<verb>`).
     private static string DeriveSource(string action)
     {
         var separator = action.IndexOf('.');

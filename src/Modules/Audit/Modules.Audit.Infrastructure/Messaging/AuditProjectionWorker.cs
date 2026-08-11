@@ -9,11 +9,11 @@ using Modules.Audit.Infrastructure.Persistence;
 
 namespace Modules.Audit.Infrastructure.Messaging;
 
-// Operational audit path (ADR 0019): projects audit events published to the platform
-// Outbox into the append-only audit.entries store. Idempotent via this module's own
-// inbox keyed by (consumer, outbox message id); each message is committed independently
-// so one failure does not block the batch. Critical/security audits do not use this path
-// — they are written atomically inside the producer transaction.
+// Camino de auditoría operativa (ADR 0019): proyecta al almacén append-only audit.entries
+// los eventos de auditoría publicados en el Outbox de plataforma. Es idempotente por el
+// inbox propio de este módulo, con clave (consumidor, id de mensaje de outbox); cada
+// mensaje se commitea independiente, así que una falla no bloquea el lote. Las auditorías
+// críticas/de seguridad no van por acá — se escriben atómicas en la transacción del productor.
 internal sealed partial class AuditProjectionWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<AuditProjectionWorker> logger) : BackgroundService

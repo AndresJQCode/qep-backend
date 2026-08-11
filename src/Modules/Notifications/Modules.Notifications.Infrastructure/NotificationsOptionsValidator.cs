@@ -2,9 +2,9 @@
 
 namespace Modules.Notifications.Infrastructure;
 
-// Fails fast at startup (ValidateOnStart) so a misconfigured Notifications section
-// is caught on boot rather than on the first email. Infobip credentials are only
-// required when that provider is selected.
+// Falla rápido al arrancar (ValidateOnStart) para que una sección Notifications mal
+// configurada se detecte en el boot y no en el primer email. Las credenciales de Infobip
+// sólo se exigen cuando ese proveedor está seleccionado.
 internal sealed class NotificationsOptionsValidator : IValidateOptions<NotificationsOptions>
 {
     private static readonly string[] KnownProviders =

@@ -1,7 +1,7 @@
 ﻿namespace Modules.Storage.Application;
 
-// Outbound port to Cloudflare R2 through its S3-compatible API (ADR 0020).
-// Presigned URLs are short-lived and issued only after authorization is (re-)evaluated.
+// Puerto de salida hacia Cloudflare R2 por su API compatible con S3 (ADR 0020).
+// Las URLs prefirmadas son de vida corta y se emiten sólo tras (re)evaluar la autorización.
 public interface IObjectStorage
 {
     Task<Uri> CreatePresignedUploadUrlAsync(
@@ -13,7 +13,7 @@ public interface IObjectStorage
         string key,
         CancellationToken cancellationToken);
 
-    // Metadata of the stored object, or null if the object is absent (upload never happened).
+    // Metadata del objeto almacenado, o null si el objeto no está (la subida nunca ocurrió).
     Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken);
 
     Task DeleteAsync(string key, CancellationToken cancellationToken);
@@ -24,10 +24,10 @@ public interface IObjectStorage
         string expectedChecksum,
         CancellationToken cancellationToken);
 
-    // Server-side read/write, for backend processes that need the bytes directly (e.g. a
-    // module parsing an uploaded file import, or writing a generated report) rather than
-    // handing a presigned URL to a browser. Same bucket/credentials as the presigned-URL
-    // path; just a different access pattern for a non-browser caller.
+    // Lectura/escritura del lado del servidor, para procesos de backend que necesitan los bytes
+    // directo (por ejemplo un módulo parseando un archivo importado, o escribiendo un reporte
+    // generado) en vez de entregarle una URL prefirmada a un navegador. Mismo bucket y mismas
+    // credenciales que el camino de URL prefirmada; sólo otro patrón de acceso, sin navegador.
     Task<byte[]> DownloadAsync(string key, CancellationToken cancellationToken);
 
     Task UploadAsync(

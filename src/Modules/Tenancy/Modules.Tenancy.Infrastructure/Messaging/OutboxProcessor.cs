@@ -9,10 +9,10 @@ internal interface IOutboxProcessor
     Task<int> ProcessPendingAsync(CancellationToken cancellationToken);
 }
 
-// Internal Outbox publisher for the modular monolith (no external broker). It
-// claims a batch of unprocessed messages with FOR UPDATE SKIP LOCKED so multiple
-// workers never grab the same row, dispatches each, and marks processed_at. A
-// failed dispatch records attempts/last_error and is retried on a later tick.
+// Publicador interno del Outbox para el monolito modular (sin broker externo). Reclama
+// un lote de mensajes sin procesar con FOR UPDATE SKIP LOCKED para que varios workers
+// nunca tomen la misma fila, despacha cada uno y marca processed_at. Un despacho
+// fallido registra attempts/last_error y se reintenta en un tick posterior.
 internal sealed class OutboxProcessor(
     TenancyDbContext dbContext,
     IIntegrationEventDispatcher dispatcher,

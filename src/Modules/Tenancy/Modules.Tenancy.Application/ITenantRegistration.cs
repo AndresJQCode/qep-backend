@@ -8,13 +8,13 @@ public sealed record TenantRegistrationData(
     string DateFormat);
 
 /// <summary>
-/// Creates a new tenant and its owner membership in one unit of work (ADR 0017).
-/// Only reachable when public tenant signup is enabled; the caller is responsible
-/// for provisioning the owner user first and enforcing the feature flag.
+/// Crea un tenant nuevo y su membresía de owner en una sola unidad de trabajo (ADR 0017).
+/// Sólo es alcanzable cuando el signup público de tenants está habilitado; el llamador es
+/// responsable de aprovisionar primero el usuario owner y de hacer cumplir el feature flag.
 /// </summary>
 public interface ITenantRegistration
 {
-    /// <returns>The id of the created tenant.</returns>
+    /// <returns>El id del tenant creado.</returns>
     Task<Guid> RegisterOwnerTenantAsync(
         Guid ownerUserId,
         TenantRegistrationData data,

@@ -51,8 +51,8 @@ public sealed class ListMembershipsHandler(
             cancellationToken);
 
         var items = new List<MembershipListItemDto>(memberships.Count);
-        // One lookup per membership: IUserDirectory only exposes single-id resolution
-        // (v1). Acceptable for the small member counts a tenant has today.
+        // Una búsqueda por membresía: IUserDirectory sólo expone resolución por id único
+        // (v1). Aceptable para la poca cantidad de miembros que tiene un tenant hoy.
         foreach (var membership in memberships)
         {
             var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);

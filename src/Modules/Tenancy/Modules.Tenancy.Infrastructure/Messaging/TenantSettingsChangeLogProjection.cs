@@ -4,9 +4,9 @@ using Modules.Tenancy.Infrastructure.Persistence;
 
 namespace Modules.Tenancy.Infrastructure.Messaging;
 
-// Demonstrative consumer of tenancy.tenant-settings-updated.v1: it appends a row
-// to a projection log. Append-only means a duplicate delivery would insert twice
-// unless the Inbox guard suppresses it — which is exactly acceptance #6.
+// Consumidor demostrativo de tenancy.tenant-settings-updated.v1: agrega una fila
+// a un log de proyección. Al ser append-only, una entrega duplicada insertaría dos veces
+// salvo que la guarda del Inbox la suprima — que es justamente la aceptación #6.
 internal sealed class TenantSettingsChangeLogProjection(TenancyDbContext dbContext, IClock clock)
     : IIntegrationEventHandler
 {

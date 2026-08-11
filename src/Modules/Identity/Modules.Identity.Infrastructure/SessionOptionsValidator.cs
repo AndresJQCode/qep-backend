@@ -2,8 +2,8 @@
 
 namespace Modules.Identity.Infrastructure;
 
-// Fails fast at startup (ValidateOnStart) so a misconfigured session policy is caught
-// on boot rather than on the first login.
+// Falla rápido al arrancar (ValidateOnStart) para que una política de sesión mal configurada
+// se detecte en el boot y no en el primer login.
 internal sealed class SessionOptionsValidator : IValidateOptions<QepSessionOptions>
 {
     public ValidateOptionsResult Validate(string? name, QepSessionOptions options)

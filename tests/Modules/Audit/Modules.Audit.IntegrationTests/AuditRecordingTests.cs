@@ -15,8 +15,8 @@ public sealed class AuditRecordingTests
     private const string AuditEventName = "platform.audit.recorded.v1";
     private static readonly string[] DefaultRoles = ["tenancy.member"];
 
-    // Atomic path (ADR 0019): a Tenancy action writes its audit entry into the Audit-owned
-    // audit.entries table synchronously, within the same transaction as the business change.
+    // Camino atómico (ADR 0019): una acción de Tenancy escribe su entrada de auditoría en la
+    // tabla audit.entries (de Audit) de forma síncrona, en la misma transacción que el cambio.
     [Fact]
     public async Task InviteWritesAuditEntryAtomicallyToAuditStore()
     {
@@ -34,7 +34,7 @@ public sealed class AuditRecordingTests
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
-        // The audit row is present immediately after the request (not eventual).
+        // La fila de auditoría está presente inmediatamente después del request (no es eventual).
         var row = await QueryRowAsync(
             connection,
             """
@@ -50,14 +50,14 @@ public sealed class AuditRecordingTests
         Assert.Equal("tenancy", row[3]);
     }
 
-    // Operational path (ADR 0019): an audit event on the platform Outbox is projected into
-    // audit.entries by the background worker, exactly once (idempotent via the audit inbox).
+    // Camino operativo (ADR 0019): un evento de auditoría del Outbox de plataforma lo proyecta
+    // el worker de fondo a audit.entries, exactamente una vez (idempotente por el inbox de Audit).
     [Fact]
     public async Task OperationalAuditEventIsProjectedExactlyOnce()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        // Building the factory's client boots the host so migrations run and the worker starts.
+        // Construir el cliente de la factory arranca el host: corren las migraciones y el worker.
         using var client = factory.CreateClient();
 
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -73,7 +73,7 @@ public sealed class AuditRecordingTests
         var count = await WaitForAuditCountAsync(connection, resourceId, expected: 1);
         Assert.Equal(1L, count);
 
-        // Further polling ticks do not project a duplicate.
+        // Los ticks de sondeo posteriores no proyectan un duplicado.
         await Task.Delay(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
         Assert.Equal(1L, await CountAuditAsync(connection, resourceId));
     }
@@ -198,12 +198,12 @@ public sealed class AuditRecordingTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

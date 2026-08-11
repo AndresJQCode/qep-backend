@@ -16,16 +16,16 @@ public sealed class ProviderLinkingService(
         bool emailVerified,
         CancellationToken cancellationToken)
     {
-        // Already linked: the external subject maps to a known user. Nothing to
-        // provision; the user is returned as-is.
+        // Ya vinculado: el subject externo mapea a un usuario conocido. Nada que
+        // aprovisionar; el usuario se devuelve como está.
         var linked = await userRepository.FindByProviderAsync(provider, subject, cancellationToken);
         if (linked is not null)
         {
             return ProviderLinkOutcome.Linked(linked.Id.Value);
         }
 
-        // First login for this subject. Per ADR 0015 only a verified email may be
-        // used to match an invited user.
+        // Primer login para este subject. Según el ADR 0015 sólo un email verificado puede
+        // usarse para hacer match con un usuario invitado.
         if (!emailVerified)
         {
             return ProviderLinkOutcome.Denied("email_not_verified");
@@ -41,7 +41,7 @@ public sealed class ProviderLinkingService(
             return ProviderLinkOutcome.Denied("email_invalid");
         }
 
-        // Invitation-only: an unknown email is never auto-provisioned.
+        // Sólo por invitación: un email desconocido nunca se aprovisiona solo.
         var user = await userRepository.FindByEmailAsync(normalizedEmail, cancellationToken);
         if (user is null)
         {

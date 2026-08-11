@@ -33,9 +33,9 @@ public static class NotificationsInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<NotificationsOptions>, NotificationsOptionsValidator>();
 
-        // The email provider is chosen at registration time, before the container
-        // exists, so this one value must be read eagerly. Everything else is consumed
-        // at runtime through IOptions<NotificationsOptions>.
+        // El proveedor de email se elige al momento de registrar, antes de que exista el
+        // contenedor, así que este único valor hay que leerlo de forma ansiosa. Todo lo demás
+        // se consume en runtime por IOptions<NotificationsOptions>.
         var provider = section[nameof(NotificationsOptions.EmailProvider)]
             ?? NotificationsOptions.LogProvider;
         AddEmailChannel(services, provider);

@@ -14,8 +14,8 @@ internal sealed class SessionService(
     IOptions<QepSessionOptions> options)
     : ISessionService
 {
-    // Idle tracking is only meaningfully precise to a few minutes; touching on every
-    // request would turn every authenticated call into a write.
+    // El seguimiento de inactividad sólo es realmente preciso a unos minutos; tocarlo en cada
+    // request convertiría toda llamada autenticada en una escritura.
     private static readonly TimeSpan TouchThreshold = TimeSpan.FromMinutes(5);
 
     public async Task<SessionIssueResult> IssueAsync(
@@ -123,18 +123,18 @@ internal sealed class SessionService(
         return sessions.Count;
     }
 
-    // 256 bits of entropy, base64url-encoded so the raw value is cookie-safe. The raw
-    // token is returned to the caller exactly once (at issuance) and is never
-    // persisted — only its hash is stored (see Hash).
+    // 256 bits de entropía, codificados en base64url para que el valor crudo sea seguro en una
+    // cookie. El token crudo se devuelve al llamador exactamente una vez (al emitirlo) y nunca
+    // se persiste — sólo se guarda su hash (ver Hash).
     private static string GenerateRawToken() =>
         Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             .Replace('+', '-')
             .Replace('/', '_')
             .TrimEnd('=');
 
-    // SHA-256 is adequate here (unlike password hashing) because the input is
-    // already a high-entropy random value, not a low-entropy secret an attacker
-    // could feasibly brute-force from the hash.
+    // SHA-256 alcanza acá (a diferencia del hashing de contraseñas) porque la entrada ya
+    // es un valor aleatorio de alta entropía, no un secreto de baja entropía que un atacante
+    // pudiera romper por fuerza bruta desde el hash.
     private static string Hash(string rawToken) =>
         Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
 }

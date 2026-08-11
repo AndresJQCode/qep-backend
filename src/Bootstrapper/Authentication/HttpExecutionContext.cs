@@ -11,8 +11,8 @@ internal sealed class HttpExecutionContext(IHttpContextAccessor httpContextAcces
     private ClaimsPrincipal User => httpContextAccessor.HttpContext?.User
         ?? throw new InvalidOperationException("No active HTTP execution context.");
 
-    // Prefer the internal QEP user id (resolved from the provider subject for external
-    // tokens). The dev stub sets the QEP subject directly in "sub".
+    // Preferir el id interno de usuario QEP (resuelto del subject del proveedor para tokens
+    // externos). El stub de desarrollo pone el subject QEP directo en "sub".
     public Guid SubjectId => ParseRequiredGuid(
         User.FindFirstValue(QepClaimTypes.QepSubject) is not null
             ? QepClaimTypes.QepSubject
