@@ -6,6 +6,8 @@ using Bootstrapper.Authentication;
 using Bootstrapper.Csrf;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
+using Modules.Catalog.Api;
+using Modules.Catalog.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Storage.Api;
@@ -90,6 +92,7 @@ app.MapAuthorizationCatalogEndpoints();
 app.MapTenantSettingsEndpoints();
 app.MapMembershipEndpoints();
 app.MapStorageEndpoints();
+app.MapCatalogEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
@@ -103,6 +106,8 @@ await app.Services.InitializeIdentityDatabaseAsync(
 await app.Services.InitializeNotificationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeStorageDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+await app.Services.InitializeCatalogDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.RunAsync();
 

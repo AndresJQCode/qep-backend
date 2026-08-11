@@ -671,6 +671,8 @@
           "Microsoft.AspNetCore.OpenApi": "[10.0.9, )",
           "Microsoft.OpenApi": "[2.7.5, )",
           "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Catalog.Api": "[1.0.0, )",
+          "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Api": "[1.0.0, )",
@@ -686,6 +688,8 @@
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[10.0.9, )",
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Authorization.Application": "[1.0.0, )",
+          "Modules.Catalog.Application": "[1.0.0, )",
+          "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
@@ -751,6 +755,38 @@
         "type": "Project",
         "dependencies": {
           "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.catalog.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Catalog.Application": "[1.0.0, )",
+          "Modules.Catalog.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.catalog.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Catalog.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.catalog.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.catalog.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.9, )",
+          "Modules.Catalog.Application": "[1.0.0, )",
+          "Modules.Catalog.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
         }
       },
       "modules.identity.application": {

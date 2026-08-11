@@ -13,6 +13,8 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
+using Modules.Catalog.Application;
+using Modules.Catalog.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
@@ -80,12 +82,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListFilesQuery, PagedFilesDto>,
             ListFilesHandler>();
+        services.AddScoped<
+            IQueryHandler<ListProductsQuery, IReadOnlyList<ProductDto>>,
+            ListProductsHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
         services.AddNotificationsInfrastructure(configuration);
         services.AddStorageInfrastructure(configuration);
+        services.AddCatalogInfrastructure(configuration);
         AddAuthorizationCapability(services);
         services.AddQepObservability(configuration, environment);
         AddAuthentication(services, configuration, environment);
@@ -119,7 +125,11 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileUpload,
                 StoragePermissions.FileRead,
                 StoragePermissions.FileDelete,
-                StoragePermissions.FilePublish
+                StoragePermissions.FilePublish,
+                CatalogPermissions.ProductRead,
+                CatalogPermissions.ProductManage,
+                CatalogPermissions.TaxRateRead,
+                CatalogPermissions.TaxRateManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -129,7 +139,9 @@ public static class QepServiceCollectionExtensions
             "medium",
             [
                 TenancyPermissions.SettingsRead,
-                TenancyPermissions.MembershipRead
+                TenancyPermissions.MembershipRead,
+                CatalogPermissions.ProductRead,
+                CatalogPermissions.TaxRateRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -184,6 +196,30 @@ public static class QepServiceCollectionExtensions
             "Publicar imágenes",
             "Permite publicar y despublicar imágenes y sus variantes.",
             "Storage",
+            "high"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductRead,
+            "Leer productos",
+            "Permite consultar el catálogo de productos del tenant.",
+            "Catalog",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductManage,
+            "Gestionar productos",
+            "Permite crear, editar e inactivar productos.",
+            "Catalog",
+            "medium"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.TaxRateRead,
+            "Leer tasas de impuesto",
+            "Permite consultar las tasas de impuesto del tenant.",
+            "Catalog",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.TaxRateManage,
+            "Gestionar tasas de impuesto",
+            "Permite crear, editar e inactivar tasas de impuesto. Cambiarlas mueve los totales de toda cotización.",
+            "Catalog",
             "high"));
     }
 
@@ -321,7 +357,19 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, StoragePermissions.FileDelete))
             .AddPolicy(
                 StoragePermissions.FilePublish,
-                policy => AddPermissionRequirement(policy, StoragePermissions.FilePublish));
+                policy => AddPermissionRequirement(policy, StoragePermissions.FilePublish))
+            .AddPolicy(
+                CatalogPermissions.ProductRead,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductRead))
+            .AddPolicy(
+                CatalogPermissions.ProductManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage))
+            .AddPolicy(
+                CatalogPermissions.TaxRateRead,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateRead))
+            .AddPolicy(
+                CatalogPermissions.TaxRateManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateManage));
     }
 
     private static void AddPermissionRequirement(
