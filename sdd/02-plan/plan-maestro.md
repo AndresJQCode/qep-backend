@@ -129,6 +129,44 @@ Owner: Andres Jaramillo
 
 ## Handoff
 
+### 2026-08-11 — El build de Docker rompió solo: tag flotante contra `global.json` fijo
+
+**El primer deploy tras publicar `main` falló en el `Build`, no en el despliegue.** Literal:
+
+```
+Requested SDK version: 10.0.301
+global.json file: /src/global.json
+Installed SDKs:
+10.0.400 [/usr/share/dotnet/sdk]
+Install the [10.0.301] .NET SDK or update [/src/global.json] to match an installed SDK.
+exit code: 155
+```
+
+**Causa.** `mcr.microsoft.com/dotnet/sdk:10.0` es un tag flotante y se movió a `10.0.400`.
+`global.json` pide `10.0.301` con `rollForward: latestPatch`, que rueda **dentro de la misma
+banda de feature**: de `10.0.3xx` a `10.0.3xx` sí, de `3xx` a `4xx` no. Nadie tocó el
+repositorio: `global.json` no cambia desde `0d3e5e9`, el commit inicial, y el `Dockerfile`
+desde `414afd1`. **Rompió el paso del tiempo.**
+
+**Corrección.** `Dockerfile:8` fija `mcr.microsoft.com/dotnet/sdk:10.0.301`. Se fija la imagen
+en lugar de aflojar `global.json` a propósito: `global.json` existe para que todos compilen
+con el mismo SDK, y la máquina del developer tiene `10.0.301` — aflojarlo haría que CI y
+developer dejaran de coincidir, que es justo lo que ese archivo evita. Al subir de banda se
+cambian los dos, juntos.
+
+**Evidencia:** reproducido local con `docker build`, mismo `exit code: 155` y mismo texto que
+CI. Con el tag fijo, `docker build` termina en `naming to docker.io/library/...` sin error.
+
+**Trampa que casi desvía el diagnóstico:** `docker image ls` mostraba `sdk:10.0` en `10.0.302`
+—que sí resuelve— y `docker run` sobre esa imagen cacheada confirmaba `10.0.302`. Pero
+buildkit resuelve el tag **contra el registry**, no contra la caché local, y ahí ya era
+`10.0.400`. Para saber con qué SDK construye de verdad hay que mirar el log del build, no la
+imagen local.
+
+**Queda como riesgo aceptado, no corregido:** `mcr.microsoft.com/dotnet/aspnet:10.0` de la
+etapa de runtime sigue flotante. No rompe el build, pero puede cambiar el runtime de
+producción sin que nadie lo pida. Fijarlo es decisión aparte.
+
 ### 2026-08-11 — El checkout de `qep-frontend` está en una rama vieja, y eso invalidó dos hallazgos
 
 **Regla que sale de acá, y es la parte que importa: antes de leer cualquier cosa de
