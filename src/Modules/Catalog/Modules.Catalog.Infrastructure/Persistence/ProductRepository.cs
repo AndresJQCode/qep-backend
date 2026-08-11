@@ -18,8 +18,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         var term = search?.Trim();
         if (!string.IsNullOrEmpty(term))
         {
-            // ILike is the Npgsql case-insensitive match; the wildcards are ours, and the
-            // term is a parameter, so a % typed by a user matches literally nothing odd.
+            // ILike is the Npgsql case-insensitive match; the wildcards are ours and the
+            // term travels as a parameter.
             var pattern = $"%{term}%";
             query = query.Where(product =>
                 EF.Functions.ILike(product.Name, pattern) ||
@@ -30,4 +30,16 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .OrderBy(product => product.Name)
             .ToListAsync(cancellationToken);
     }
+
+    // Tracked on purpose, unlike SearchAsync: the callers of this one mutate the aggregate
+    // and rely on the unit of work to persist it.
+    public Task<Product?> FindAsync(
+        Guid tenantId,
+        ProductId productId,
+        CancellationToken cancellationToken) =>
+        dbContext.Products.SingleOrDefaultAsync(
+            product => product.TenantId == tenantId && product.Id == productId,
+            cancellationToken);
+
+    public void Add(Product product) => dbContext.Products.Add(product);
 }

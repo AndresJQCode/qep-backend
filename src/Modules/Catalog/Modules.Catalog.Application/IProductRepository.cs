@@ -10,4 +10,11 @@ public interface IProductRepository
         Guid tenantId,
         string? search,
         CancellationToken cancellationToken);
+
+    Task<Product?> FindAsync(
+        Guid tenantId,
+        ProductId productId,
+        CancellationToken cancellationToken);
+
+    void Add(Product product);
 }

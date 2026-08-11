@@ -1,5 +1,4 @@
 using BuildingBlocks.Application;
-using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
@@ -22,14 +21,6 @@ public sealed class ListProductsHandler(
         var products = await repository.SearchAsync(
             query.TenantId, query.Search, cancellationToken);
 
-        return products.Select(ToDto).ToArray();
+        return products.Select(product => product.ToDto()).ToArray();
     }
-
-    private static ProductDto ToDto(Product product) => new(
-        product.Id.Value,
-        product.Name,
-        product.Code,
-        product.IsActive,
-        product.CreatedAt,
-        product.UpdatedAt);
 }

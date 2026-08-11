@@ -85,7 +85,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListProductsQuery, IReadOnlyList<ProductDto>>,
             ListProductsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetProductQuery, ProductDto>,
+            GetProductHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateProductCommand, ProductDto>,
+            CreateProductHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateProductCommand, ProductDto>,
+            UpdateProductHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateProductCommand, ProductDto>,
+            DeactivateProductHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);

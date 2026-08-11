@@ -349,6 +349,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
           "Modules.Catalog.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )"
         }
