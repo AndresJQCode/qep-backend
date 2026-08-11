@@ -37,9 +37,14 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          # Dos fuentes, sin claves superpuestas: el ConfigMap lleva el delta por entorno
+          # no sensible, el Secret lleva las credenciales. Ante una colisión de claves
+          # gana la fuente posterior, por eso el Secret va segundo a propósito.
           envFrom:
             - configMapRef:
                 name: #{APP_NAME}#-config
+            - secretRef:
+                name: #{APP_NAME}#-secret
           startupProbe:
             httpGet:
               path: /health/live

@@ -85,15 +85,15 @@ estándar de configuración de ASP.NET Core.
 lleva una contraseña, y la regla de este repositorio es que una credencial nunca
 se compromete en un `appsettings*.json`. Se provee por secretos de usuario en
 local y por variable de entorno en k8s
-([`prod-configMap.yaml`](k8s/prod-configMap.yaml)).
+([`prod-secret.yaml`](k8s/prod-secret.yaml), no el ConfigMap: lleva contraseña).
 
 | Clave | Valor local | Uso |
 |---|---|---|
 | `ConnectionStrings:QepDatabase` | **sin valor por defecto — requerido** | Conexión compartida por los módulos. Ausente ⇒ la API no inicia |
 | `OpenTelemetry:Endpoint` | `http://localhost:4317` | Exportación OTLP de trazas y métricas |
 | `OTEL_SERVICE_NAME` | sin definir (cae a `qep-api`) | `service.name` del recurso; en k8s lo fija el Deployment |
-| `Authentication:Authority` | vacío | Emisor OIDC requerido fuera de Development |
-| `Authentication:Audience` | `qep-api` | Audiencia JWT requerida fuera de Development |
+| `Authentication:Authority` | ausente (cae a `https://accounts.google.com`) | Emisor OIDC; sólo se define para pisar el de Google |
+| `Authentication:Audience` | ausente | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId` |
 
 Ejemplo con variables de entorno:
 
