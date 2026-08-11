@@ -29,7 +29,7 @@ historial de chat.
 | Slice activo | **Ninguno.** `CAT-02` cerró el 2026-08-11 con `CAT-02a` y `CAT-02b` en `Complete`: runtime de 12/12 criterios, revisión de 4 lentes y su transacción de corrección. El próximo es `CAT-03`, que todavía no tiene spec |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
-| Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01` cerrada el 2026-08-11 por el owner: infraestructura y despliegue quedan explícitamente fuera del alcance del método.** No se abre módulo de plataforma ni se reserva prefijo. El corte es **por efecto, no por carpeta** —ver «Alcance del método» abajo—, y la obligación que **no** desaparece es la entrada de handoff en este ledger. Pendiente que deja: es una decisión estructural, así que `convenciones-de-id.md` pide que produzca un `SDD-ADR-*`. **`SDD-ADR-09` quedó redactado el 2026-08-11 en `qep-frontend/sdd/01-contexto/decisiones-de-arquitectura.md`, en el working tree de ese repo y SIN commitear**: es autoridad del otro repositorio y lo revisa y commitea su developer. **`SDD-ADR-08` también quedó redactado ahí el 2026-08-11, retroactivo y sin commitear:** se citaba en tres archivos de este repo sin tener entrada. No se reconstruyó de memoria — sale del mensaje de `594ee11`, escrito por quien la tomó, más los tres archivos que ese commit introdujo. Escribirlo destapó dos deudas del otro repo, anotadas en el propio ADR: **`AGENTS.md` §0c contradice hoy a `SDD-ADR-08`** —dice que `sdd/` vive sólo en `qep-frontend` y que un slice cruzado usa **el mismo ID** en los dos repos—, y **`SDD-CT-18` y `SDD-CT-19` se citan en este repo sin tener fila** en el registro de contradicciones del producto. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
+| Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01` cerrada el 2026-08-11 por el owner: infraestructura y despliegue quedan explícitamente fuera del alcance del método.** No se abre módulo de plataforma ni se reserva prefijo. El corte es **por efecto, no por carpeta** —ver «Alcance del método» abajo—, y la obligación que **no** desaparece es la entrada de handoff en este ledger. Pendiente que deja: es una decisión estructural, así que `convenciones-de-id.md` pide que produzca un `SDD-ADR-*`. **`SDD-ADR-09` está sin redactar**, y se redacta sobre `develop` de `qep-frontend` — ver el handoff del 2026-08-11 sobre el estado de ese checkout. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
 | Contradicciones abiertas | `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
 
 ### Próxima acción ejecutable
@@ -128,6 +128,44 @@ Owner: Andres Jaramillo
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | Pending | Sin spec todavía. Se separa de `CAT-02` porque es otro recurso, con otros permisos y otra migración, y juntos pasarían holgado el umbral de 400 líneas. El porcentaje es **entero de 0 decimales** (`P-008`, decidido por el owner el 2026-08-10): no admite retenciones con fracción, y eso está declarado como límite de alcance en el gate |
 
 ## Handoff
+
+### 2026-08-11 — El checkout de `qep-frontend` está en una rama vieja, y eso invalidó dos hallazgos
+
+**Regla que sale de acá, y es la parte que importa: antes de leer cualquier cosa de
+`qep-frontend/sdd/`, verificar en qué rama está ese checkout.** No alcanza con que el
+directorio exista.
+
+Al cerrar `DECISIÓN-PENDIENTE-INFRA-01` se buscó dónde escribir su `SDD-ADR`, y el registro
+`qep-frontend/sdd/01-contexto/decisiones-de-arquitectura.md` parecía terminar en
+`SDD-ADR-07`. De ahí salieron dos hallazgos que se registraron en este ledger y **los dos son
+falsos**:
+
+- «`SDD-ADR-08` se cita en tres archivos de este repo y no tiene entrada». **Falso.** Existe
+  desde `3aca4a9`, titulado «Cada repo tiene su carpeta `sdd/`, con un solo ledger».
+- «`AGENTS.md` §0c contradice a `SDD-ADR-08`». **Falso.** §0c ya está actualizado, con la
+  tabla del reparto y la mención explícita a `SDD-ADR-08`.
+
+La causa es una sola: **ese checkout está en `feature/catalog`, nueve commits detrás de
+`develop`**, que es donde vive todo eso. `SDD-CT-18` también está en `develop`, y `SDD-CT-19`
+no está en ningún lado porque es un ID reservado a futuro, tal como lo declara el handoff del
+`fix(config)` más abajo — no es deuda.
+
+Cómo se detectó, y es la comprobación que hay que correr: `git -C qep-frontend log -S
+"<término>" --all` encontró el commit; `git branch -a --contains` mostró que vive en
+`develop` y no en la rama activa.
+
+Lo escrito sobre el working tree del frontend se revirtió: `git status` de ese repo está
+limpio salvo un `.claude/` sin trackear, que ya estaba. `SDD-ADR-09` queda **sin redactar**,
+y va sobre `develop`.
+
+**Único hallazgo real que sobrevive, y hay que verificarlo antes de actuar:** el `SDD-ADR-08`
+de `develop` se declara `Estado: decidida, **sin ejecutar** — la migración de archivos no se
+hizo todavía`. Ya no es cierto: `594ee11` la ejecutó en este repositorio el 2026-08-11. Es
+corrección de una línea, en el otro repo.
+
+**Lección de método, la misma que `SDD-CT-16`:** un mecanismo inferido de leer archivos se
+contradijo al contrastarlo contra la historia de git. La diferencia es qué se contrastó: acá
+la primera lectura fue del árbol de trabajo, que es un estado, no la autoridad.
 
 ### 2026-08-11 — Forma de la configuración en k8s: híbrida, con Secret propio
 

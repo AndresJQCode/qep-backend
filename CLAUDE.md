@@ -33,6 +33,13 @@ un módulo hace falta el checkout de `qep-frontend` como hermano de éste. El tr
 —leer el ledger, abrir el spec activo, escribir código y probarlo— no lo necesita. Si no está
 disponible, un contrato **no** se transcribe de memoria: se registra `DECISIÓN-PENDIENTE`.
 
+**Que el checkout exista no alcanza: hay que verificar en qué rama está.** El 2026-08-11 se
+leyó `qep-frontend/sdd/` estando ese repo en `feature/catalog`, nueve commits detrás de
+`develop`, y se reportaron como faltantes un ADR y una sección de `AGENTS.md` que sí existen.
+El árbol de trabajo del otro repo es un **estado**, no la autoridad. Antes de concluir que
+algo falta ahí: `git -C ../qep-frontend branch --show-current`, y si el dato no aparece,
+`git -C ../qep-frontend log -S "<término>" --all` más `git branch -a --contains <sha>`.
+
 ## Antes de escribir código
 
 1. [`sdd/02-plan/plan-maestro.md`](sdd/02-plan/plan-maestro.md) — qué sigue, en este repo
