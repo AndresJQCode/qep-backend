@@ -442,13 +442,94 @@ Las tres pruebas de auditoría consultan `platform.outbox_messages`, no `audit.e
 worker de proyección del módulo `Audit`: asertar ahí sería una carrera. El outbox commitea en
 la misma transacción que el producto, que es justo la garantía que hay que probar.
 
-**Commiteado en `CAT-02b`.**
+**Commiteado en `3c2c9ec`** (`feat(CAT-02b): escrituras de productos con auditoría en el
+outbox`), con la evidencia de este tramo en `797c099`.
 
-### Tramos siguientes
+### Tramo 5 — runtime contra la API local (2026-08-11)
 
-- **RED:**
-- **GREEN:**
-- **Build:**
-- **Runtime:**
-- **Revisión:**
-- **Commit:**
+Los 12 criterios ya estaban cubiertos por prueba automatizada desde el tramo 4. Este tramo
+es el **runtime** que pide el DoD: la API real, con PostgreSQL real, verificada endpoint por
+endpoint. Una suite de integración levanta su propio host y su propio contenedor; esto
+ejercita el proceso que un developer arranca de verdad.
+
+#### Cómo se levantó
+
+```powershell
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+$env:ASPNETCORE_URLS = "http://localhost:5000"
+$env:Authentication__UseDevelopmentStub = "true"
+dotnet run --project src/Api --no-launch-profile
+```
+
+`--no-launch-profile` **no es opcional**: los dos perfiles de `launchSettings.json` fijan
+`Authentication__UseDevelopmentStub` en `false` y ganan sobre la variable del shell. Sin él la
+API arranca con auth real y todo lo de abajo devuelve `401`.
+
+Sujetos y tenants, con `X-Permissions` explícito en cada request: el stub concede sólo los
+cinco permisos de tenancy cuando el header falta, y entonces un `403` vendría del permiso
+ausente y no de lo que se cree estar probando — el defecto que ya había encontrado el tramo 3.
+
+| Alias | Valor |
+| --- | --- |
+| tenant A / sujeto A | `01900000-…-0000000000a1` / `…a2` |
+| tenant B / sujeto B | `01900000-…-0000000000b1` / `…b2` |
+
+#### Resultado — 12 de 12
+
+| CA | Verificación | Resultado literal |
+| --- | --- | --- |
+| `-01` | `GET T/products` en A y en B | `200` / `200`. A devuelve sólo sus 2 productos, B sólo los suyos. Cero cruce |
+| `-02` | producto de A pedido con credenciales de B | `403` `authorization.denied` — **no 404** |
+| `-03` | `POST` con `X-Permissions: catalog.product.read` | `403`, cuerpo vacío, nada persistido |
+| `-04` | `POST` válido | `201`, `"isActive":true`, id `019ff1b9-81f8-76b7-b682-29446e1f1c65` |
+| `-05` | `POST` con `name` y `code` vacíos | `422` `validation.failed` con `"errors":{"Name":[…],"Code":[…]}` |
+| `-06` | `PUT` válido | `200`. `updatedAt` avanzó de `16:48:14.328361` a `16:48:39.0001725` |
+| `-07` | id inexistente en `GET`, `PUT` y `deactivate` | `404` las tres, `catalog.product.not_found` |
+| `-08` | `POST …/deactivate` | `200`, `"isActive":false` |
+| `-09` | `deactivate` por segunda vez | `422` `catalog.product.already_inactive` |
+| `-10` | `?search=cat02b-001` y `?search=valvula` | `200`, 1 ítem cada uno. Filtra por `code` y por `name` sin distinguir mayúsculas |
+| `-11` | `authorization/catalog` y `authorization/me` | `200`. Los cuatro permisos de `catalog` publicados; `tenancy.member` con `product.read`, `tenancy.owner` con `product.manage` |
+| `-12` | mismo `code` en A, y después en B | `422` `catalog.product.code_taken` en A; `201` en B. La unicidad es por tenant |
+
+#### La verificación que el status HTTP no da
+
+Los criterios `-04`, `-06` y `-08` exigen que la auditoría commitee **en la misma transacción**
+que el cambio. Un `201` no prueba eso. Consulta directa después de la corrida:
+
+```txt
+           action            | outcome | count
+-----------------------------+---------+-------
+ catalog.product.created     | success |     4
+ catalog.product.updated     | success |     1
+ catalog.product.deactivated | success |     1
+```
+
+Seis filas en `platform.outbox_messages` con `source = catalog`, las seis con `processed_at`
+no nulo, y seis filas espejo en `audit.entries` una vez que corrió el worker de proyección de
+`Audit`.
+
+**Lo que prueba la atomicidad es lo que NO está:** cuatro altas exitosas dejaron cuatro filas,
+y el `POST` que devolvió `403` más los tres `422` no dejaron ninguna. Si el outbox no
+committeara con el cambio, un intento fallido habría dejado su rastro igual.
+
+#### Tres hallazgos del runtime
+
+**1. `appsettings.json` apunta a una base que no existe.** Declara
+`Database=dev_lulo_crm2`; en el contenedor local la base es `dev_lulo_crm_v2`. La API arranca
+porque la cadena real llega por user-secrets, que en `Development` carga
+`WebApplication.CreateBuilder` sin ayuda de nadie. Consecuencia: **un clon nuevo sin
+user-secrets no arranca**, y el archivo versionado afirma algo falso. Refuerza que los seis
+`GetConnectionString("QepDatabase")` duplicados necesitan su propio slice.
+
+**2. El mapa `errors` sale en el idioma del sistema operativo del servidor.** Literal
+observado: `"Name":["'Name' no debería estar vacío."]`. FluentValidation resuelve sus mensajes
+por la cultura del proceso, así que el texto cambia entre la máquina del developer, CI y
+producción. El `code` es estable; el texto **no es contrato**. Si el frontend muestra ese
+string, muestra el locale del servidor.
+
+**3. El `search` ignora mayúsculas pero no acentos.** `?search=valvula` no encuentra
+`Válvula de bola 2"`. `CA-CAT-02-10` pide sólo lo primero, así que **el criterio pasa** — pero
+en un catálogo en español es una sorpresa esperando a alguien. Queda como observación, no como
+defecto de este slice.
+
+**Runtime ejecutado el 2026-08-11.** Falta la revisión de riesgo de 4 lentes para el DoD.
