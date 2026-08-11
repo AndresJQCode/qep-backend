@@ -26,7 +26,7 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **`CAT-02` — API de productos**, `In Progress` desde el 2026-08-10. Único activo en este repo |
+| Slice activo | **`CAT-02b` — escrituras de productos**, código y pruebas listos el 2026-08-10; falta runtime y revisión. `CAT-02` se partió al medir 1043 líneas autoradas; `a` y `b` ejecutan en secuencia, así que el repo sigue con un solo slice activo |
 | Último slice completado | Ninguno en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | `968c4a8` (`feat(CAT-02)`) y `898cc10` (`docs(SDD-ADR-08,CAT-02)`), rama **`feature/catalog-api`**, árbol limpio. Se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo |
 | Decisiones abiertas | Ninguna. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
@@ -54,7 +54,13 @@ Orden de trabajo, con RED antes que GREEN en cada tramo:
    (`GET /products`), porque una prueba de integración sin ruta que ejercer no verifica nada.
    GREEN `Superado: 3, Total: 3` contra PostgreSQL real. Sin regresión: `Tenancy` sigue con
    los mismos 5 fallos de `SDD-CT-14`, verificados por nombre. Commiteado en `968c4a8`.
-4. **Casos de uso y endpoints**, uno a uno, con integración contra PostgreSQL real.
+4. ~~**Casos de uso y endpoints**, uno a uno, con integración contra PostgreSQL real.~~
+   **Hecho el 2026-08-10** como `CAT-02b`. RED de runtime `Expected: Created / Actual:
+   MethodNotAllowed`; GREEN `Superado: 15, Total: 15`. **Los 12 criterios de aceptación
+   cubiertos por prueba.** Sin regresión.
+
+**Lo que queda de `CAT-02` para el DoD:** runtime del owner contra la API local y revisión de
+riesgo de 4 lentes. Sin esas dos, ni `CAT-02a` ni `CAT-02b` pasan a `Complete`.
 
 **Antes de cualquier `dotnet build`, `dotnet test` o comando `ef`: verificar que `Api.exe` no
 esté corriendo.** Si lo está, los tres fallan por archivo bloqueado. El nombre del proceso es
@@ -71,7 +77,9 @@ Owner: Andres Jaramillo
 
 | ID | Resultado revisable | Depende de | Estado | Evidencia / commit / PR |
 | --- | --- | --- | --- | --- |
-| `CAT-02` | **API de productos**: módulo backend nuevo con sus cuatro capas, permisos propios, auditoría por outbox y aislamiento entre tenants | `CAT-00` (gate cerrado) | **In Progress** | Desbloqueado el 2026-08-10 al cerrar `DECISIÓN-PENDIENTE-CAT-04` (`code` único por tenant). Spec en [`03-modulos/catalog/slices/CAT-02-api-de-productos.md`](../03-modulos/catalog/slices/CAT-02-api-de-productos.md), creada el 2026-08-10. Contrato y permisos vienen ratificados del gate: rutas `/api/v1/tenants/{tenantId:guid}/catalog/products` y permisos `catalog.product.read` / `catalog.product.manage`. **Estimado ~500 líneas, por encima del umbral de 400**: se mide al implementar y, si se confirma, se parte en `CAT-02a` (andamiaje + `GET`) y `CAT-02b` (escrituras). **Tres tramos en verde el 2026-08-10** — andamiaje, dominio, y persistencia con el `GET` de productos—, cada uno con su RED y GREEN literales en el spec. Falta el resto de los endpoints. Commits `968c4a8` (código) y `898cc10` (spec y ledger) |
+| `CAT-02` | **API de productos** — fila padre, ya no es unidad ejecutable | `CAT-00` (gate cerrado) | Partido el 2026-08-10 | Se partió al medir **1043 líneas autoradas** con un endpoint de cinco, contra el umbral de ~400 de `convenciones-de-id.md`. No se renumera nada y los commits que citan `feat(CAT-02)` siguen válidos: el ID padre no se toca. Spec único en [`03-modulos/catalog/slices/CAT-02-api-de-productos.md`](../03-modulos/catalog/slices/CAT-02-api-de-productos.md) |
+| `CAT-02a` | Andamiaje del módulo, dominio `Product`, persistencia con `InitialCatalog` y `GET /products` | `CAT-00` | Código listo | Tres tramos con RED y GREEN literales en el spec. `ArchitectureTests` 16/16, unitarias 13/13, integración 3/3 contra PostgreSQL real; `Tenancy` sin regresión, con los mismos 5 fallos de `SDD-CT-14` verificados por nombre. Commits `968c4a8` y `594ee11`. **Falta runtime del owner y revisión de riesgo de 4 lentes**, así que no es `Complete` |
+| `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y pruebas de auditoría y outbox | `CAT-02a` | **In Progress** | Abierto el 2026-08-10. Cubre `CA-CAT-02-03` a `-09`, `-11`, `-12` y las mitades pendientes de `-01` y `-10`. **Lo más urgente que trae:** hoy el índice `IX_products_tenant_code` existe y nadie captura su violación, así que un `code` repetido devolvería `500`; es la forma exacta de `SDD-CT-06` |
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | Pending | Sin spec todavía. Se separa de `CAT-02` porque es otro recurso, con otros permisos y otra migración, y juntos pasarían holgado el umbral de 400 líneas. El porcentaje es **entero de 0 decimales** (`P-008`, decidido por el owner el 2026-08-10): no admite retenciones con fracción, y eso está declarado como límite de alcance en el gate |
 
 ## Handoff

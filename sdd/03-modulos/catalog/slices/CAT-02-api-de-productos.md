@@ -6,10 +6,33 @@
 > **Depende de:** `CAT-00` (gate cerrado el 2026-08-10)
 > **Bloqueado por:** ninguno — `DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner
 > **Repos afectados:** `qep-backend`
-> **Tamaño estimado:** ~500 líneas autoradas. **Excede el umbral de ~400** de
-> `../../../00-metodo/convenciones-de-id.md`: se mide al implementar y, si se confirma, se
-> parte en `CAT-02a` (andamiaje del módulo + `GET`) y `CAT-02b` (escrituras). No se
-> renumera nada.
+> **Tamaño medido:** **1043 líneas autoradas** con un solo endpoint de cinco, sin contar
+> lock files, migración generada ni `Backend.slnx`. El umbral de
+> `qep-frontend/sdd/00-metodo/convenciones-de-id.md` es ~400, así que **el slice se partió**
+> el 2026-08-10, como el propio spec anticipaba.
+
+## Partición del slice
+
+`CAT-02` deja de ser unidad ejecutable y queda como **fila padre**. No se renumera nada, y
+los commits que ya citan `feat(CAT-02)` siguen siendo válidos: el ID padre no se toca
+(`convenciones-de-id.md`, "Partir un slice").
+
+| Parte | Alcance | Estado |
+|---|---|---|
+| `CAT-02a` | Andamiaje del módulo, dominio `Product`, persistencia con `InitialCatalog`, y `GET /products` | Código y pruebas listos (`968c4a8`). Falta runtime y revisión de riesgo |
+| `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y las pruebas de auditoría y outbox | In Progress |
+
+Las dos partes ejecutan **en secuencia**, así que el repositorio sigue con un solo slice
+activo: `CAT-02`. `a` y `b` son sus dos mitades entregables, no dos slices en paralelo.
+
+### Reparto de criterios de aceptación
+
+- **`CAT-02a`:** `CA-CAT-02-02` (completo), `CA-CAT-02-01` (mitad: la ruta responde para su
+  tenant; el "sólo los suyos" necesita sembrar datos y por eso cierra en `b`),
+  `CA-CAT-02-10` implementado pero **sin prueba** — la búsqueda no tiene con qué filtrar
+  hasta que haya alta.
+- **`CAT-02b`:** el resto — `-03` a `-09`, `-11`, `-12`, más las mitades pendientes de `-01`
+  y `-10`.
 
 ## Objetivo
 
@@ -366,6 +389,60 @@ tenant de la ruta no es el suyo. Es el mismo patrón de prueba de teatro que las
 `AUTH-05` y `AUTH-06` ya habían encontrado.
 
 **Commiteado en `968c4a8`.**
+
+### Tramo 4 — `CAT-02b`: escrituras (2026-08-10)
+
+- **RED:** `ProductWriteApiTests.cs`, 12 pruebas escritas antes de los endpoints. **RED de
+  runtime, no de compilación** —el archivo compilaba porque los DTOs ya existían—:
+
+  ```txt
+  Expected: Created
+  Actual:   MethodNotAllowed
+  ```
+
+  `MethodNotAllowed` y no `NotFound` porque el grupo de rutas ya existía con el `GET`; el
+  `POST` sobre la misma ruta cae en 405. Es el RED correcto: dice exactamente que falta el
+  verbo, no la ruta.
+
+- **GREEN:** `Correctas! - Con error: 0, Superado: 15, Omitido: 0, Total: 15` (las 3 de
+  `CAT-02a` más las 12 nuevas), contra PostgreSQL real.
+- **Build:** `Compilación correcta. 0 Advertencia(s)`.
+- **Sin regresión:** `ArchitectureTests` 16/16, unitarias 13/13, y `Tenancy` con los mismos
+  5 fallos de `SDD-CT-14`, verificados por nombre.
+
+**Los 12 criterios de aceptación quedan cubiertos por prueba automatizada.** `CA-CAT-02-01`
+y `-10`, que `CAT-02a` dejó a medias por no tener con qué sembrar, cierran acá.
+
+#### Lo que trajo este tramo
+
+`GET` por id, `POST`, `PUT` y `deactivate`, con validadores de FluentValidation para las dos
+escrituras con texto libre. El validador **no** duplica al dominio por gusto: el agregado
+lanza un código único y el validador es lo que produce el mapa `errors` por campo que
+`ApiExceptionHandler` arma desde `ValidationException`, que es lo que un formulario necesita
+para marcar el input culpable.
+
+**La traducción del índice único, que era el hueco más serio de `CAT-02a`:** vive en
+`CatalogUnitOfWork.SaveChangesAsync`, discrimina por **nombre de índice** además de
+`SqlState`, y convierte la violación en `catalog.product.code_taken` → 422. Sin eso, un
+código repetido devolvía `500`, que es la forma exacta de `SDD-CT-06`. `CatalogLayerTests`
+sigue verificando que esa traducción no se filtre a Application.
+
+#### Un defecto de prueba, corregido
+
+`CatalogPermissionsArePublishedInTheAuthorizationCatalog` fallaba con `403`. No era el
+producto: `/authorization/catalog` está guardado por `tenancy.membership.read`, cuya
+definición dice "consultar membresías **y catálogo de roles/permisos**". Tener los permisos
+de catálogo no alcanza para leer el catálogo que los publica. La prueba ahora pide también
+ese permiso, con la razón escrita al lado.
+
+#### Auditoría: por qué se asienta sobre el outbox
+
+Las tres pruebas de auditoría consultan `platform.outbox_messages`, no `audit.entries`.
+`catalog` usa el camino de outbox, así que `audit.entries` recién aparece cuando corre el
+worker de proyección del módulo `Audit`: asertar ahí sería una carrera. El outbox commitea en
+la misma transacción que el producto, que es justo la garantía que hay que probar.
+
+**Commiteado en `CAT-02b`.**
 
 ### Tramos siguientes
 
