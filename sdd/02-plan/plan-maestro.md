@@ -129,6 +129,53 @@ Owner: Andres Jaramillo
 
 ## Handoff
 
+### 2026-08-11 — Auditoría de RBAC: el `Role` acotado no es una frontera real
+
+**Hallazgo preexistente, no lo introdujo este trabajo.** Se encontró al auditar el `Role` que
+se creó para que el pipeline aplicara `prod-secret.yaml`.
+
+El `Role` quedó bien acotado —`get`/`patch`/`update` sólo sobre `qep-backend-secret`, y ni
+siquiera `list`— pero **eso no impide que el agente lea cualquier Secret del clúster.** El
+`ClusterRole` `azure-devops-deployer`, atado por `ClusterRoleBinding` y por lo tanto vigente en
+**todos** los namespaces, concede:
+
+```
+apiGroups=[""]                resources=[namespaces configmaps services]  verbs=[get list watch create update patch]
+apiGroups=[apps]              resources=[deployments]                     verbs=[get list watch create update patch]
+apiGroups=[networking.k8s.io] resources=[ingresses]                       verbs=[get list watch create update patch]
+apiGroups=[batch]             resources=[cronjobs jobs]                   verbs=[get list watch create update patch]
+```
+
+**Por qué eso alcanza para leer secretos sin permiso de leer secretos:** montar un Secret en un
+Pod **no** requiere permiso RBAC sobre ese Secret. El kubelet lo monta con sus propias
+credenciales. Con `create` sobre `jobs` o `deployments` en un namespace, se crea una carga que
+monta cualquier Secret de ese namespace y lo vuelca. Verificado con `auth can-i` que la SA
+puede crear Jobs y Deployments en `default`, `database`, `azure-devops-agent` y **`kube-system`**.
+
+**Y no hay contención:** ningún namespace tiene `pod-security.kubernetes.io/enforce` —los 15
+salen vacíos— ni hay webhook de admisión que restrinja pods; los cuatro presentes son de
+cert-manager, CNPG, ingress-nginx y Prometheus. Sin eso, un Pod privilegiado o con `hostPath`
+en `kube-system` llega al nodo. `database` tiene 7 Secrets, y ahí vive el PostgreSQL del que
+sale la cadena de conexión de producción.
+
+**Lo que sí está cerrado:** la SA **no** puede crear `roles`, `rolebindings` ni
+`serviceaccounts`. No hay escalación directa por RBAC.
+
+**No se ejecutó ninguna prueba de explotación.** Todo lo anterior sale de leer objetos de RBAC
+y las etiquetas de los namespaces con `auth can-i`, que es evaluación, no acción.
+
+**Remediación propuesta, no aplicada — es de devops, no de este repositorio:**
+
+1. Reemplazar el `ClusterRoleBinding` por `RoleBinding`s namespace por namespace, sólo en los
+   que el pipeline despliega. Mata el acceso cruzado de una. **Ojo:** ese `ClusterRole` lo usan
+   otros pipelines —hay namespaces de otras aplicaciones en el mismo clúster—, así que
+   acotarlo sin crear su `RoleBinding` a cada uno les rompe el deploy.
+2. Activar Pod Security Admission en `baseline` o `restricted`, al menos en `kube-system` y
+   `database`. Cierra el salto de Pod privilegiado a nodo.
+
+Mientras 1 y 2 no estén, el `Role` acotado documenta la intención pero **no** es la frontera
+que aparenta ser.
+
 ### 2026-08-11 — El deploy corta al aplicar el Secret: falta RBAC, no es el manifiesto
 
 Con el build ya verde tras fijar el SDK, el `Deploy` falla en el paso del `Secret`:
