@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
@@ -18,6 +19,16 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
         try
         {
             return await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        // Va antes que la rama de DbUpdateException porque DbUpdateConcurrencyException hereda
+        // de ella: al revés, el filtro de índice único la dejaría pasar sin traducir y saldría
+        // como 500. Mismo patrón que TenancyUnitOfWork.
+        catch (DbUpdateConcurrencyException exception)
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The product changed while the update was being committed.",
+                exception);
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

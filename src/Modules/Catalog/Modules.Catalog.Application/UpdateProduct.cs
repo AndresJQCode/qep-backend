@@ -37,9 +37,10 @@ public sealed class UpdateProductHandler(
         UpdateProductCommand command,
         CancellationToken cancellationToken)
     {
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        // Autorizar antes de validar. Ver la razón en CreateProductHandler.
         CatalogAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CatalogPermissions.ProductManage);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var product = await repository.FindAsync(
             command.TenantId, new ProductId(command.ProductId), cancellationToken)

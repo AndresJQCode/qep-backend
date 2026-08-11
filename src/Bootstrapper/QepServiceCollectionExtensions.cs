@@ -140,9 +140,7 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileDelete,
                 StoragePermissions.FilePublish,
                 CatalogPermissions.ProductRead,
-                CatalogPermissions.ProductManage,
-                CatalogPermissions.TaxRateRead,
-                CatalogPermissions.TaxRateManage
+                CatalogPermissions.ProductManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -153,8 +151,7 @@ public static class QepServiceCollectionExtensions
             [
                 TenancyPermissions.SettingsRead,
                 TenancyPermissions.MembershipRead,
-                CatalogPermissions.ProductRead,
-                CatalogPermissions.TaxRateRead
+                CatalogPermissions.ProductRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -222,18 +219,6 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar e inactivar productos.",
             "Catalog",
             "medium"));
-        services.AddSingleton(new PermissionDefinition(
-            CatalogPermissions.TaxRateRead,
-            "Leer tasas de impuesto",
-            "Permite consultar las tasas de impuesto del tenant.",
-            "Catalog",
-            "low"));
-        services.AddSingleton(new PermissionDefinition(
-            CatalogPermissions.TaxRateManage,
-            "Gestionar tasas de impuesto",
-            "Permite crear, editar e inactivar tasas de impuesto. Cambiarlas mueve los totales de toda cotización.",
-            "Catalog",
-            "high"));
     }
 
     private static void AddAuthentication(
@@ -376,13 +361,7 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, CatalogPermissions.ProductRead))
             .AddPolicy(
                 CatalogPermissions.ProductManage,
-                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage))
-            .AddPolicy(
-                CatalogPermissions.TaxRateRead,
-                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateRead))
-            .AddPolicy(
-                CatalogPermissions.TaxRateManage,
-                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateManage));
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage));
     }
 
     private static void AddPermissionRequirement(

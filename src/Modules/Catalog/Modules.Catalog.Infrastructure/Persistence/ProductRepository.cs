@@ -6,6 +6,15 @@ namespace Modules.Catalog.Infrastructure.Persistence;
 
 internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRepository
 {
+    private const string LikeEscapeCharacter = "\\";
+
+    // La barra va primero: escaparla después convertiría en literal la barra que acaban de
+    // agregar los otros dos reemplazos.
+    private static string EscapeLikeWildcards(string term) => term
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("%", "\\%", StringComparison.Ordinal)
+        .Replace("_", "\\_", StringComparison.Ordinal);
+
     public async Task<IReadOnlyList<Product>> SearchAsync(
         Guid tenantId,
         string? search,
@@ -18,12 +27,16 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         var term = search?.Trim();
         if (!string.IsNullOrEmpty(term))
         {
-            // ILike es la coincidencia case-insensitive de Npgsql; los comodines son nuestros y el
-            // término viaja como parámetro.
-            var pattern = $"%{term}%";
+            // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
+            // sólo los dos que pone esta línea: `%` y `_` son comodines de LIKE, así que un
+            // término sin escapar los convierte en parte de la sintaxis. `?search=_` devolvía el
+            // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
+            // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
+            // afirmaba justo lo que no pasaba.
+            var pattern = $"%{EscapeLikeWildcards(term)}%";
             query = query.Where(product =>
-                EF.Functions.ILike(product.Name, pattern) ||
-                EF.Functions.ILike(product.Code, pattern));
+                EF.Functions.ILike(product.Name, pattern, LikeEscapeCharacter) ||
+                EF.Functions.ILike(product.Code, pattern, LikeEscapeCharacter));
         }
 
         return await query

@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
+using Modules.Catalog.Domain;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -295,6 +298,144 @@ public sealed class ProductWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.Contains(CatalogPermissions.ProductRead, body, StringComparison.Ordinal);
         Assert.Contains(CatalogPermissions.ProductManage, body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// CA-CAT-02-02 con cuerpo inválido, el camino que la revisión de riesgo de CAT-02
+    /// encontró sin cubrir.
+    ///
+    /// Falta de permiso y tenant ajeno **no** son el mismo caso. A quien le falta el permiso
+    /// lo frena la política del endpoint, antes de que el handler exista, así que el validador
+    /// nunca corre. El cruce de tenants es distinto: la política pasa —el permiso está— y
+    /// quien rechaza es la revalidación del handler. Ahí sí importa el orden, y validar antes
+    /// de autorizar le devuelve a un tenant ajeno el mapa de errores por campo: la forma del
+    /// contrato, a alguien que no puede usarlo contra ese tenant.
+    /// </summary>
+    [Fact]
+    public async Task CreateForAnotherTenantIsForbiddenBeforeTheBodyIsValidated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Autenticado en OtherTenant y con el permiso de gestión: la política del endpoint pasa.
+        using var intruder = CreateClient(
+            factory, OtherSubjectId, OtherTenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(intruder, TenantId, string.Empty, string.Empty);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        Assert.DoesNotContain("validation.failed", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// El `_` de LIKE coincide con un carácter cualquiera. Como el término del usuario se
+    /// interpola en el patrón, `?search=_` devolvía el catálogo entero: lo contrario de
+    /// filtrar. Los comodines tienen que ser sólo los que pone el repositorio.
+    /// </summary>
+    [Fact]
+    public async Task SearchTreatsLikeWildcardsAsLiteralCharacters()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
+        await CreateProductAsync(client, TenantId, "Mecha de algodón", "MC-002");
+        await CreateProductAsync(client, TenantId, "Kit_A de armado", "KT-003");
+
+        // Sólo el que lleva un guion bajo literal en el nombre.
+        var underscore = await ListAsync(client, TenantId, "_");
+        Assert.Single(underscore);
+        Assert.Equal("KT-003", underscore.Single().Code);
+
+        // El % no coincide con nada: ningún producto lo tiene en su texto.
+        var percent = await ListAsync(client, TenantId, "%");
+        Assert.Empty(percent);
+    }
+
+    /// <summary>
+    /// Los permisos de tasas de impuesto son de CAT-03, declarado fuera de alcance en el spec
+    /// de CAT-02. Publicarlos antes hace que un owner cargue hoy un permiso de gestión sobre
+    /// algo que no existe, y que el frontend lo lea de /authorization/me como si existiera.
+    /// Esta prueba se borra cuando CAT-03 los traiga con su implementación.
+    /// </summary>
+    [Fact]
+    public async Task TaxRatePermissionsAreNotPublishedBeforeTheirSliceExists()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(
+            factory, SubjectId, TenantId, [.. ManagePermissions, "tenancy.membership.read"]);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/authorization/catalog",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        Assert.DoesNotContain("catalog.tax_rate", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Hallazgo A de la revisión de CAT-02, al que llegaron por separado los lentes de
+    /// fiabilidad y de resiliencia.
+    ///
+    /// Una edición que lee el producto activo y una inactivación que commitea en el medio.
+    /// `EnsureActive()` del agregado ya pasó contra la copia en memoria del editor, y como esa
+    /// edición no toca `IsActive`, EF no la incluye en el `SET`: sin token de concurrencia el
+    /// `UPDATE` entra sin condición sobre el estado real. Quedaba un producto **editado después
+    /// de inactivarse** —justo lo que `EnsureActive()` existe para impedir—, con dos entradas
+    /// de auditoría `success` y un estado final que no corresponde a ninguna de las dos.
+    ///
+    /// El competidor va por la API y no por SQL a propósito: pasa por el dominio, que es quien
+    /// incrementa la versión, y así la prueba no nombra la columna. Y va intercalado en vez de
+    /// en paralelo porque una carrera de dos requests no falla de forma reproducible.
+    /// </summary>
+    [Fact]
+    public async Task EditingAProductDeactivatedMidFlightIsRefusedInsteadOfOverwritingIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var created = await ReadProductAsync(
+            await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001"));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>();
+
+        // El que va a perder lee primero: se lleva el producto activo.
+        var stale = await repository.FindAsync(
+            Guid.Parse(TenantId),
+            new ProductId(created.Id),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(stale);
+        Assert.True(stale!.IsActive);
+
+        // Otro request inactiva y commitea, en su propia unidad de trabajo.
+        var deactivate = await client.PostAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
+
+        // Recién ahora escribe el primero, sobre una copia que ya no refleja la base.
+        stale.Update("Vela de soja premium", "VS-002", DateTimeOffset.UtcNow);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        // Y la inactivación sigue en pie: la edición perdida no dejó rastro.
+        var current = await ReadProductAsync(
+            await client.GetAsync(
+                $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+                TestContext.Current.CancellationToken));
+        Assert.False(current.IsActive);
+        Assert.Equal("Vela de soja", current.Name);
+        Assert.Equal("VS-001", current.Code);
     }
 
     private static Task<HttpResponseMessage> CreateProductAsync(

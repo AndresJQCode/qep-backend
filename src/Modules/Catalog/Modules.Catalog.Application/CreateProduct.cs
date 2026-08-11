@@ -37,9 +37,14 @@ public sealed class CreateProductHandler(
         CreateProductCommand command,
         CancellationToken cancellationToken)
     {
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        // Autorizar antes de validar, y no al revés. La política del endpoint ya frena a quien
+        // le falta el permiso, pero no al que lo tiene para otro tenant: a ése lo rechaza esta
+        // revalidación. Validando primero, ese llamador ajeno se lleva el mapa de errores por
+        // campo —la forma del contrato— antes de que nadie le diga que no. Lo encontró la
+        // revisión de riesgo de CAT-02.
         CatalogAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CatalogPermissions.ProductManage);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var now = clock.UtcNow;
         var product = Product.Create(

@@ -32,6 +32,7 @@ public sealed class Product
         Name = name;
         Code = code;
         IsActive = true;
+        Version = 1;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
     }
@@ -46,6 +47,19 @@ public sealed class Product
     public string Code { get; private set; }
 
     public bool IsActive { get; private set; }
+
+    /// <summary>
+    /// Token de concurrencia optimista, como en <c>Tenant</c> y <c>Membership</c>. Cada mutación
+    /// lo incrementa, y la infraestructura lo mapea con <c>IsConcurrencyToken()</c>, de modo que
+    /// el <c>UPDATE</c> lleve la versión leída en su <c>WHERE</c>.
+    ///
+    /// Sin él, dos escrituras que se solapan se pisaban en silencio: la segunda no sólo perdía
+    /// la primera, sino que podía dejar el producto editado **después** de inactivarse, porque
+    /// <see cref="EnsureActive"/> se evalúa contra la copia en memoria del que escribe y no
+    /// contra el estado real al momento del commit. Lo encontraron los lentes de fiabilidad y
+    /// resiliencia en la revisión de CAT-02.
+    /// </summary>
+    public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
 
@@ -65,6 +79,7 @@ public sealed class Product
 
         Name = NormalizeName(name);
         Code = NormalizeCode(code);
+        Version++;
         UpdatedAt = occurredAt;
     }
 
@@ -78,6 +93,7 @@ public sealed class Product
         }
 
         IsActive = false;
+        Version++;
         UpdatedAt = occurredAt;
     }
 

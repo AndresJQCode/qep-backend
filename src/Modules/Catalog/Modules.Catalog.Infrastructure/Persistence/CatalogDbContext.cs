@@ -33,6 +33,9 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("code")
             .HasMaxLength(Product.CodeMaxLength);
         product.Property(value => value.IsActive).HasColumnName("is_active");
+        product.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
         product.Property(value => value.CreatedAt).HasColumnName("created_at");
         product.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         product.HasIndex(value => value.TenantId).HasDatabaseName("IX_products_tenant");
