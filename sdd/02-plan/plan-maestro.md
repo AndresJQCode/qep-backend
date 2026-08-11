@@ -241,11 +241,10 @@ cada campo. Ausente y `""` se comportan igual.
 **Lo que NO se verificó: el pipeline nunca corrió.** Todo lo de arriba es lectura de la
 plantilla más build y pruebas locales. El primer deploy es la prueba real.
 
-**Cuatro seguimientos abiertos:**
+**Tres seguimientos abiertos.** `prod-wildcard-certificate.yaml` **no** es uno: quedó fuera de
+la lista de `manifests` a propósito, resuelto por el owner el 2026-08-11 — el certificado se
+usa más adelante y se agrega a la lista cuando llegue ese momento.
 
-- **`prod-wildcard-certificate.yaml` no lo aplica nadie.** No está en la lista por defecto ni
-  en la nueva. Se dejó así: agregarlo lo re-aplicaría en cada deploy, y eso es un cambio de
-  comportamiento que nadie pidió. Confirmar con el owner si se aplicó a mano.
 - **El `sed` del tag corre sobre credenciales ya sustituidas.** En `deploy.yml` el reemplazo de
   tokens es el paso previo al `find prod-*.yaml -exec sed -i "s|TAG|<buildId>|g"`. Una
   credencial que contenga la cadena literal `TAG` en mayúsculas se corrompe en silencio, y el

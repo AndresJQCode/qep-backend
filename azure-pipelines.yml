@@ -44,6 +44,8 @@ stages:
           # lista por defecto no incluye "secret", y sin él el Deployment referencia
           # un Secret inexistente y los pods quedan en CreateContainerConfigError.
           # El orden importa: el Secret debe existir antes que el Deployment.
+          # prod-wildcard-certificate.yaml queda fuera a propósito: el certificado se usa
+          # más adelante. Se agrega acá cuando llegue ese momento, no antes.
           manifests:
             - namespace
             - configMap
