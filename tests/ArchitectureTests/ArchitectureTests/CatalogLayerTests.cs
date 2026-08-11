@@ -35,9 +35,9 @@ public sealed class CatalogLayerTests
             typeof(ProductEndpoints).Assembly);
     }
 
-    // Translating a database error is Infrastructure's job, not Application's: the unique
-    // violation on IX_products_tenant_code becomes catalog.product.code_taken there. This
-    // guards the boundary that SDD-CT-06 was closed on.
+    // Traducir un error de base es tarea de Infrastructure, no de Application: la violación
+    // de unicidad en IX_products_tenant_code se vuelve catalog.product.code_taken ahí. Esto
+    // protege la frontera con la que se cerró SDD-CT-06.
     [Fact]
     public void ApplicationDoesNotReferencePersistenceLibraries()
     {

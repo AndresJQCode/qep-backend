@@ -5,8 +5,8 @@ using Modules.Notifications.Infrastructure;
 
 namespace ArchitectureTests;
 
-// Notifications has three projects (Domain, Application, Infrastructure) and no Api,
-// so the Api rule the other modules assert does not apply here.
+// Notifications tiene tres proyectos (Domain, Application, Infrastructure) y ninguno Api,
+// así que la regla de Api que afirman los otros módulos no aplica acá.
 public sealed class NotificationsLayerTests
 {
     [Fact]

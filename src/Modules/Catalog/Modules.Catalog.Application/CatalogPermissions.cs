@@ -1,8 +1,8 @@
 namespace Modules.Catalog.Application;
 
-// Three segments, module.resource.action, matching every permission already registered
-// (TenancyPermissions, StoragePermissions). Products and tax rates are split because
-// changing a tax rate moves the totals of every quote, while loading a product does not.
+// Tres segmentos, module.resource.action, igual que todos los permisos ya registrados
+// (TenancyPermissions, StoragePermissions). Productos y tasas de impuesto van separados
+// porque cambiar una tasa mueve los totales de toda cotización, y cargar un producto no.
 public static class CatalogPermissions
 {
     public const string ProductRead = "catalog.product.read";

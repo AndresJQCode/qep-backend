@@ -1,7 +1,7 @@
 ﻿namespace Modules.Storage.Infrastructure;
 
-// Strongly-typed binding of the "Storage" appsettings section. Cloudflare R2 is the only
-// runtime provider (ADR 0020). Credentials are per-environment secrets, never committed.
+// Binding fuertemente tipado de la sección "Storage" de appsettings. Cloudflare R2 es el
+// único proveedor de runtime (ADR 0020). Las credenciales son secretos por entorno.
 public sealed class StorageOptions
 {
     public const string SectionName = "Storage";
@@ -40,10 +40,10 @@ public sealed class R2Options
 
     public string PublicBucket { get; init; } = string.Empty;
 
-    // Public custom domain or R2.dev origin, e.g. https://assets.example.com.
+    // Dominio público propio u origen R2.dev, por ejemplo https://assets.example.com.
     public string PublicBaseUrl { get; init; } = string.Empty;
 
-    // Optional; when empty it is derived from AccountId as
+    // Opcional; cuando está vacío se deriva de AccountId como
     // https://{AccountId}.r2.cloudflarestorage.com.
     public string Endpoint { get; init; } = string.Empty;
 }

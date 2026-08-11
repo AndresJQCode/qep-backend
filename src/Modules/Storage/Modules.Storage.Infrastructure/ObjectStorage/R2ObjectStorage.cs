@@ -6,8 +6,8 @@ using Modules.Storage.Application;
 
 namespace Modules.Storage.Infrastructure.ObjectStorage;
 
-// Cloudflare R2 adapter over the S3-compatible AWSSDK.S3 client (ADR 0020). Presigned URLs
-// are issued directly by R2; the client never sees credentials.
+// Adaptador de Cloudflare R2 sobre el cliente AWSSDK.S3 compatible con S3 (ADR 0020). Las
+// URLs prefirmadas las emite R2 directamente; el cliente nunca ve credenciales.
 internal sealed class R2ObjectStorage(IAmazonS3 client, IOptions<StorageOptions> options)
     : IObjectStorage
 {

@@ -5,10 +5,10 @@ public sealed record SessionIssueResult(string RawToken, DateTimeOffset ExpiresA
 public sealed record SessionPrincipal(Guid UserId);
 
 /// <summary>
-/// Issues, validates and revokes opaque-token sessions backed by the
-/// <c>identity.sessions</c> table. The raw token is returned to the caller exactly
-/// once, at issuance, and is never persisted — only its hash is stored, so a
-/// database read cannot be replayed as a valid session (see <c>Session</c>).
+/// Emite, valida y revoca sesiones de token opaco respaldadas por la tabla
+/// <c>identity.sessions</c>. El token crudo se devuelve al llamador exactamente una vez,
+/// al emitirlo, y nunca se persiste — sólo se guarda su hash, así que una lectura de la
+/// base no se puede reproducir como sesión válida (ver <c>Session</c>).
 /// </summary>
 public interface ISessionService
 {
@@ -18,13 +18,13 @@ public interface ISessionService
         string? ipAddress,
         CancellationToken cancellationToken);
 
-    /// <returns>The session's principal, or <c>null</c> if the token is unknown,
-    /// expired, idle-timed-out or revoked.</returns>
+    /// <returns>El principal de la sesión, o <c>null</c> si el token es desconocido,
+    /// venció, expiró por inactividad o fue revocado.</returns>
     Task<SessionPrincipal?> ValidateAsync(string rawToken, CancellationToken cancellationToken);
 
     Task RevokeAsync(string rawToken, string reason, CancellationToken cancellationToken);
 
-    /// <returns>The number of sessions revoked.</returns>
+    /// <returns>La cantidad de sesiones revocadas.</returns>
     Task<int> RevokeAllForUserAsync(
         Guid userId,
         string reason,

@@ -3,9 +3,9 @@ using Modules.Catalog.Application;
 
 namespace Modules.Catalog.Infrastructure.Persistence;
 
-// Buffers a platform.audit.recorded.v1 event into the CatalogDbContext outbox projection so
-// it commits atomically with the catalogue change. The Audit module projection worker writes
-// it to audit.entries.
+// Acumula un evento platform.audit.recorded.v1 en la proyección de outbox de CatalogDbContext
+// para que commitee atómico con el cambio del catálogo. El worker de proyección del módulo
+// Audit lo escribe en audit.entries.
 internal sealed class CatalogAuditPublisher(CatalogDbContext dbContext) : ICatalogAuditPublisher
 {
     private const string EventName = "platform.audit.recorded.v1";

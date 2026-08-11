@@ -1,8 +1,8 @@
 namespace Modules.Catalog.Infrastructure.Persistence;
 
-// Write projection of the platform Outbox, owned by Tenancy. Catalog inserts operational
-// audit events here in the same transaction as the catalogue change; the Audit module
-// projection worker consumes them. Mapped ExcludeFromMigrations.
+// Proyección de escritura del Outbox de plataforma, propiedad de Tenancy. Catalog inserta acá
+// los eventos de auditoría operativa en la misma transacción que el cambio del catálogo; los
+// consume el worker de proyección del módulo Audit. Mapeado como ExcludeFromMigrations.
 internal sealed class CatalogOutboxMessage
 {
     public Guid Id { get; init; }

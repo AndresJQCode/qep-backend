@@ -1,8 +1,8 @@
 namespace Modules.Catalog.Application;
 
-// Operational audit over the outbox path: buffers the event into the module own DbContext
-// so it commits in the same transaction as the catalogue change. Administering a product is
-// operational, not security-critical-synchronous, which is the same call Storage made.
+// Auditoría operativa por el camino de outbox: acumula el evento en el DbContext del propio
+// módulo para que commitee en la misma transacción que el cambio del catálogo. Administrar un
+// producto es operativo, no crítico-de-seguridad-síncrono, la misma decisión que tomó Storage.
 public interface ICatalogAuditPublisher
 {
     void Publish(

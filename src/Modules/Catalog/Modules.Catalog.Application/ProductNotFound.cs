@@ -2,9 +2,9 @@ using BuildingBlocks.Application;
 
 namespace Modules.Catalog.Application;
 
-// The lookup is always scoped to the caller tenant, so "not found" here means "not found in
-// your catalogue". A product of another tenant is unreachable earlier, at the authorization
-// check, and answers 403 — never 404, which would confirm the id exists somewhere.
+// La búsqueda siempre está acotada al tenant del llamador, así que "no encontrado" acá
+// significa "no encontrado en tu catálogo". Un producto de otro tenant es inalcanzable antes,
+// en la autorización, y responde 403 — nunca 404, que confirmaría que el id existe.
 internal static class ProductNotFound
 {
     public static ResourceNotFoundException For(Guid productId) =>

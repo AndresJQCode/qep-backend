@@ -3,11 +3,11 @@ using Modules.Audit.Domain;
 
 namespace Modules.Audit.Infrastructure.Persistence;
 
-// Owns the audit store (schema "audit"): the append-only audit.entries table and this
-// module's operational inbox. Producer contexts (e.g. TenancyDbContext) map the same
-// audit.entries table as an ExcludeFromMigrations write projection so critical audits
-// commit atomically inside the producer transaction (ADR 0019). Keep the audit.entries
-// column mapping here in sync with those projections.
+// Dueño del almacén de auditoría (esquema "audit"): la tabla append-only audit.entries y
+// el inbox operativo de este módulo. Los contextos productores (p. ej. TenancyDbContext)
+// mapean la misma tabla audit.entries como proyección de escritura ExcludeFromMigrations,
+// para que las auditorías críticas commiteen atómicas en la transacción del productor
+// (ADR 0019). Mantener este mapeo de columnas sincronizado con esas proyecciones.
 public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options)
     : DbContext(options)
 {
@@ -24,10 +24,10 @@ public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options)
         ConfigureOutboxProjection(modelBuilder);
     }
 
-    // Shared shape of the audit.entries table. `ownsTable` is true for the owning
-    // AuditDbContext (the table is created by this module's migrations) and false for
-    // producer write projections, which map the same physical table but exclude it from
-    // their own migrations.
+    // Forma compartida de la tabla audit.entries. `ownsTable` es true para el AuditDbContext
+    // dueño (la tabla la crean las migraciones de este módulo) y false para las proyecciones
+    // de escritura de los productores, que mapean la misma tabla física pero la excluyen de
+    // sus propias migraciones.
     public static void ConfigureEntry(ModelBuilder modelBuilder, bool ownsTable)
     {
         var entry = modelBuilder.Entity<AuditEntry>();
@@ -75,7 +75,7 @@ public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options)
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
     {
-        // Read-only view over the platform Outbox owned by the producing module.
+        // Vista de sólo lectura sobre el Outbox de plataforma, propiedad del módulo productor.
         var outbox = modelBuilder.Entity<OutboxRecord>();
         outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
         outbox.HasKey(value => value.Id);

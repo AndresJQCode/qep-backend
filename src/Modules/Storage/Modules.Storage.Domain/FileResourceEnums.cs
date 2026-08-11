@@ -1,7 +1,7 @@
 ﻿namespace Modules.Storage.Domain;
 
-// Upload lifecycle of a file resource (capability contract). Only Available is
-// downloadable; a soft-deleted resource is retained before physical purge.
+// Ciclo de vida de subida de un recurso de archivo (contrato de capacidad). Sólo Available
+// es descargable; un recurso borrado lógicamente se retiene antes del purgado físico.
 public enum FileResourceStatus
 {
     PendingUpload = 1,

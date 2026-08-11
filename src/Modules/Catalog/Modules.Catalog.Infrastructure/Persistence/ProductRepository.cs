@@ -18,8 +18,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         var term = search?.Trim();
         if (!string.IsNullOrEmpty(term))
         {
-            // ILike is the Npgsql case-insensitive match; the wildcards are ours and the
-            // term travels as a parameter.
+            // ILike es la coincidencia case-insensitive de Npgsql; los comodines son nuestros y el
+            // término viaja como parámetro.
             var pattern = $"%{term}%";
             query = query.Where(product =>
                 EF.Functions.ILike(product.Name, pattern) ||
@@ -31,8 +31,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .ToListAsync(cancellationToken);
     }
 
-    // Tracked on purpose, unlike SearchAsync: the callers of this one mutate the aggregate
-    // and rely on the unit of work to persist it.
+    // Con tracking a propósito, a diferencia de SearchAsync: los llamadores de éste mutan el
+    // agregado y dependen de la unidad de trabajo para persistirlo.
     public Task<Product?> FindAsync(
         Guid tenantId,
         ProductId productId,

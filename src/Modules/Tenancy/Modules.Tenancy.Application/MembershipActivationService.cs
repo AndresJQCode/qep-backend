@@ -28,12 +28,12 @@ public sealed class MembershipActivationService(
             }
             catch (TenantDomainException)
             {
-                // Expired invitation: Accept marked it Expired. Skip it; the user
-                // simply has no active membership for that tenant.
+                // Invitación vencida: Accept la marcó Expired. Se saltea; el usuario
+                // simplemente no tiene membresía activa para ese tenant.
                 continue;
             }
 
-            // The logging-in user is the actor of their own acceptance.
+            // El usuario que hace login es el actor de su propia aceptación.
             auditRecorder.Record(
                 membership.TenantId.Value,
                 userId,

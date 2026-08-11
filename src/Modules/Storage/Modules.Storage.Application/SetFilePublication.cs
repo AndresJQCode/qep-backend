@@ -34,7 +34,7 @@ public sealed class PublishFileHandler(
         var publicKey = resource.PublicStorageKey ?? StorageKey.PublicFor(
             resource.TenantId, resource.Id, resource.Name);
         var now = clock.UtcNow;
-        // Validate all publication invariants before creating any public object.
+        // Validar todos los invariantes de publicación antes de crear cualquier objeto público.
         resource.Publish(publicKey, now);
         var copiedKeys = new List<string>();
 

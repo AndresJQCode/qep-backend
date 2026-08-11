@@ -1,9 +1,9 @@
 ﻿namespace Modules.Tenancy.Application;
 
 /// <summary>
-/// Validates that membership role references point to roles known by the
-/// Authorization capability. Tenancy owns the relation; Authorization owns the
-/// role catalog.
+/// Valida que las referencias de rol de una membresía apunten a roles conocidos por la
+/// capacidad Authorization. Tenancy es dueño de la relación; Authorization es dueño del
+/// catálogo de roles.
 /// </summary>
 public interface IRoleReferenceValidator
 {

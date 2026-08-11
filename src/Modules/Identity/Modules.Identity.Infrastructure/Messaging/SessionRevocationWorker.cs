@@ -8,18 +8,18 @@ using Modules.Identity.Infrastructure.Persistence;
 
 namespace Modules.Identity.Infrastructure.Messaging;
 
-// Consumes the membership-suspended/removed integration events from the platform
-// Outbox and revokes every active session of the affected user. Idempotent via this
-// module's own inbox keyed by (consumer, outbox message id): a redelivered message is
-// skipped. Session.Revoke is itself idempotent, so double-processing across a crash
-// is also safe, not just single-delivery.
+// Consume del Outbox de plataforma los eventos de integración de membresía suspendida o
+// quitada y revoca toda sesión activa del usuario afectado. Es idempotente por el inbox
+// propio de este módulo, con clave (consumidor, id de mensaje de outbox): un mensaje
+// reentregado se saltea. Session.Revoke es idempotente en sí mismo, así que procesar dos
+// veces tras una caída también es seguro, no sólo la entrega única.
 //
-// Deliberately revokes ALL of the user's sessions, not only the affected tenant's:
-// the session token carries no tenant context (tenant/permissions are resolved live
-// per request from membership state, see ExternalClaimsTransformation), so there is
-// no per-tenant session to scope this to. Logging the user out of every tenant on a
-// single-tenant suspend/removal is broader than strictly necessary but simpler and
-// safe — see the session-cookie ADR for the trade-off.
+// Deliberadamente revoca TODAS las sesiones del usuario, no sólo las del tenant afectado:
+// el token de sesión no lleva contexto de tenant (tenant y permisos se resuelven en vivo
+// por request desde el estado de la membresía, ver ExternalClaimsTransformation), así que
+// no hay sesión por tenant a la cual acotar esto. Desloguear al usuario de todos los
+// tenants ante una suspensión/baja de un solo tenant es más amplio que lo estrictamente
+// necesario, pero más simple y seguro — ver el ADR de cookie de sesión por el trade-off.
 internal sealed partial class SessionRevocationWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<SessionRevocationWorker> logger) : BackgroundService

@@ -10,19 +10,19 @@ using Modules.Tenancy.Application;
 namespace Api;
 
 /// <summary>
-/// Composition-root endpoints that establish, revalidate and end a QEP session.
-/// The API is a resource server: the SPA authenticates with the OIDC provider via
-/// Authorization Code + PKCE and calls <c>POST /auth/session</c> with the provider
-/// bearer token — the only endpoint in the whole API that scheme is ever accepted
-/// on (see QepServiceCollectionExtensions.AddAuthentication). It reads the validated
-/// <c>sub</c>/<c>email</c>/<c>email_verified</c> claims, orchestrates the two module
-/// contracts — Identity link/activate, then Tenancy membership acceptance — applying
-/// the ADR 0015 invitation-only rules, and issues the opaque-token session cookie
-/// every other endpoint authenticates against.
+/// Endpoints de la raíz de composición que establecen, revalidan y terminan una sesión QEP.
+/// La API es un resource server: la SPA se autentica con el proveedor OIDC vía
+/// Authorization Code + PKCE y llama a <c>POST /auth/session</c> con el bearer token
+/// del proveedor — el único endpoint de toda la API donde ese esquema se acepta
+/// (ver QepServiceCollectionExtensions.AddAuthentication). Lee los claims validados
+/// <c>sub</c>/<c>email</c>/<c>email_verified</c>, orquesta los dos contratos de módulo
+/// —vincular/activar en Identity, después aceptar la membresía en Tenancy— aplicando
+/// las reglas de sólo-por-invitación del ADR 0015, y emite la cookie de sesión de token
+/// opaco contra la que autentica todo el resto de los endpoints.
 /// </summary>
 public static class AuthSessionEndpoints
 {
-    // First (and only) external provider, per ADR 0014.
+    // Primer (y único) proveedor externo, según el ADR 0014.
     private const string Provider = "google";
 
     public static IEndpointRouteBuilder MapAuthSessionEndpoints(
@@ -83,8 +83,8 @@ public static class AuthSessionEndpoints
             cancellationToken);
         if (outcome.IsDenied)
         {
-            // Invitation-only: unknown or unverified identities are refused without
-            // leaking whether the email exists.
+            // Sólo por invitación: las identidades desconocidas o no verificadas se rechazan sin
+            // filtrar si el email existe.
             return Results.Problem(
                 statusCode: StatusCodes.Status403Forbidden,
                 title: "Login denied.",
@@ -139,8 +139,8 @@ public static class AuthSessionEndpoints
             await sessionService.RevokeAsync(rawToken, "logout", cancellationToken);
         }
 
-        // Path must match what AppendSessionCookie used, or the browser treats this
-        // as a different cookie and never removes the real one.
+        // El Path tiene que coincidir con el que usó AppendSessionCookie, o el navegador trata
+        // esto como otra cookie y nunca borra la real.
         httpContext.Response.Cookies.Delete(cookieName, new CookieOptions { Path = "/" });
         return Results.NoContent();
     }

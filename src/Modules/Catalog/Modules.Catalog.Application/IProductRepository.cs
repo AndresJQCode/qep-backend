@@ -2,8 +2,8 @@ using Modules.Catalog.Domain;
 
 namespace Modules.Catalog.Application;
 
-// Every method takes tenantId first: the tenant filter is part of the query, never an
-// optional argument a caller can forget.
+// Todo método recibe tenantId primero: el filtro de tenant es parte de la consulta, nunca
+// un argumento opcional que el llamador se pueda olvidar.
 public interface IProductRepository
 {
     Task<IReadOnlyList<Product>> SearchAsync(

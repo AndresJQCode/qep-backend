@@ -40,10 +40,10 @@ public sealed class ProductWriteApiTests
         Assert.Equal(HttpStatusCode.OK, fetched.StatusCode);
     }
 
-    // CA-CAT-02-04: the audit event has to be in the outbox, committed with the product.
-    // Asserted on platform.outbox_messages and not on audit.entries on purpose: catalog uses
-    // the outbox path, so audit.entries only appears once the Audit projection worker runs,
-    // which would make this assertion a race.
+    // CA-CAT-02-04: el evento de auditoría tiene que estar en el outbox, commiteado con el producto.
+    // Se asserta sobre platform.outbox_messages y no sobre audit.entries a propósito: catalog usa
+    // el camino de outbox, así que audit.entries recién aparece cuando corre el worker de
+    // proyección de Audit, lo que volvería esta aserción una carrera.
     [Fact]
     public async Task CreateWritesExactlyOneAuditEventToTheOutbox()
     {
@@ -65,8 +65,8 @@ public sealed class ProductWriteApiTests
         Assert.Contains(created.Id.ToString(), single, StringComparison.OrdinalIgnoreCase);
     }
 
-    // CA-CAT-02-05: the field map comes from the FluentValidation validator, not from the
-    // domain exception, which only carries a code.
+    // CA-CAT-02-05: el mapa de campos viene del validador de FluentValidation, no de la
+    // excepción de dominio, que sólo lleva un código.
     [Fact]
     public async Task CreateWithABlankNameReturnsUnprocessableWithTheFieldMap()
     {
@@ -84,7 +84,7 @@ public sealed class ProductWriteApiTests
         Assert.Contains("Name", body, StringComparison.OrdinalIgnoreCase);
     }
 
-    // CA-CAT-02-03: reading is not managing.
+    // CA-CAT-02-03: leer no es gestionar.
     [Fact]
     public async Task CreateWithOnlyTheReadPermissionIsForbiddenAndPersistsNothing()
     {
@@ -105,8 +105,8 @@ public sealed class ProductWriteApiTests
         Assert.Empty(body.Items);
     }
 
-    // CA-CAT-02-12: the unique violation on IX_products_tenant_code has to surface as a 422
-    // with the domain code. Without the translation it is a 500 — the shape of SDD-CT-06.
+    // CA-CAT-02-12: la violación de unicidad en IX_products_tenant_code tiene que salir como 422
+    // con el código de dominio. Sin la traducción es un 500 — la forma de SDD-CT-06.
     [Fact]
     public async Task CreatingTheSameCodeTwiceInATenantReturnsCodeTaken()
     {
@@ -125,7 +125,7 @@ public sealed class ProductWriteApiTests
         Assert.Contains("catalog.product.code_taken", body, StringComparison.Ordinal);
     }
 
-    // CA-CAT-02-12, second half: uniqueness is per tenant, not global.
+    // CA-CAT-02-12, segunda mitad: la unicidad es por tenant, no global.
     [Fact]
     public async Task TheSameCodeIsAcceptedInADifferentTenant()
     {
@@ -143,8 +143,8 @@ public sealed class ProductWriteApiTests
         Assert.Equal(HttpStatusCode.Created, second.StatusCode);
     }
 
-    // CA-CAT-02-01, the half CAT-02a could not cover: with nothing seeded, an empty list
-    // proves nothing about isolation.
+    // CA-CAT-02-01, la mitad que CAT-02a no podía cubrir: sin nada sembrado, una lista vacía
+    // no prueba nada sobre el aislamiento.
     [Fact]
     public async Task ListReturnsOnlyTheProductsOfTheAuthenticatedTenant()
     {
@@ -240,8 +240,8 @@ public sealed class ProductWriteApiTests
         Assert.Single(await QueryAuditEventsAsync(connection, "catalog.product.updated"));
     }
 
-    // CA-CAT-02-08 and CA-CAT-02-09: inactivating twice is a business error, not a silent
-    // success, and it must not reach the database as a 500.
+    // CA-CAT-02-08 y CA-CAT-02-09: inactivar dos veces es un error de negocio, no un éxito
+    // silencioso, y no tiene que llegar a la base como un 500.
     [Fact]
     public async Task DeactivateTurnsTheProductInactiveAndRejectsASecondAttempt()
     {
@@ -270,16 +270,16 @@ public sealed class ProductWriteApiTests
         Assert.Single(await QueryAuditEventsAsync(connection, "catalog.product.deactivated"));
     }
 
-    // CA-CAT-02-11: the permissions are not just constants in code, they are published by
-    // the authorization catalogue the UI reads to decide what to render.
+    // CA-CAT-02-11: los permisos no son sólo constantes en el código, los publica el catálogo
+    // de autorización que la UI lee para decidir qué renderizar.
     [Fact]
     public async Task CatalogPermissionsArePublishedInTheAuthorizationCatalog()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        // The catalogue endpoint is guarded by tenancy.membership.read, whose definition
-        // reads "consultar membresías y catálogo de roles/permisos". Holding the catalog
-        // permissions is not enough to read the catalogue that publishes them.
+        // El endpoint del catálogo está protegido por tenancy.membership.read, cuya definición
+        // dice "consultar membresías y catálogo de roles/permisos". Tener los permisos de catalog
+        // no alcanza para leer el catálogo que los publica.
         using var client = CreateClient(
             factory,
             SubjectId,
@@ -396,7 +396,7 @@ public sealed class ProductWriteApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, never inherited from appsettings.json. SDD-CT-17.
+            // Fijado, nunca heredado de appsettings.json. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

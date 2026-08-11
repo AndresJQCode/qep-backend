@@ -3,9 +3,9 @@ using Modules.Storage.Application;
 
 namespace Modules.Storage.Infrastructure.Persistence;
 
-// Operational audit (ADR 0019): buffers a platform.audit.recorded.v1 event into the
-// StorageDbContext outbox projection so it commits atomically with the file operation. The
-// Audit module's projection worker writes it to audit.entries.
+// Auditoría operativa (ADR 0019): acumula un evento platform.audit.recorded.v1 en la
+// proyección de outbox de StorageDbContext para que commitee atómico con la operación de
+// archivo. El worker de proyección del módulo Audit lo escribe en audit.entries.
 internal sealed class StorageAuditPublisher(StorageDbContext dbContext) : IStorageAuditPublisher
 {
     private const string EventName = "platform.audit.recorded.v1";

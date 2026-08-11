@@ -1,11 +1,11 @@
 ﻿namespace Modules.Identity.Domain;
 
 /// <summary>
-/// A server-side authenticated session, identified to the browser by an opaque
-/// httpOnly cookie. Only <see cref="TokenHash"/> (never the raw token) is persisted,
-/// so a database read cannot be used to replay a session. Authentication only —
-/// tenant/permission context is resolved live per request from membership state, not
-/// carried on the session (see <c>ExternalClaimsTransformation</c>).
+/// Una sesión autenticada del lado del servidor, identificada ante el navegador por una
+/// cookie httpOnly opaca. Sólo se persiste <see cref="TokenHash"/> (nunca el token crudo),
+/// así que una lectura de la base no sirve para reproducir una sesión. Es sólo
+/// autenticación — el contexto de tenant/permisos se resuelve en vivo por request desde el
+/// estado de la membresía, no viaja en la sesión (ver <c>ExternalClaimsTransformation</c>).
 /// </summary>
 public sealed class Session
 {
@@ -79,9 +79,9 @@ public sealed class Session
     }
 
     /// <summary>
-    /// Bumps <see cref="LastSeenAt"/>. Callers should throttle this (e.g. only when
-    /// stale by more than a few minutes) so idle tracking does not turn every
-    /// authenticated request into a write.
+    /// Empuja <see cref="LastSeenAt"/>. Los llamadores deberían limitar esto (por ejemplo sólo
+    /// cuando esté viejo por más de unos minutos) para que el seguimiento de inactividad no
+    /// convierta cada request autenticado en una escritura.
     /// </summary>
     public void Touch(DateTimeOffset now)
     {

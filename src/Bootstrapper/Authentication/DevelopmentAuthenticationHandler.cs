@@ -35,8 +35,8 @@ internal sealed class DevelopmentAuthenticationHandler(
             claims.Add(new Claim(QepClaimTypes.Permission, permission));
         }
 
-        // Optional identity claims that simulate an OIDC provider token for the
-        // /auth/session login flow. Absent for ordinary tenant-aware requests.
+        // Claims de identidad opcionales que simulan un token de proveedor OIDC para el
+        // flujo de login de /auth/session. Ausentes en los requests normales con tenant.
         var email = Request.Headers["X-Email"].ToString();
         if (!string.IsNullOrWhiteSpace(email))
         {
@@ -53,10 +53,10 @@ internal sealed class DevelopmentAuthenticationHandler(
             new AuthenticationTicket(principal, AuthenticationSchemeName)));
     }
 
-    // Permissions come from the optional X-Permissions header (comma-separated) so
-    // a read-only subject can be simulated in development and tests. When the
-    // header is absent the default tenancy permissions are granted, preserving the
-    // default developer experience. This is a stub — see
+    // Los permisos vienen del header opcional X-Permissions (separados por coma) para
+    // poder simular un sujeto de sólo lectura en desarrollo y en pruebas. Cuando el
+    // header no está se conceden los permisos de tenancy por defecto, preservando la
+    // experiencia por defecto del developer. Esto es un stub — ver
     // docs/decisions/0001-development-auth-stub.md.
     private IEnumerable<string> ResolvePermissions()
     {

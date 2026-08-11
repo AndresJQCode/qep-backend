@@ -1,7 +1,7 @@
 ﻿namespace Modules.Identity.Infrastructure.Persistence;
 
-// Per-consumer idempotency guard: a processed outbox message id for this module's
-// consumer. (consumer, message_id) is unique.
+// Guarda de idempotencia por consumidor: un id de mensaje de outbox ya procesado por el
+// consumidor de este módulo. (consumer, message_id) es único.
 internal sealed class IdentityInboxMessage
 {
     public string Consumer { get; init; } = string.Empty;
@@ -11,7 +11,7 @@ internal sealed class IdentityInboxMessage
     public DateTimeOffset ProcessedAt { get; init; }
 }
 
-// Read-only projection of the platform Outbox, consumed independently by this module.
+// Proyección de sólo lectura del Outbox de plataforma, consumida independiente por este módulo.
 internal sealed class OutboxRecord
 {
     public Guid Id { get; init; }

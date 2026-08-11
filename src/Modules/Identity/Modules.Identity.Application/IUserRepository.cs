@@ -4,7 +4,7 @@ namespace Modules.Identity.Application;
 
 public interface IUserRepository
 {
-    /// <param name="normalizedEmail">Email already normalized via <see cref="User.NormalizeEmail"/>.</param>
+    /// <param name="normalizedEmail">Email ya normalizado con <see cref="User.NormalizeEmail"/>.</param>
     Task<User?> FindByEmailAsync(string normalizedEmail, CancellationToken cancellationToken);
 
     Task<User?> FindByProviderAsync(

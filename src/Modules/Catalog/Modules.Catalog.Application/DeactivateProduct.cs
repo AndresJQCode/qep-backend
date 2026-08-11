@@ -7,8 +7,8 @@ namespace Modules.Catalog.Application;
 public sealed record DeactivateProductCommand(Guid TenantId, Guid ProductId)
     : ICommand<ProductDto>;
 
-// No validator: the command carries no free text. Deactivating twice is rejected by the
-// aggregate, which is where that rule belongs.
+// Sin validador: el comando no lleva texto libre. Desactivar dos veces lo rechaza el
+// agregado, que es donde va esa regla.
 public sealed class DeactivateProductHandler(
     IProductRepository repository,
     ICatalogUnitOfWork unitOfWork,

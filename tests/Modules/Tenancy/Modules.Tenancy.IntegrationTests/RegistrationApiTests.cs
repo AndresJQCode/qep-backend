@@ -89,10 +89,10 @@ public sealed class RegistrationApiTests
     }
 
     /// <summary>
-    /// SDD-CT-06. tenants.slug is unique (IX_tenants_slug), and picking a name someone
-    /// already took is the most likely mistake on the registration screen. Before this test
-    /// the unique violation reached the handler as a raw DbUpdateException and came back as
-    /// 500 server.unexpected, so a normal user error looked like the server falling over.
+    /// SDD-CT-06. tenants.slug es único (IX_tenants_slug), y elegir un nombre que alguien ya
+    /// tomó es el error más probable en la pantalla de registro. Antes de esta prueba la
+    /// violación de unicidad llegaba al handler como una DbUpdateException cruda y volvía como
+    /// 500 server.unexpected, así que un error normal de usuario parecía el servidor cayéndose.
     /// </summary>
     [Fact]
     public async Task RegisterTenantRejectsASlugAlreadyTaken()
@@ -107,8 +107,8 @@ public sealed class RegistrationApiTests
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         }
 
-        // A different person, the same slug: the collision is on the tenant, not on the
-        // membership, so this isolates the index under test.
+        // Otra persona, el mismo slug: la colisión es sobre el tenant, no sobre la
+        // membresía, así que esto aísla el índice bajo prueba.
         using var secondOwner = CreateOwnerClient(factory, NewEmail());
         var response = await RegisterAsync(secondOwner, slug);
 
@@ -191,7 +191,7 @@ public sealed class RegistrationApiTests
     private static HttpClient CreateOwnerClient(QepApiFactory factory, string email)
     {
         var client = factory.CreateClient();
-        // Owner has signed in with Google (simulated verified email via the dev stub).
+        // El owner entró con Google (email verificado simulado por el stub de desarrollo).
         client.DefaultRequestHeaders.Add("X-Subject-Id", Guid.CreateVersion7().ToString());
         client.DefaultRequestHeaders.Add("X-Tenant-Id", Guid.CreateVersion7().ToString());
         client.DefaultRequestHeaders.Add("X-Email", email);
@@ -203,7 +203,7 @@ public sealed class RegistrationApiTests
 
     private sealed record RegisterPayload(Guid TenantId, Guid OwnerUserId);
 
-    /// <summary>ProblemDetails extensions arrive flattened at the root (ApiExceptionHandler).</summary>
+    /// <summary>Las extensiones de ProblemDetails llegan aplanadas en la raíz (ApiExceptionHandler).</summary>
     private sealed record ProblemPayload(string Code);
 
     private sealed class QepApiFactory(string connectionString, bool signupEnabled)
@@ -218,12 +218,12 @@ public sealed class RegistrationApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
             builder.UseSetting(
                 "Registration:PublicTenantSignupEnabled",

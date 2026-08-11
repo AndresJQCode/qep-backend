@@ -14,9 +14,9 @@ public sealed class ProductApiTests
     private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
-    // CA-CAT-02-01, first half: the route answers for the authenticated tenant. The list is
-    // empty because nothing seeds catalog.products yet; the "only its own" half of the
-    // criterion arrives with the create endpoint.
+    // CA-CAT-02-01, primera mitad: la ruta responde para el tenant autenticado. La lista está
+    // vacía porque todavía nada siembra catalog.products; la mitad de "sólo los suyos" del
+    // criterio llega con el endpoint de creación.
     [Fact]
     public async Task ListReturnsAnEmptyCatalogForANewTenant()
     {
@@ -36,16 +36,16 @@ public sealed class ProductApiTests
         Assert.Empty(body.Items);
     }
 
-    // CA-CAT-02-02: the handler revalidates the caller's active tenant against the tenant in
-    // the route before touching the repository, so this is 403 and not 404 — a 404 would leak
-    // whether the other tenant's catalogue is empty.
+    // CA-CAT-02-02: el handler revalida el tenant activo del llamador contra el tenant de la
+    // ruta antes de tocar el repositorio, así que esto es 403 y no 404 — un 404 filtraría
+    // si el catálogo del otro tenant está vacío.
     [Fact]
     public async Task ListForAnotherTenantIsForbidden()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        // Holds the permission: the 403 has to come from the tenant mismatch, not from a
-        // missing permission, or the test would survive tenant isolation being removed.
+        // Tiene el permiso: el 403 tiene que venir del tenant que no coincide, no de un permiso
+        // faltante, o la prueba sobreviviría a que se quite el aislamiento de tenant.
         using var client = CreateClient(
             factory, OtherSubjectId, OtherTenantId, CatalogPermissions.ProductRead);
 
@@ -56,7 +56,7 @@ public sealed class ProductApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    // CA-CAT-02-03, read side: holding an unrelated permission is not holding this one.
+    // CA-CAT-02-03, lado de lectura: tener un permiso ajeno no es tener éste.
     [Fact]
     public async Task ListWithoutTheReadPermissionIsForbidden()
     {
@@ -83,11 +83,11 @@ public sealed class ProductApiTests
         return database;
     }
 
-    // The development stub grants only the tenancy defaults when X-Permissions is absent
-    // (DevelopmentAuthenticationHandler.ResolvePermissions), so a catalog permission has to
-    // be asked for explicitly. Passing it per test keeps each 403 attributable: without this,
-    // a cross-tenant test would pass simply because the caller held no catalog permission at
-    // all, and would keep passing even if tenant isolation broke.
+    // El stub de desarrollo concede sólo los defaults de tenancy cuando X-Permissions no está
+    // (DevelopmentAuthenticationHandler.ResolvePermissions), así que un permiso de catalog hay
+    // que pedirlo explícitamente. Pasarlo por prueba mantiene cada 403 atribuible: sin esto,
+    // una prueba cross-tenant pasaría simplemente porque el llamador no tenía ningún permiso de
+    // catalog, y seguiría pasando aunque se rompiera el aislamiento de tenant.
     private static HttpClient CreateClient(
         QepApiFactory factory,
         string subjectId,
@@ -117,9 +117,9 @@ public sealed class ProductApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, never inherited from appsettings.json: with "infobip" and the Infobip
-            // keys absent, NotificationsOptionsValidator fails at startup and every test in
-            // this file dies before reaching its assertion. SDD-CT-17.
+            // Fijado, nunca heredado de appsettings.json: con "infobip" y las claves de Infobip
+            // ausentes, NotificationsOptionsValidator falla al arrancar y todas las pruebas de
+            // este archivo mueren antes de llegar a su aserción. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

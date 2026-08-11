@@ -1,8 +1,8 @@
 ﻿namespace Modules.Tenancy.Infrastructure.Persistence;
 
-// Dedupe ledger for at-least-once integration-event delivery. Uniqueness by
-// (Consumer, MessageId) guarantees a given consumer applies an event once even
-// if it is redelivered.
+// Registro de deduplicación para la entrega at-least-once de eventos de integración. La
+// unicidad por (Consumer, MessageId) garantiza que un consumidor dado aplique un evento
+// una sola vez, incluso si se reentrega.
 internal sealed class InboxMessage
 {
     public string Consumer { get; init; } = string.Empty;

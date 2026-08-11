@@ -29,7 +29,7 @@ public sealed class AuthorizationService(
         Guid tenantId,
         CancellationToken cancellationToken)
     {
-        // Step 1: validate active membership (deny-by-default when absent).
+        // Paso 1: validar la membresía activa (deny por defecto cuando no hay).
         var roles = await membershipDirectory.FindActiveRolesAsync(
             subjectId,
             tenantId,
@@ -39,8 +39,8 @@ public sealed class AuthorizationService(
             return null;
         }
 
-        // Step 2: resolve tenant-scoped role permissions. DirectGrant and contextual
-        // Policy are deferred (see docs/decisions/0002).
+        // Paso 2: resolver los permisos de rol acotados al tenant. DirectGrant y la Policy
+        // contextual quedan diferidos (ver docs/decisions/0002).
         return roles
             .SelectMany(roleCatalog.PermissionsFor)
             .Distinct(StringComparer.Ordinal)

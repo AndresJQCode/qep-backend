@@ -8,13 +8,13 @@ namespace Modules.Tenancy.Infrastructure.Persistence;
 
 internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUnitOfWork
 {
-    /// <summary>PostgreSQL unique_violation.</summary>
+    /// <summary>unique_violation de PostgreSQL.</summary>
     private const string UniqueViolation = "23505";
 
     /// <summary>
-    /// Created by the initial migration (20260705161840_InitialPlatform) over tenancy.tenants.
-    /// Matched by name so a collision on memberships — which has its own unique index — is not
-    /// mislabelled as a taken slug.
+    /// Lo crea la migración inicial (20260705161840_InitialPlatform) sobre tenancy.tenants.
+    /// Se hace match por nombre para que una colisión en memberships —que tiene su propio
+    /// índice único— no se etiquete mal como un slug ya tomado.
     /// </summary>
     private const string TenantSlugIndex = "IX_tenants_slug";
 
@@ -31,12 +31,12 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
                 "Tenant settings changed while the update was being committed.",
                 exception);
         }
-        // SDD-CT-06. Registering with a slug someone already took is a normal user error, not
-        // a fault, but the raw DbUpdateException matches no branch in ApiExceptionHandler and
-        // used to surface as 500 server.unexpected. Translated here, in Infrastructure, because
-        // this is the only layer that may know about EF and Npgsql: Modules.Tenancy.Application
-        // references neither, and ArchitectureTests enforces that. The inner exception is
-        // dropped on purpose — a 422 is an expected outcome, so there is no incident to trace.
+        // SDD-CT-06. Registrarse con un slug que alguien ya tomó es un error normal de usuario, no
+        // una falla, pero la DbUpdateException cruda no coincide con ninguna rama de
+        // ApiExceptionHandler y salía como 500 server.unexpected. Se traduce acá, en Infrastructure,
+        // porque es la única capa que puede saber de EF y Npgsql: Modules.Tenancy.Application no
+        // referencia ninguno de los dos, y ArchitectureTests lo hace cumplir. La excepción interna
+        // se descarta a propósito — un 422 es un resultado esperado, no hay incidente que rastrear.
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException
                   {

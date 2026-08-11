@@ -43,8 +43,8 @@ public sealed class InviteMemberHandler(
         EnsureAuthorized(command.TenantId);
         EnsureKnownRoles(command.Roles);
 
-        // Provision (or resolve) the invited user through the Identity contract. This
-        // is idempotent by email, so a re-invite reuses the same user id.
+        // Aprovisiona (o resuelve) el usuario invitado por el contrato de Identity. Es
+        // idempotente por email, así que re-invitar reutiliza el mismo id de usuario.
         var userId = await identityProvisioning.GetOrProvisionInvitedUserAsync(
             command.Email,
             cancellationToken);
@@ -88,13 +88,13 @@ public sealed class InviteMemberHandler(
     }
 
     /// <summary>
-    /// Decides what a second invitation means for a membership that already exists.
+    /// Decide qué significa una segunda invitación para una membresía que ya existe.
     /// </summary>
     /// <remarks>
-    /// Renewal happens on the existing row, never by inserting a second one:
-    /// (UserId, TenantId) is UNIQUE (TenancyDbContext.cs:105). Creating a new membership
-    /// here — as this handler did for any state other than Invited/Active — violates that
-    /// index and surfaces as a 500. See SDD-CT-15.
+    /// La renovación pasa sobre la fila existente, nunca insertando una segunda:
+    /// (UserId, TenantId) es UNIQUE (TenancyDbContext.cs:105). Crear acá una membresía nueva
+    /// —como hacía este handler para cualquier estado que no fuera Invited/Active— viola ese
+    /// índice y sale como un 500. Ver SDD-CT-15.
     /// </remarks>
     private async Task<MembershipDto> ReinviteExistingAsync(
         Membership existing,
@@ -103,9 +103,9 @@ public sealed class InviteMemberHandler(
     {
         var now = clock.UtcNow;
 
-        // A live invitation and an active membership are both no-ops. Renewing a live
-        // invitation would move a deadline someone is counting on and invalidate the link
-        // already in their inbox.
+        // Una invitación viva y una membresía activa son las dos no-ops. Renovar una invitación
+        // viva movería un plazo con el que alguien cuenta e invalidaría el link que ya está en
+        // su bandeja.
         var invitationIsLive =
             existing.State == MembershipState.Invited && now <= existing.ExpiresAt;
         if (invitationIsLive || existing.State == MembershipState.Active)
@@ -113,9 +113,9 @@ public sealed class InviteMemberHandler(
             return existing.ToDto();
         }
 
-        // Everything else is either a lapsed invitation (still Invited, because expiry is
-        // lazy and nobody tried to sign in) or one already marked Expired. Both are
-        // renewable; Reinvite refuses the states that are not. SDD-OD-04.
+        // Todo lo demás es o una invitación vencida (todavía en Invited, porque el vencimiento es
+        // perezoso y nadie intentó entrar) o una ya marcada como Expired. Las dos son
+        // renovables; Reinvite rechaza los estados que no lo son. SDD-OD-04.
         existing.Reinvite(command.Roles, now, Membership.DefaultInvitationTimeToLive);
 
         auditRecorder.Record(
@@ -128,9 +128,9 @@ public sealed class InviteMemberHandler(
             [],
             now);
 
-        // The renewal only reaches the person through the outbox: InvitationDeliveryWorker
-        // sends the email off this event. Persisting without emitting it renews nothing
-        // that the invitee can see.
+        // La renovación sólo le llega a la persona por el outbox: InvitationDeliveryWorker
+        // manda el email a partir de este evento. Persistir sin emitirlo no renueva nada
+        // que el invitado pueda ver.
         foreach (var domainEvent in existing.PullDomainEvents())
         {
             outboxWriter.Add(domainEvent, command.CorrelationId);

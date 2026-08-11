@@ -3,10 +3,10 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
-// Handler-level authorization, defense in depth beyond the endpoint policy: the caller
-// active tenant must match the tenant in the route, and the permission must be present.
-// Returning 403 rather than 404 is deliberate: a 404 would leak whether another tenant
-// catalogue holds that id.
+// Autorización a nivel handler, defensa en profundidad más allá de la política del endpoint:
+// el tenant activo del llamador tiene que coincidir con el de la ruta, y el permiso estar presente.
+// Devolver 403 y no 404 es deliberado: un 404 filtraría si el catálogo de otro tenant
+// tiene ese id.
 internal static class CatalogAuthorization
 {
     public static void EnsureAuthorized(

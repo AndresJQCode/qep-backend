@@ -3,15 +3,15 @@
 namespace Modules.Tenancy.Domain;
 
 /// <summary>
-/// The explicit relation between a user and a tenant. Per ADR 0016 the Membership
-/// aggregate is owned by Tenancy: it holds the user reference by id only, its
-/// lifecycle state, role references (resolved by Authorization) and audit dates.
-/// Inviting a user creates the Membership in <see cref="MembershipState.Invited"/>;
-/// the first matching external login accepts it into <see cref="MembershipState.Active"/>.
+/// La relación explícita entre un usuario y un tenant. Según el ADR 0016 el agregado
+/// Membership pertenece a Tenancy: guarda la referencia al usuario sólo por id, su estado
+/// de ciclo de vida, las referencias de rol (que resuelve Authorization) y fechas de auditoría.
+/// Invitar a un usuario crea la Membership en <see cref="MembershipState.Invited"/>;
+/// el primer login externo que coincida la acepta y la pasa a <see cref="MembershipState.Active"/>.
 /// </summary>
 public sealed class Membership
 {
-    /// <summary>Default invitation window, per ADR 0016 (72 hours).</summary>
+    /// <summary>Ventana de invitación por defecto, según el ADR 0016 (72 horas).</summary>
     public static readonly TimeSpan DefaultInvitationTimeToLive = TimeSpan.FromHours(72);
 
     private readonly List<IDomainEvent> _domainEvents = [];
@@ -70,8 +70,8 @@ public sealed class Membership
     public IReadOnlyCollection<IDomainEvent> DomainEvents => _domainEvents.AsReadOnly();
 
     /// <summary>
-    /// Creates an invited membership that expires at <paramref name="invitedAt"/> plus
-    /// <paramref name="timeToLive"/> (72 hours by default, per ADR 0016).
+    /// Crea una membresía invitada que vence en <paramref name="invitedAt"/> más
+    /// <paramref name="timeToLive"/> (72 horas por defecto, según el ADR 0016).
     /// </summary>
     public static Membership Invite(
         MembershipId id,
@@ -115,9 +115,9 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Creates a membership already in <see cref="MembershipState.Active"/>. Used to
-    /// bootstrap the owner of a self-registered tenant (ADR 0017), the single
-    /// exception to the invite-then-accept lifecycle.
+    /// Crea una membresía que ya está en <see cref="MembershipState.Active"/>. Sirve para
+    /// dar de alta al owner de un tenant auto-registrado (ADR 0017), la única
+    /// excepción al ciclo de invitar-y-luego-aceptar.
     /// </summary>
     public static Membership CreateActive(
         MembershipId id,
@@ -156,10 +156,10 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Accepts an invited membership, transitioning it to
-    /// <see cref="MembershipState.Active"/>. Idempotent for an already-active
-    /// membership. Rejects acceptance of an expired invitation (transitioning it to
-    /// <see cref="MembershipState.Expired"/>) or of a non-invited, non-active state.
+    /// Acepta una membresía invitada y la pasa a
+    /// <see cref="MembershipState.Active"/>. Es idempotente para una membresía que ya
+    /// está activa. Rechaza aceptar una invitación vencida (y la pasa a
+    /// <see cref="MembershipState.Expired"/>) o un estado que no sea invitado ni activo.
     /// </summary>
     public void Accept(DateTimeOffset occurredAt)
     {
@@ -196,8 +196,8 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Expires an invited membership whose invitation window has elapsed. No-op for
-    /// any other state or before expiry.
+    /// Vence una membresía invitada cuya ventana de invitación ya pasó. No hace nada en
+    /// cualquier otro estado ni antes del vencimiento.
     /// </summary>
     public bool Expire(DateTimeOffset occurredAt)
     {
@@ -213,20 +213,20 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Renews a lapsed invitation in place, with a fresh window and the roles given now.
+    /// Renueva en el lugar una invitación vencida, con ventana nueva y los roles que se den ahora.
     /// </summary>
     /// <remarks>
-    /// In place, and not by creating a second membership: (UserId, TenantId) is a UNIQUE
-    /// index, so one user holds exactly one membership per tenant. See SDD-CT-15.
+    /// En el lugar, y no creando una segunda membresía: (UserId, TenantId) es un índice
+    /// UNIQUE, así que un usuario tiene exactamente una membresía por tenant. Ver SDD-CT-15.
     ///
-    /// Exists because expiry is lazy — only <see cref="Accept"/> transitions an invitation
-    /// to <see cref="MembershipState.Expired"/>, and that only happens when the person
-    /// tries to sign in. Someone who never tries stays <see cref="MembershipState.Invited"/>
-    /// with a ExpiresAt in the past forever, and re-inviting them used to return that dead
-    /// row untouched: no new invitation, no failure, no warning. See SDD-OD-04.
+    /// Existe porque el vencimiento es perezoso: sólo <see cref="Accept"/> pasa una invitación
+    /// a <see cref="MembershipState.Expired"/>, y eso ocurre únicamente cuando la persona
+    /// intenta entrar. Quien nunca lo intenta queda en <see cref="MembershipState.Invited"/>
+    /// con un ExpiresAt en el pasado para siempre, y volver a invitarla devolvía esa fila
+    /// muerta sin tocar: ni invitación nueva, ni error, ni aviso. Ver SDD-OD-04.
     ///
-    /// A still-valid invitation is refused rather than renewed: extending a live window
-    /// silently invalidates the link already in someone's inbox.
+    /// Una invitación todavía válida se rechaza en vez de renovarse: extender una ventana viva
+    /// invalida en silencio el link que ya está en la bandeja de alguien.
     /// </remarks>
     public void Reinvite(
         IEnumerable<string> roles,
@@ -272,10 +272,10 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Suspends an active membership, blocking access without discarding it.
-    /// Only valid from <see cref="MembershipState.Active"/>; there is no
-    /// reactivation path in v1 (per ADR 0016, states are real, audited
-    /// transitions — a suspended member must be re-invited to return).
+    /// Suspende una membresía activa, bloqueando el acceso sin descartarla.
+    /// Sólo es válido desde <see cref="MembershipState.Active"/>; en la v1 no hay
+    /// camino de reactivación (según el ADR 0016, los estados son transiciones reales y
+    /// auditadas — un miembro suspendido tiene que ser re-invitado para volver).
     /// </summary>
     public void Suspend(DateTimeOffset occurredAt)
     {
@@ -298,22 +298,22 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Returns a suspended membership to <see cref="MembershipState.Active"/>.
+    /// Devuelve una membresía suspendida a <see cref="MembershipState.Active"/>.
     /// </summary>
     /// <remarks>
-    /// Only from <see cref="MembershipState.Suspended"/>. Not from `Expired`, which is a
-    /// lapsed invitation and belongs to `Reinvite`: mixing them would erase the difference
-    /// between "their window ran out" and "somebody decided to suspend them".
+    /// Sólo desde <see cref="MembershipState.Suspended"/>. No desde `Expired`, que es una
+    /// invitación vencida y le corresponde a `Reinvite`: mezclarlos borraría la diferencia
+    /// entre "se le venció el plazo" y "alguien decidió suspenderla".
     ///
-    /// `AcceptedAt` survives untouched. The person accepted their invitation once already,
-    /// and asking them to accept again would be asking them to confirm what they confirmed.
+    /// `AcceptedAt` se conserva intacto. La persona ya aceptó su invitación una vez, y
+    /// pedirle que acepte de nuevo sería pedirle que confirme lo que ya confirmó.
     ///
-    /// Added by AUTH-11. Until then a suspension was a dead end — `Reinvite` refuses a
-    /// suspended membership and nothing else could move it — so someone suspended by
-    /// mistake had no way back through the product. The owner chose a separate operation
-    /// over letting a re-invitation restore, because they are two different intentions: if
-    /// inviting also restored, an administrator could undo somebody else's suspension
-    /// without ever realising they had. See SDD-OD-13.
+    /// Lo agregó AUTH-11. Hasta entonces una suspensión era un callejón sin salida — `Reinvite`
+    /// rechaza una membresía suspendida y nada más podía moverla — así que alguien suspendido
+    /// por error no tenía forma de volver desde el producto. El owner eligió una operación
+    /// separada en vez de que re-invitar restaure, porque son dos intenciones distintas: si
+    /// invitar también restaurara, un administrador podría deshacer la suspensión que puso
+    /// otro sin llegar a darse cuenta. Ver SDD-OD-13.
     /// </remarks>
     public void Reactivate(DateTimeOffset occurredAt)
     {
@@ -336,9 +336,9 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Removes a membership, permanently revoking it. Valid from any
-    /// non-terminal state (<see cref="MembershipState.Invited"/>,
-    /// <see cref="MembershipState.Active"/> or <see cref="MembershipState.Suspended"/>).
+    /// Quita una membresía, revocándola de forma permanente. Válido desde cualquier
+    /// estado no terminal (<see cref="MembershipState.Invited"/>,
+    /// <see cref="MembershipState.Active"/> o <see cref="MembershipState.Suspended"/>).
     /// </summary>
     public void Remove(DateTimeOffset occurredAt)
     {

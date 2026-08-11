@@ -21,9 +21,9 @@ public sealed class ProductTests
         Assert.Equal(Now, product.UpdatedAt);
     }
 
-    // The unique index is on (tenant_id, code): " VS-001" and "VS-001" would be two rows for
-    // what a person reads as the same code. Normalizing here keeps that decision in the
-    // aggregate instead of leaving it to whoever writes the next caller.
+    // El índice único es sobre (tenant_id, code): " VS-001" y "VS-001" serían dos filas para
+    // lo que una persona lee como el mismo código. Normalizar acá mantiene esa decisión en el
+    // agregado en vez de dejársela a quien escriba el próximo llamador.
     [Fact]
     public void CreateTrimsNameAndCode()
     {
@@ -56,9 +56,9 @@ public sealed class ProductTests
         Assert.Equal("catalog.product.code_required", error.Code);
     }
 
-    // The columns are varchar(200) and varchar(60). Without a domain guard an over-long value
-    // reaches PostgreSQL and comes back as 500 server.unexpected — the same shape of defect
-    // SDD-CT-06 was opened for.
+    // Las columnas son varchar(200) y varchar(60). Sin una guarda de dominio, un valor demasiado
+    // largo llega a PostgreSQL y vuelve como 500 server.unexpected — la misma forma de defecto
+    // por la que se abrió SDD-CT-06.
     [Fact]
     public void CreateRejectsNameOverTwoHundredCharacters()
     {
@@ -114,7 +114,7 @@ public sealed class ProductTests
         Assert.Equal(later, product.UpdatedAt);
     }
 
-    // CA-CAT-02-09: inactivating twice is a business error, not a silent success.
+    // CA-CAT-02-09: inactivar dos veces es un error de negocio, no un éxito silencioso.
     [Fact]
     public void DeactivateRejectsAnAlreadyInactiveProduct()
     {

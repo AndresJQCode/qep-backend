@@ -1,7 +1,7 @@
 ﻿namespace Modules.Audit.Domain;
 
-// The kind of subject that performed an audited action (capability contract: Human,
-// System, Integration, AiAgent). Persisted as a string.
+// El tipo de sujeto que ejecutó una acción auditada (contrato de capacidad: Human,
+// System, Integration, AiAgent). Se persiste como string.
 public enum AuditActorType
 {
     Human = 1,

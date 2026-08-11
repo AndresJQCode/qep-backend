@@ -34,14 +34,14 @@ public sealed class MembershipApiTests
         Assert.Equal("Invited", membership!.State);
         Assert.Equal(email, membership.Email);
         Assert.NotEqual(Guid.Empty, membership.UserId);
-        // 72-hour invitation window, per ADR 0016.
+        // Ventana de invitación de 72 horas, según el ADR 0016.
         Assert.True(membership.ExpiresAt > membership.InvitedAt.AddHours(71));
         Assert.True(membership.ExpiresAt <= membership.InvitedAt.AddHours(72));
 
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
-        // Identity provisioned an invited user for the email.
+        // Identity aprovisionó un usuario invitado para el email.
         var user = await QueryRowAsync(
             connection,
             "SELECT status FROM identity.users WHERE email = @email",
@@ -49,7 +49,7 @@ public sealed class MembershipApiTests
         Assert.NotNull(user);
         Assert.Equal("Invited", user![0]);
 
-        // Tenancy created the membership in Invited state.
+        // Tenancy creó la membresía en estado Invited.
         var membershipRow = await QueryRowAsync(
             connection,
             "SELECT state FROM tenancy.memberships WHERE id = @id",
@@ -57,7 +57,7 @@ public sealed class MembershipApiTests
         Assert.NotNull(membershipRow);
         Assert.Equal("Invited", membershipRow![0]);
 
-        // Audit entry records the invitation.
+        // La entrada de auditoría registra la invitación.
         var audit = await QueryRowAsync(
             connection,
             """
@@ -70,7 +70,7 @@ public sealed class MembershipApiTests
         Assert.Equal(SubjectId, audit![0]);
         Assert.Equal("success", audit[1]);
 
-        // Outbox carries the correlated integration event, same unit of work.
+        // El outbox lleva el evento de integración correlacionado, en la misma unidad de trabajo.
         var outbox = await QueryRowAsync(
             connection,
             """
@@ -89,7 +89,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        // Authenticated as OtherTenant, attempting to invite into the seeded tenant.
+        // Autenticado como OtherTenant, intentando invitar al tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
         var response = await InviteAsync(client, TenantId, NewEmail());
@@ -218,14 +218,14 @@ public sealed class MembershipApiTests
     }
 
     /// <summary>
-    /// AUTH-05 / SDD-OD-04. Expiry is lazy: only an attempted sign-in transitions an
-    /// invitation to Expired. Someone who never tries stays Invited with a past ExpiresAt,
-    /// and re-inviting them returned that dead row unchanged — no new invitation, no
-    /// failure, no warning, and no way for that person to ever join.
+    /// AUTH-05 / SDD-OD-04. El vencimiento es perezoso: sólo un intento de login pasa una
+    /// invitación a Expired. Quien nunca lo intenta queda en Invited con un ExpiresAt pasado,
+    /// y volver a invitarla devolvía esa fila muerta sin cambios — ni invitación nueva, ni
+    /// error, ni aviso, y sin forma de que esa persona llegue a entrar nunca.
     ///
-    /// The window is forced past in the database rather than by moving a clock: the API
-    /// resolves time through the real IClock, and the point under test is what the handler
-    /// does with a row whose window has already lapsed.
+    /// La ventana se fuerza al pasado en la base y no moviendo un reloj: la API resuelve el
+    /// tiempo por el IClock real, y lo que está bajo prueba es qué hace el handler con una
+    /// fila cuya ventana ya venció.
     /// </summary>
     [Fact]
     public async Task ReinvitingALapsedInvitationIssuesAFreshOne()
@@ -255,8 +255,8 @@ public sealed class MembershipApiTests
             "A renewed invitation must expire in the future.");
         Assert.True(renewed.Version > original.Version);
 
-        // Renewed in place: (user_id, tenant_id) is UNIQUE, so a second row is impossible.
-        // See SDD-CT-15.
+        // Renovada en el lugar: (user_id, tenant_id) es UNIQUE, así que una segunda fila es imposible.
+        // Ver SDD-CT-15.
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         var rows = await ScalarAsync(
@@ -269,9 +269,9 @@ public sealed class MembershipApiTests
     }
 
     /// <summary>
-    /// The renewal has to reach the person: InvitationDeliveryWorker sends the email off
-    /// the outbox event, so a renewal that persists without re-emitting it is a silent
-    /// no-op from the invitee's point of view.
+    /// La renovación tiene que llegarle a la persona: InvitationDeliveryWorker manda el email a
+    /// partir del evento de outbox, así que una renovación que persiste sin volver a emitirlo
+    /// es un no-op silencioso desde el punto de vista del invitado.
     /// </summary>
     [Fact]
     public async Task ReinvitingALapsedInvitationEmitsTheInvitedEventAgain()
@@ -314,8 +314,8 @@ public sealed class MembershipApiTests
     }
 
     /// <summary>
-    /// CA-AUTH-05-12: a live invitation stays untouched. Renewing it would invalidate the
-    /// link already sitting in someone's inbox and silently move the deadline.
+    /// CA-AUTH-05-12: una invitación viva queda intacta. Renovarla invalidaría el link que ya
+    /// está en la bandeja de alguien y movería el plazo en silencio.
     /// </summary>
     [Fact]
     public async Task ReinvitingALiveInvitationRemainsAnIdempotentNoOp()
@@ -338,19 +338,19 @@ public sealed class MembershipApiTests
         Assert.NotNull(repeated);
         Assert.Equal(original!.Id, repeated!.Id);
         Assert.Equal(original.Version, repeated.Version);
-        // Compared to the microsecond: the first response carries the in-memory value and
-        // the second one comes back from Postgres, which stores microseconds. A stricter
-        // comparison fails on sub-microsecond ticks and proves nothing about the no-op.
+        // Comparado al microsegundo: la primera respuesta lleva el valor en memoria y la
+        // segunda vuelve de Postgres, que guarda microsegundos. Una comparación más estricta
+        // falla por ticks de menos de un microsegundo y no prueba nada sobre el no-op.
         Assert.True(
             (repeated.ExpiresAt - original.ExpiresAt).Duration() < TimeSpan.FromMilliseconds(1),
             "A no-op must not move the expiry window.");
     }
 
     /// <summary>
-    /// CA-AUTH-05-12 through the real path. The unit test for an Active membership calls
-    /// Reinvite() directly, which the handler never does for that state — it short-circuits
-    /// first. Without this, the criterion looked covered and the production behaviour was
-    /// untested. Found by the AUTH-05 review.
+    /// CA-AUTH-05-12 por el camino real. La prueba unitaria de una membresía Active llama a
+    /// Reinvite() directo, cosa que el handler nunca hace para ese estado — corta antes. Sin
+    /// esto, el criterio parecía cubierto y el comportamiento de producción quedaba sin
+    /// probar. Lo encontró la revisión de AUTH-05.
     /// </summary>
     [Fact]
     public async Task ReinvitingAnActiveMemberIsAnIdempotentNoOp()
@@ -365,9 +365,9 @@ public sealed class MembershipApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(original);
 
-        // Activated in the database rather than by signing in: acceptance is a side effect
-        // of a real login, and this test is about what a second invitation does to an
-        // already-active member.
+        // Activada en la base y no entrando por login: la aceptación es un efecto lateral
+        // de un login real, y esta prueba es sobre qué le hace una segunda invitación a un
+        // miembro que ya está activo.
         await SetStateAsync(database, original!.Id, "Active");
 
         var second = await InviteAsync(client, TenantId, email);
@@ -382,10 +382,10 @@ public sealed class MembershipApiTests
     }
 
     /// <summary>
-    /// A membership an administrator suspended is not reopened by inviting the person
-    /// again. Before AUTH-05 this path inserted a second row and died on the
-    /// (user_id, tenant_id) UNIQUE index, surfacing as a 500; now it is a stated 422.
-    /// Whether re-inviting *should* restore them is SDD-OD-13, a product decision.
+    /// Una membresía que un administrador suspendió no se reabre invitando de nuevo a la
+    /// persona. Antes de AUTH-05 este camino insertaba una segunda fila y moría en el índice
+    /// UNIQUE (user_id, tenant_id), saliendo como 500; ahora es un 422 declarado.
+    /// Si re-invitar *debería* restaurarla es SDD-OD-13, una decisión de producto.
     /// </summary>
     [Fact]
     public async Task ReinvitingASuspendedMemberIsRefusedWithoutRestoringThem()
@@ -712,12 +712,12 @@ public sealed class MembershipApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }

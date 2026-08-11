@@ -1,19 +1,19 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// A product in a tenant's catalogue (RF-020). Holds the live master data only: price lists
-/// and validity belong to `pricing`, and a document freezes its own copy of what it sold.
+/// Un producto del catálogo de un tenant (RF-020). Guarda sólo los datos maestros vivos: las
+/// listas de precio y su vigencia son de `pricing`, y un documento congela su copia de lo vendido.
 /// </summary>
 public sealed class Product
 {
-    // Mirrors the column widths of catalog.products. Guarding here means an over-long value
-    // fails as a 422 with a domain code instead of reaching PostgreSQL and coming back as
-    // 500 server.unexpected.
+    // Espeja los anchos de columna de catalog.products. Guardar acá significa que un valor
+    // demasiado largo falla como 422 con código de dominio en vez de llegar a PostgreSQL y
+    // volver como 500 server.unexpected.
     public const int NameMaxLength = 200;
     public const int CodeMaxLength = 60;
 
-    // EF Core materializes through this. Code never builds the aggregate this way:
-    // Create is the only entry point, and it is the one that enforces the invariants.
+    // EF Core materializa por acá. El código nunca construye el agregado así:
+    // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
     private Product()
     {
         Name = string.Empty;
@@ -42,7 +42,7 @@ public sealed class Product
 
     public string Name { get; private set; }
 
-    /// <summary>Unique per tenant; the uniqueness lives in IX_products_tenant_code.</summary>
+    /// <summary>Único por tenant; la unicidad vive en IX_products_tenant_code.</summary>
     public string Code { get; private set; }
 
     public bool IsActive { get; private set; }
@@ -91,8 +91,8 @@ public sealed class Product
         }
     }
 
-    // Trimming is part of the invariant, not caller hygiene: the unique index treats
-    // " VS-001" and "VS-001" as two different codes, which no person reading the list would.
+    // Recortar espacios es parte del invariante, no higiene del llamador: el índice único trata
+    // " VS-001" y "VS-001" como dos códigos distintos, cosa que nadie leyendo la lista haría.
     private static string NormalizeName(string name) =>
         Normalize(
             name,

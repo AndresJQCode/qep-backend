@@ -4,9 +4,9 @@ using System.Text;
 namespace Modules.Authorization.Application;
 
 /// <summary>
-/// A tenant-scoped role and the permissions it grants. System role definitions are
-/// versioned with code and owned by the module that protects the use case; they are
-/// registered at composition time. Custom (DB-backed) roles are a later addition.
+/// Un rol acotado al tenant y los permisos que concede. Las definiciones de rol de sistema
+/// se versionan con el código y son propiedad del módulo que protege el caso de uso; se
+/// registran en tiempo de composición. Los roles custom (en base) son un agregado posterior.
 /// </summary>
 public sealed record RoleDefinition(
     string Role,
@@ -23,7 +23,7 @@ public sealed record PermissionDefinition(
     string Category,
     string RiskLevel);
 
-/// <summary>Resolves a membership role reference to its granted permissions.</summary>
+/// <summary>Resuelve una referencia de rol de una membresía a los permisos que concede.</summary>
 public interface IRoleCatalog
 {
     IReadOnlyCollection<string> PermissionsFor(string role);

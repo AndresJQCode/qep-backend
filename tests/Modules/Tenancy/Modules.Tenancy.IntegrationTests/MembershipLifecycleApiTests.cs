@@ -136,9 +136,9 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task RemoveNonManagerMemberIsAllowedEvenAsOnlyOtherActiveMember()
     {
-        // Proves the guard is manager-precise, not a blanket "last active membership"
-        // check: the owner (manager) remains active, so removing the sole plain
-        // member must succeed even though it empties the non-manager active pool.
+        // Prueba que la guarda es precisa a nivel manager, y no un chequeo genérico de "última
+        // membresía activa": el owner (manager) sigue activo, así que quitar al único miembro
+        // común tiene que funcionar aunque deje vacío el pool de activos no-manager.
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
@@ -255,10 +255,10 @@ public sealed class MembershipLifecycleApiTests
 
     private static string NewSlug() => $"org-{Guid.NewGuid():N}"[..12];
 
-    // Registers a tenant (public signup enabled) to get an owner Membership already in
-    // Active state (Membership.CreateActive, ADR 0016/0017) — the only way to reach
-    // Active without a full Google-login round trip. Returns a client scoped to the
-    // new tenant via dev-stub headers (default permission set = full owner grant).
+    // Registra un tenant (con signup público habilitado) para conseguir una Membership de owner
+    // ya en estado Active (Membership.CreateActive, ADR 0016/0017) — la única forma de llegar a
+    // Active sin la vuelta completa de login con Google. Devuelve un cliente acotado al tenant
+    // nuevo por headers del stub de desarrollo (set de permisos por defecto = grant de owner).
     private static async Task<(string TenantId, Guid OwnerMembershipId, Guid OwnerUserId, HttpClient Client)>
         RegisterTenantWithOwnerAsync(QepApiFactory factory)
     {
@@ -373,8 +373,8 @@ public sealed class MembershipLifecycleApiTests
         return (Guid)result!;
     }
 
-    // Bypasses the invite-accept round trip (which requires a real Google login) so
-    // tests can put a second membership into Active state directly.
+    // Saltea la vuelta de invitar-aceptar (que requiere un login real de Google) para que
+    // las pruebas puedan poner una segunda membresía en estado Active directamente.
     private static async Task ActivateMembershipAsync(string connectionString, Guid membershipId)
     {
         await using var connection = new NpgsqlConnection(connectionString);
@@ -435,12 +435,12 @@ public sealed class MembershipLifecycleApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
-            // Pinned, not inherited: appsettings.json carries whatever provider the product
-            // is deployed with, and an integration suite that depends on that ends up
-            // depending on the credentials of whoever runs it. With "infobip" and the
-            // Infobip keys absent — CI, a fresh clone — NotificationsOptionsValidator fails
-            // at startup and every test in the file dies before reaching its assertion.
-            // The log channel is the development default (SDD-CT-03). SDD-CT-17.
+            // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
+            // producto, y una suite de integración que depende de eso termina dependiendo de las
+            // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,
+            // un clon nuevo— NotificationsOptionsValidator falla al arrancar y todas las pruebas
+            // del archivo mueren antes de llegar a su aserción.
+            // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
             builder.UseSetting("Registration:PublicTenantSignupEnabled", "true");
         }

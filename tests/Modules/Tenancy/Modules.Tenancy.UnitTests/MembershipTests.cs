@@ -211,15 +211,15 @@ public sealed class MembershipTests
 
 
     /// <summary>
-    /// AUTH-05 / SDD-OD-04. An invitation that lapses without the person ever trying to
-    /// sign in stays in <see cref="MembershipState.Invited"/> with a past ExpiresAt,
-    /// because expiry is lazy: only Accept transitions it. Re-inviting used to return that
-    /// dead row unchanged, leaving the person permanently un-invitable while the admin
-    /// believed the invitation had been sent.
+    /// AUTH-05 / SDD-OD-04. Una invitación que vence sin que la persona haya intentado
+    /// entrar queda en <see cref="MembershipState.Invited"/> con un ExpiresAt pasado,
+    /// porque el vencimiento es perezoso: sólo Accept la transiciona. Volver a invitar
+    /// devolvía esa fila muerta sin cambios, dejando a la persona permanentemente
+    /// no-invitable mientras el admin creía que la invitación se había mandado.
     ///
-    /// Renewal happens in place, not by inserting a second row: (UserId, TenantId) is a
-    /// UNIQUE index (TenancyDbContext.cs:105), so one user has exactly one membership per
-    /// tenant. See SDD-CT-15.
+    /// La renovación pasa en el lugar, no insertando una segunda fila: (UserId, TenantId) es
+    /// un índice UNIQUE (TenancyDbContext.cs:105), así que un usuario tiene exactamente una
+    /// membresía por tenant. Ver SDD-CT-15.
     /// </summary>
     [Fact]
     public void ReinviteAfterExpiryRenewsInPlaceWithAFreshWindow()
@@ -268,8 +268,8 @@ public sealed class MembershipTests
     }
 
     /// <summary>
-    /// CA-AUTH-05-12: a live invitation is not disturbed. Renewing one would silently
-    /// extend a window somebody is counting on, and invalidate the link already sent.
+    /// CA-AUTH-05-12: una invitación viva no se toca. Renovarla extendería en silencio una
+    /// ventana con la que alguien cuenta, e invalidaría el link ya enviado.
     /// </summary>
     [Fact]
     public void ReinviteRejectsAStillValidInvitation()
@@ -302,10 +302,10 @@ public sealed class MembershipTests
     }
 
     /// <summary>
-    /// The security boundary the AUTH-05 review found untested. Suspending and removing are
-    /// deliberate acts by an administrator; re-inviting must not undo either of them
-    /// silently. Whether re-inviting *should* restore a suspended member is a product
-    /// question, open as SDD-OD-13 — until it is answered, refusing is the safe answer.
+    /// La frontera de seguridad que la revisión de AUTH-05 encontró sin probar. Suspender y quitar
+    /// son actos deliberados de un administrador; re-invitar no debe deshacer ninguno de los dos
+    /// en silencio. Si re-invitar *debería* restaurar a un miembro suspendido es una pregunta de
+    /// producto, abierta como SDD-OD-13 — hasta que se responda, rechazar es la respuesta segura.
     /// </summary>
     [Fact]
     public void ReinviteRejectsASuspendedMembership()
@@ -342,8 +342,8 @@ public sealed class MembershipTests
     }
 
     /// <summary>
-    /// A rejected re-invitation must leave the aggregate exactly as it was: refusing while
-    /// having already replaced the roles would hand out permissions nobody granted.
+    /// Una re-invitación rechazada tiene que dejar el agregado exactamente como estaba: rechazar
+    /// después de haber reemplazado los roles repartiría permisos que nadie otorgó.
     /// </summary>
     [Fact]
     public void ARejectedReinviteLeavesRolesUntouched()

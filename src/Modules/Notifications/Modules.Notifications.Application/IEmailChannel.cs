@@ -7,9 +7,9 @@ public sealed record EmailMessage(
     string TextBody);
 
 /// <summary>
-/// Delivers an email through the configured provider. Implementations are adapters
-/// (Infobip in production, a log channel in development) and must not leak provider
-/// specifics to callers (ADR 0018).
+/// Entrega un email por el proveedor configurado. Las implementaciones son adaptadores
+/// (Infobip en producción, un canal de log en desarrollo) y no deben filtrar detalles del
+/// proveedor a los llamadores (ADR 0018).
 /// </summary>
 public interface IEmailChannel
 {

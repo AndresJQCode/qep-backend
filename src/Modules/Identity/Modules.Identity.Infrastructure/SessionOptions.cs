@@ -1,8 +1,8 @@
 ﻿namespace Modules.Identity.Infrastructure;
 
-// Strongly-typed binding of the "Authentication:Session" appsettings section.
-// Consumers inject IOptions<QepSessionOptions>; validation runs at startup
-// (see SessionOptionsValidator).
+// Binding fuertemente tipado de la sección "Authentication:Session" de appsettings.
+// Los consumidores inyectan IOptions<QepSessionOptions>; la validación corre al arrancar
+// (ver SessionOptionsValidator).
 public sealed class QepSessionOptions
 {
     public const string SectionName = "Authentication:Session";

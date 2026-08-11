@@ -1,11 +1,11 @@
 ﻿namespace Modules.Identity.Application;
 
 /// <summary>
-/// Provisions the owner user of a self-registered tenant (ADR 0017). Unlike
-/// <see cref="IProviderLinking"/> this is NOT invitation-gated: bootstrapping a new
-/// tenant necessarily creates its first user without a prior invitation. It is the
-/// single documented exception to invitation-only provisioning and is only reachable
-/// when public tenant signup is enabled. A verified email is still required.
+/// Aprovisiona el usuario owner de un tenant auto-registrado (ADR 0017). A diferencia de
+/// <see cref="IProviderLinking"/>, esto NO está condicionado a invitación: dar de alta un
+/// tenant nuevo necesariamente crea su primer usuario sin invitación previa. Es la única
+/// excepción documentada al aprovisionamiento sólo-por-invitación y sólo es alcanzable
+/// cuando el signup público de tenants está habilitado. Igual se exige un email verificado.
 /// </summary>
 public interface IOwnerProvisioning
 {

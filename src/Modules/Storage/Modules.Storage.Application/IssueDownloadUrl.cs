@@ -4,8 +4,8 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Storage.Application;
 
-// A command (not a query) because issuing a download URL re-evaluates authorization and
-// records an audit entry — it has a side effect committed in a unit of work.
+// Es un comando (no una consulta) porque emitir una URL de descarga reevalúa la autorización
+// y registra una entrada de auditoría — tiene efecto commiteado en una unidad de trabajo.
 public sealed record IssueDownloadUrlCommand(
     Guid TenantId,
     Guid FileResourceId,
@@ -36,7 +36,7 @@ public sealed class IssueDownloadUrlHandler(
                 "storage.file.not_found", "The file resource was not found.");
         }
 
-        // Only an available resource can be downloaded (capability invariant).
+        // Sólo un recurso disponible se puede descargar (invariante de la capacidad).
         resource.EnsureDownloadable();
 
         var storageKey = string.IsNullOrWhiteSpace(command.Variant)

@@ -1,5 +1,4 @@
 ﻿using System.Security.Claims;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Bootstrapper.Authentication;
 using Modules.Identity.Application;
@@ -9,11 +8,11 @@ using Modules.Tenancy.Application;
 namespace Api;
 
 /// <summary>
-/// Public tenant self-registration (ADR 0017). Availability is governed by the
-/// <c>Registration:PublicTenantSignupEnabled</c> flag (default false); the backend
-/// is the single source of truth and always enforces it. Registering a tenant is the
-/// single exception to invitation-only provisioning and is scoped to the new tenant's
-/// owner.
+/// Auto-registro público de tenants (ADR 0017). La disponibilidad la gobierna el flag
+/// <c>Registration:PublicTenantSignupEnabled</c> (false por defecto); el backend es la
+/// única fuente de verdad y siempre lo hace cumplir. Registrar un tenant es la única
+/// excepción al aprovisionamiento sólo-por-invitación y está acotado al owner del tenant
+/// nuevo.
 /// </summary>
 public static class RegistrationEndpoints
 {
@@ -28,9 +27,9 @@ public static class RegistrationEndpoints
             .WithTags("Authentication")
             .Produces<RegistrationPolicyResponse>();
 
-        // Registration happens before any session exists, straight off the Google
-        // bearer token (same reasoning as /auth/session — see AuthSessionEndpoints
-        // and QepServiceCollectionExtensions.AddAuthentication).
+        // El registro pasa antes de que exista cualquier sesión, directo del bearer token
+        // de Google (mismo razonamiento que /auth/session — ver AuthSessionEndpoints
+        // y QepServiceCollectionExtensions.AddAuthentication).
         var registerTenant = endpoints.MapPost("/api/v1/auth/register-tenant", RegisterAsync);
         registerTenant.RequireGoogleBearerOrDevStub(endpoints.ServiceProvider);
         registerTenant
@@ -104,9 +103,9 @@ public static class RegistrationEndpoints
             httpContext.TraceIdentifier,
             cancellationToken);
 
-        // The new owner is authenticated from here on — the frontend navigates
-        // straight to the tenant's settings page after registering, which needs a
-        // live session (see AuthSessionEndpoints.EstablishAsync for the same step).
+        // El owner nuevo queda autenticado de acá en adelante — el frontend navega
+        // directo a la página de configuración del tenant después de registrar, y eso
+        // necesita una sesión viva (ver AuthSessionEndpoints.EstablishAsync, el mismo paso).
         var issued = await sessionService.IssueAsync(
             ownerUserId,
             httpContext.Request.Headers.UserAgent.ToString(),

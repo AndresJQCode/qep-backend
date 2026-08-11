@@ -42,7 +42,7 @@ public sealed class SoftDeleteFileHandler(
             }
             resource.Unpublish(now);
         }
-        // Logical delete; the object is retained until the retention window elapses.
+        // Borrado lógico; el objeto se retiene hasta que pase la ventana de retención.
         resource.SoftDelete(now);
 
         auditPublisher.Publish(

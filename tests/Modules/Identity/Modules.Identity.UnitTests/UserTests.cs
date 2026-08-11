@@ -25,7 +25,7 @@ public sealed class UserTests
         user.Activate(CreatedAt.AddMinutes(1));
         Assert.Equal(UserStatus.Active, user.Status);
 
-        // A second activation is a no-op, not a failure.
+        // Una segunda activación es un no-op, no una falla.
         user.Activate(CreatedAt.AddMinutes(2));
         Assert.Equal(UserStatus.Active, user.Status);
     }

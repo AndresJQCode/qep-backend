@@ -8,9 +8,9 @@ namespace Modules.Catalog.Application;
 public sealed record CreateProductCommand(Guid TenantId, string Name, string Code)
     : ICommand<ProductDto>;
 
-// The domain enforces the same rules and would throw a 422 with a single code. The validator
-// exists so the response carries the per-field errors map that ApiExceptionHandler builds
-// from ValidationException, which is what a form needs to mark the offending input.
+// El dominio hace cumplir las mismas reglas y tiraría un 422 con un solo código. El validador
+// existe para que la respuesta lleve el mapa de errores por campo que ApiExceptionHandler arma
+// desde ValidationException, que es lo que un formulario necesita para marcar el input culpable.
 public sealed class CreateProductValidator : AbstractValidator<CreateProductCommand>
 {
     public CreateProductValidator()

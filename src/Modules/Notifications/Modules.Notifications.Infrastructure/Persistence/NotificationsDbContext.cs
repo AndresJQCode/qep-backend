@@ -64,7 +64,7 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
     {
-        // Read-only view over the platform Outbox owned by the producing module.
+        // Vista de sólo lectura sobre el Outbox de plataforma, propiedad del módulo productor.
         var outbox = modelBuilder.Entity<OutboxRecord>();
         outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
         outbox.HasKey(value => value.Id);

@@ -3,11 +3,11 @@ using Modules.Identity.Application;
 
 namespace Modules.Identity.Infrastructure.Persistence;
 
-// Atomic audit path (ADR 0019) for Identity: buffers the audit entry in
-// IdentityDbContext so it commits or rolls back together with the session
-// issue/revoke in the same unit of work. audit.entries is owned by the Audit
-// module's migrations; IdentityDbContext maps it as an ExcludeFromMigrations write
-// projection, same as TenancyDbContext does for Tenancy.
+// Camino de auditoría atómica (ADR 0019) para Identity: acumula la entrada de auditoría en
+// IdentityDbContext para que commitee o revierta junto con la emisión/revocación de sesión
+// en la misma unidad de trabajo. audit.entries es propiedad de las migraciones del módulo
+// Audit; IdentityDbContext la mapea como proyección de escritura ExcludeFromMigrations,
+// igual que hace TenancyDbContext para Tenancy.
 internal sealed class IdentityAuditRecorder(IdentityDbContext dbContext) : IIdentityAuditRecorder
 {
     public void Record(

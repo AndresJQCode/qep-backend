@@ -48,9 +48,9 @@ internal sealed class FileResourceRepository(StorageDbContext dbContext) : IFile
         }
         else
         {
-            // Active uploads are represented by the client's progress queue. Keeping
-            // transient rows out of the default library prevents failed PUTs from
-            // appearing indefinitely as "uploading".
+            // Las subidas activas las representa la cola de progreso del cliente. Mantener
+            // las filas transitorias fuera de la biblioteca por defecto evita que los PUT
+            // fallidos aparezcan indefinidamente como "subiendo".
             query = query.Where(resource => resource.Status != FileResourceStatus.PendingUpload);
         }
 

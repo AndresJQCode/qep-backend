@@ -7,10 +7,10 @@ namespace Modules.Catalog.Infrastructure.Persistence;
 
 internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUnitOfWork
 {
-    // Discriminating by index name and not by SqlState alone is deliberate: 23505 only says
-    // that some unique index was violated, and answering catalog.product.code_taken for a
-    // different one would send the caller to fix the wrong field. That is the lesson
-    // SDD-CT-06 was closed on, where another unique index reported the wrong domain code.
+    // Discriminar por nombre de índice y no sólo por SqlState es deliberado: 23505 sólo dice
+    // que se violó algún índice único, y responder catalog.product.code_taken para otro
+    // mandaría al llamador a corregir el campo equivocado. Esa es la lección con la que se
+    // cerró SDD-CT-06, donde otro índice único reportaba el código de dominio equivocado.
     private const string ProductCodeIndex = "IX_products_tenant_code";
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
@@ -27,8 +27,8 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
                       ProductCodeIndex,
                       StringComparison.Ordinal))
         {
-            // Translated here and not in Application, which does not reference Npgsql and is
-            // kept that way by CatalogLayerTests.
+            // Traducido acá y no en Application, que no referencia Npgsql y se mantiene así
+            // gracias a CatalogLayerTests.
             throw new CatalogDomainException(
                 "catalog.product.code_taken",
                 "Another product in this tenant already uses that code.");

@@ -1,10 +1,10 @@
 ﻿namespace Modules.Identity.Domain;
 
 /// <summary>
-/// Links an external identity provider subject to an internal user. The pair
-/// (<see cref="Provider"/>, <see cref="Subject"/>) is globally unique: an external
-/// subject maps to exactly one user. Per ADR 0015 the subject is never the internal
-/// user id.
+/// Vincula el subject de un proveedor de identidad externo con un usuario interno. El par
+/// (<see cref="Provider"/>, <see cref="Subject"/>) es único a nivel global: un subject
+/// externo mapea a exactamente un usuario. Según el ADR 0015 el subject nunca es el id
+/// interno de usuario.
 /// </summary>
 public sealed class ProviderLink
 {

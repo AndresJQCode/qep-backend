@@ -36,10 +36,10 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.Property(value => value.CreatedAt).HasColumnName("created_at");
         product.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         product.HasIndex(value => value.TenantId).HasDatabaseName("IX_products_tenant");
-        // The uniqueness the product code promises. Named on purpose: the infrastructure
-        // layer discriminates the unique violation by index name, not by SqlState alone,
-        // because other unique indexes in this database would otherwise be reported with
-        // the wrong domain code. That was the lesson of SDD-CT-06.
+        // La unicidad que promete el código de producto. Nombrado a propósito: la capa de
+        // infraestructura discrimina la violación de unicidad por nombre de índice, no sólo por
+        // SqlState, porque si no otros índices únicos de esta base se reportarían con el código
+        // de dominio equivocado. Esa fue la lección de SDD-CT-06.
         product.HasIndex(value => new { value.TenantId, value.Code })
             .IsUnique()
             .HasDatabaseName("IX_products_tenant_code");

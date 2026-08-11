@@ -26,8 +26,8 @@ public interface IMembershipRepository
         TenantId tenantId,
         CancellationToken cancellationToken);
 
-    // Active memberships in the tenant other than excludeId, so a suspend/remove handler
-    // can check whether another member still holds a manage-capable role (lockout guard).
+    // Membresías activas del tenant distintas de excludeId, para que un handler de suspender o
+    // quitar verifique si otro miembro conserva un rol con capacidad de gestión (guarda de lockout).
     Task<IReadOnlyList<Membership>> ListActiveExcludingAsync(
         TenantId tenantId,
         MembershipId excludeId,
