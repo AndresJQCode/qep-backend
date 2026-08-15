@@ -170,7 +170,14 @@ public sealed class ProductTests
             TenantId,
             "Vela de soja",
             "VS-001",
-            new ProductDetails("Cera de soja, 200 g", image, 45000m, "COP", taxRate),
+            ProductDetails.Empty with
+            {
+                Description = "Cera de soja, 200 g",
+                ImageFileId = image,
+                Price = 45000m,
+                Currency = "COP",
+                TaxRateId = taxRate
+            },
             Now);
 
         Assert.Equal("Cera de soja, 200 g", product.Description);
@@ -303,7 +310,14 @@ public sealed class ProductTests
             TenantId,
             "Vela de soja",
             "VS-001",
-            new ProductDetails("Cera de soja", Guid.CreateVersion7(), 45000m, "COP", TaxRateId.New()),
+            ProductDetails.Empty with
+            {
+                Description = "Cera de soja",
+                ImageFileId = Guid.CreateVersion7(),
+                Price = 45000m,
+                Currency = "COP",
+                TaxRateId = TaxRateId.New()
+            },
             Now);
 
         product.Update("Vela de soja", "VS-001", ProductDetails.Empty, Now.AddMinutes(5));

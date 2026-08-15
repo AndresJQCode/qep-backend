@@ -1,6 +1,6 @@
 # `CAT-04` — Propiedades nuevas de producto
 
-> **Estado:** In Progress
+> **Estado:** In Progress — código y pruebas cerrados; **falta sólo el gate `CAT-00`**, que vive en `qep-frontend`
 > **Módulo:** `catalog` — ficha y gate en `qep-frontend/sdd/03-modulos/catalog/`
 > (`SDD-ADR-08`: los enlaces relativos no cruzan repos)
 > **Depende de:** `CAT-03` (`Complete`, 2026-08-13) — el campo `impuesto` es una FK a `TaxRate`
@@ -487,13 +487,88 @@ de `Currency` sólo comprueba `Length(3)`, mientras el dominio además exige let
 `"123"` atraviesa el validador y lo rechaza el dominio sin mapa por campo — la misma forma
 que el hallazgo `A`.
 
+### Tramo 6 — corrección de los hallazgos `A`, `B`, `D`, `E` y `F` (2026-08-15)
+
+Una sola transacción de corrección, con RED antes que GREEN. **El RED falló por el motivo
+correcto en los dos frentes**: las cuatro pruebas de validación con
+`Assert.Equal() Failure: Strings differ / Expected: "validation.failed"` —o sea, llegaba el
+código de dominio y no el de validación, que es exactamente lo que dice el hallazgo `A`— y la de
+la foreign key con `Assert.Throws() Failure: Exception type was not an exact match ----
+Microsoft.EntityFrameworkCore.DbUpdateException`, sin traducir. Literal:
+
+```txt
+Con error! - Con error: 5, Superado: 13, Omitido: 0, Total: 18 - Modules.Catalog.IntegrationTests.dll
+```
+
+| Hallazgo | Corrección | Archivo |
+|---|---|---|
+| `A` | Regla que empareja `Price` y `Currency`, **en los dos sentidos**, cada uno apuntando al campo que hay que corregir | `ProductWriteRules.cs` |
+| `F` | `Matches("^[A-Za-z]{3}$")` además de `Length(3)`: el dominio exige letras y el validador comprobaba sólo el largo | `ProductWriteRules.cs` |
+| `D` | Las reglas se escriben **una vez** en `ProductWriteRules` y los dos validadores las incluyen con `Include()`. `CreateProductCommand` y `UpdateProductCommand` implementan `IProductWriteCommand` | `ProductWriteRules.cs`, `CreateProduct.cs`, `UpdateProduct.cs` |
+| `E` | `ProductDetails` deja de ser posicional: propiedades `init`, construcción sólo por nombre. Intercambiar `Description` y `Currency` ya no compila | `ProductDetails.cs` |
+| `B` | **Se traduce.** Rama para `23503` sobre `FK_products_tax_rates_tax_rate_id`, discriminando por nombre de constraint como manda `SDD-CT-06` | `CatalogUnitOfWork.cs` |
+
+**Decisión sobre `B`, que el tramo 5 dejó abierta: se traduce, no se declara deuda.** Cuesta una
+rama de diez líneas, y el argumento para postergarla —«hoy no hay endpoint que borre una tasa»—
+es justamente la condición que puede cambiar sin que nadie se acuerde de esta rama. Devuelve el
+**mismo** código que `ProductTaxRateResolver` a propósito: para el llamador es el mismo problema
+—la tasa que pidió no está— y darle dos códigos distintos según qué capa lo detectó lo obligaría
+a manejar los dos.
+
+**Cambio de contrato que la corrección de `A` produce, y hay que declararlo.** `CA-CAT-04-06`
+pedía `422` con el código `catalog.product.price_currency_mismatch`. Con validador, ese caso
+pasa a `422 validation.failed` **con el mapa `errors`**. No es una desviación: es lo que la
+tabla de «Riesgos» de este spec pedía —«invariante de dominio **y** validador»— y lo que ya
+hacían los otros dos invariantes de `CAT-04`, precio negativo y largo de moneda, que siempre
+tuvieron regla. **El criterio y la tabla de «Riesgos» se contradecían entre sí**, que es lo que
+el hallazgo `A` señaló; gana la tabla. El código de dominio sigue vivo como red de abajo para
+quien llame al agregado sin pasar por el validador, y lo cubren las unitarias de `ProductTests`.
+
+**GREEN, literal:**
+
+```txt
+Correctas! - Con error: 0, Superado: 44, Omitido: 0, Total: 44 - Modules.Catalog.UnitTests.dll
+Correctas! - Con error: 0, Superado: 16, Omitido: 0, Total: 16 - ArchitectureTests.dll
+Correctas! - Con error: 0, Superado: 55, Omitido: 0, Total: 55 - Modules.Catalog.IntegrationTests.dll
+```
+
+**Regresión de toda la solución: 265 en verde.** Los únicos 5 fallos son los de `SDD-CT-14`,
+verificados **por nombre** y no por conteo:
+
+```txt
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.LogoutRevokesTheSessionCookie
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.MutatingRequestWithoutCsrfHeaderIsRejected
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.RoleDowngradeRemovesPermissionsOnTheNextRequest
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.SuspendingMembershipRevokesTheMembersActiveSession
+```
+
+`dotnet build Backend.slnx` → `Compilación correcta. 0 Advertencia(s)`. `dotnet format
+--verify-no-changes` no reporta ninguno de los seis archivos tocados; los 22 archivos que el
+repo tiene sucios son deuda preexistente y siguen abiertos.
+
+**Trampa de entorno nueva, verificada hoy:** `dotnet restore` falla con
+`error NU1903: ... "SSH.NET" 2025.1.0 tiene una vulnerabilidad de gravedad alta`, tratada como
+error. Entra por `Testcontainers.PostgreSql` y **frena todos los proyectos de integración**. Se
+esquiva en local con `-p:NuGetAudit=false`, que es lo que se usó acá; **no se tocó ninguna
+configuración del repo**. Es preexistente, no lo introdujo este tramo, y va a frenar CI: queda
+como seguimiento propio, fuera de este slice.
+
 ### Lo que falta para `Complete`
 
-| Falta | Por qué |
+| Falta | Estado |
 |---|---|
-| **Resolver los hallazgos `A`, `D`, `E`, `F`** | Son de este slice. `A` contradice la tabla de «Riesgos» de este mismo spec |
-| **Decidir sobre `B`** | Traducir `23503` en `CatalogUnitOfWork`, o declararlo deuda aceptada mientras no exista borrado de tasas |
-| **Escribir el alcance en el gate `CAT-00`** | Vive en `qep-frontend`, autoridad del otro repo. **Sin acordar, no se toca** |
+| ~~Resolver los hallazgos `A`, `D`, `E`, `F`~~ | **Hecho en el tramo 6.** |
+| ~~Decidir sobre `B`~~ | **Decidido: se traduce.** Tramo 6 |
+| **Escribir el alcance en el gate `CAT-00`** | **Abierto.** Vive en `qep-frontend/sdd/03-modulos/catalog/gate.md`, autoridad del otro repositorio y con su propio developer. **Sin acordar, no se toca** |
+
+**Es el único bloqueo que queda, y no es técnico.** El gate declara el modelo de `Product` con
+`id`, `name`, `code`, `isActive` y **"Ningún campo más"**; el código tiene cinco campos más.
+`SDD-ADR-01` manda que gane el código y **se corrija el documento**. Lo que hay que escribir
+está en «Alcance que este slice corre en el gate `CAT-00`», más arriba, y son tres filas.
 
 `C` **no pertenece a este slice**: es de `src/Api/ApiExceptionHandler.cs` y afecta a todos los
 módulos. Va como `DECISIÓN-PENDIENTE` propia.
+
+**Seguimiento nuevo, tampoco de este slice:** `NU1903` sobre `SSH.NET`, que frena el restore de
+los proyectos de integración y va a frenar CI.

@@ -13,30 +13,13 @@ public sealed record CreateProductCommand(
     Guid? ImageFileId,
     decimal? Price,
     string? Currency,
-    Guid? TaxRateId) : ICommand<ProductDto>;
+    Guid? TaxRateId) : ICommand<ProductDto>, IProductWriteCommand;
 
-// El dominio hace cumplir las mismas reglas y tiraría un 422 con un solo código. El validador
-// existe para que la respuesta lleve el mapa de errores por campo que ApiExceptionHandler arma
-// desde ValidationException, que es lo que un formulario necesita para marcar el input culpable.
+// Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
+// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes.
 public sealed class CreateProductValidator : AbstractValidator<CreateProductCommand>
 {
-    public CreateProductValidator()
-    {
-        RuleFor(command => command.Name)
-            .NotEmpty()
-            .MaximumLength(Product.NameMaxLength);
-        RuleFor(command => command.Code)
-            .NotEmpty()
-            .MaximumLength(Product.CodeMaxLength);
-        RuleFor(command => command.Description)
-            .MaximumLength(ProductDetails.DescriptionMaxLength);
-        RuleFor(command => command.Price)
-            .GreaterThanOrEqualTo(0m)
-            .When(command => command.Price.HasValue);
-        RuleFor(command => command.Currency)
-            .Length(ProductDetails.CurrencyLength)
-            .When(command => !string.IsNullOrWhiteSpace(command.Currency));
-    }
+    public CreateProductValidator() => Include(new ProductWriteRules());
 }
 
 public sealed class CreateProductHandler(
@@ -73,12 +56,14 @@ public sealed class CreateProductHandler(
             command.TenantId,
             command.Name,
             command.Code,
-            new ProductDetails(
-                command.Description,
-                command.ImageFileId,
-                command.Price,
-                command.Currency,
-                taxRateId),
+            new ProductDetails
+            {
+                Description = command.Description,
+                ImageFileId = command.ImageFileId,
+                Price = command.Price,
+                Currency = command.Currency,
+                TaxRateId = taxRateId
+            },
             now);
 
         repository.Add(product);

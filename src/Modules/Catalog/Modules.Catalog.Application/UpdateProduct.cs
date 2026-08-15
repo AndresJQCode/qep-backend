@@ -14,27 +14,12 @@ public sealed record UpdateProductCommand(
     Guid? ImageFileId,
     decimal? Price,
     string? Currency,
-    Guid? TaxRateId) : ICommand<ProductDto>;
+    Guid? TaxRateId) : ICommand<ProductDto>, IProductWriteCommand;
 
+// Mismas reglas que el POST, por inclusión y no por copia. Ver ProductWriteRules.
 public sealed class UpdateProductValidator : AbstractValidator<UpdateProductCommand>
 {
-    public UpdateProductValidator()
-    {
-        RuleFor(command => command.Name)
-            .NotEmpty()
-            .MaximumLength(Product.NameMaxLength);
-        RuleFor(command => command.Code)
-            .NotEmpty()
-            .MaximumLength(Product.CodeMaxLength);
-        RuleFor(command => command.Description)
-            .MaximumLength(ProductDetails.DescriptionMaxLength);
-        RuleFor(command => command.Price)
-            .GreaterThanOrEqualTo(0m)
-            .When(command => command.Price.HasValue);
-        RuleFor(command => command.Currency)
-            .Length(ProductDetails.CurrencyLength)
-            .When(command => !string.IsNullOrWhiteSpace(command.Currency));
-    }
+    public UpdateProductValidator() => Include(new ProductWriteRules());
 }
 
 public sealed class UpdateProductHandler(
@@ -70,12 +55,14 @@ public sealed class UpdateProductHandler(
         product.Update(
             command.Name,
             command.Code,
-            new ProductDetails(
-                command.Description,
-                command.ImageFileId,
-                command.Price,
-                command.Currency,
-                taxRateId),
+            new ProductDetails
+            {
+                Description = command.Description,
+                ImageFileId = command.ImageFileId,
+                Price = command.Price,
+                Currency = command.Currency,
+                TaxRateId = taxRateId
+            },
             now);
 
         auditPublisher.Publish(

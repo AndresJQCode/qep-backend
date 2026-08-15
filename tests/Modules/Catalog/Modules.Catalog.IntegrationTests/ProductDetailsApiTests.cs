@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
+using Modules.Catalog.Domain;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -182,7 +185,19 @@ public sealed class ProductDetailsApiTests
         Assert.Equal("COP", created.Currency);
     }
 
-    // CA-CAT-04-06, los dos sentidos: una guarda escrita en uno solo deja pasar el otro.
+    /// <summary>
+    /// CA-CAT-04-06, los dos sentidos: una guarda escrita en uno solo deja pasar el otro.
+    ///
+    /// **El código cambió al corregir el hallazgo `A`, y es a propósito.** Antes este caso lo
+    /// rechazaba sólo el invariante de dominio y salía como `catalog.product.price_currency_mismatch`
+    /// sin mapa por campo; ahora lo ataja el validador y sale como `validation.failed` **con**
+    /// `errors`, igual que los otros dos invariantes de CAT-04 —precio negativo y largo de
+    /// moneda—, que siempre tuvieron regla. La tabla de «Riesgos» del spec pedía «invariante de
+    /// dominio **y** validador»; con los dos, el que responde primero es el validador.
+    ///
+    /// El código de dominio no desapareció: sigue siendo la red de abajo para quien llame al
+    /// agregado sin pasar por el validador, y lo cubren las unitarias de `ProductTests`.
+    /// </summary>
     [Fact]
     public async Task PriceWithoutCurrencyAndCurrencyWithoutPriceAreBothUnprocessable()
     {
@@ -196,11 +211,7 @@ public sealed class ProductDetailsApiTests
             code = "VS-001",
             price = 45000m
         });
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, priceOnly.StatusCode);
-        Assert.Contains(
-            "catalog.product.price_currency_mismatch",
-            await priceOnly.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
-            StringComparison.Ordinal);
+        Assert.Contains("Currency", (await ReadValidationErrorsAsync(priceOnly)).Keys);
 
         var currencyOnly = await CreateProductAsync(client, TenantId, new
         {
@@ -208,11 +219,7 @@ public sealed class ProductDetailsApiTests
             code = "VC-002",
             currency = "COP"
         });
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, currencyOnly.StatusCode);
-        Assert.Contains(
-            "catalog.product.price_currency_mismatch",
-            await currencyOnly.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
-            StringComparison.Ordinal);
+        Assert.Contains("Price", (await ReadValidationErrorsAsync(currencyOnly)).Keys);
     }
 
     /// <summary>
@@ -374,6 +381,168 @@ public sealed class ProductDetailsApiTests
         Assert.Null(fetched.Price);
         Assert.Null(fetched.Currency);
         Assert.Null(fetched.TaxRateId);
+    }
+
+    /// <summary>
+    /// Hallazgo `A` de la revisión de 4 lentes, en los dos sentidos.
+    ///
+    /// El caso ya devolvía **422**, y por eso la prueba de `CA-CAT-04-06` pasaba: afirmaba sobre
+    /// el status y el código de dominio. Lo que no llevaba es el mapa `errors` por campo, porque
+    /// el emparejamiento precio/moneda lo rechazaba **sólo** el invariante de dominio y ningún
+    /// validador. Un formulario recibía un 422 sin saber qué input marcar.
+    ///
+    /// La tabla de «Riesgos» de este spec pedía «invariante de dominio **y** validador». Esta
+    /// prueba afirma sobre `errors`, que es la parte que la anterior no miraba.
+    /// </summary>
+    [Fact]
+    public async Task APriceWithoutCurrencyNamesTheCurrencyFieldInTheErrorMap()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-001",
+            price = 45000m
+        });
+
+        var errors = await ReadValidationErrorsAsync(response);
+        Assert.Contains("Currency", errors.Keys);
+    }
+
+    // El sentido inverso apunta al otro campo: quien mandó moneda sin precio tiene que corregir
+    // el precio, no la moneda. Una regla escrita en un solo sentido deja pasar el otro.
+    [Fact]
+    public async Task ACurrencyWithoutPriceNamesThePriceFieldInTheErrorMap()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-001",
+            currency = "COP"
+        });
+
+        var errors = await ReadValidationErrorsAsync(response);
+        Assert.Contains("Price", errors.Keys);
+    }
+
+    /// <summary>
+    /// Hallazgo `F` — la regla del validador comprobaba sólo el largo, mientras el dominio además
+    /// exige letras. `"123"` atravesaba el validador y lo rechazaba el dominio, con la misma
+    /// forma del hallazgo `A`: 422 con código, sin mapa por campo.
+    /// </summary>
+    [Fact]
+    public async Task ACurrencyOfThreeNonLettersNamesTheCurrencyFieldInTheErrorMap()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-001",
+            price = 1000m,
+            currency = "123"
+        });
+
+        var errors = await ReadValidationErrorsAsync(response);
+        Assert.Contains("Currency", errors.Keys);
+    }
+
+    /// <summary>
+    /// Hallazgo `D` — las reglas estaban duplicadas textualmente entre `CreateProductValidator` y
+    /// `UpdateProductValidator`, así que corregir una sola dejaba `POST` y `PUT` validando
+    /// distinto. Esta prueba ejerce el **mismo** caso por el otro verbo: es la que se pone roja
+    /// si alguien vuelve a duplicar y arregla una sola copia.
+    /// </summary>
+    [Fact]
+    public async Task ThePutEnforcesTheSameDetailRulesAsThePost()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var created = await ReadProductAsync(await CreateProductAsync(
+            client, TenantId, new { name = "Vela de soja", code = "VS-001" }));
+
+        var priceOnly = await client.PutAsJsonAsync(
+            "/api/v1/tenants/" + TenantId + "/catalog/products/" + created.Id,
+            new { name = "Vela de soja", code = "VS-001", price = 45000m },
+            TestContext.Current.CancellationToken);
+        Assert.Contains("Currency", (await ReadValidationErrorsAsync(priceOnly)).Keys);
+
+        var badCurrency = await client.PutAsJsonAsync(
+            "/api/v1/tenants/" + TenantId + "/catalog/products/" + created.Id,
+            new { name = "Vela de soja", code = "VS-001", price = 1000m, currency = "123" },
+            TestContext.Current.CancellationToken);
+        Assert.Contains("Currency", (await ReadValidationErrorsAsync(badCurrency)).Keys);
+    }
+
+    /// <summary>
+    /// Un 422 de validación tiene dos mitades y las pruebas viejas miraban una sola: el status y
+    /// el código salían bien mientras el mapa por campo faltaba. Este helper exige las dos.
+    /// </summary>
+    private static async Task<IReadOnlyDictionary<string, string[]>> ReadValidationErrorsAsync(
+        HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+
+        var problem = JsonDocument.Parse(body).RootElement;
+        Assert.Equal("validation.failed", problem.GetProperty("code").GetString());
+
+        var errors = problem.TryGetProperty("errors", out var map)
+            ? map.Deserialize<Dictionary<string, string[]>>()
+            : null;
+        Assert.NotNull(errors);
+        return errors;
+    }
+
+    /// <summary>
+    /// Hallazgo `B` — la violación de foreign key sobre `FK_products_tax_rates_tax_rate_id` no
+    /// estaba traducida. `CatalogUnitOfWork` traducía las dos violaciones de índice único y no
+    /// ésta, que la migración `AddProductDetails` estrena con `RESTRICT`.
+    ///
+    /// **Se salta el handler a propósito.** Por HTTP este caso no llega: `ProductTaxRateResolver`
+    /// lo frena antes, y `CA-CAT-04-08` ya lo cubre. Lo que se prueba acá es la red de abajo —la
+    /// que se activa cuando la fila desaparece entre la verificación y el commit, que es justo el
+    /// escenario para el que se puso el `RESTRICT`. Sin traducir, sale **500 server.unexpected**
+    /// y, por el hallazgo `C`, con el nombre de la constraint adentro del mensaje.
+    /// </summary>
+    [Fact]
+    public async Task AForeignKeyViolationOnTheTaxRateIsTranslatedInsteadOfCrashing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        // Fuerza el arranque de la app, y con él las migraciones, antes de tocar la base.
+        Assert.Empty(await ListAsync(client, TenantId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>();
+
+        repository.Add(Product.Create(
+            ProductId.New(),
+            Guid.Parse(TenantId),
+            "Vela de soja",
+            "VS-001",
+            ProductDetails.Empty with { TaxRateId = TaxRateId.New() },
+            DateTimeOffset.UtcNow));
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(
+            async () => await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("catalog.product.tax_rate_not_found", error.Code);
     }
 
     private static async Task<Guid> CreateTaxRateAsync(

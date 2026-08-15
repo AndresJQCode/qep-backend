@@ -7,14 +7,25 @@ namespace Modules.Catalog.Domain;
 /// La menor: con los cinco sueltos la firma llega a diez argumentos. La que importa: la
 /// invariante «precio y moneda van juntos» **cruza dos campos**, y suelta habría que repetirla en
 /// los dos métodos o dejarla sin dueño.
+///
+/// **Las propiedades son `init` y no posicionales, así que sólo se construye por nombre.** Era un
+/// record posicional, y el hallazgo `E` de la revisión de 4 lentes mostró el agujero:
+/// `Description` y `Currency` son los dos `string?` y estaban en posiciones **no adyacentes**, de
+/// modo que intercambiarlos compilaba sin una queja. Un producto quedaba con la descripción en la
+/// moneda. Ahora ese error no tiene forma de escribirse.
 /// </summary>
-public sealed record ProductDetails(
-    string? Description,
-    Guid? ImageFileId,
-    decimal? Price,
-    string? Currency,
-    TaxRateId? TaxRateId)
+public sealed record ProductDetails
 {
+    public string? Description { get; init; }
+
+    public Guid? ImageFileId { get; init; }
+
+    public decimal? Price { get; init; }
+
+    public string? Currency { get; init; }
+
+    public TaxRateId? TaxRateId { get; init; }
+
     // Espeja los anchos de columna, igual que Name y Code en Product: un valor demasiado largo
     // falla como 422 con código de dominio en vez de llegar a PostgreSQL y volver como 500.
     public const int DescriptionMaxLength = 2000;
@@ -22,7 +33,7 @@ public sealed record ProductDetails(
     // ISO-4217 alfabético: siempre tres letras.
     public const int CurrencyLength = 3;
 
-    public static ProductDetails Empty { get; } = new(null, null, null, null, null);
+    public static ProductDetails Empty { get; } = new();
 
     /// <summary>
     /// Normaliza y hace cumplir los invariantes. Lo llama <see cref="Product"/>; no es punto de
@@ -45,7 +56,7 @@ public sealed record ProductDetails(
                 "Price and currency must be provided together.");
         }
 
-        return new ProductDetails(description, ImageFileId, price, currency, TaxRateId);
+        return this with { Description = description, Price = price, Currency = currency };
     }
 
     private static string? NormalizeDescription(string? description)
