@@ -387,10 +387,113 @@ Correctas!  - Con error: 0, Superado: 16, Total: 16 - ArchitectureTests.dll
 **260 en verde, 5 en rojo.** Los 5 son los de `SDD-CT-14`, verificados **por nombre**. Cero
 regresión. `dotnet format` sin hallazgos.
 
+### Tramo 4 — runtime contra la API local: 11 de 11 (2026-08-15)
+
+Los 11 criterios verificados endpoint por endpoint contra `http://localhost:5099` con
+PostgreSQL real, con el stub de desarrollo encendido.
+
+**Cómo se levantó, que tiene una trampa nueva:** `launchSettings.json` **pisa** las variables
+de entorno. Sus dos perfiles fijan `Authentication__UseDevelopmentStub=false` y
+`applicationUrl=http://localhost:5000`, así que exportar `Authentication__UseDevelopmentStub=true`
+antes de `dotnet run` **no alcanza**. Hay que pedir `--no-launch-profile`:
+
+```powershell
+$env:Authentication__UseDevelopmentStub = "true"
+$env:ASPNETCORE_URLS = "http://localhost:5099"
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+dotnet run --project src/Api --no-build --no-launch-profile
+```
+
+El contenedor `postgres18` (`5433`) ya estaba arriba y las migraciones al día —
+`No migrations were applied. The database is already up to date.`
+
+| Criterio | Resultado |
+|---|---|
+| `CA-CAT-04-01` | **201**, y el cuerpo devuelve los cinco campos tal como se enviaron |
+| `CA-CAT-04-02` | **201** con los cinco en `null` |
+| `CA-CAT-04-03` | **200**, los cinco quedan en `null`, verificado con un `GET` independiente |
+| `CA-CAT-04-04` | **422** `validation.failed` con `errors.Price` |
+| `CA-CAT-04-05` | **422** con `errors.Currency` para 2 y 4 caracteres; `"cop"` → **201** y persiste `"COP"` |
+| `CA-CAT-04-06` | **422** `catalog.product.price_currency_mismatch` en los dos sentidos — **pero sin el mapa `errors`**, ver hallazgo `A` |
+| `CA-CAT-04-07` | **422** `catalog.product.tax_rate_not_found` **y no persiste** |
+| `CA-CAT-04-08` | **422**, no 500 por violación de FK |
+| `CA-CAT-04-09` | **201** con una tasa **inactiva** del propio tenant |
+| `CA-CAT-04-10` | **Una** entrada de auditoría por escritura, en la misma transacción |
+| `CA-CAT-04-11` | Los 4 productos del 2026-08-11 siguen legibles con los cinco en `null` |
+
+**`CA-CAT-04-11` salió con datos reales, no sembrados.** Los 4 productos que dejó el runtime
+de `CAT-02` el 2026-08-11 son anteriores a la migración `AddProductDetails` del 2026-08-13, y
+se leen con las cinco columnas en `NULL`. Es la prueba que las de integración simulan.
+
+**`CA-CAT-04-10` es la evidencia más fuerte, y se probó por lo que NO escribió.** El outbox
+—`platform.outbox_messages`, no una tabla de `catalog`— quedó con exactamente 5 entradas del
+runtime: 4 `catalog.product.created` y **1** `catalog.product.updated`. Los **7 pedidos
+rechazados no dejaron ninguna**. Y el `occurred_at` del `updated` —`10:43:32.567328`— es el
+mismo instante que el `updatedAt` que devolvió el `PUT`: misma transacción, no dos escrituras.
+
+```txt
+platform.audit.recorded.v1 | catalog.product.created | 10:43:22.765231
+platform.audit.recorded.v1 | catalog.product.created | 10:43:22.949561
+platform.audit.recorded.v1 | catalog.product.updated | 10:43:32.567328
+platform.audit.recorded.v1 | catalog.product.created | 10:43:42.594974
+platform.audit.recorded.v1 | catalog.product.created | 10:44:01.670894
+```
+
+La no-persistencia de `CA-CAT-04-07` se verificó en base, no por el status: `select count(*)`
+sobre los 7 códigos rechazados devuelve **0**.
+
+### Tramo 5 — revisión con 4 lentes ciegos (2026-08-15)
+
+Esta vez **no** fue autorrevisión: cuatro lentes independientes, sin verse entre sí, sobre el
+commit `85b87c8`. Salda la deuda de método que dejó `CAT-03`.
+
+| Lente | Hallazgos |
+|---|---|
+| **Riesgo** | **Ninguno.** Confirmó que `ProductTaxRateResolver` cubre los dos caminos de escritura y que `CA-CAT-04-07` está probado contra el mecanismo ausente |
+| **Fiabilidad** | 1 — hallazgo `A` |
+| **Resiliencia** | 2 — hallazgos `B` y `C` |
+| **Legibilidad** | 3 — hallazgos `D`, `E` y `F` |
+
+**Que el lente de riesgo saliera limpio es el resultado que importa**, porque la frontera de
+aislamiento entre tenants era la razón declarada para exigir esta revisión.
+
+**Hallazgo `A` — el `422` de `CA-CAT-04-06` no lleva el mapa `errors`.** Ni
+`CreateProductValidator` ni `UpdateProductValidator` tienen una regla que empareje `Price` y
+`Currency`, así que ese caso lo rechaza **sólo** el invariante de dominio: sale como
+`DomainException` con `code`, sin el mapa por campo que produce `ValidationException`. Los
+otros dos invariantes de `CAT-04` en el mismo validador —precio negativo, largo de moneda— sí
+tienen regla y sí devuelven el mapa. **Contradice la tabla de «Riesgos» de este spec**, que
+pide «invariante de dominio **y** validador». Lo encontraron dos lentes por separado y el
+runtime lo confirmó en vivo. La prueba de integración no lo detectó porque afirma sobre el
+status y el código, nunca sobre `errors`.
+
+**Hallazgo `B` — la violación de FK no está traducida.** `CatalogUnitOfWork` traduce las dos
+violaciones de índice único pero no `23503` sobre `FK_products_tax_rates_tax_rate_id`, que
+esta migración estrena con `RESTRICT`. Hoy **no hay endpoint que borre una tasa** —sólo
+`deactivate`—, así que no es alcanzable por HTTP; se activa si alguien borra por SQL, que es
+justo el escenario para el que el `RESTRICT` se puso.
+
+**Hallazgo `C` — `ApiExceptionHandler` devuelve `exception.Message` sin distinguir entorno.**
+Preexistente, pero el camino lo estrena esta FK: un error no traducido filtraría nombres de
+constraint y de tabla al llamador, también en producción. **No es de `catalog`**, así que no
+se corrige acá.
+
+**Hallazgos `D`, `E` y `F` — legibilidad.** (`D`) Los tres bloques de reglas nuevas están
+duplicados textualmente entre `CreateProductValidator` y `UpdateProductValidator`, y cambiar
+uno solo deja `POST` y `PUT` con validaciones distintas. (`E`) `ProductDetails` es un record
+posicional con `Description` y `Currency` —los dos `string?`— en posiciones **no adyacentes**,
+y todos los llamadores lo construyen posicionalmente: intercambiarlos compila. (`F`) La regla
+de `Currency` sólo comprueba `Length(3)`, mientras el dominio además exige letras, así que
+`"123"` atraviesa el validador y lo rechaza el dominio sin mapa por campo — la misma forma
+que el hallazgo `A`.
+
 ### Lo que falta para `Complete`
 
 | Falta | Por qué |
 |---|---|
-| **Runtime contra la API local** | Los 11 criterios endpoint por endpoint, con la auditoría verificada en base |
-| **Revisión de riesgo** | **Obligatoria**: `CA-CAT-04-07` es una frontera de aislamiento entre tenants. Y esta vez debería ser con **lentes ciegos**, no autorrevisión como en `CAT-03` |
+| **Resolver los hallazgos `A`, `D`, `E`, `F`** | Son de este slice. `A` contradice la tabla de «Riesgos» de este mismo spec |
+| **Decidir sobre `B`** | Traducir `23503` en `CatalogUnitOfWork`, o declararlo deuda aceptada mientras no exista borrado de tasas |
 | **Escribir el alcance en el gate `CAT-00`** | Vive en `qep-frontend`, autoridad del otro repo. **Sin acordar, no se toca** |
+
+`C` **no pertenece a este slice**: es de `src/Api/ApiExceptionHandler.cs` y afecta a todos los
+módulos. Va como `DECISIÓN-PENDIENTE` propia.

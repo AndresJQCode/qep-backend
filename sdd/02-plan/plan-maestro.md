@@ -26,7 +26,7 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **`CAT-04` — propiedades nuevas de producto**, `In Progress` desde el 2026-08-13. `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate`. Código completo y probado —unitarias `44/44`, integración `50/50`, regresión 260 en verde—; faltan runtime y revisión de riesgo. **Bloqueo formal abierto:** el gate `CAT-00` declara el modelo de `Product` con "Ningún campo más" y vive en `qep-frontend`, que no se tocó |
+| Slice activo | **`CAT-04` — propiedades nuevas de producto**, `In Progress` desde el 2026-08-13. `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate`. **Commiteado el 2026-08-15 en `85b87c8`.** Runtime **11 de 11** y revisión con **4 lentes ciegos**, con el lente de **riesgo limpio**. **No cierra por dos cosas:** quedan 6 hallazgos —`A`, `D`, `E` y `F` son de este slice; `A` contradice la tabla de «Riesgos» del propio spec— y sigue el **bloqueo formal** del gate `CAT-00`, que declara `Product` con "Ningún campo más" y vive en `qep-frontend` |
 | Slice anterior | **`CAT-03` — API de tasas de impuesto**, `In Progress` desde el 2026-08-12. Spec en [`03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md), con partición `CAT-03a`/`CAT-03b` **declarada antes de escribir código** —al revés que `CAT-02`, que se midió en 1043 líneas recién al querer commitear— y ejecutada en secuencia el 2026-08-13. **Código completo y probado**: dominio, persistencia, migración `AddTaxRates`, permisos con sus dos mitades y los 5 endpoints. Unitarias `31/31`, arquitectura `16/16`, **integración `37/37`**, regresión de toda la solución con **233 en verde** y sólo los 5 fallos de `SDD-CT-14` verificados por nombre. **runtime 11 de 11** con la auditoría probada en base y la atomicidad por lo que **no** escribió. Revisión hecha: un bloqueante propio —`Version` sin prueba que lo ejercitara— corregido y verificado **saboteando el mecanismo**. **No cierra por decisiones, no por técnica:** faltan `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C`, todos de producto. Deuda de método declarada: la revisión fue **autorrevisión**, no cuatro lentes ciegos |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
@@ -165,9 +165,100 @@ Owner: Andres Jaramillo
 | `CAT-02a` | Andamiaje del módulo, dominio `Product`, persistencia con `InitialCatalog` y `GET /products` | `CAT-00` | **Complete** | Tres tramos con RED y GREEN literales en el spec. Commits `968c4a8` y `594ee11`. Runtime en el tramo 5 y revisión de 4 lentes en el tramo 6, ambos el 2026-08-11 |
 | `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y pruebas de auditoría y outbox | `CAT-02a` | **Complete** | Código en `3c2c9ec`. Cubre `CA-CAT-02-03` a `-09`, `-11`, `-12` y las mitades pendientes de `-01` y `-10`. **Runtime del 2026-08-11: los 12 criterios verificados contra la API local**, con `422 catalog.product.code_taken` confirmado en vivo —el `500` de `SDD-CT-06` que este slice existía para cerrar— y la atomicidad del outbox probada por lo que **no** dejó rastro: el `403` y los tres `422` no escribieron fila. **Revisión de 4 lentes y su corrección** en el tramo 6: token de concurrencia, permisos de `tax_rate` retirados, comodines de `LIKE` escapados y autorización antes que validación. Regresión de 203 pruebas, con los 5 fallos de `SDD-CT-14` verificados **por nombre** |
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | **Complete** | Cerrado el 2026-08-13. Spec con evidencia en [`CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md): 11 criterios, todos con prueba. Unitarias `31/31`, arquitectura `16/16`, integración `37/37`, regresión con 233 en verde y los 5 de `SDD-CT-14` por nombre, **runtime 11 de 11** con la auditoría verificada en base. Partición `CAT-03a`/`CAT-03b` declarada **antes** de escribir código. Devolvió `catalog.tax_rate.read`/`.manage` con sus tres mitades —constante, definición y **`AddPolicy`**—, que la revisión de `CAT-02` había retirado. `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C` cerrados por el owner el 2026-08-13, los tres ratificando lo implementado. **Deuda declarada:** la revisión fue autorrevisión, no 4 lentes ciegos |
-| `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **In Progress** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Código completo: `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, regresión **260 en verde** con los 5 de `SDD-CT-14` por nombre. **`CA-CAT-04-07` verificado contra el mecanismo ausente:** sin la comprobación de tenant, un producto de A apuntando a una tasa de B se crea con **201** — la FK no sabe de tenants. **No cierra:** faltan runtime y revisión de riesgo. **Corre el alcance del gate `CAT-00`** ("Ningún campo más"), que vive en `qep-frontend` y **no se tocó**. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing`, `Definido` y sin gate cerrado |
+| `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **In Progress** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Commiteado el 2026-08-15 en `85b87c8`. `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, arquitectura `16/16`, regresión sin cambios con los 5 de `SDD-CT-14` por nombre. **Runtime 11 de 11**, con la auditoría probada por lo que **no** escribió y `CA-CAT-04-11` verificado sobre datos reales del 2026-08-11. **`CA-CAT-04-07` verificado contra el mecanismo ausente** y confirmado en runtime: no persiste. **Revisión con 4 lentes ciegos —salda la deuda de método de `CAT-03`— con el lente de riesgo limpio.** **No cierra:** 6 hallazgos abiertos (`A`, `D`, `E`, `F` de este slice; `B` por decidir; `C` es de `src/Api`) y el alcance del gate `CAT-00` sin escribir. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing` |
 
 ## Handoff
+
+### 2026-08-15 — `CAT-03` y `CAT-04` commiteados; runtime y revisión de 4 lentes de `CAT-04`
+
+**Estado: `CAT-04` sigue `In Progress`.** El runtime salió **11 de 11** y la revisión con
+lentes ciegos dejó **6 hallazgos**, ninguno en el lente de riesgo. No cierra por eso y por el
+gate.
+
+**El árbol de trabajo se partió en tres commits**, sobre `feature/catalog-api`:
+
+| Commit | Qué | Tamaño |
+|---|---|---|
+| `e1630a3` | `feat(CAT-03)` — tasas de impuesto completas, con su spec | +2404 / −11 |
+| `85b87c8` | `feat(CAT-04)` — `ProductDetails`, FK a `TaxRate`, migración y pruebas | +1818 / −49 |
+| `21fcf35` | `docs(CAT-03,CAT-04)` — este ledger | +460 / −10 |
+
+Tres archivos estaban compartidos entre los dos slices —`CatalogDtos.cs`, `CatalogDbContext.cs`
+y el `ModelSnapshot`— y se cortaron por hunks para que cada commit fuera un slice entero.
+`e1630a3` se verificó compilando **en un worktree aparte**: `Modules.Catalog.UnitTests` en
+verde, 0 errores `CS`.
+
+**Se midió antes de commitear, como manda `convenciones-de-id.md`, y los dos slices se pasan
+del umbral:** `CAT-03` ~1480 líneas autoradas y `CAT-04` ~1115, contra los ~400 de referencia.
+`CAT-03` había previsto 500-650 y declarado partición `a`/`b`; **la previsión quedó corta por
+casi tres veces.** Se decidió no partir los commits retroactivamente porque hacerlo obligaba a
+cortar por hunks también `TaxRateApiTests.cs` (579 líneas) y el registro de handlers. **Lección
+para el próximo slice: la estimación de tamaño no está midiendo las pruebas de integración**,
+que en los dos casos fueron más de la mitad del volumen.
+
+**Regresión completa, con `Api.exe` detenido:**
+
+```txt
+Modules.Catalog.UnitTests         44/44
+Modules.Catalog.IntegrationTests  50/50
+ArchitectureTests                 16/16
+Modules.Tenancy.IntegrationTests  52/57  ← los 5 de SDD-CT-14, por nombre
+```
+
+Los 5 en rojo son `LogoutRevokesTheSessionCookie`,
+`RoleDowngradeRemovesPermissionsOnTheNextRequest`,
+`SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken`,
+`MutatingRequestWithoutCsrfHeaderIsRejected` y
+`SuspendingMembershipRevokesTheMembersActiveSession` — todos de `RealAuthenticationApiTests`.
+Cero regresión.
+
+**Runtime de `CAT-04`: 11 de 11.** Evidencia completa en el **tramo 4** del spec. Lo que más
+valía verificar en vivo:
+
+- **`CA-CAT-04-10`, la auditoría, se probó por lo que NO escribió.** El outbox quedó con 5
+  entradas —4 `created` y **1** `updated`— y los **7 pedidos rechazados no dejaron ninguna**.
+  El `occurred_at` del `updated` coincide al microsegundo con el `updatedAt` que devolvió el
+  `PUT`: misma transacción.
+- **`CA-CAT-04-11` salió con datos reales.** Los 4 productos que dejó el runtime de `CAT-02`
+  el 2026-08-11 son anteriores a la migración y se leen con las cinco columnas en `NULL`.
+- **`CA-CAT-04-07` no persistió**, verificado por `count(*)` en base y no por el status.
+
+**Revisión con 4 lentes ciegos — salda la deuda de método de `CAT-03`.** El lente de **riesgo
+salió limpio**, que es el resultado que importa: la frontera de aislamiento entre tenants era
+la razón declarada para exigir esta revisión. Los 6 hallazgos, con su detalle en el tramo 5 del
+spec:
+
+| # | Lente | Qué | De quién es |
+|---|---|---|---|
+| `A` | Fiabilidad | El `422` de `CA-CAT-04-06` no lleva el mapa `errors`: falta la regla que empareje `Price` y `Currency` en los dos validadores | `CAT-04` |
+| `B` | Resiliencia | `23503` sobre la FK nueva no está traducido en `CatalogUnitOfWork` | `CAT-04`, no alcanzable por HTTP hoy |
+| `C` | Resiliencia | `ApiExceptionHandler` devuelve `exception.Message` sin distinguir entorno | **No es de `catalog`** |
+| `D` | Legibilidad | Las tres reglas nuevas están duplicadas entre los dos validadores | `CAT-04` |
+| `E` | Legibilidad | `ProductDetails` es posicional con dos `string?` no adyacentes: intercambiarlos compila | `CAT-04` |
+| `F` | Legibilidad | La regla de `Currency` sólo mira el largo; el dominio además exige letras | `CAT-04` |
+
+**`A` es el que más pesa, y lo encontraron dos lentes por separado.** Contradice la tabla de
+«Riesgos» del propio spec de `CAT-04`, que pide «invariante de dominio **y** validador». El
+runtime lo confirmó en vivo, y **la prueba de integración no lo detecta** porque afirma sobre
+el status y el código, nunca sobre `errors`.
+
+**Dos hallazgos de entorno, verificados:**
+
+- **`launchSettings.json` pisa las variables de entorno.** Sus dos perfiles fijan
+  `Authentication__UseDevelopmentStub=false` y `applicationUrl=http://localhost:5000`, así que
+  exportar la variable antes de `dotnet run` **no alcanza**: hay que pedir
+  `--no-launch-profile`. El `CLAUDE.md` decía que se pide con la variable; con eso solo, no.
+- **`NU1903`: `SSH.NET 2025.1.0` tiene una vulnerabilidad de gravedad alta**
+  (`GHSA-q939-rpr3-3284`), entra como transitiva y con `TreatWarningsAsErrors` **rompe el
+  build** de `Modules.Catalog.IntegrationTests` y `ArchitectureTests`. Verificado como
+  preexistente en `e7060f0`, anterior a este trabajo. Se sorteó con
+  `-p:WarningsNotAsErrors=NU1903` **sólo en línea de comandos**, sin tocar el repo. **Va a
+  frenar CI**, y no es de ningún slice: es dependencia.
+
+**Handoff.** Lo que sigue, en orden: decidir sobre los hallazgos `A`, `D`, `E` y `F`, que son
+de `CAT-04`; decidir si `B` se corrige o se declara deuda; abrir `DECISIÓN-PENDIENTE` por `C` y
+otra por `NU1903`; y **acordar con `qep-frontend` el alcance del gate `CAT-00`**, que declara
+`Product` con «Ningún campo más» y es el bloqueo formal que impide cerrar el slice.
 
 ### 2026-08-13 (cont.) — Runtime de `CAT-03`: 11 de 11, con la auditoría probada en base
 
