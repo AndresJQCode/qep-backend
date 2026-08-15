@@ -26,7 +26,8 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **`CAT-04` — propiedades nuevas de producto**, `In Progress` desde el 2026-08-13. `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate`. **Commiteado el 2026-08-15 en `85b87c8`.** Runtime **11 de 11** y revisión con **4 lentes ciegos**, con el lente de **riesgo limpio**. **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`**, con RED y GREEN literales en el tramo 6 del spec. **Queda un solo bloqueo, y no es técnico:** el gate `CAT-00` declara `Product` con "Ningún campo más", vive en `qep-frontend` y **no se toca sin acordar** |
+| Slice activo | **Ninguno.** `CAT-04` cerró el 2026-08-15 y no se abrió nada nuevo: **un slice a la vez en este repositorio**. El candidato es `CAT-05`, descrito en «Próxima acción ejecutable» |
+| Último slice cerrado | **`CAT-04` — propiedades nuevas de producto**, `Complete` el 2026-08-15, abierto el 2026-08-13. `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate`. **Commiteado el 2026-08-15 en `85b87c8`.** Runtime **11 de 11** y revisión con **4 lentes ciegos**, con el lente de **riesgo limpio**. **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`**, con RED y GREEN literales en el tramo 6 del spec. **`Complete` el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) — declaraba `Product` con "Ningún campo más" y ahora lista los cinco campos con su origen. El gate **no se reabrió** (`SDD-ADR-01`) |
 | Slice anterior | **`CAT-03` — API de tasas de impuesto**, `In Progress` desde el 2026-08-12. Spec en [`03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md), con partición `CAT-03a`/`CAT-03b` **declarada antes de escribir código** —al revés que `CAT-02`, que se midió en 1043 líneas recién al querer commitear— y ejecutada en secuencia el 2026-08-13. **Código completo y probado**: dominio, persistencia, migración `AddTaxRates`, permisos con sus dos mitades y los 5 endpoints. Unitarias `31/31`, arquitectura `16/16`, **integración `37/37`**, regresión de toda la solución con **233 en verde** y sólo los 5 fallos de `SDD-CT-14` verificados por nombre. **runtime 11 de 11** con la auditoría probada en base y la atomicidad por lo que **no** escribió. Revisión hecha: un bloqueante propio —`Version` sin prueba que lo ejercitara— corregido y verificado **saboteando el mecanismo**. **No cierra por decisiones, no por técnica:** faltan `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C`, todos de producto. Deuda de método declarada: la revisión fue **autorrevisión**, no cuatro lentes ciegos |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
@@ -35,37 +36,30 @@ historial de chat.
 
 ### Próxima acción ejecutable
 
-**Escribir el alcance de `CAT-04` en el gate `CAT-00`, que vive en `qep-frontend`.** Es el
-**único** bloqueo que le queda al slice, y no es técnico: el código está completo, probado y
-revisado. El gate declara el modelo de `Product` como `id`, `name`, `code`, `isActive` y
-**"Ningún campo más"** (`gate.md:124-126`); el código tiene cinco campos más. `SDD-ADR-01` manda
-que gane el código y **se corrija el documento**.
+**`CAT-04` está `Complete`. No hay slice activo en este repositorio.**
 
-Son tres filas, ya redactadas en «Alcance que este slice corre en el gate `CAT-00`» del spec:
+**El candidato es `CAT-05` — el pegamento entre `Storage` y `Product.ImageFileId`.** El owner
+pidió el 2026-08-15 *"API para subir imágenes y asignarlas a productos"*, y contrastado contra el
+código la capacidad **ya existe en sus dos mitades**: el flujo de sesión de carga de `Storage`
+(`POST /files` → URL prefirmada, `POST /files/{id}/complete`, variantes con ImageSharp,
+publicación) y `Product.ImageFileId`, que `CAT-04` expone en el `POST`, el `PUT` y el `GET` de
+productos. Lo que **no** existe es el pegamento:
 
-1. `Product` suma `description`, `imageFileId`, `price`, `currency`, `taxRateId`
-2. `stock` queda **fuera del alcance del proyecto** (decisión del owner, 2026-08-12)
-3. `escala de precios` es de `pricing` — ya lo declaraba; se confirma
+| Hueco | Qué pasa hoy | Gravedad |
+| --- | --- | --- |
+| **`ImageFileId` entra sin ninguna validación** | Se guarda sin verificar que el archivo exista, esté `Available`, sea imagen ni **que sea del mismo tenant**. Un producto del tenant A puede apuntar al archivo del tenant B y la respuesta es un `201` normal | **Es la misma fuga que `ProductTaxRateResolver` cierra para la tasa**, con su `CA-CAT-04-07` y su revisión de riesgo. Para la imagen no hay nada |
+| **`FileOwnerType` no tiene `Product`** | Sólo `User`, `Entity`, `System`. Y `StorageEndpoints.cs:84-86` hace **fallback silencioso a `User`** cuando el string no parsea: mandar `"Product"` guarda `User` y devuelve `201` | Un `OwnerType` inválido no falla, se convierte en otro |
+| **El producto no expone URL de imagen** | Sólo el `Guid`. Pintar una grilla de 20 productos son 20 llamadas a `POST /files/{id}/download-url` | N+1 contra el frontend |
 
-**`qep-frontend` es autoridad del otro repositorio y tiene su propio developer** (`SDD-ADR-08`).
-El checkout local está en `develop`, que es la rama correcta —verificado el 2026-08-15, y no es
-un detalle: el 2026-08-11 se leyó ese repo estando en `feature/catalog`, nueve commits atrás, y
-se reportaron como faltantes cosas que sí existían. **Sin acordar con ese developer, no se
-toca.**
+El primero es de riesgo y **debería llevar revisión de lentes ciegos**, por el mismo argumento
+que la llevó `CAT-04`: es frontera de aislamiento entre tenants, que es donde una autorrevisión
+menos vale.
 
-Con el gate escrito, `CAT-04` cumple el DoD y pasa a `Complete`.
-
-**Después de `CAT-04`, el candidato natural es `CAT-05`.** La sesión del 2026-08-15 encontró que
-la capacidad de *subir imágenes y asignarlas a productos* ya existe en sus dos mitades —el flujo
-de carga de `Storage` y `Product.ImageFileId`— **pero el pegamento no está**:
-
-| Hueco | Qué pasa hoy |
-| --- | --- |
-| **`ImageFileId` no se valida** | Entra por el request y se guarda sin verificar que el archivo exista, esté `Available`, sea imagen ni **que sea del mismo tenant**. Es la misma fuga que `ProductTaxRateResolver` cierra para la tasa, con su `CA-CAT-04-07`; para la imagen no hay nada, y la respuesta es un `201` normal |
-| **`FileOwnerType` no tiene `Product`** | Sólo `User`, `Entity`, `System`. Y `StorageEndpoints.cs:84-86` hace **fallback silencioso a `User`** cuando el string no parsea: mandar `"Product"` guarda `User` y devuelve `201` |
-| **El producto no expone URL de imagen** | Sólo el `Guid`. Pintar una grilla de 20 productos son 20 llamadas a `POST /files/{id}/download-url` |
-
-No se abrió nada: **un slice a la vez en este repositorio**, y `CAT-04` sigue abierto.
+**Y hay trabajo de frontend que este ledger no lleva.** Los cinco campos de `CAT-04` no están en
+`qep-frontend`: `types/product.ts` y `catalog.api.ts` siguen con `id`, `name`, `code`, `isActive`,
+y `catalog.api.ts` además apunta a `/api/v1/catalog/*` **sin tenant**, que el gate `CAT-00` ya
+declaraba como deuda de `CAT-01`. Eso es fila del **ledger del frontend**, no de éste
+(`SDD-ADR-08`): una fila de slice vive en exactamente un ledger.
 
 **Dos seguimientos que no pertenecen a ningún slice de `catalog`:**
 
@@ -196,9 +190,50 @@ Owner: Andres Jaramillo
 | `CAT-02a` | Andamiaje del módulo, dominio `Product`, persistencia con `InitialCatalog` y `GET /products` | `CAT-00` | **Complete** | Tres tramos con RED y GREEN literales en el spec. Commits `968c4a8` y `594ee11`. Runtime en el tramo 5 y revisión de 4 lentes en el tramo 6, ambos el 2026-08-11 |
 | `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y pruebas de auditoría y outbox | `CAT-02a` | **Complete** | Código en `3c2c9ec`. Cubre `CA-CAT-02-03` a `-09`, `-11`, `-12` y las mitades pendientes de `-01` y `-10`. **Runtime del 2026-08-11: los 12 criterios verificados contra la API local**, con `422 catalog.product.code_taken` confirmado en vivo —el `500` de `SDD-CT-06` que este slice existía para cerrar— y la atomicidad del outbox probada por lo que **no** dejó rastro: el `403` y los tres `422` no escribieron fila. **Revisión de 4 lentes y su corrección** en el tramo 6: token de concurrencia, permisos de `tax_rate` retirados, comodines de `LIKE` escapados y autorización antes que validación. Regresión de 203 pruebas, con los 5 fallos de `SDD-CT-14` verificados **por nombre** |
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | **Complete** | Cerrado el 2026-08-13. Spec con evidencia en [`CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md): 11 criterios, todos con prueba. Unitarias `31/31`, arquitectura `16/16`, integración `37/37`, regresión con 233 en verde y los 5 de `SDD-CT-14` por nombre, **runtime 11 de 11** con la auditoría verificada en base. Partición `CAT-03a`/`CAT-03b` declarada **antes** de escribir código. Devolvió `catalog.tax_rate.read`/`.manage` con sus tres mitades —constante, definición y **`AddPolicy`**—, que la revisión de `CAT-02` había retirado. `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C` cerrados por el owner el 2026-08-13, los tres ratificando lo implementado. **Deuda declarada:** la revisión fue autorrevisión, no 4 lentes ciegos |
-| `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **In Progress** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Commiteado el 2026-08-15 en `85b87c8`. `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, arquitectura `16/16`, regresión sin cambios con los 5 de `SDD-CT-14` por nombre. **Runtime 11 de 11**, con la auditoría probada por lo que **no** escribió y `CA-CAT-04-11` verificado sobre datos reales del 2026-08-11. **`CA-CAT-04-07` verificado contra el mecanismo ausente** y confirmado en runtime: no persiste. **Revisión con 4 lentes ciegos —salda la deuda de método de `CAT-03`— con el lente de riesgo limpio.** **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`** (tramo 6): `A` y `F` con reglas de validador que faltaban, `D` con `ProductWriteRules` incluido por los dos validadores, `E` con `ProductDetails` no posicional, y `B` **decidido: se traduce** la violación de FK. Integración `55/55`, regresión con **265 en verde** y los 5 de `SDD-CT-14` por nombre. **Falta sólo el gate `CAT-00`**, que vive en `qep-frontend` y no se toca sin acordar. `C` es de `src/Api` y no pertenece a este slice. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing` |
+| `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **Complete** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Commiteado el 2026-08-15 en `85b87c8`. `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, arquitectura `16/16`, regresión sin cambios con los 5 de `SDD-CT-14` por nombre. **Runtime 11 de 11**, con la auditoría probada por lo que **no** escribió y `CA-CAT-04-11` verificado sobre datos reales del 2026-08-11. **`CA-CAT-04-07` verificado contra el mecanismo ausente** y confirmado en runtime: no persiste. **Revisión con 4 lentes ciegos —salda la deuda de método de `CAT-03`— con el lente de riesgo limpio.** **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`** (tramo 6): `A` y `F` con reglas de validador que faltaban, `D` con `ProductWriteRules` incluido por los dos validadores, `E` con `ProductDetails` no posicional, y `B` **decidido: se traduce** la violación de FK. Integración `55/55`, regresión con **265 en verde** y los 5 de `SDD-CT-14` por nombre. **Cerrado el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) y con eso el slice cumple el DoD. `C` es de `src/Api` y no pertenece a este slice. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing` |
 
 ## Handoff
+
+### 2026-08-15 (cont.) — `CAT-04` `Complete`: se corrigió el gate `CAT-00`
+
+**El último bloqueo de `CAT-04` no era técnico: era el gate**, que declaraba el modelo de
+`Product` con **"Ningún campo más"** mientras el código tenía cinco campos más. `SDD-ADR-01`
+manda que gane el código y se corrija el documento, y eso se hizo: `qep-frontend`, commit
+`38e5abe`.
+
+**El gate no se reabrió.** Su cierre del 2026-08-10 sigue válido; lo que cambió es el alcance que
+declara. Ahora lista los cinco campos con su origen y su razón —incluida la referencia blanda a
+`Storage` sin FK y la moneda por producto, que se implementó **contra la recomendación del
+spec**— y escribe los dos límites que estaban decididos desde el 2026-08-12 y sin documentar:
+`stock` **fuera del alcance del proyecto** y la escala de precios como propiedad de `pricing`.
+
+**Dos cuidados al escribir en el otro repositorio, y los dos importan:**
+
+1. **Se verificó la rama antes de leer y de escribir:** `git -C ../qep-frontend branch
+   --show-current` → `develop`. Es la lección del 2026-08-11, cuando se leyó ese repo estando en
+   `feature/catalog` —nueve commits atrás— y se reportaron como faltantes un ADR y una sección de
+   `AGENTS.md` que sí existían.
+2. **El commit se acotó al archivo del gate**, con `git commit -- <path>`. Ese repositorio tenía
+   seis archivos de su developer **staged y sin commitear** (`use-active-tenant`,
+   `_authenticated.tsx`, `.oxlintrc.json`, `bun.lock` y su propio ledger): un `git add -A` los
+   habría arrastrado a un commit ajeno con un mensaje que no los describe. Se verificó después
+   que el índice quedó intacto.
+
+También se corrigió la fila de `catalog` en `01-contexto/registro-de-modulos.md`, que seguía
+diciendo "el slice de backend todavía no tiene spec" cuando ya hay tres `Complete`. El **estado**
+del módulo no cambió: sigue `En curso`, porque el frontend no está.
+
+**`CAT-04` cumple el DoD y pasa a `Complete`.** No queda slice activo en este repositorio.
+
+**Lo que este cierre deja sobre la mesa, en orden de riesgo:**
+
+1. **`ImageFileId` entra sin ninguna validación** — ni existencia, ni estado, ni tipo, ni
+   **tenant**. Es la misma fuga que `ProductTaxRateResolver` cierra para la tasa; para la imagen
+   no hay nada. Candidato a `CAT-05`, con revisión de lentes ciegos por ser frontera de
+   aislamiento.
+2. **Los cinco campos no están en el frontend**, y `catalog.api.ts` sigue apuntando a
+   `/api/v1/catalog/*` sin tenant. Es fila del **ledger del frontend** (`CAT-01`), no de éste.
+3. `NU1903` sobre `SSH.NET` y el hallazgo `C` de `ApiExceptionHandler`, ninguno de `catalog`.
 
 ### 2026-08-15 (cont.) — Los 5 hallazgos propios de `CAT-04`, cerrados
 

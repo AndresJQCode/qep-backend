@@ -1,10 +1,11 @@
 # `CAT-04` — Propiedades nuevas de producto
 
-> **Estado:** In Progress — código y pruebas cerrados; **falta sólo el gate `CAT-00`**, que vive en `qep-frontend`
+> **Estado:** **Complete** — 2026-08-15
 > **Módulo:** `catalog` — ficha y gate en `qep-frontend/sdd/03-modulos/catalog/`
 > (`SDD-ADR-08`: los enlaces relativos no cruzan repos)
 > **Depende de:** `CAT-03` (`Complete`, 2026-08-13) — el campo `impuesto` es una FK a `TaxRate`
-> **Bloqueado por:** el gate `CAT-00` declara el modelo de `Product` con **"Ningún campo más"**.
+> **Bloqueado por:** ~~el gate `CAT-00` declaraba el modelo de `Product` con **"Ningún campo más"**.~~
+> **Desbloqueado el 2026-08-15:** el gate se corrigió en `qep-frontend`, commit `38e5abe`.
 > Ver «Alcance que este slice corre en el gate»
 > **Repos afectados:** `qep-backend`
 > **Tamaño estimado:** ~350-450 líneas autoradas. Un solo agregado, una migración, sin recurso
@@ -572,3 +573,31 @@ módulos. Va como `DECISIÓN-PENDIENTE` propia.
 
 **Seguimiento nuevo, tampoco de este slice:** `NU1903` sobre `SSH.NET`, que frena el restore de
 los proyectos de integración y va a frenar CI.
+
+### Cierre — `Complete` el 2026-08-15
+
+**El último bloqueo era el gate, y se corrigió.** `qep-frontend`, commit `38e5abe`: el modelo de
+`Product` deja de decir "Ningún campo más" y declara los cinco campos con su origen, más los dos
+límites que estaban decididos y sin escribir —`stock` fuera del alcance del proyecto y la escala
+de precios como propiedad de `pricing`. **El gate no se reabrió:** su cierre del 2026-08-10 sigue
+válido; lo que cambió es el alcance que declara, que es lo que `SDD-ADR-01` prescribe.
+
+Se verificó que el checkout de `qep-frontend` estaba en `develop` antes de leerlo y de escribir,
+y el commit se hizo **acotado al archivo del gate**: ese repositorio tenía trabajo de su developer
+staged y sin commitear, y un `git add -A` lo habría arrastrado a un commit ajeno.
+
+**DoD repasado.** Los 11 criterios de aceptación con prueba; unitarias `44/44`, arquitectura
+`16/16`, integración `55/55`; regresión de la solución con **265 en verde** y los 5 fallos de
+`SDD-CT-14` por nombre; runtime 11 de 11 contra la API local; revisión con **4 lentes ciegos** y
+su transacción de corrección completa. Los ítems de UI van `N/A` con razón: es un slice de
+backend, y el frontend es trabajo de `CAT-01` en el otro repositorio.
+
+**Lo que este slice deja abierto, y no es suyo:**
+
+| Qué | Dónde vive |
+| --- | --- |
+| `DECISIÓN-PENDIENTE-CAT-06` — precedencia entre `pricing` y `Product.Price` | Contrato, no implementación. No hay segundo origen todavía |
+| `DECISIÓN-PENDIENTE-CAT-07` — moneda por producto vs. por tenant | Implementada por producto, por decisión del owner. Se ve cuando haya datos reales |
+| Hallazgo `C` — `ApiExceptionHandler` filtra `exception.Message` sin distinguir entorno | `src/Api`, afecta a todos los módulos |
+| `NU1903` sobre `SSH.NET` — frena el restore de los proyectos de integración | Dependencia transitiva; va a frenar CI |
+| El pegamento entre `Storage` y `Product.ImageFileId` | Candidato a `CAT-05`; ver el ledger |
