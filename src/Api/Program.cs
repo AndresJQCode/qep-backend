@@ -84,6 +84,7 @@ app.MapTenantSettingsEndpoints();
 app.MapMembershipEndpoints();
 app.MapStorageEndpoints();
 app.MapCatalogEndpoints();
+app.MapCatalogTaxRateEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,

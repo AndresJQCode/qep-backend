@@ -8,11 +8,14 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 {
     public DbSet<Product> Products => Set<Product>();
 
+    public DbSet<TaxRate> TaxRates => Set<TaxRate>();
+
     internal DbSet<CatalogOutboxMessage> Outbox => Set<CatalogOutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureProduct(modelBuilder);
+        ConfigureTaxRate(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -46,6 +49,36 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.HasIndex(value => new { value.TenantId, value.Code })
             .IsUnique()
             .HasDatabaseName("IX_products_tenant_code");
+    }
+
+    private static void ConfigureTaxRate(ModelBuilder modelBuilder)
+    {
+        var taxRate = modelBuilder.Entity<TaxRate>();
+        taxRate.ToTable("tax_rates", "catalog");
+        taxRate.HasKey(value => value.Id);
+        taxRate.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new TaxRateId(value))
+            .ValueGeneratedNever();
+        taxRate.Property(value => value.TenantId).HasColumnName("tenant_id");
+        taxRate.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(TaxRate.NameMaxLength);
+        taxRate.Property(value => value.Percentage).HasColumnName("percentage");
+        taxRate.Property(value => value.IsActive).HasColumnName("is_active");
+        taxRate.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+        taxRate.Property(value => value.CreatedAt).HasColumnName("created_at");
+        taxRate.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        taxRate.HasIndex(value => value.TenantId).HasDatabaseName("IX_tax_rates_tenant");
+        // Mismo criterio que IX_products_tenant_code, y el mismo nombre explícito: la traducción
+        // de la violación de unicidad discrimina por nombre de índice, no sólo por SqlState.
+        // Con dos índices únicos en el mismo esquema, confundirlos manda al llamador a corregir
+        // el campo equivocado — la lección de SDD-CT-06.
+        taxRate.HasIndex(value => new { value.TenantId, value.Name })
+            .IsUnique()
+            .HasDatabaseName("IX_tax_rates_tenant_name");
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
