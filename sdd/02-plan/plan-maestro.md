@@ -26,7 +26,7 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **Ninguno.** `CAT-05` cerró el 2026-08-15. **Tres slices cerrados en la misma sesión** —`CAT-04` y `CAT-05`, más el gate `CAT-00` corregido en `qep-frontend`— y no se abrió nada nuevo: **un slice a la vez en este repositorio** |
+| Slice activo | **Ninguno.** `CAT-06` cerró el 2026-08-15. **Cuatro cierres en la misma sesión** —`CAT-04`, `CAT-05` y `CAT-06` en este repo, más `CAT-01` alineado en `qep-frontend`— y no se abrió nada nuevo: **un slice a la vez en este repositorio** |
 | Último slice cerrado | **`CAT-04` — propiedades nuevas de producto**, `Complete` el 2026-08-15, abierto el 2026-08-13. `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate`. **Commiteado el 2026-08-15 en `85b87c8`.** Runtime **11 de 11** y revisión con **4 lentes ciegos**, con el lente de **riesgo limpio**. **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`**, con RED y GREEN literales en el tramo 6 del spec. **`Complete` el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) — declaraba `Product` con "Ningún campo más" y ahora lista los cinco campos con su origen. El gate **no se reabrió** (`SDD-ADR-01`) |
 | Slice anterior | **`CAT-03` — API de tasas de impuesto**, `In Progress` desde el 2026-08-12. Spec en [`03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md), con partición `CAT-03a`/`CAT-03b` **declarada antes de escribir código** —al revés que `CAT-02`, que se midió en 1043 líneas recién al querer commitear— y ejecutada en secuencia el 2026-08-13. **Código completo y probado**: dominio, persistencia, migración `AddTaxRates`, permisos con sus dos mitades y los 5 endpoints. Unitarias `31/31`, arquitectura `16/16`, **integración `37/37`**, regresión de toda la solución con **233 en verde** y sólo los 5 fallos de `SDD-CT-14` verificados por nombre. **runtime 11 de 11** con la auditoría probada en base y la atomicidad por lo que **no** escribió. Revisión hecha: un bloqueante propio —`Version` sin prueba que lo ejercitara— corregido y verificado **saboteando el mecanismo**. **No cierra por decisiones, no por técnica:** faltan `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C`, todos de producto. Deuda de método declarada: la revisión fue **autorrevisión**, no cuatro lentes ciegos |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
@@ -217,8 +217,60 @@ Owner: Andres Jaramillo
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | **Complete** | Cerrado el 2026-08-13. Spec con evidencia en [`CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md): 11 criterios, todos con prueba. Unitarias `31/31`, arquitectura `16/16`, integración `37/37`, regresión con 233 en verde y los 5 de `SDD-CT-14` por nombre, **runtime 11 de 11** con la auditoría verificada en base. Partición `CAT-03a`/`CAT-03b` declarada **antes** de escribir código. Devolvió `catalog.tax_rate.read`/`.manage` con sus tres mitades —constante, definición y **`AddPolicy`**—, que la revisión de `CAT-02` había retirado. `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C` cerrados por el owner el 2026-08-13, los tres ratificando lo implementado. **Deuda declarada:** la revisión fue autorrevisión, no 4 lentes ciegos |
 | `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **Complete** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Commiteado el 2026-08-15 en `85b87c8`. `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, arquitectura `16/16`, regresión sin cambios con los 5 de `SDD-CT-14` por nombre. **Runtime 11 de 11**, con la auditoría probada por lo que **no** escribió y `CA-CAT-04-11` verificado sobre datos reales del 2026-08-11. **`CA-CAT-04-07` verificado contra el mecanismo ausente** y confirmado en runtime: no persiste. **Revisión con 4 lentes ciegos —salda la deuda de método de `CAT-03`— con el lente de riesgo limpio.** **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`** (tramo 6): `A` y `F` con reglas de validador que faltaban, `D` con `ProductWriteRules` incluido por los dos validadores, `E` con `ProductDetails` no posicional, y `B` **decidido: se traduce** la violación de FK. Integración `55/55`, regresión con **265 en verde** y los 5 de `SDD-CT-14` por nombre. **Cerrado el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) y con eso el slice cumple el DoD. `C` es de `src/Api` y no pertenece a este slice. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing` |
 | `CAT-05` | **Imagen de producto:** el pegamento con `Storage` — validación de `ImageFileId` y `imageUrl` en la respuesta | `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-05-imagen-de-producto.md`](../03-modulos/catalog/slices/CAT-05-imagen-de-producto.md) con 11 criterios. **Partición `CAT-05a`/`CAT-05b` declarada antes de escribir código.** Cierra la fuga que `CAT-04` dejó abierta: `ImageFileId` entraba sin verificar existencia, estado, tipo ni **tenant**, y sin FK que lo respaldara. `catalog` **no** referencia `Storage`: el puerto `IProductImageLookup` se declara en `catalog`, el adaptador vive en `Bootstrapper` y `CatalogLayerTests` lo verifica. `Storage` suma `FileOwnerType.Product` y deja de caer en silencio a `User`. Unitarias `55/55`, arquitectura `17/17`, integración `69/69`, regresión con **291 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 16 de 16**, con `owner_type` verificado en base y la auditoría probada por lo que **no** escribió. **`CA-CAT-05-01` verificado contra el mecanismo ausente**: sin la comparación de tenant responde `Created`. **La revisión encontró un bloqueante propio y se corrigió**: la escritura quedaba cerrada y la **lectura** abierta —un producto anterior al slice con imagen ajena filtraba su URL en el `GET` y el listado. **Deuda de método: fue autorrevisión, no 4 lentes ciegos** |
+| `CAT-06` | **Borrado de tasa de impuesto** — `DELETE` con la restricción que la FK ya impone | `CAT-03`, `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-06-borrado-de-tasa-de-impuesto.md`](../03-modulos/catalog/slices/CAT-06-borrado-de-tasa-de-impuesto.md) con 8 criterios. **Sale de una deuda que encontró la alineación de `CAT-01`:** el frontend ya tenía el botón y pegaba a una ruta inexistente. No borra siempre: la FK `RESTRICT` de `CAT-04` impide borrar una tasa en uso, y el endpoint lo devuelve como **422 `catalog.tax_rate.in_use`** en vez de 500. Se comprueba dos veces —consulta previa para el caso normal, traducción de la violación de FK para la carrera— y **la misma constraint se discrimina por dos causas opuestas** vía `DbUpdateException.Entries`. Integración de `catalog` `77/77`, regresión con **299 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 8 de 8**, con el aislamiento verificado por conteo en base y la atomicidad por la auditoría que el 422 **no** escribió. **Defecto encontrado en el camino:** los handlers se registran a mano en el composition root, y olvidar la línea da **500, no 404** — quedó documentado ahí mismo. Corre el gate `CAT-00`, escrito en `qep-frontend` (`17bbdfe`) |
 
 ## Handoff
+
+### 2026-08-15 (cont.) — `CAT-06`: el `DELETE` de tasa de impuesto que el frontend ya llamaba
+
+**Sale de una deuda que encontró la alineación de `CAT-01`.** `tax-rate-modal.tsx` tenía el botón
+de eliminar y llamaba a `deleteTaxRate`, que pegaba a una ruta que el backend no exponía. Se podía
+cerrar por dos lados —retirar el botón o construir el endpoint— y el owner eligió el segundo.
+
+**El endpoint no promete «borra siempre», y eso es diseño, no limitación.**
+`catalog.products.tax_rate_id` referencia `catalog.tax_rates(id)` con `ON DELETE RESTRICT` desde
+`CAT-04`. PostgreSQL ya impide borrar una tasa que algún producto usa; lo que agrega el slice es
+que el llamador reciba **422 `catalog.tax_rate.in_use`** en vez de un 500 por violación de FK que,
+por el hallazgo `C` de `CAT-04`, además filtraría el nombre de la constraint.
+
+| Caso | Respuesta |
+| --- | --- |
+| No existe, o es de otro tenant | **404** |
+| Existe y algún producto la usa | **422 `catalog.tax_rate.in_use`** |
+| Existe y nadie la usa | **204**, y la fila desaparece |
+
+**Se comprueba dos veces, y no es redundancia.** La consulta previa da el mensaje correcto en el
+caso normal; la traducción en `Infrastructure` cubre la **carrera** —entre esa consulta y el
+commit, otra transacción puede crear un producto que use la tasa—. Sin la segunda, ese caso sale
+como 500.
+
+**Lo más delicado del slice: la misma constraint, dos causas opuestas.**
+`FK_products_tax_rates_tax_rate_id` se viola cuando un producto apunta a una tasa inexistente
+—«la tasa no existe»— y cuando una tasa se borra estando en uso —«la tasa está en uso»—. Idéntico
+`SqlState 23503`, idéntico nombre. Se distinguen por **qué entidad estaba guardando EF**, vía
+`DbUpdateException.Entries`. Colapsarlas en un código manda a mirar la entidad equivocada: es la
+lección de `SDD-CT-06` un nivel más adentro.
+
+**Defecto encontrado en el camino, y vale registrarlo.** Con el endpoint mapeado y el handler
+escrito, las 8 pruebas pasaron de `MethodNotAllowed` a **`InternalServerError`**: **los handlers
+se registran en el composition root uno por uno, a mano**, y faltaba la línea. El endpoint
+resolvía y el dispatcher no encontraba a quién llamar. Es el mismo defecto que el `README`
+documenta para las políticas de permiso —«el síntoma es 500, no 403»—, y ahora quedó documentado
+también para los handlers, en `QepServiceCollectionExtensions`.
+
+**Evidencia.** RED literal `Expected: NoContent / Actual: MethodNotAllowed` en las 8. GREEN con
+integración de `catalog` en `77/77`, unitarias `55/55`, arquitectura `17/17`, **regresión de la
+solución con 299 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 8 de 8** contra la API
+local: el aislamiento verificado por **conteo en base** —un `DELETE` que responda 404 y borre
+igual no dejaría rastro en la respuesta— y la atomicidad por la auditoría que el `422` **no**
+escribió.
+
+**El gate `CAT-00` se corrigió** en `qep-frontend` (`17bbdfe`): ratificaba cinco operaciones de
+`tax-rates` y ahora declara la sexta, con la advertencia de que no borra siempre. Segunda
+corrección del gate en el mismo día, y por el mismo criterio: `SDD-ADR-01`, gana el código.
+
+**Deuda de método: sigue siendo autorrevisión.** `CAT-05` la contrajo y `CAT-06` la repite. Van
+dos slices seguidos sin lentes ciegos.
 
 ### 2026-08-15 (cont.) — `CAT-05`: subir imágenes y asignarlas a productos, cerrado de punta a punta
 
