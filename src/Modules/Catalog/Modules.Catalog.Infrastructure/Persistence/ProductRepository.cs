@@ -55,4 +55,14 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             cancellationToken);
 
     public void Add(Product product) => dbContext.Products.Add(product);
+
+    // AnyAsync y no un Count: la pregunta es si hay al menos uno, y PostgreSQL puede cortar en
+    // el primero. AsNoTracking está de más acá porque Any no materializa entidades.
+    public Task<bool> AnyWithTaxRateAsync(
+        Guid tenantId,
+        TaxRateId taxRateId,
+        CancellationToken cancellationToken) =>
+        dbContext.Products.AnyAsync(
+            product => product.TenantId == tenantId && product.TaxRateId == taxRateId,
+            cancellationToken);
 }

@@ -50,6 +50,16 @@ public static class TaxRateEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // CAT-06. Sin permiso propio: borrar es administrar, el mismo criterio con el que
+        // deactivate tampoco tiene el suyo. El 422 es el caso que hace falta declarar: una tasa
+        // que algún producto usa no se puede borrar, porque la FK es RESTRICT.
+        group.MapDelete("/tax-rates/{taxRateId:guid}", DeleteTaxRateAsync)
+            .RequireAuthorization(CatalogPermissions.TaxRateManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -105,6 +115,20 @@ public static class TaxRateEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(taxRate));
+    }
+
+    private static async Task<IResult> DeleteTaxRateAsync(
+        Guid tenantId,
+        Guid taxRateId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteTaxRateCommand(tenantId, taxRateId),
+            cancellationToken);
+
+        // 204 y no el recurso: se borró, no hay qué devolver. Igual que DELETE /files/{id}.
+        return Results.NoContent();
     }
 
     private static async Task<IResult> DeactivateTaxRateAsync(

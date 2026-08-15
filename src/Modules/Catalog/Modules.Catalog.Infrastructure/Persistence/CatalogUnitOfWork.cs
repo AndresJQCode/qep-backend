@@ -77,17 +77,45 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
         // Mismo código de dominio que el resolver a propósito: para el llamador es el mismo
         // problema —la tasa que pidió no está— y darle dos códigos distintos según qué capa lo
         // detectó lo obligaría a manejar los dos.
+        // CAT-06: la MISMA constraint se viola por dos causas opuestas, y cada una manda a
+        // corregir una entidad distinta.
+        //
+        //   - Escribiendo un Product que apunta a una tasa inexistente -> la tasa no existe.
+        //   - Borrando un TaxRate que algún producto sigue usando      -> la tasa está en uso.
+        //
+        // El SqlState y el nombre de la constraint son idénticos en los dos, así que no alcanza
+        // con mirarlos: se distingue por **qué entidad estaba guardando EF**, que es lo que
+        // Entries expone. Colapsarlos en un solo código manda a mirar la entidad equivocada —
+        // la misma lección de SDD-CT-06, un nivel más adentro.
+        //
+        // Esta rama va primero porque es la más específica de las dos.
         catch (DbUpdateException exception)
-            when (exception.InnerException is PostgresException postgres &&
-                  postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
-                  string.Equals(
-                      postgres.ConstraintName,
-                      ProductTaxRateForeignKey,
-                      StringComparison.Ordinal))
+            when (IsProductTaxRateViolation(exception) && IsDeletingATaxRate(exception))
+        {
+            throw new CatalogDomainException(
+                "catalog.tax_rate.in_use",
+                "The tax rate cannot be deleted because at least one product uses it.");
+        }
+        catch (DbUpdateException exception) when (IsProductTaxRateViolation(exception))
         {
             throw new CatalogDomainException(
                 "catalog.product.tax_rate_not_found",
                 "The tax rate was not found in this tenant.");
         }
     }
+
+    private static bool IsProductTaxRateViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
+        string.Equals(
+            postgres.ConstraintName,
+            ProductTaxRateForeignKey,
+            StringComparison.Ordinal);
+
+    // El estado sigue siendo Deleted cuando SaveChanges falla: EF sólo lo pasa a Detached después
+    // de un commit exitoso. Si eso cambiara, esta rama dejaría de entrar y el caso volvería a
+    // salir con el código de la causa opuesta — por eso CA-CAT-06-08 afirma sobre el código.
+    private static bool IsDeletingATaxRate(DbUpdateException exception) =>
+        exception.Entries.Any(entry =>
+            entry.Entity is TaxRate && entry.State == EntityState.Deleted);
 }

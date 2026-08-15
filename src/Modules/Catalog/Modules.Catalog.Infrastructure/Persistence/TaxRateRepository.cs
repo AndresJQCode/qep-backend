@@ -29,4 +29,6 @@ internal sealed class TaxRateRepository(CatalogDbContext dbContext) : ITaxRateRe
             cancellationToken);
 
     public void Add(TaxRate taxRate) => dbContext.TaxRates.Add(taxRate);
+
+    public void Remove(TaxRate taxRate) => dbContext.TaxRates.Remove(taxRate);
 }

@@ -20,4 +20,8 @@ public interface ITaxRateRepository
         CancellationToken cancellationToken);
 
     void Add(TaxRate taxRate);
+
+    // Borrado real, no lógico: desactivar ya existe y es la operación que conserva historia.
+    // Éste es para la tasa que se cargó por error y nunca se usó. CAT-06.
+    void Remove(TaxRate taxRate);
 }
