@@ -81,9 +81,20 @@ public static class StorageEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        var ownerType = Enum.TryParse<FileOwnerType>(request.OwnerType, ignoreCase: true, out var parsed)
-            ? parsed
-            : FileOwnerType.User;
+        // CAT-05: esto caía en silencio a FileOwnerType.User cuando el string no parseaba, así
+        // que un ownerType inválido no fallaba — se convertía en otro, devolvía 201, y el archivo
+        // quedaba mal clasificado sin que nadie se enterara. Un error es mejor que un dato falso.
+        //
+        // Enum.TryParse acepta además el número crudo ("4"), que no es contrato: se descarta
+        // exigiendo que el valor esté definido y no sea dígitos.
+        if (!Enum.TryParse<FileOwnerType>(request.OwnerType, ignoreCase: true, out var ownerType) ||
+            !Enum.IsDefined(ownerType) ||
+            char.IsDigit(request.OwnerType.Trim().FirstOrDefault()))
+        {
+            throw new StorageDomainException(
+                "storage.file.owner_type_invalid",
+                "The owner type is not one of the supported values.");
+        }
 
         var session = await dispatcher.SendAsync(
             new CreateUploadSessionCommand(

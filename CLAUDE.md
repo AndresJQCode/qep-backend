@@ -56,6 +56,20 @@ algo falta ahí: `git -C ../qep-frontend branch --show-current`, y si el dato no
   sesión, en un log o en una captura. Lo que se filtre se rota. Precedente: el 2026-08-09 se
   imprimió la API key de Infobip completa al verificar si estaba configurada. Qué secretos usa
   el repo y cómo se cargan: [README § Secretos de usuario](README.md#secretos-de-usuario).
+- **`kubectl get secret` imprime los valores. `describe` no.** El campo `.data` es base64 —
+  codificación, no cifrado— así que `-o yaml`, `-o json` y cualquier `-o custom-columns` que
+  incluya `.data` filtran el secreto completo. Para ver **qué claves** tiene un Secret, sin sus
+  valores:
+
+  ```powershell
+  kubectl -n <ns> describe secret <nombre>            # nombres y tamaño en bytes
+  kubectl -n <ns> get secret <nombre> -o jsonpath='{range $k,$v := .data}{$k}{"\n"}{end}'
+  ```
+
+  Precedente: el 2026-08-11 se volcaron las cuatro credenciales de `qep-backend-secret`
+  —contraseña de base, API key de Infobip y el par de R2— al verificar un despliegue con
+  `-o custom-columns=KEYS:.data`. Las cuatro se rotaron. Es la **segunda** vez que pasa en este
+  proyecto: la primera fue la API key de Infobip el 2026-08-09.
 - **Sin spec no hay código.** Todo cambio pertenece a un slice con ID, **salvo infraestructura
   y despliegue**, que el owner declaró fuera del alcance del método el 2026-08-11
   (`DECISIÓN-PENDIENTE-INFRA-01`). El corte es **por efecto, no por carpeta**: la pregunta es

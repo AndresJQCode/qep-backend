@@ -17,4 +17,17 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     void Add(Product product);
+
+    /// <summary>
+    /// Si algún producto del tenant apunta a esa tasa. Lo pregunta `DeleteTaxRate` antes de
+    /// borrar, para que el caso normal salga como un 422 que se entiende en vez de una violación
+    /// de foreign key traducida.
+    ///
+    /// Devuelve un booleano y no la lista: quien pregunta sólo necesita saber si puede borrar, y
+    /// traer los productos para contarlos sería traer datos que nadie va a mirar.
+    /// </summary>
+    Task<bool> AnyWithTaxRateAsync(
+        Guid tenantId,
+        TaxRateId taxRateId,
+        CancellationToken cancellationToken);
 }

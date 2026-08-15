@@ -24,6 +24,7 @@ public static class CatalogInfrastructureExtensions
                     "catalog")));
 
         services.AddScoped<IProductRepository, ProductRepository>();
+        services.AddScoped<ITaxRateRepository, TaxRateRepository>();
         services.AddScoped<ICatalogUnitOfWork, CatalogUnitOfWork>();
         services.AddScoped<ICatalogAuditPublisher, CatalogAuditPublisher>();
 

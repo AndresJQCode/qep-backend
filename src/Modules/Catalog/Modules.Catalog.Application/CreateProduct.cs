@@ -5,27 +5,27 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
-public sealed record CreateProductCommand(Guid TenantId, string Name, string Code)
-    : ICommand<ProductDto>;
+public sealed record CreateProductCommand(
+    Guid TenantId,
+    string Name,
+    string Code,
+    string? Description,
+    Guid? ImageFileId,
+    decimal? Price,
+    string? Currency,
+    Guid? TaxRateId) : ICommand<ProductDto>, IProductWriteCommand;
 
-// El dominio hace cumplir las mismas reglas y tiraría un 422 con un solo código. El validador
-// existe para que la respuesta lleve el mapa de errores por campo que ApiExceptionHandler arma
-// desde ValidationException, que es lo que un formulario necesita para marcar el input culpable.
+// Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
+// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes.
 public sealed class CreateProductValidator : AbstractValidator<CreateProductCommand>
 {
-    public CreateProductValidator()
-    {
-        RuleFor(command => command.Name)
-            .NotEmpty()
-            .MaximumLength(Product.NameMaxLength);
-        RuleFor(command => command.Code)
-            .NotEmpty()
-            .MaximumLength(Product.CodeMaxLength);
-    }
+    public CreateProductValidator() => Include(new ProductWriteRules());
 }
 
 public sealed class CreateProductHandler(
     IProductRepository repository,
+    ITaxRateRepository taxRateRepository,
+    IProductImageLookup imageLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -46,9 +46,31 @@ public sealed class CreateProductHandler(
             executionContext, command.TenantId, CatalogPermissions.ProductManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
+        // Antes de construir el agregado: la FK garantiza que la tasa exista, no que sea de este
+        // tenant. Ver ProductTaxRateResolver.
+        var taxRateId = await ProductTaxRateResolver.ResolveAsync(
+            taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
+
+        // CAT-05: la imagen no tiene FK que la respalde —es referencia blanda a Storage—, así
+        // que esta comprobación es la única red. Ver ProductImageResolver.
+        var image = await ProductImageResolver.ResolveAsync(
+            imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
+
         var now = clock.UtcNow;
         var product = Product.Create(
-            ProductId.New(), command.TenantId, command.Name, command.Code, now);
+            ProductId.New(),
+            command.TenantId,
+            command.Name,
+            command.Code,
+            new ProductDetails
+            {
+                Description = command.Description,
+                ImageFileId = image?.FileId,
+                Price = command.Price,
+                Currency = command.Currency,
+                TaxRateId = taxRateId
+            },
+            now);
 
         repository.Add(product);
         auditPublisher.Publish(
@@ -60,6 +82,6 @@ public sealed class CreateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto();
+        return product.ToDto(image?.PublicUrl);
     }
 }

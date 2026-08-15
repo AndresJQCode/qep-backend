@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- Los resolvers son internal: no son API pública del módulo, y las reglas que hacen
+         cumplir se prueban unitariamente. Mismo patrón que Audit, Notifications y Storage. -->
+    <InternalsVisibleTo Include="Modules.Catalog.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Modules.Catalog.Domain\Modules.Catalog.Domain.csproj" />
     <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
