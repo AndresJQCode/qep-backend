@@ -52,6 +52,29 @@ public sealed class CatalogLayerTests
              name.StartsWith("Npgsql", StringComparison.Ordinal)));
     }
 
+    /// <summary>
+    /// CAT-05 — `catalog` no se acopla a `storage`.
+    ///
+    /// La decisión 1 del spec de `CAT-05` es que `Modules.Catalog.Application` **no** referencie
+    /// `Modules.Storage.Application`, aunque tendría precedente y ningún test lo prohibía: el
+    /// puerto `IProductImageLookup` se declara acá y el adaptador vive en `Bootstrapper`, que es
+    /// el composition root y cuyo trabajo es exactamente cablear dos módulos.
+    ///
+    /// **Sin esta aserción esa decisión es un comentario, no una regla**: el primero que necesite
+    /// un dato de `Storage` agrega el `ProjectReference` y nada se pone rojo.
+    /// </summary>
+    [Fact]
+    public void ApplicationDoesNotReferenceAnotherBusinessModule()
+    {
+        var references = typeof(ListProductsQuery).Assembly
+            .GetReferencedAssemblies()
+            .Select(name => name.Name)
+            .ToArray();
+
+        Assert.DoesNotContain(references, name =>
+            name is not null && name.StartsWith("Modules.Storage", StringComparison.Ordinal));
+    }
+
     private static void AssertDoesNotReference(
         Assembly source,
         params Assembly[] forbiddenAssemblies)

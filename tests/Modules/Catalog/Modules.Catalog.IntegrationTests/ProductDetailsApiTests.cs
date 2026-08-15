@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
+using Modules.Storage.Application;
+using Modules.Storage.Domain;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -26,8 +28,57 @@ public sealed class ProductDetailsApiTests
         CatalogPermissions.ProductRead,
         CatalogPermissions.ProductManage,
         CatalogPermissions.TaxRateRead,
-        CatalogPermissions.TaxRateManage
+        CatalogPermissions.TaxRateManage,
+        // CAT-05: desde que el imageFileId se valida, las pruebas que asignan portada necesitan
+        // un archivo real, y crearlo pide este permiso.
+        StoragePermissions.FileUpload
     ];
+
+    /// <summary>
+    /// Deja un archivo del tenant en `Available` y devuelve su id.
+    ///
+    /// **Existe desde `CAT-05`.** Antes estas pruebas usaban un `Guid.CreateVersion7()` cualquiera
+    /// como `imageFileId`, porque nadie lo verificaba — que es precisamente el hueco que `CAT-05`
+    /// vino a cerrar. Las dos pruebas que lo hacían se pusieron rojas con
+    /// `Expected: Created / Actual: UnprocessableEntity`, y eso es la corrección funcionando.
+    ///
+    /// El estado se fuerza por SQL: completar la subida de verdad exige escribir en R2 y que el
+    /// escáner apruebe, y ninguna de las dos cosas existe en una prueba.
+    /// </summary>
+    private static async Task<Guid> UploadImageAsync(
+        HttpClient client,
+        string tenantId,
+        PostgreSqlContainer database)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/files",
+            new
+            {
+                ownerId = Guid.CreateVersion7(),
+                ownerType = nameof(FileOwnerType.Product),
+                name = "portada.png",
+                mimeType = "image/png",
+                sizeBytes = 2048
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"Se esperaba 2xx y llegó {(int)response.StatusCode}: " +
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+
+        var fileId = (await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken)).GetProperty("fileResourceId").GetGuid();
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE storage.file_resources SET status = 'Available' WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", fileId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+
+        return fileId;
+    }
 
     // CA-CAT-04-01
     [Fact]
@@ -38,7 +89,7 @@ public sealed class ProductDetailsApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
-        var image = Guid.CreateVersion7();
+        var image = await UploadImageAsync(client, TenantId, database);
 
         var response = await CreateProductAsync(client, TenantId, new
         {
@@ -103,7 +154,7 @@ public sealed class ProductDetailsApiTests
             name = "Vela de soja",
             code = "VS-001",
             description = "Cera de soja",
-            imageFileId = Guid.CreateVersion7(),
+            imageFileId = await UploadImageAsync(client, TenantId, database),
             price = 45000m,
             currency = "COP",
             taxRateId

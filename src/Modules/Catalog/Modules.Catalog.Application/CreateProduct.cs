@@ -25,6 +25,7 @@ public sealed class CreateProductValidator : AbstractValidator<CreateProductComm
 public sealed class CreateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
+    IProductImageLookup imageLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -50,6 +51,11 @@ public sealed class CreateProductHandler(
         var taxRateId = await ProductTaxRateResolver.ResolveAsync(
             taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
 
+        // CAT-05: la imagen no tiene FK que la respalde —es referencia blanda a Storage—, así
+        // que esta comprobación es la única red. Ver ProductImageResolver.
+        var image = await ProductImageResolver.ResolveAsync(
+            imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
+
         var now = clock.UtcNow;
         var product = Product.Create(
             ProductId.New(),
@@ -59,7 +65,7 @@ public sealed class CreateProductHandler(
             new ProductDetails
             {
                 Description = command.Description,
-                ImageFileId = command.ImageFileId,
+                ImageFileId = image?.FileId,
                 Price = command.Price,
                 Currency = command.Currency,
                 TaxRateId = taxRateId
@@ -76,6 +82,6 @@ public sealed class CreateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto();
+        return product.ToDto(image?.PublicUrl);
     }
 }

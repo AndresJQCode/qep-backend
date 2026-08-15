@@ -125,6 +125,12 @@ public static class QepServiceCollectionExtensions
         services.AddNotificationsInfrastructure(configuration);
         services.AddStorageInfrastructure(configuration);
         services.AddCatalogInfrastructure(configuration);
+
+        // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
+        // ningún módulo referencia al otro, el composition root los cablea. Va después de los
+        // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
+        services.AddScoped<IProductImageLookup, ProductImageLookup>();
+
         AddAuthorizationCapability(services);
         services.AddQepObservability(configuration, environment);
         AddAuthentication(services, configuration, environment);

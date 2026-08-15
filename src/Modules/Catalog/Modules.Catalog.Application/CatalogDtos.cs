@@ -7,6 +7,7 @@ public sealed record ProductDto(
     bool IsActive,
     string? Description,
     Guid? ImageFileId,
+    string? ImageUrl,
     decimal? Price,
     string? Currency,
     Guid? TaxRateId,
@@ -20,6 +21,10 @@ public sealed record ProductResponse(
     bool IsActive,
     string? Description,
     Guid? ImageFileId,
+    // CAT-05b. Derivado y de sólo lectura: dónde se sirve el archivo es de Storage, no de
+    // catalog. Viene en null si la imagen no fue publicada. `ImageFileId` se mantiene porque es
+    // lo que el cliente manda de vuelta en el PUT.
+    string? ImageUrl,
     decimal? Price,
     string? Currency,
     Guid? TaxRateId,

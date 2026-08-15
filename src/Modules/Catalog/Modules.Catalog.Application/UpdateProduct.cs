@@ -25,6 +25,7 @@ public sealed class UpdateProductValidator : AbstractValidator<UpdateProductComm
 public sealed class UpdateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
+    IProductImageLookup imageLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -48,6 +49,11 @@ public sealed class UpdateProductHandler(
         var taxRateId = await ProductTaxRateResolver.ResolveAsync(
             taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
 
+        // CAT-05, igual que en el POST: sin esto un PUT puede mover la portada de un producto a
+        // un archivo de otro tenant, que es la mitad del criterio CA-CAT-05-01.
+        var image = await ProductImageResolver.ResolveAsync(
+            imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
+
         var now = clock.UtcNow;
 
         // Los cinco campos se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -58,7 +64,7 @@ public sealed class UpdateProductHandler(
             new ProductDetails
             {
                 Description = command.Description,
-                ImageFileId = command.ImageFileId,
+                ImageFileId = image?.FileId,
                 Price = command.Price,
                 Currency = command.Currency,
                 TaxRateId = taxRateId
@@ -74,6 +80,6 @@ public sealed class UpdateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto();
+        return product.ToDto(image?.PublicUrl);
     }
 }

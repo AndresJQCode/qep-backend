@@ -8,6 +8,7 @@ public sealed record ListProductsQuery(Guid TenantId, string? Search)
 
 public sealed class ListProductsHandler(
     IProductRepository repository,
+    IProductImageLookup imageLookup,
     IExecutionContext executionContext)
     : IQueryHandler<ListProductsQuery, IReadOnlyList<ProductDto>>
 {
@@ -21,6 +22,7 @@ public sealed class ListProductsHandler(
         var products = await repository.SearchAsync(
             query.TenantId, query.Search, cancellationToken);
 
-        return products.Select(product => product.ToDto()).ToArray();
+        // Las URLs se resuelven en una sola consulta para todo el listado. Ver ToDtosAsync.
+        return await products.ToDtosAsync(imageLookup, cancellationToken);
     }
 }

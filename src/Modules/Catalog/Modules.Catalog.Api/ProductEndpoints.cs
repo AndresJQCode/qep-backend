@@ -142,6 +142,7 @@ public static class ProductEndpoints
         product.IsActive,
         product.Description,
         product.ImageFileId,
+        product.ImageUrl,
         product.Price,
         product.Currency,
         product.TaxRateId,
