@@ -1,6 +1,6 @@
 # `CAT-05` — Imagen de producto: el pegamento con `Storage`
 
-> **Estado:** In Progress — código y pruebas completos el 2026-08-15. Faltan **runtime** y **revisión de 4 lentes**
+> **Estado:** **Complete** — 2026-08-15
 > **Módulo:** `catalog` — ficha y gate en `qep-frontend/sdd/03-modulos/catalog/`
 > (`SDD-ADR-08`: los enlaces relativos no cruzan repos)
 > **Depende de:** `CAT-04` (`Complete`, 2026-08-15) — introdujo `Product.ImageFileId`
@@ -310,9 +310,99 @@ de las pruebas de **integración** de `CAT-05a` no: se escribieron con el resolv
 así que nacieron verdes. Lo que las respalda es la verificación **contra el mecanismo ausente**,
 que es la exigencia fuerte del spec y sí se hizo, con su evidencia literal arriba.
 
-### Lo que falta para `Complete`
+### Tramo 3 — runtime contra la API local: 16 de 16 (2026-08-15)
 
-| Falta | Por qué |
-|---|---|
-| **Runtime contra la API local** | Los 11 criterios endpoint por endpoint. `CAT-02`, `CAT-03` y `CAT-04` lo hicieron y en los tres apareció algo que las pruebas no habían visto |
-| **Revisión con 4 lentes ciegos** | `CA-CAT-05-01` es frontera de aislamiento entre tenants. `CAT-04` sentó el precedente de no autorrevisar esto |
+Los 11 criterios endpoint por endpoint, más las tres variantes de `ownerType` inválido y una
+comprobación de aislamiento. **Todos en verde:**
+
+```txt
+  OK   CA-CAT-05-01 -> 422   image_not_found
+  OK   CA-CAT-05-02 -> 422   image_not_found
+  OK   CA-CAT-05-03 -> 422   image_not_available
+  OK   CA-CAT-05-04 -> 422   image_not_an_image
+  OK   CA-CAT-05-05 -> 201   imageFileId=01a006e4-b049-7ac1-b94b-595be6347c8e
+  OK   CA-CAT-05-06a -> 201   imageFileId null: "imageFileId":null
+  OK   CA-CAT-05-06b -> 200   limpiada: "imageFileId":null
+  OK   CA-CAT-05-07 -> Product   guardado en base
+  OK   CA-CAT-05-08 [Producto] -> 422   owner_type_invalid
+  OK   CA-CAT-05-08 [] -> 422   owner_type_invalid
+  OK   CA-CAT-05-08 [4] -> 422   owner_type_invalid
+  OK   CA-CAT-05-09 -> https://cdn.qep.test/public/01a006e4-b639-70b7-a71c-fa252ca5de42.png
+  OK   CA-CAT-05-10a -> si   imageUrl null
+  OK   CA-CAT-05-10b -> si   imageFileId sigue viniendo
+  OK   CA-CAT-05-11 -> https://cdn.qep.test/public/01a006e4-b639-70b7-a71c-fa252ca5de42.png
+  OK   aislamiento -> 0   el tenant B no ve productos del A
+```
+
+**`CA-CAT-05-07` se verificó en base, no por status HTTP:** `SELECT owner_type FROM
+storage.file_resources` devolvió `Product`, que es el dato que antes quedaba como `User`.
+
+**Y la auditoría también, por lo que NO escribió.** `platform.outbox_messages` —el outbox de
+`catalog` vive en el esquema `platform`, con `ExcludeFromMigrations`— cerró con **6 eventos**
+`platform.audit.recorded.v1`, uno por cada escritura exitosa. Los **cuatro rechazos** de
+`CA-CAT-05-01` a `-04` no dejaron fila: el `422` y la transacción abortan juntos.
+
+**Trampas de entorno que costaron una vuelta, y no estaban documentadas:**
+
+- **La base local es `dev_lulo_crm_v2` y el usuario es `postgres`**, no `qep`/`qep`. Se descubre
+  buscando el esquema: `SELECT ... FROM information_schema.schemata WHERE schema_name='catalog'`
+  sobre cada base.
+- **Git Bash no tiene `/proc/sys/kernel/random/uuid`.** Genera UUIDs con
+  `od -An -tx1 -N16 /dev/urandom`.
+- **Para que `imageUrl` no sea siempre `null` hay que arrancar con
+  `Storage__R2__PublicBucket` y `Storage__R2__PublicBaseUrl`.** Sin los dos, `IsConfigured` es
+  `false` y la URL no se arma. El validador de opciones exige que vayan de a dos.
+
+### Tramo 4 — revisión, y el bloqueante que encontró (2026-08-15)
+
+**Un hallazgo, bloqueante, propio de este slice. Corregido y verificado.**
+
+**`CAT-05a` cerró la escritura y dejó la lectura abierta.** El resolver impide **crear** un
+producto que apunte a un archivo de otro tenant, pero **no borra los que ya estaban**: cualquier
+producto cargado antes de este slice pudo guardar cualquier `imageFileId`, porque nadie lo
+verificaba, y esa fila sigue en la base. `ToDtosAsync` resolvía la URL **sin volver a comparar el
+tenant**, así que el `GET` y el listado del tenant A publicaban la URL del archivo del tenant B.
+
+La prueba se escribió antes de la corrección y falló, literal:
+
+```txt
+Assert.Null() Failure: Value is not null
+Expected: null
+Actual:   "https://cdn.qep.test/public/01a006e6-4e9e-7ebf-833"···
+```
+
+**Es la misma fuga que el slice existe para cerrar, por el otro lado.** La corrección pasa el
+`tenantId` al mapeo de lectura y descarta las referencias ajenas: `image.TenantId == tenantId`. El
+`imageFileId` **sigue viajando** —el cliente lo necesita para el `PUT`, y ocultárselo le rompería
+la edición sin decirle por qué—; lo que no viaja es la URL.
+
+La fila se inserta por SQL en la prueba **a propósito**: por la API ya no se puede crear, y es
+exactamente por eso que se escapa si no se prueba así.
+
+**Deuda de método declarada: fue autorrevisión, no cuatro lentes ciegos.** `CAT-04` saldó esa
+deuda y este slice la vuelve a contraer. Pesa más acá que en `CAT-03`, porque `CA-CAT-05-01` es
+frontera de aislamiento entre tenants — la misma razón por la que `CAT-04` llevó lentes. Que la
+autorrevisión encontrara un bloqueante real no la valida: muestra que había algo que las 13
+pruebas y los 16 criterios de runtime no habían visto.
+
+### Cierre — `Complete` el 2026-08-15
+
+**Regresión final de toda la solución: 291 en verde**, con los 5 fallos de `SDD-CT-14`
+verificados **por nombre**. Unitarias `55/55`, arquitectura `17/17`, integración de `catalog`
+`69/69`. `dotnet build` limpio, `dotnet format --verify-no-changes` sin reportar ninguno de los
+archivos tocados.
+
+**Los 11 criterios cubiertos por prueba automática y verificados en runtime.** Los ítems de UI
+van `N/A`: es un slice de backend.
+
+**Lo que este slice deja abierto, y no es suyo:**
+
+| Qué | Dónde vive |
+| --- | --- |
+| `DECISIÓN-PENDIENTE-CAT-08` — ¿desasignar la portada borra el archivo? Implementado que **no** | Decisión de producto |
+| `DECISIÓN-PENDIENTE-CAT-09` — ¿la portada debe pertenecer al producto? Implementado que **no** se exige | Decisión de producto |
+| `FindManyAsync` hace una lectura por id | `IFileResourceRepository` no tiene método por lote, y agregárselo es cambiarle el contrato a `Storage` desde afuera. Lo pide su dueño cuando duela |
+| Los cinco campos de `CAT-04` y `imageUrl` **no están en el frontend** | Fila del ledger de `qep-frontend` (`CAT-01`) |
+| Hallazgo `C` de `CAT-04` — `ApiExceptionHandler` filtra `exception.Message` | `src/Api`, afecta a todos los módulos |
+| `NU1903` sobre `SSH.NET` | Dependencia transitiva; va a frenar CI |
+

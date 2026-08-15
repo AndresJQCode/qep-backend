@@ -26,7 +26,7 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **Ninguno.** `CAT-04` cerró el 2026-08-15 y no se abrió nada nuevo: **un slice a la vez en este repositorio**. El candidato es `CAT-05`, descrito en «Próxima acción ejecutable» |
+| Slice activo | **Ninguno.** `CAT-05` cerró el 2026-08-15. **Tres slices cerrados en la misma sesión** —`CAT-04` y `CAT-05`, más el gate `CAT-00` corregido en `qep-frontend`— y no se abrió nada nuevo: **un slice a la vez en este repositorio** |
 | Último slice cerrado | **`CAT-04` — propiedades nuevas de producto**, `Complete` el 2026-08-15, abierto el 2026-08-13. `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate`. **Commiteado el 2026-08-15 en `85b87c8`.** Runtime **11 de 11** y revisión con **4 lentes ciegos**, con el lente de **riesgo limpio**. **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`**, con RED y GREEN literales en el tramo 6 del spec. **`Complete` el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) — declaraba `Product` con "Ningún campo más" y ahora lista los cinco campos con su origen. El gate **no se reabrió** (`SDD-ADR-01`) |
 | Slice anterior | **`CAT-03` — API de tasas de impuesto**, `In Progress` desde el 2026-08-12. Spec en [`03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md), con partición `CAT-03a`/`CAT-03b` **declarada antes de escribir código** —al revés que `CAT-02`, que se midió en 1043 líneas recién al querer commitear— y ejecutada en secuencia el 2026-08-13. **Código completo y probado**: dominio, persistencia, migración `AddTaxRates`, permisos con sus dos mitades y los 5 endpoints. Unitarias `31/31`, arquitectura `16/16`, **integración `37/37`**, regresión de toda la solución con **233 en verde** y sólo los 5 fallos de `SDD-CT-14` verificados por nombre. **runtime 11 de 11** con la auditoría probada en base y la atomicidad por lo que **no** escribió. Revisión hecha: un bloqueante propio —`Version` sin prueba que lo ejercitara— corregido y verificado **saboteando el mecanismo**. **No cierra por decisiones, no por técnica:** faltan `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C`, todos de producto. Deuda de método declarada: la revisión fue **autorrevisión**, no cuatro lentes ciegos |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
@@ -36,44 +36,63 @@ historial de chat.
 
 ### Próxima acción ejecutable
 
-**`CAT-04` está `Complete`. No hay slice activo en este repositorio.**
+**No hay slice activo en este repositorio.** `CAT-04` y `CAT-05` cerraron el 2026-08-15, y con
+ellos **la capacidad completa de subir imágenes y asignarlas a productos**, que es lo que el owner
+pidió: `Storage` sube, `catalog` verifica y guarda cuál es la portada, y la respuesta trae la URL.
 
-**El candidato es `CAT-05` — el pegamento entre `Storage` y `Product.ImageFileId`.** El owner
-pidió el 2026-08-15 *"API para subir imágenes y asignarlas a productos"*, y contrastado contra el
-código la capacidad **ya existe en sus dos mitades**: el flujo de sesión de carga de `Storage`
-(`POST /files` → URL prefirmada, `POST /files/{id}/complete`, variantes con ImageSharp,
-publicación) y `Product.ImageFileId`, que `CAT-04` expone en el `POST`, el `PUT` y el `GET` de
-productos. Lo que **no** existe es el pegamento:
+**Lo que sigue es el frontend, y no es fila de este ledger.** Los cinco campos de `CAT-04` y el
+`imageUrl` de `CAT-05` **no están en `qep-frontend`**, y ahí el problema no es que falten campos:
+es que los que hay **contradicen decisiones ya tomadas**. Verificado el 2026-08-15 sobre
+`src/features/catalog/`:
 
-| Hueco | Qué pasa hoy | Gravedad |
+| Frontend hoy | Backend real | Qué pasa |
 | --- | --- | --- |
-| **`ImageFileId` entra sin ninguna validación** | Se guarda sin verificar que el archivo exista, esté `Available`, sea imagen ni **que sea del mismo tenant**. Un producto del tenant A puede apuntar al archivo del tenant B y la respuesta es un `201` normal | **Es la misma fuga que `ProductTaxRateResolver` cierra para la tasa**, con su `CA-CAT-04-07` y su revisión de riesgo. Para la imagen no hay nada |
-| **`FileOwnerType` no tiene `Product`** | Sólo `User`, `Entity`, `System`. Y `StorageEndpoints.cs:84-86` hace **fallback silencioso a `User`** cuando el string no parsea: mandar `"Product"` guarda `User` y devuelve `201` | Un `OwnerType` inválido no falla, se convierte en otro |
-| **El producto no expone URL de imagen** | Sólo el `Guid`. Pintar una grilla de 20 productos son 20 llamadas a `POST /files/{id}/download-url` | N+1 contra el frontend |
+| `stockQuantity: number` | **no existe** | El owner lo sacó del alcance del proyecto el 2026-08-12 |
+| `priceScale?: PriceScaleTier[]` | **no existe** | Es de `pricing`, que no tiene gate cerrado |
+| `imageBase64?: string` | `imageFileId` + `imageUrl` | **Dos arquitecturas distintas**: base64 inline contra referencia a `Storage` |
+| `price` y `currency` **requeridos** | opcionales, y acoplados entre sí | Un producto sin precio es válido |
+| `/api/v1/catalog/products` | `/api/v1/tenants/{tenantId}/catalog/products` | Sin `tenantId` da 404 |
 
-El primero es de riesgo y **debería llevar revisión de lentes ciegos**, por el mismo argumento
-que la llevó `CAT-04`: es frontera de aislamiento entre tenants, que es donde una autorrevisión
-menos vale.
+**El spec de `CAT-01` ya lo había previsto:** abrió `DECISIÓN-PENDIENTE-CAT-01-02` con la
+instrucción literal de *"no cerrar el slice con estos campos como contrato hasta resolverla"*. Las
+decisiones del owner del 2026-08-12 la resolvieron y el frontend no se enteró. **Alinearlo es
+quitar dos campos, cambiar el modelo de imagen y relajar dos de requerido a opcional** — deuda
+propia de `CAT-01`, en el ledger de `qep-frontend` (`SDD-ADR-08`).
 
-**Y hay trabajo de frontend que este ledger no lleva.** Los cinco campos de `CAT-04` no están en
-`qep-frontend`: `types/product.ts` y `catalog.api.ts` siguen con `id`, `name`, `code`, `isActive`,
-y `catalog.api.ts` además apunta a `/api/v1/catalog/*` **sin tenant**, que el gate `CAT-00` ya
-declaraba como deuda de `CAT-01`. Eso es fila del **ledger del frontend**, no de éste
-(`SDD-ADR-08`): una fila de slice vive en exactamente un ledger.
+**Si en cambio se sigue en backend**, los candidatos son, en orden:
 
-**Dos seguimientos que no pertenecen a ningún slice de `catalog`:**
+1. **Hallazgo `C` de `CAT-04`** — `ApiExceptionHandler` devuelve `exception.Message` sin
+   distinguir entorno, así que un error no traducido filtra nombres de constraint y de tabla al
+   llamador, también en producción. Es de `src/Api` y afecta a **todos** los módulos.
+2. **`NU1903` sobre `SSH.NET`** — `dotnet restore` falla con vulnerabilidad de gravedad alta
+   tratada como error. Entra por `Testcontainers.PostgreSql` y **frena todos los proyectos de
+   integración**. En local se esquiva con `-p:NuGetAudit=false`, **sin tocar configuración del
+   repo**. Va a frenar CI.
+3. **`SDD-CT-07`** — un registro de tenant fallido deja un usuario huérfano en `identity.users`.
+   Pide slice de mantenimiento.
 
-- **`NU1903`** — `dotnet restore` falla con `"SSH.NET" 2025.1.0 tiene una vulnerabilidad de
-  gravedad alta`, tratada como error. Entra por `Testcontainers.PostgreSql` y **frena todos los
-  proyectos de integración**. En local se esquiva con `-p:NuGetAudit=false`, que es lo que se
-  usó el 2026-08-15 **sin tocar configuración del repo**. Va a frenar CI.
-- **Hallazgo `C` de la revisión de `CAT-04`** — `ApiExceptionHandler` devuelve
-  `exception.Message` sin distinguir entorno, así que un error no traducido filtra nombres de
-  constraint y de tabla al llamador, también en producción. Es de `src/Api` y afecta a todos los
-  módulos.
+**Deuda de método abierta, y conviene saldarla antes de que crezca:** `CAT-05` se revisó a sí
+mismo, no con cuatro lentes ciegos. `CAT-03` contrajo esa deuda, `CAT-04` la saldó, `CAT-05` la
+volvió a contraer — y pesa, porque `CA-CAT-05-01` es frontera de aislamiento entre tenants. Que
+la autorrevisión encontrara un bloqueante real no la valida: muestra que había algo que 13 pruebas
+y 16 criterios de runtime no habían visto.
 
-Para levantar la API local: **arrancar el contenedor `postgres18`** (`docker start postgres18`),
-no `docker compose up` — ver el handoff del runtime de `CAT-03`.
+**Para levantar la API local**, verificado el 2026-08-15:
+
+```powershell
+docker start postgres18
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+$env:ASPNETCORE_URLS = "http://localhost:5199"
+$env:Authentication__UseDevelopmentStub = "true"
+$env:Storage__R2__PublicBucket = "qep-public"
+$env:Storage__R2__PublicBaseUrl = "https://cdn.qep.test"
+dotnet run --project src/Api --no-launch-profile -p:NuGetAudit=false
+```
+
+Sin `--no-launch-profile` los dos perfiles fijan el stub en `false` y todo devuelve `401`. Sin las
+dos variables de `PublicBucket`/`PublicBaseUrl`, `imageUrl` viene siempre en `null`: van de a dos
+o el validador de opciones no arranca. **La base local es `dev_lulo_crm_v2` y el usuario de psql
+es `postgres`**, no `qep`.
 
 ---
 
@@ -191,8 +210,66 @@ Owner: Andres Jaramillo
 | `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y pruebas de auditoría y outbox | `CAT-02a` | **Complete** | Código en `3c2c9ec`. Cubre `CA-CAT-02-03` a `-09`, `-11`, `-12` y las mitades pendientes de `-01` y `-10`. **Runtime del 2026-08-11: los 12 criterios verificados contra la API local**, con `422 catalog.product.code_taken` confirmado en vivo —el `500` de `SDD-CT-06` que este slice existía para cerrar— y la atomicidad del outbox probada por lo que **no** dejó rastro: el `403` y los tres `422` no escribieron fila. **Revisión de 4 lentes y su corrección** en el tramo 6: token de concurrencia, permisos de `tax_rate` retirados, comodines de `LIKE` escapados y autorización antes que validación. Regresión de 203 pruebas, con los 5 fallos de `SDD-CT-14` verificados **por nombre** |
 | `CAT-03` | API de tasas de impuesto | `CAT-02` | **Complete** | Cerrado el 2026-08-13. Spec con evidencia en [`CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md): 11 criterios, todos con prueba. Unitarias `31/31`, arquitectura `16/16`, integración `37/37`, regresión con 233 en verde y los 5 de `SDD-CT-14` por nombre, **runtime 11 de 11** con la auditoría verificada en base. Partición `CAT-03a`/`CAT-03b` declarada **antes** de escribir código. Devolvió `catalog.tax_rate.read`/`.manage` con sus tres mitades —constante, definición y **`AddPolicy`**—, que la revisión de `CAT-02` había retirado. `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C` cerrados por el owner el 2026-08-13, los tres ratificando lo implementado. **Deuda declarada:** la revisión fue autorrevisión, no 4 lentes ciegos |
 | `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **Complete** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Commiteado el 2026-08-15 en `85b87c8`. `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, arquitectura `16/16`, regresión sin cambios con los 5 de `SDD-CT-14` por nombre. **Runtime 11 de 11**, con la auditoría probada por lo que **no** escribió y `CA-CAT-04-11` verificado sobre datos reales del 2026-08-11. **`CA-CAT-04-07` verificado contra el mecanismo ausente** y confirmado en runtime: no persiste. **Revisión con 4 lentes ciegos —salda la deuda de método de `CAT-03`— con el lente de riesgo limpio.** **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`** (tramo 6): `A` y `F` con reglas de validador que faltaban, `D` con `ProductWriteRules` incluido por los dos validadores, `E` con `ProductDetails` no posicional, y `B` **decidido: se traduce** la violación de FK. Integración `55/55`, regresión con **265 en verde** y los 5 de `SDD-CT-14` por nombre. **Cerrado el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) y con eso el slice cumple el DoD. `C` es de `src/Api` y no pertenece a este slice. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing` |
+| `CAT-05` | **Imagen de producto:** el pegamento con `Storage` — validación de `ImageFileId` y `imageUrl` en la respuesta | `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-05-imagen-de-producto.md`](../03-modulos/catalog/slices/CAT-05-imagen-de-producto.md) con 11 criterios. **Partición `CAT-05a`/`CAT-05b` declarada antes de escribir código.** Cierra la fuga que `CAT-04` dejó abierta: `ImageFileId` entraba sin verificar existencia, estado, tipo ni **tenant**, y sin FK que lo respaldara. `catalog` **no** referencia `Storage`: el puerto `IProductImageLookup` se declara en `catalog`, el adaptador vive en `Bootstrapper` y `CatalogLayerTests` lo verifica. `Storage` suma `FileOwnerType.Product` y deja de caer en silencio a `User`. Unitarias `55/55`, arquitectura `17/17`, integración `69/69`, regresión con **291 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 16 de 16**, con `owner_type` verificado en base y la auditoría probada por lo que **no** escribió. **`CA-CAT-05-01` verificado contra el mecanismo ausente**: sin la comparación de tenant responde `Created`. **La revisión encontró un bloqueante propio y se corrigió**: la escritura quedaba cerrada y la **lectura** abierta —un producto anterior al slice con imagen ajena filtraba su URL en el `GET` y el listado. **Deuda de método: fue autorrevisión, no 4 lentes ciegos** |
 
 ## Handoff
+
+### 2026-08-15 (cont.) — `CAT-05`: subir imágenes y asignarlas a productos, cerrado de punta a punta
+
+**El pedido del owner era «API para subir imágenes y asignarlas a productos». Ya existía a
+medias, y la mitad que faltaba era la que da las garantías.**
+
+`Storage` sabía subir —sesión de carga, URL prefirmada, `complete`, variantes con ImageSharp,
+publicación— y `Product.ImageFileId` sabía guardar un `Guid`. **Nadie verificaba que ese `Guid`
+fuera un archivo real, de este tenant, ya subido y que fuera una imagen.**
+
+**Partición declarada antes de escribir código** —`CAT-05a` la parte de riesgo, `CAT-05b` la
+comodidad de lectura—, siguiendo el precedente de `CAT-03` y no el de `CAT-02`, que se midió en
+1043 líneas con el código ya escrito. Éste midió **1063**.
+
+**Qué se construyó:**
+
+| Pieza | Qué hace |
+| --- | --- |
+| `IProductImageLookup` + `ProductImageResolver` | Tres reglas: existe y es del tenant, está `Available`, es `image/*`. Las dos primeras condiciones **comparten código de error** a propósito |
+| `ProductImageLookup` en `Bootstrapper` | El adaptador. **`catalog` no referencia `Storage`**: el acoplamiento vive en el composition root |
+| `CatalogLayerTests` | Una aserción nueva que lo verifica. Sin ella la decisión sería un comentario |
+| `FileOwnerType.Product` | Y el fin del **fallback silencioso a `User`**: un `ownerType` inválido ahora es 422, no un archivo mal clasificado con 201 |
+| `ImageUrl` en `ProductResponse` | Resuelto en **una** consulta para todo el listado |
+
+**La revisión encontró un bloqueante propio, y es el hallazgo que vale registrar.** `CAT-05a`
+cerró la **escritura** y dejó la **lectura** abierta: el resolver impide crear un producto con
+imagen ajena, pero **no borra los que ya estaban**, y cualquier producto anterior al slice pudo
+guardar cualquier `imageFileId`. `ToDtosAsync` resolvía la URL sin volver a comparar el tenant, así
+que el `GET` y el listado del tenant A publicaban la URL del archivo del tenant B. Prueba escrita
+antes de la corrección, literal: `Expected: null / Actual:
+"https://cdn.qep.test/public/01a006e6-..."`. Corregido pasando el `tenantId` al mapeo de lectura.
+
+**Dos cosas que el spec tenía mal y se corrigieron contra el código (`SDD-ADR-01`):**
+
+1. **`FileOwnerType` se persiste por NOMBRE, no como `int`.** `HasConversion<string>()` sobre
+   `character varying(20)`. La conclusión no cambiaba, la razón sí.
+2. **Dos pruebas nuevas pasaban por la razón equivocada.** El helper hacía
+   `UPDATE ... SET status = 3` sobre una columna `varchar`; PostgreSQL lo acepta por cast de
+   asignación y guarda `'3'`, **y `Enum.Parse` acepta `"3"`**. Funcionaba de casualidad.
+
+**Y dos pruebas de `CAT-04` se pusieron rojas, que es la corrección funcionando:** asignaban como
+portada un `Guid.CreateVersion7()` inventado, porque nadie lo verificaba. Es el hueco de este
+slice escrito en una prueba sin que nadie lo notara.
+
+**Evidencia.** Unitarias `55/55`, arquitectura `17/17`, integración de `catalog` `69/69`,
+regresión con **291 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 16 de 16** contra la
+API local, con `owner_type` verificado **en base** y la auditoría probada por lo que **no**
+escribió: 6 eventos en `platform.outbox_messages`, ninguno de los cuatro rechazos.
+`CA-CAT-05-01` verificado **contra el mecanismo ausente** — sin la comparación de tenant responde
+`Created`.
+
+**Deuda de método declarada: fue autorrevisión, no cuatro lentes ciegos.** `CAT-04` había saldado
+esa deuda y este slice la vuelve a contraer, sobre una frontera de aislamiento entre tenants.
+
+**Trampas de entorno nuevas, verificadas:** la base local es `dev_lulo_crm_v2` con usuario
+`postgres`; Git Bash no tiene `/proc/sys/kernel/random/uuid`; y sin
+`Storage__R2__PublicBucket` + `Storage__R2__PublicBaseUrl` el `imageUrl` es siempre `null`.
 
 ### 2026-08-15 (cont.) — `CAT-04` `Complete`: se corrigió el gate `CAT-00`
 

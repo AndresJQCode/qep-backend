@@ -23,6 +23,6 @@ public sealed class ListProductsHandler(
             query.TenantId, query.Search, cancellationToken);
 
         // Las URLs se resuelven en una sola consulta para todo el listado. Ver ToDtosAsync.
-        return await products.ToDtosAsync(imageLookup, cancellationToken);
+        return await products.ToDtosAsync(imageLookup, query.TenantId, cancellationToken);
     }
 }

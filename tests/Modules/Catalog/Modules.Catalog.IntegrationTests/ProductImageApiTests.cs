@@ -360,6 +360,60 @@ public sealed class ProductImageApiTests
     }
 
     /// <summary>
+    /// El hueco que dejaba `CAT-05b` por su cuenta, encontrado en la revisión.
+    ///
+    /// `CAT-05a` impide **crear** un producto que apunte a un archivo de otro tenant, pero no
+    /// borra los que ya estaban: **cualquier producto cargado antes de este slice pudo guardar
+    /// cualquier `imageFileId`**, porque nadie lo verificaba. Esa fila sigue ahí.
+    ///
+    /// Si el mapeo de lectura resuelve la URL sin volver a comparar el tenant, el listado del
+    /// tenant A publica la URL de un archivo del tenant B. La escritura quedó cerrada y la lectura
+    /// abierta — y la lectura es la que se expone en una grilla.
+    ///
+    /// La fila se inserta por SQL a propósito: por la API ya no se puede crear, que es
+    /// justamente por qué esto se escapa si no se prueba así.
+    /// </summary>
+    [Fact]
+    public async Task ALegacyProductPointingAtAnotherTenantsFileDoesNotLeakItsUrl()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var owner = CreateClient(factory, SubjectId, TenantId, All);
+        using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
+
+        var foreignImage = await UploadImageAsync(other, OtherTenantId, database, "ajena.png");
+        await PublishAsync(database, foreignImage);
+
+        // Un producto del tenant A que ya tenía guardada la imagen del tenant B, como sólo pudo
+        // quedar antes de CAT-05a.
+        var legacyId = Guid.CreateVersion7();
+        await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand(
+                """
+                INSERT INTO catalog.products
+                    (id, tenant_id, name, code, is_active, version, created_at, updated_at,
+                     image_file_id)
+                VALUES (@id, @tenantId, 'Heredado', 'HE-001', true, 1, now(), now(), @imageId)
+                """,
+                connection);
+            command.Parameters.AddWithValue("id", legacyId);
+            command.Parameters.AddWithValue("tenantId", Guid.Parse(TenantId));
+            command.Parameters.AddWithValue("imageId", foreignImage);
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var fetched = await ReadProductAsync(await owner.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{legacyId}",
+            TestContext.Current.CancellationToken));
+        Assert.Null(fetched.ImageUrl);
+
+        var listed = (await ListAsync(owner, TenantId)).Single(p => p.Code == "HE-001");
+        Assert.Null(listed.ImageUrl);
+    }
+
+    /// <summary>
     /// Publica por SQL, por la misma razón que `UploadFileAsync` fuerza el estado: el endpoint de
     /// publicación copia el objeto en R2, que en una prueba no existe. Lo que hace falta acá es la
     /// **consecuencia** de publicar —que haya `public_storage_key`—, no el viaje a R2.

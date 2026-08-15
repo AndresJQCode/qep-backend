@@ -29,7 +29,7 @@ public sealed class GetProductHandler(
 
         // Un solo producto pasa igual por el mapeo de lote: la lista de ids tiene un elemento, o
         // ninguno si no hay portada, y en ese caso no se le pregunta nada a Storage.
-        var dtos = await new[] { product }.ToDtosAsync(imageLookup, cancellationToken);
+        var dtos = await new[] { product }.ToDtosAsync(imageLookup, query.TenantId, cancellationToken);
         return dtos[0];
     }
 }
