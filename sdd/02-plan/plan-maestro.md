@@ -3,7 +3,7 @@
 Ledger de continuidad **de este repositorio**. Una sesión de backend empieza aquí, no en el
 historial de chat.
 
-> **Última actualización:** 2026-08-11
+> **Última actualización:** 2026-08-15
 > **Alcance:** sólo slices que se ejecutan en `qep-backend`. El frontend lleva el suyo en
 > `qep-frontend/sdd/02-plan/plan-maestro.md`. Ninguna fila aparece en los dos
 > (`SDD-ADR-08`).
@@ -26,20 +26,109 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **Ninguno.** `CAT-02` cerró el 2026-08-11 con `CAT-02a` y `CAT-02b` en `Complete`: runtime de 12/12 criterios, revisión de 4 lentes y su transacción de corrección. El próximo es `CAT-03`, que todavía no tiene spec |
+| Slice activo | **Ninguno.** `CAT-06` cerró el 2026-08-15. **Cuatro cierres en la misma sesión** —`CAT-04`, `CAT-05` y `CAT-06` en este repo, más `CAT-01` alineado en `qep-frontend`— y no se abrió nada nuevo: **un slice a la vez en este repositorio** |
+| Último slice cerrado | **`CAT-04` — propiedades nuevas de producto**, `Complete` el 2026-08-15, abierto el 2026-08-13. `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate`. **Commiteado el 2026-08-15 en `85b87c8`.** Runtime **11 de 11** y revisión con **4 lentes ciegos**, con el lente de **riesgo limpio**. **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`**, con RED y GREEN literales en el tramo 6 del spec. **`Complete` el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) — declaraba `Product` con "Ningún campo más" y ahora lista los cinco campos con su origen. El gate **no se reabrió** (`SDD-ADR-01`) |
+| Slice anterior | **`CAT-03` — API de tasas de impuesto**, `In Progress` desde el 2026-08-12. Spec en [`03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md), con partición `CAT-03a`/`CAT-03b` **declarada antes de escribir código** —al revés que `CAT-02`, que se midió en 1043 líneas recién al querer commitear— y ejecutada en secuencia el 2026-08-13. **Código completo y probado**: dominio, persistencia, migración `AddTaxRates`, permisos con sus dos mitades y los 5 endpoints. Unitarias `31/31`, arquitectura `16/16`, **integración `37/37`**, regresión de toda la solución con **233 en verde** y sólo los 5 fallos de `SDD-CT-14` verificados por nombre. **runtime 11 de 11** con la auditoría probada en base y la atomicidad por lo que **no** escribió. Revisión hecha: un bloqueante propio —`Version` sin prueba que lo ejercitara— corregido y verificado **saboteando el mecanismo**. **No cierra por decisiones, no por técnica:** faltan `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C`, todos de producto. Deuda de método declarada: la revisión fue **autorrevisión**, no cuatro lentes ciegos |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
-| Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01` cerrada el 2026-08-11 por el owner: infraestructura y despliegue quedan explícitamente fuera del alcance del método.** No se abre módulo de plataforma ni se reserva prefijo. El corte es **por efecto, no por carpeta** —ver «Alcance del método» abajo—, y la obligación que **no** desaparece es la entrada de handoff en este ledger. Pendiente que deja: es una decisión estructural, así que `convenciones-de-id.md` pide que produzca un `SDD-ADR-*`. **`SDD-ADR-09` cerrado el 2026-08-11 en `qep-frontend`, commit `35e6f93` sobre `develop`.** Revisado contra sus fuentes antes de entrar: los cuatro commits citados, los cuatro archivos, el conteo de prefijos y la lista blanca de manifiestos de la plantilla de deploy. El mismo commit agrega al índice la fila de `SDD-ADR-08`, que estaba en el cuerpo del documento desde `3aca4a9` y no en la tabla. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure |
+| Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01` cerrada el 2026-08-11 por el owner: infraestructura y despliegue quedan explícitamente fuera del alcance del método.** No se abre módulo de plataforma ni se reserva prefijo. El corte es **por efecto, no por carpeta** —ver «Alcance del método» abajo—, y la obligación que **no** desaparece es la entrada de handoff en este ledger. Pendiente que deja: es una decisión estructural, así que `convenciones-de-id.md` pide que produzca un `SDD-ADR-*`. **`SDD-ADR-09` cerrado el 2026-08-11 en `qep-frontend`, commit `35e6f93` sobre `develop`.** Revisado contra sus fuentes antes de entrar: los cuatro commits citados, los cuatro archivos, el conteo de prefijos y la lista blanca de manifiestos de la plantilla de deploy. El mismo commit agrega al índice la fila de `SDD-ADR-08`, que estaba en el cuerpo del documento desde `3aca4a9` y no en la tabla. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure. **Tres decisiones del owner del 2026-08-12, sobre el modelo de `Product`:** `descripción`, `imagen`, `precio` y `moneda` entran a `catalog` (`CAT-04`); la **escala de precios** queda en `pricing`, como el gate ya declaraba; y **`stock` queda fuera del alcance del proyecto** — no tenía `RF` que lo sustentara ni módulo en el mapa, y como campo suelto era el candidato a corromperse por escrituras concurrentes. **Las tres corren el alcance del gate `CAT-00`**, que cerró con "Ningún campo más", así que hay que escribirlas ahí. **Dos abiertas nuevas: `DECISIÓN-PENDIENTE-CAT-05`** —¿el `name` de una tasa es único por tenant? Recomendado que sí; bloquea la migración `AddTaxRates`— y **`DECISIÓN-PENDIENTE-CAT-06`** —cuando exista `pricing`, ¿gana la lista o `Product.Price`? Default asumido y declarado: gana `pricing`, y `Product.Price` es precio base de fallback; bloquea `CAT-04`, no `CAT-03` |
 | Contradicciones abiertas | `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
 
 ### Próxima acción ejecutable
 
-**Abrir `CAT-03` — API de tasas de impuesto.** Empieza por su spec, que todavía no existe. Lo
-que ya está decidido: el porcentaje es **entero de 0 decimales** (`P-008`, owner, 2026-08-10),
-y sus dos permisos —`catalog.tax_rate.read` y `.manage`— **los trae `CAT-03` con su
-implementación**. Estaban registrados desde `CAT-02` sin nada que los consumiera y la revisión
-de 4 lentes los hizo retirar; volver a agregarlos es parte de este slice, no un pendiente
-suelto.
+**No hay slice activo en este repositorio.** `CAT-04` y `CAT-05` cerraron el 2026-08-15, y con
+ellos **la capacidad completa de subir imágenes y asignarlas a productos**, que es lo que el owner
+pidió: `Storage` sube, `catalog` verifica y guarda cuál es la portada, y la respuesta trae la URL.
+
+**Lo que sigue es el frontend, y no es fila de este ledger.** Los cinco campos de `CAT-04` y el
+`imageUrl` de `CAT-05` **no están en `qep-frontend`**, y ahí el problema no es que falten campos:
+es que los que hay **contradicen decisiones ya tomadas**. Verificado el 2026-08-15 sobre
+`src/features/catalog/`:
+
+| Frontend hoy | Backend real | Qué pasa |
+| --- | --- | --- |
+| `stockQuantity: number` | **no existe** | El owner lo sacó del alcance del proyecto el 2026-08-12 |
+| `priceScale?: PriceScaleTier[]` | **no existe** | Es de `pricing`, que no tiene gate cerrado |
+| `imageBase64?: string` | `imageFileId` + `imageUrl` | **Dos arquitecturas distintas**: base64 inline contra referencia a `Storage` |
+| `price` y `currency` **requeridos** | opcionales, y acoplados entre sí | Un producto sin precio es válido |
+| `/api/v1/catalog/products` | `/api/v1/tenants/{tenantId}/catalog/products` | Sin `tenantId` da 404 |
+
+> **Hecho el 2026-08-15**, en `qep-frontend`: commits `94a538c` (código) y `a6e92f4` (spec de
+> `CAT-01`). Suite `510/510`, `tsc -b` y `oxlint` limpios, `vite build` correcto. Se retiraron
+> los tres campos fuera de contrato, las rutas pasan a llevar el tenant, la imagen se sube contra
+> `Storage` de verdad y se retiró el mock de catálogo. **El ledger de ese repo no se tocó**:
+> tenía cambios de su developer staged sin commitear.
+
+**El spec de `CAT-01` ya lo había previsto:** abrió `DECISIÓN-PENDIENTE-CAT-01-02` con la
+instrucción literal de *"no cerrar el slice con estos campos como contrato hasta resolverla"*. Las
+decisiones del owner del 2026-08-12 la resolvieron y el frontend no se enteró. **Alinearlo es
+quitar dos campos, cambiar el modelo de imagen y relajar dos de requerido a opcional** — deuda
+propia de `CAT-01`, en el ledger de `qep-frontend` (`SDD-ADR-08`).
+
+**Si en cambio se sigue en backend**, los candidatos son, en orden:
+
+1. **Hallazgo `C` de `CAT-04`** — `ApiExceptionHandler` devuelve `exception.Message` sin
+   distinguir entorno, así que un error no traducido filtra nombres de constraint y de tabla al
+   llamador, también en producción. Es de `src/Api` y afecta a **todos** los módulos.
+2. **`NU1903` sobre `SSH.NET`** — `dotnet restore` falla con vulnerabilidad de gravedad alta
+   tratada como error. Entra por `Testcontainers.PostgreSql` y **frena todos los proyectos de
+   integración**. En local se esquiva con `-p:NuGetAudit=false`, **sin tocar configuración del
+   repo**. Va a frenar CI.
+3. **`SDD-CT-07`** — un registro de tenant fallido deja un usuario huérfano en `identity.users`.
+   Pide slice de mantenimiento.
+
+**Deuda de método abierta, y conviene saldarla antes de que crezca:** `CAT-05` se revisó a sí
+mismo, no con cuatro lentes ciegos. `CAT-03` contrajo esa deuda, `CAT-04` la saldó, `CAT-05` la
+volvió a contraer — y pesa, porque `CA-CAT-05-01` es frontera de aislamiento entre tenants. Que
+la autorrevisión encontrara un bloqueante real no la valida: muestra que había algo que 13 pruebas
+y 16 criterios de runtime no habían visto.
+
+**Para levantar la API local**, verificado el 2026-08-15:
+
+```powershell
+docker start postgres18
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+$env:ASPNETCORE_URLS = "http://localhost:5199"
+$env:Authentication__UseDevelopmentStub = "true"
+$env:Storage__R2__PublicBucket = "qep-public"
+$env:Storage__R2__PublicBaseUrl = "https://cdn.qep.test"
+dotnet run --project src/Api --no-launch-profile -p:NuGetAudit=false
+```
+
+Sin `--no-launch-profile` los dos perfiles fijan el stub en `false` y todo devuelve `401`. Sin las
+dos variables de `PublicBucket`/`PublicBaseUrl`, `imageUrl` viene siempre en `null`: van de a dos
+o el validador de opciones no arranca. **La base local es `dev_lulo_crm_v2` y el usuario de psql
+es `postgres`**, no `qep`.
+
+---
+
+**`CAT-03` está terminado y `Complete`.**
+Unitarias `31/31`, arquitectura `16/16`, integración `37/37`, regresión con 233 en verde y sólo
+los 5 fallos de `SDD-CT-14` por nombre, **runtime 11 de 11** con la auditoría probada en base, y
+revisión hecha con su bloqueante corregido.
+
+Tres decisiones antes de poder marcarlo `Complete`:
+
+1. **`DECISIÓN-PENDIENTE-CAT-05`** — ¿el `name` de una tasa es único por tenant? Se implementó con
+   el default asumido. **Hay 4 tasas de prueba cargadas en `dev_lulo_crm_v2`, pero ningún dato
+   real: revertirla todavía cuesta una migración vacía.**
+2. **Hallazgo `B`** — ¿desactivar una tasa libera su nombre? Hoy no: el índice único no filtra por
+   `is_active`, así que recrearla devuelve `422 name_taken` con la lista de activas vacía.
+3. **Hallazgo `C`** — ¿`GET T/tax-rates` debe filtrar las inactivas? Hoy las devuelve, y quien
+   arme una cotización puede elegir una tasa desactivada.
+
+Y una deuda de método que no bloquea pero está declarada: la revisión del tramo 5 fue
+**autorrevisión**, no cuatro lentes ciegos entre sí.
+
+Para levantar la API con el stub —cuesta una vuelta descubrirlo—:
+`dotnet run --project src/Api --no-launch-profile`, con `ASPNETCORE_ENVIRONMENT`,
+`ASPNETCORE_URLS` y `Authentication__UseDevelopmentStub=true` en el entorno. Sin
+`--no-launch-profile` los dos perfiles fijan el stub en `false` y todo devuelve `401`.
+
+**Y queda una ratificación pendiente que hoy es barata y mañana no:**
+`DECISIÓN-PENDIENTE-CAT-05` se implementó con el **default asumido** —`name` único por tenant—
+porque se preguntó dos veces sin respuesta. **Mientras no haya datos cargados, revertirla cuesta
+una migración vacía.** Después de la primera carga real, es migración sobre datos sucios.
 
 Antes de arrancar, tres seguimientos abiertos por la revisión de `CAT-02` (tramo 6 del spec):
 el mensaje veneno de `AuditProjectionWorker`, que merece `SDD-CT` y no lo introdujo `CAT-02`;
@@ -125,9 +214,706 @@ Owner: Andres Jaramillo
 | `CAT-02` | **API de productos** — fila padre, ya no es unidad ejecutable | `CAT-00` (gate cerrado) | Partido el 2026-08-10 | Se partió al medir **1043 líneas autoradas** con un endpoint de cinco, contra el umbral de ~400 de `convenciones-de-id.md`. No se renumera nada y los commits que citan `feat(CAT-02)` siguen válidos: el ID padre no se toca. Spec único en [`03-modulos/catalog/slices/CAT-02-api-de-productos.md`](../03-modulos/catalog/slices/CAT-02-api-de-productos.md) |
 | `CAT-02a` | Andamiaje del módulo, dominio `Product`, persistencia con `InitialCatalog` y `GET /products` | `CAT-00` | **Complete** | Tres tramos con RED y GREEN literales en el spec. Commits `968c4a8` y `594ee11`. Runtime en el tramo 5 y revisión de 4 lentes en el tramo 6, ambos el 2026-08-11 |
 | `CAT-02b` | Escrituras: `GET` por id, `POST`, `PUT`, `deactivate`, validadores, traducción del índice único y pruebas de auditoría y outbox | `CAT-02a` | **Complete** | Código en `3c2c9ec`. Cubre `CA-CAT-02-03` a `-09`, `-11`, `-12` y las mitades pendientes de `-01` y `-10`. **Runtime del 2026-08-11: los 12 criterios verificados contra la API local**, con `422 catalog.product.code_taken` confirmado en vivo —el `500` de `SDD-CT-06` que este slice existía para cerrar— y la atomicidad del outbox probada por lo que **no** dejó rastro: el `403` y los tres `422` no escribieron fila. **Revisión de 4 lentes y su corrección** en el tramo 6: token de concurrencia, permisos de `tax_rate` retirados, comodines de `LIKE` escapados y autorización antes que validación. Regresión de 203 pruebas, con los 5 fallos de `SDD-CT-14` verificados **por nombre** |
-| `CAT-03` | API de tasas de impuesto | `CAT-02` | Pending | Sin spec todavía. Se separa de `CAT-02` porque es otro recurso, con otros permisos y otra migración, y juntos pasarían holgado el umbral de 400 líneas. El porcentaje es **entero de 0 decimales** (`P-008`, decidido por el owner el 2026-08-10): no admite retenciones con fracción, y eso está declarado como límite de alcance en el gate |
+| `CAT-03` | API de tasas de impuesto | `CAT-02` | **Complete** | Cerrado el 2026-08-13. Spec con evidencia en [`CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md): 11 criterios, todos con prueba. Unitarias `31/31`, arquitectura `16/16`, integración `37/37`, regresión con 233 en verde y los 5 de `SDD-CT-14` por nombre, **runtime 11 de 11** con la auditoría verificada en base. Partición `CAT-03a`/`CAT-03b` declarada **antes** de escribir código. Devolvió `catalog.tax_rate.read`/`.manage` con sus tres mitades —constante, definición y **`AddPolicy`**—, que la revisión de `CAT-02` había retirado. `DECISIÓN-PENDIENTE-CAT-05` y los hallazgos `B` y `C` cerrados por el owner el 2026-08-13, los tres ratificando lo implementado. **Deuda declarada:** la revisión fue autorrevisión, no 4 lentes ciegos |
+| `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **Complete** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Commiteado el 2026-08-15 en `85b87c8`. `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, arquitectura `16/16`, regresión sin cambios con los 5 de `SDD-CT-14` por nombre. **Runtime 11 de 11**, con la auditoría probada por lo que **no** escribió y `CA-CAT-04-11` verificado sobre datos reales del 2026-08-11. **`CA-CAT-04-07` verificado contra el mecanismo ausente** y confirmado en runtime: no persiste. **Revisión con 4 lentes ciegos —salda la deuda de método de `CAT-03`— con el lente de riesgo limpio.** **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`** (tramo 6): `A` y `F` con reglas de validador que faltaban, `D` con `ProductWriteRules` incluido por los dos validadores, `E` con `ProductDetails` no posicional, y `B` **decidido: se traduce** la violación de FK. Integración `55/55`, regresión con **265 en verde** y los 5 de `SDD-CT-14` por nombre. **Cerrado el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) y con eso el slice cumple el DoD. `C` es de `src/Api` y no pertenece a este slice. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing` |
+| `CAT-05` | **Imagen de producto:** el pegamento con `Storage` — validación de `ImageFileId` y `imageUrl` en la respuesta | `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-05-imagen-de-producto.md`](../03-modulos/catalog/slices/CAT-05-imagen-de-producto.md) con 11 criterios. **Partición `CAT-05a`/`CAT-05b` declarada antes de escribir código.** Cierra la fuga que `CAT-04` dejó abierta: `ImageFileId` entraba sin verificar existencia, estado, tipo ni **tenant**, y sin FK que lo respaldara. `catalog` **no** referencia `Storage`: el puerto `IProductImageLookup` se declara en `catalog`, el adaptador vive en `Bootstrapper` y `CatalogLayerTests` lo verifica. `Storage` suma `FileOwnerType.Product` y deja de caer en silencio a `User`. Unitarias `55/55`, arquitectura `17/17`, integración `69/69`, regresión con **291 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 16 de 16**, con `owner_type` verificado en base y la auditoría probada por lo que **no** escribió. **`CA-CAT-05-01` verificado contra el mecanismo ausente**: sin la comparación de tenant responde `Created`. **La revisión encontró un bloqueante propio y se corrigió**: la escritura quedaba cerrada y la **lectura** abierta —un producto anterior al slice con imagen ajena filtraba su URL en el `GET` y el listado. **Deuda de método: fue autorrevisión, no 4 lentes ciegos** |
+| `CAT-06` | **Borrado de tasa de impuesto** — `DELETE` con la restricción que la FK ya impone | `CAT-03`, `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-06-borrado-de-tasa-de-impuesto.md`](../03-modulos/catalog/slices/CAT-06-borrado-de-tasa-de-impuesto.md) con 8 criterios. **Sale de una deuda que encontró la alineación de `CAT-01`:** el frontend ya tenía el botón y pegaba a una ruta inexistente. No borra siempre: la FK `RESTRICT` de `CAT-04` impide borrar una tasa en uso, y el endpoint lo devuelve como **422 `catalog.tax_rate.in_use`** en vez de 500. Se comprueba dos veces —consulta previa para el caso normal, traducción de la violación de FK para la carrera— y **la misma constraint se discrimina por dos causas opuestas** vía `DbUpdateException.Entries`. Integración de `catalog` `77/77`, regresión con **299 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 8 de 8**, con el aislamiento verificado por conteo en base y la atomicidad por la auditoría que el 422 **no** escribió. **Defecto encontrado en el camino:** los handlers se registran a mano en el composition root, y olvidar la línea da **500, no 404** — quedó documentado ahí mismo. Corre el gate `CAT-00`, escrito en `qep-frontend` (`17bbdfe`) |
 
 ## Handoff
+
+### 2026-08-15 (cont.) — `CAT-06`: el `DELETE` de tasa de impuesto que el frontend ya llamaba
+
+**Sale de una deuda que encontró la alineación de `CAT-01`.** `tax-rate-modal.tsx` tenía el botón
+de eliminar y llamaba a `deleteTaxRate`, que pegaba a una ruta que el backend no exponía. Se podía
+cerrar por dos lados —retirar el botón o construir el endpoint— y el owner eligió el segundo.
+
+**El endpoint no promete «borra siempre», y eso es diseño, no limitación.**
+`catalog.products.tax_rate_id` referencia `catalog.tax_rates(id)` con `ON DELETE RESTRICT` desde
+`CAT-04`. PostgreSQL ya impide borrar una tasa que algún producto usa; lo que agrega el slice es
+que el llamador reciba **422 `catalog.tax_rate.in_use`** en vez de un 500 por violación de FK que,
+por el hallazgo `C` de `CAT-04`, además filtraría el nombre de la constraint.
+
+| Caso | Respuesta |
+| --- | --- |
+| No existe, o es de otro tenant | **404** |
+| Existe y algún producto la usa | **422 `catalog.tax_rate.in_use`** |
+| Existe y nadie la usa | **204**, y la fila desaparece |
+
+**Se comprueba dos veces, y no es redundancia.** La consulta previa da el mensaje correcto en el
+caso normal; la traducción en `Infrastructure` cubre la **carrera** —entre esa consulta y el
+commit, otra transacción puede crear un producto que use la tasa—. Sin la segunda, ese caso sale
+como 500.
+
+**Lo más delicado del slice: la misma constraint, dos causas opuestas.**
+`FK_products_tax_rates_tax_rate_id` se viola cuando un producto apunta a una tasa inexistente
+—«la tasa no existe»— y cuando una tasa se borra estando en uso —«la tasa está en uso»—. Idéntico
+`SqlState 23503`, idéntico nombre. Se distinguen por **qué entidad estaba guardando EF**, vía
+`DbUpdateException.Entries`. Colapsarlas en un código manda a mirar la entidad equivocada: es la
+lección de `SDD-CT-06` un nivel más adentro.
+
+**Defecto encontrado en el camino, y vale registrarlo.** Con el endpoint mapeado y el handler
+escrito, las 8 pruebas pasaron de `MethodNotAllowed` a **`InternalServerError`**: **los handlers
+se registran en el composition root uno por uno, a mano**, y faltaba la línea. El endpoint
+resolvía y el dispatcher no encontraba a quién llamar. Es el mismo defecto que el `README`
+documenta para las políticas de permiso —«el síntoma es 500, no 403»—, y ahora quedó documentado
+también para los handlers, en `QepServiceCollectionExtensions`.
+
+**Evidencia.** RED literal `Expected: NoContent / Actual: MethodNotAllowed` en las 8. GREEN con
+integración de `catalog` en `77/77`, unitarias `55/55`, arquitectura `17/17`, **regresión de la
+solución con 299 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 8 de 8** contra la API
+local: el aislamiento verificado por **conteo en base** —un `DELETE` que responda 404 y borre
+igual no dejaría rastro en la respuesta— y la atomicidad por la auditoría que el `422` **no**
+escribió.
+
+**El gate `CAT-00` se corrigió** en `qep-frontend` (`17bbdfe`): ratificaba cinco operaciones de
+`tax-rates` y ahora declara la sexta, con la advertencia de que no borra siempre. Segunda
+corrección del gate en el mismo día, y por el mismo criterio: `SDD-ADR-01`, gana el código.
+
+**Deuda de método: sigue siendo autorrevisión.** `CAT-05` la contrajo y `CAT-06` la repite. Van
+dos slices seguidos sin lentes ciegos.
+
+### 2026-08-15 (cont.) — `CAT-05`: subir imágenes y asignarlas a productos, cerrado de punta a punta
+
+**El pedido del owner era «API para subir imágenes y asignarlas a productos». Ya existía a
+medias, y la mitad que faltaba era la que da las garantías.**
+
+`Storage` sabía subir —sesión de carga, URL prefirmada, `complete`, variantes con ImageSharp,
+publicación— y `Product.ImageFileId` sabía guardar un `Guid`. **Nadie verificaba que ese `Guid`
+fuera un archivo real, de este tenant, ya subido y que fuera una imagen.**
+
+**Partición declarada antes de escribir código** —`CAT-05a` la parte de riesgo, `CAT-05b` la
+comodidad de lectura—, siguiendo el precedente de `CAT-03` y no el de `CAT-02`, que se midió en
+1043 líneas con el código ya escrito. Éste midió **1063**.
+
+**Qué se construyó:**
+
+| Pieza | Qué hace |
+| --- | --- |
+| `IProductImageLookup` + `ProductImageResolver` | Tres reglas: existe y es del tenant, está `Available`, es `image/*`. Las dos primeras condiciones **comparten código de error** a propósito |
+| `ProductImageLookup` en `Bootstrapper` | El adaptador. **`catalog` no referencia `Storage`**: el acoplamiento vive en el composition root |
+| `CatalogLayerTests` | Una aserción nueva que lo verifica. Sin ella la decisión sería un comentario |
+| `FileOwnerType.Product` | Y el fin del **fallback silencioso a `User`**: un `ownerType` inválido ahora es 422, no un archivo mal clasificado con 201 |
+| `ImageUrl` en `ProductResponse` | Resuelto en **una** consulta para todo el listado |
+
+**La revisión encontró un bloqueante propio, y es el hallazgo que vale registrar.** `CAT-05a`
+cerró la **escritura** y dejó la **lectura** abierta: el resolver impide crear un producto con
+imagen ajena, pero **no borra los que ya estaban**, y cualquier producto anterior al slice pudo
+guardar cualquier `imageFileId`. `ToDtosAsync` resolvía la URL sin volver a comparar el tenant, así
+que el `GET` y el listado del tenant A publicaban la URL del archivo del tenant B. Prueba escrita
+antes de la corrección, literal: `Expected: null / Actual:
+"https://cdn.qep.test/public/01a006e6-..."`. Corregido pasando el `tenantId` al mapeo de lectura.
+
+**Dos cosas que el spec tenía mal y se corrigieron contra el código (`SDD-ADR-01`):**
+
+1. **`FileOwnerType` se persiste por NOMBRE, no como `int`.** `HasConversion<string>()` sobre
+   `character varying(20)`. La conclusión no cambiaba, la razón sí.
+2. **Dos pruebas nuevas pasaban por la razón equivocada.** El helper hacía
+   `UPDATE ... SET status = 3` sobre una columna `varchar`; PostgreSQL lo acepta por cast de
+   asignación y guarda `'3'`, **y `Enum.Parse` acepta `"3"`**. Funcionaba de casualidad.
+
+**Y dos pruebas de `CAT-04` se pusieron rojas, que es la corrección funcionando:** asignaban como
+portada un `Guid.CreateVersion7()` inventado, porque nadie lo verificaba. Es el hueco de este
+slice escrito en una prueba sin que nadie lo notara.
+
+**Evidencia.** Unitarias `55/55`, arquitectura `17/17`, integración de `catalog` `69/69`,
+regresión con **291 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 16 de 16** contra la
+API local, con `owner_type` verificado **en base** y la auditoría probada por lo que **no**
+escribió: 6 eventos en `platform.outbox_messages`, ninguno de los cuatro rechazos.
+`CA-CAT-05-01` verificado **contra el mecanismo ausente** — sin la comparación de tenant responde
+`Created`.
+
+**Deuda de método declarada: fue autorrevisión, no cuatro lentes ciegos.** `CAT-04` había saldado
+esa deuda y este slice la vuelve a contraer, sobre una frontera de aislamiento entre tenants.
+
+**Trampas de entorno nuevas, verificadas:** la base local es `dev_lulo_crm_v2` con usuario
+`postgres`; Git Bash no tiene `/proc/sys/kernel/random/uuid`; y sin
+`Storage__R2__PublicBucket` + `Storage__R2__PublicBaseUrl` el `imageUrl` es siempre `null`.
+
+### 2026-08-15 (cont.) — `CAT-04` `Complete`: se corrigió el gate `CAT-00`
+
+**El último bloqueo de `CAT-04` no era técnico: era el gate**, que declaraba el modelo de
+`Product` con **"Ningún campo más"** mientras el código tenía cinco campos más. `SDD-ADR-01`
+manda que gane el código y se corrija el documento, y eso se hizo: `qep-frontend`, commit
+`38e5abe`.
+
+**El gate no se reabrió.** Su cierre del 2026-08-10 sigue válido; lo que cambió es el alcance que
+declara. Ahora lista los cinco campos con su origen y su razón —incluida la referencia blanda a
+`Storage` sin FK y la moneda por producto, que se implementó **contra la recomendación del
+spec**— y escribe los dos límites que estaban decididos desde el 2026-08-12 y sin documentar:
+`stock` **fuera del alcance del proyecto** y la escala de precios como propiedad de `pricing`.
+
+**Dos cuidados al escribir en el otro repositorio, y los dos importan:**
+
+1. **Se verificó la rama antes de leer y de escribir:** `git -C ../qep-frontend branch
+   --show-current` → `develop`. Es la lección del 2026-08-11, cuando se leyó ese repo estando en
+   `feature/catalog` —nueve commits atrás— y se reportaron como faltantes un ADR y una sección de
+   `AGENTS.md` que sí existían.
+2. **El commit se acotó al archivo del gate**, con `git commit -- <path>`. Ese repositorio tenía
+   seis archivos de su developer **staged y sin commitear** (`use-active-tenant`,
+   `_authenticated.tsx`, `.oxlintrc.json`, `bun.lock` y su propio ledger): un `git add -A` los
+   habría arrastrado a un commit ajeno con un mensaje que no los describe. Se verificó después
+   que el índice quedó intacto.
+
+También se corrigió la fila de `catalog` en `01-contexto/registro-de-modulos.md`, que seguía
+diciendo "el slice de backend todavía no tiene spec" cuando ya hay tres `Complete`. El **estado**
+del módulo no cambió: sigue `En curso`, porque el frontend no está.
+
+**`CAT-04` cumple el DoD y pasa a `Complete`.** No queda slice activo en este repositorio.
+
+**Lo que este cierre deja sobre la mesa, en orden de riesgo:**
+
+1. **`ImageFileId` entra sin ninguna validación** — ni existencia, ni estado, ni tipo, ni
+   **tenant**. Es la misma fuga que `ProductTaxRateResolver` cierra para la tasa; para la imagen
+   no hay nada. Candidato a `CAT-05`, con revisión de lentes ciegos por ser frontera de
+   aislamiento.
+2. **Los cinco campos no están en el frontend**, y `catalog.api.ts` sigue apuntando a
+   `/api/v1/catalog/*` sin tenant. Es fila del **ledger del frontend** (`CAT-01`), no de éste.
+3. `NU1903` sobre `SSH.NET` y el hallazgo `C` de `ApiExceptionHandler`, ninguno de `catalog`.
+
+### 2026-08-15 (cont.) — Los 5 hallazgos propios de `CAT-04`, cerrados
+
+**Punto de partida:** el owner pidió *"API para subir imágenes y asignarlas a productos"*. Antes
+de escribir nada se contrastó contra el código, y la capacidad **ya existía en sus dos mitades**:
+el flujo de sesión de carga de `Storage` y `Product.ImageFileId`, que `CAT-04` había agregado. Lo
+que falta es el pegamento, y quedó anotado arriba como candidato a `CAT-05`. No se abrió: **un
+slice a la vez**, y `CAT-04` estaba abierto. El owner mandó cerrarlo primero.
+
+**Lo que se hizo:** una transacción de corrección, tramo 6 del spec, commit `a9575a5`.
+
+| Hallazgo | Qué era | Cómo se cerró |
+| --- | --- | --- |
+| `A` | El `422` de precio-sin-moneda salía con código de dominio y **sin el mapa `errors`**: ningún validador lo atajaba | Regla en los dos sentidos, cada uno apuntando al campo que hay que corregir |
+| `F` | La regla de `Currency` comprobaba sólo el largo; el dominio además exige letras, así que `"123"` la atravesaba | `Matches("^[A-Za-z]{3}$")` además de `Length(3)` |
+| `D` | Reglas duplicadas textualmente entre los dos validadores: corregir una dejaba `POST` y `PUT` validando distinto | `ProductWriteRules`, incluido por los dos con `Include()`. Los comandos implementan `IProductWriteCommand` |
+| `E` | `ProductDetails` era posicional con los dos `string?` en posiciones no adyacentes: intercambiarlos **compilaba** | Propiedades `init`; sólo se construye por nombre |
+| `B` | La violación de la FK con `RESTRICT` no estaba traducida: salía `500` | **Se traduce**, por nombre de constraint (`SDD-CT-06`) |
+
+**Decisión sobre `B`, que el tramo 5 dejó abierta: se traduce, no se declara deuda.** El
+argumento para postergarla —«hoy no hay endpoint que borre una tasa»— es justamente la condición
+que puede cambiar sin que nadie se acuerde de la rama que falta. Cuesta diez líneas.
+
+**Cambio de contrato, declarado y no escondido.** `CA-CAT-04-06` pedía `422` con el código
+`catalog.product.price_currency_mismatch`; con validador ese caso pasa a `422 validation.failed`
+**con el mapa `errors`**. **El criterio y la tabla de «Riesgos» del propio spec se contradecían**
+—la tabla pedía «invariante de dominio **y** validador»— y es exactamente lo que el hallazgo `A`
+señaló. Gana la tabla: es lo que ya hacían los otros dos invariantes de `CAT-04`. El código de
+dominio sigue vivo como red de abajo, cubierto por las unitarias.
+
+**Evidencia.** RED de las 5 pruebas nuevas por el motivo correcto —`Expected: "validation.failed"`
+en cuatro, `DbUpdateException` sin traducir en la quinta—; GREEN con unitarias `44/44`,
+arquitectura `16/16`, integración de `catalog` `55/55`. **Regresión de la solución: 265 en
+verde**, con los 5 fallos de `SDD-CT-14` verificados **por nombre**. `dotnet format
+--verify-no-changes` no reporta ninguno de los seis archivos tocados.
+
+**Trampa de entorno nueva:** `dotnet restore` falla con **`NU1903`** sobre `SSH.NET 2025.1.0`,
+vulnerabilidad alta tratada como error, que entra por `Testcontainers.PostgreSql` y frena **todos**
+los proyectos de integración. Se esquivó en local con `-p:NuGetAudit=false`, **sin tocar
+configuración del repo**. Es preexistente y va a frenar CI.
+
+**Qué queda.** Un solo bloqueo, y no es técnico: **el gate `CAT-00`**, en `qep-frontend`. Se
+verificó que ese checkout está en `develop` —la rama correcta— antes de citarlo, que es la
+lección del 2026-08-11. **No se tocó el otro repo.**
+
+### 2026-08-15 — `CAT-03` y `CAT-04` commiteados; runtime y revisión de 4 lentes de `CAT-04`
+
+**Estado: `CAT-04` sigue `In Progress`.** El runtime salió **11 de 11** y la revisión con
+lentes ciegos dejó **6 hallazgos**, ninguno en el lente de riesgo. No cierra por eso y por el
+gate.
+
+**El árbol de trabajo se partió en tres commits**, sobre `feature/catalog-api`:
+
+| Commit | Qué | Tamaño |
+|---|---|---|
+| `e1630a3` | `feat(CAT-03)` — tasas de impuesto completas, con su spec | +2404 / −11 |
+| `85b87c8` | `feat(CAT-04)` — `ProductDetails`, FK a `TaxRate`, migración y pruebas | +1818 / −49 |
+| `21fcf35` | `docs(CAT-03,CAT-04)` — este ledger | +460 / −10 |
+
+Tres archivos estaban compartidos entre los dos slices —`CatalogDtos.cs`, `CatalogDbContext.cs`
+y el `ModelSnapshot`— y se cortaron por hunks para que cada commit fuera un slice entero.
+`e1630a3` se verificó compilando **en un worktree aparte**: `Modules.Catalog.UnitTests` en
+verde, 0 errores `CS`.
+
+**Se midió antes de commitear, como manda `convenciones-de-id.md`, y los dos slices se pasan
+del umbral:** `CAT-03` ~1480 líneas autoradas y `CAT-04` ~1115, contra los ~400 de referencia.
+`CAT-03` había previsto 500-650 y declarado partición `a`/`b`; **la previsión quedó corta por
+casi tres veces.** Se decidió no partir los commits retroactivamente porque hacerlo obligaba a
+cortar por hunks también `TaxRateApiTests.cs` (579 líneas) y el registro de handlers. **Lección
+para el próximo slice: la estimación de tamaño no está midiendo las pruebas de integración**,
+que en los dos casos fueron más de la mitad del volumen.
+
+**Regresión completa, con `Api.exe` detenido:**
+
+```txt
+Modules.Catalog.UnitTests         44/44
+Modules.Catalog.IntegrationTests  50/50
+ArchitectureTests                 16/16
+Modules.Tenancy.IntegrationTests  52/57  ← los 5 de SDD-CT-14, por nombre
+```
+
+Los 5 en rojo son `LogoutRevokesTheSessionCookie`,
+`RoleDowngradeRemovesPermissionsOnTheNextRequest`,
+`SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken`,
+`MutatingRequestWithoutCsrfHeaderIsRejected` y
+`SuspendingMembershipRevokesTheMembersActiveSession` — todos de `RealAuthenticationApiTests`.
+Cero regresión.
+
+**Runtime de `CAT-04`: 11 de 11.** Evidencia completa en el **tramo 4** del spec. Lo que más
+valía verificar en vivo:
+
+- **`CA-CAT-04-10`, la auditoría, se probó por lo que NO escribió.** El outbox quedó con 5
+  entradas —4 `created` y **1** `updated`— y los **7 pedidos rechazados no dejaron ninguna**.
+  El `occurred_at` del `updated` coincide al microsegundo con el `updatedAt` que devolvió el
+  `PUT`: misma transacción.
+- **`CA-CAT-04-11` salió con datos reales.** Los 4 productos que dejó el runtime de `CAT-02`
+  el 2026-08-11 son anteriores a la migración y se leen con las cinco columnas en `NULL`.
+- **`CA-CAT-04-07` no persistió**, verificado por `count(*)` en base y no por el status.
+
+**Revisión con 4 lentes ciegos — salda la deuda de método de `CAT-03`.** El lente de **riesgo
+salió limpio**, que es el resultado que importa: la frontera de aislamiento entre tenants era
+la razón declarada para exigir esta revisión. Los 6 hallazgos, con su detalle en el tramo 5 del
+spec:
+
+| # | Lente | Qué | De quién es |
+|---|---|---|---|
+| `A` | Fiabilidad | El `422` de `CA-CAT-04-06` no lleva el mapa `errors`: falta la regla que empareje `Price` y `Currency` en los dos validadores | `CAT-04` |
+| `B` | Resiliencia | `23503` sobre la FK nueva no está traducido en `CatalogUnitOfWork` | `CAT-04`, no alcanzable por HTTP hoy |
+| `C` | Resiliencia | `ApiExceptionHandler` devuelve `exception.Message` sin distinguir entorno | **No es de `catalog`** |
+| `D` | Legibilidad | Las tres reglas nuevas están duplicadas entre los dos validadores | `CAT-04` |
+| `E` | Legibilidad | `ProductDetails` es posicional con dos `string?` no adyacentes: intercambiarlos compila | `CAT-04` |
+| `F` | Legibilidad | La regla de `Currency` sólo mira el largo; el dominio además exige letras | `CAT-04` |
+
+**`A` es el que más pesa, y lo encontraron dos lentes por separado.** Contradice la tabla de
+«Riesgos» del propio spec de `CAT-04`, que pide «invariante de dominio **y** validador». El
+runtime lo confirmó en vivo, y **la prueba de integración no lo detecta** porque afirma sobre
+el status y el código, nunca sobre `errors`.
+
+**Dos hallazgos de entorno, verificados:**
+
+- **`launchSettings.json` pisa las variables de entorno.** Sus dos perfiles fijan
+  `Authentication__UseDevelopmentStub=false` y `applicationUrl=http://localhost:5000`, así que
+  exportar la variable antes de `dotnet run` **no alcanza**: hay que pedir
+  `--no-launch-profile`. El `CLAUDE.md` decía que se pide con la variable; con eso solo, no.
+- **`NU1903`: `SSH.NET 2025.1.0` tiene una vulnerabilidad de gravedad alta**
+  (`GHSA-q939-rpr3-3284`), entra como transitiva y con `TreatWarningsAsErrors` **rompe el
+  build** de `Modules.Catalog.IntegrationTests` y `ArchitectureTests`. Verificado como
+  preexistente en `e7060f0`, anterior a este trabajo. Se sorteó con
+  `-p:WarningsNotAsErrors=NU1903` **sólo en línea de comandos**, sin tocar el repo. **Va a
+  frenar CI**, y no es de ningún slice: es dependencia.
+
+**Handoff.** Lo que sigue, en orden: decidir sobre los hallazgos `A`, `D`, `E` y `F`, que son
+de `CAT-04`; decidir si `B` se corrige o se declara deuda; abrir `DECISIÓN-PENDIENTE` por `C` y
+otra por `NU1903`; y **acordar con `qep-frontend` el alcance del gate `CAT-00`**, que declara
+`Product` con «Ningún campo más» y es el bloqueo formal que impide cerrar el slice.
+
+### 2026-08-13 (cont.) — Runtime de `CAT-03`: 11 de 11, con la auditoría probada en base
+
+Los 11 criterios verificados endpoint por endpoint contra la API local con PostgreSQL real.
+Evidencia completa —comandos, códigos de estado y cuerpos— en el **tramo 6** del spec.
+
+**Lo que más valía verificar en vivo, y salió bien:** `CA-CAT-03-11` devuelve **`422
+catalog.tax_rate.name_taken`, no 500**. Es la forma exacta de `SDD-CT-06`, y confirma que la
+discriminación **por nombre de índice** distingue `IX_tax_rates_tenant_name` de
+`IX_products_tenant_code` con los dos índices vivos en el mismo esquema.
+
+**La atomicidad se probó por lo que NO escribió**, que es la única forma de probarla:
+
+```txt
+ catalog.tax_rate.created     | 4      <- los 4 201, ni una mas
+ catalog.tax_rate.deactivated | 1
+ catalog.tax_rate.updated     | 1
+```
+
+El `403`, los **seis** `422` y los tres `404` no dejaron una sola fila de outbox.
+
+**Dos hallazgos del runtime, ninguno bloqueante:**
+
+1. **El mapa `errors` sale en el idioma del SO del servidor** (`"'Name' no debería estar
+   vacío."`). **Es el mismo hallazgo 2 del runtime de `CAT-02`, sin corregir.** Que reaparezca en
+   un recurso nuevo confirma que es sistémico, no del slice. Importa para el frontend.
+2. **El `compose.yaml` de este repo no sirve para el entorno local tal como está configurado.**
+   La cadena de user-secrets apunta a `localhost:5433` —el contenedor `postgres18` del
+   developer— y el compose crea `qep` en **5432**. Con Docker abajo, la API muere al arrancar en
+   `TenancyDatabaseInitializer` con `Failed to connect to 127.0.0.1:5433`. **Para levantar la API
+   hay que arrancar `postgres18`, no `docker compose up`.** No está en el README.
+
+**Datos de prueba que quedaron:** cuatro tasas en `dev_lulo_crm_v2`, tenants `…000c31` y
+`…000c32`, con sus 6 filas de outbox. No se borraron, mismo criterio que con los cuatro productos
+de `CAT-02`.
+
+### 2026-08-13 (cont.) — Revisión de `CAT-03`: un bloqueante propio, corregido
+
+**Fue una autorrevisión, y se declara como deuda de método.** El método pide cuatro lentes
+**ciegos entre sí**; acá los aplicó quien escribió el código. Vale menos que la de `CAT-02`,
+donde dos lentes independientes convergieron en el token de concurrencia y esa convergencia fue
+lo que lo movió a bloqueante.
+
+**Hallazgo `A`, bloqueante, corregido: `Version` existía y nada lo ejercitaba.** El spec lo
+vendía como mejora sobre `Product` —"nace con el agregado"— pero lo único que lo respaldaba era
+una unitaria que assertaba `Assert.Equal(2, taxRate.Version)`: **un contador en memoria**. No
+probaba que `IsConcurrencyToken()` estuviera mapeado, ni que el `UPDATE` llevara la versión en su
+`WHERE`, ni que `DbUpdateConcurrencyException` se tradujera. `Product` sí tenía esa prueba;
+`CAT-03` copió la columna y no la prueba.
+
+**Es la misma familia que el peor hallazgo de `CAT-02`:** una afirmación con una prueba verde
+encima que no prueba lo afirmado.
+
+**Y la corrección se verificó saboteando el mecanismo**, que es lo que `CAT-02` enseñó a exigir.
+Quitando `.IsConcurrencyToken()` del `CatalogDbContext`, la prueba nueva se pone roja con el
+motivo correcto:
+
+```txt
+Assert.Throws() Failure: No exception was thrown
+Expected: typeof(BuildingBlocks.Application.RequestConcurrencyException)
+```
+
+Restaurado: `Correctas! - Con error: 0, Superado: 37, Total: 37`.
+
+**Seguimiento, no corregido — `B` y `C` son decisión de producto y no las toma quien implementa:**
+
+- **`B`** — desactivar una tasa **no libera su nombre**: el índice único no tiene filtro parcial
+  por `is_active`, así que recrearla devuelve `422 name_taken` mientras la lista de activas está
+  vacía. `Product.code` tiene lo mismo; este slice lo duplicó.
+- **`C`** — `GET T/tax-rates` devuelve también las inactivas. Quien arme una cotización recibe una
+  tasa desactivada, y elegirla mueve los totales.
+- **`D`** — el reparto por rol no tiene prueba: mover `TaxRateManage` a `tenancy.member` pasa las
+  37 pruebas, aunque el gate lo ratificó como `high`.
+- **`E`** — el mensaje veneno de `AuditProjectionWorker` suma un tercer productor a la cola
+  compartida. Sigue mereciendo `SDD-CT`.
+
+### 2026-08-13 (cont.) — Integración en verde y el defecto que sólo aparecía en runtime
+
+Se levantó Docker Desktop y corrieron las de integración. **Primera corrida: 18 de 18 en rojo**,
+todas `InternalServerError`, mientras las 18 de `Product` pasaban.
+
+**El gotcha que hay que llevarse de acá, y vale para todo caso de uso nuevo del backend: los
+handlers se registran UNO POR UNO a mano en `QepServiceCollectionExtensions`, no por escaneo de
+ensamblado.** Los cinco de tasas faltaban. El caso de uso compila, el endpoint mapea, la política
+resuelve — y el `IRequestDispatcher` no encuentra a quién despachar, así que **500**. Es
+exactamente el mismo modo de falla que un permiso sin su `AddPolicy`, y el síntoma no se parece a
+la causa en ninguno de los dos. **Un caso de uso nuevo tiene dos mitades, igual que un permiso.**
+
+**Y una lección de método sobre el helper de prueba.** El fallo llegaba como
+`ArgumentNullException : Value cannot be null. (Parameter 'collection')`, que no dice nada. La
+causa era que `ListAsync` deserializaba el cuerpo **sin assertar el status**: un `500` deserializa
+igual a `TaxRatesResponse` con `Items` en `null`. Corregido el helper para assertar `OK` antes de
+leer el cuerpo, el fallo pasó a decir `Expected: OK / Actual: InternalServerError`. **Un helper
+que no assertea el status convierte cualquier error de servidor en un `NullReference` a diez
+líneas de distancia.**
+
+**Evidencia final:**
+
+```txt
+dotnet test Backend.slnx
+Con error! - Con error: 5, Superado: 52, Total: 57 - Modules.Tenancy.IntegrationTests.dll
+Correctas!  - Con error: 0, Superado: 36, Total: 36 - Modules.Catalog.IntegrationTests.dll
+Correctas!  - Con error: 0, Superado: 31, Total: 31 - Modules.Catalog.UnitTests.dll
+Correctas!  - Con error: 0, Superado: 16, Total: 16 - ArchitectureTests.dll
+(resto de los ensamblados, todos en verde)
+```
+
+**233 en verde, 5 en rojo.** Los 5 son los de `SDD-CT-14`, verificados **por nombre**:
+`LogoutRevokesTheSessionCookie`, `RoleDowngradeRemovesPermissionsOnTheNextRequest`,
+`SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken`,
+`MutatingRequestWithoutCsrfHeaderIsRejected`,
+`SuspendingMembershipRevokesTheMembersActiveSession`. **Cero regresión.** `dotnet format` sin
+hallazgos en las rutas del slice.
+
+**`CAT-03` sigue `In Progress`.** Faltan el runtime contra la API local y la **revisión
+adversarial de 4 lentes**, que es obligatoria porque el slice toca permisos.
+
+### 2026-08-13 — `CAT-03` implementado de punta a punta, **sin ejecutar las de integración**
+
+**Estado: `CAT-03` sigue `In Progress`.** El código está completo —dominio, persistencia,
+migración, permisos y los cinco endpoints— pero **no cumple el DoD** y no se puede cerrar.
+
+**Lo verificado, con evidencia literal:**
+
+| Qué | Resultado |
+|---|---|
+| RED del dominio | `error CS0103: El nombre 'TaxRate' no existe en el contexto actual` |
+| GREEN del dominio | `Superado: 31, Total: 31` — eran 13, o sea 18 nuevos |
+| Arquitectura | `Superado: 16, Total: 16`, sin regresión |
+| Build | `Compilación correcta. 0 Advertencia(s), 0 Errores` |
+| `dotnet format` | Sin hallazgos en las rutas del slice |
+| Migración | `20260813135959_AddTaxRates` — `catalog.tax_rates`, 8 columnas, 2 índices; `Down()` borra sólo esa tabla |
+
+**Lo que bloquea el cierre, y es una sola cosa: Docker Desktop no está corriendo.**
+`docker info` responde `failed to connect to the docker API at
+npipe:////./pipe/dockerDesktopLinuxEngine`. `TaxRateApiTests.cs` está escrito con los 11
+criterios cubiertos, pero **no se ejecutó nunca**. Una prueba escrita y no corrida no es
+evidencia. Falta también el runtime, la regresión completa —los 5 fallos de `SDD-CT-14` se
+verifican **por nombre**— y la revisión de 4 lentes.
+
+**Para retomar:** levantar Docker Desktop y correr
+`dotnet test tests/Modules/Catalog/Modules.Catalog.IntegrationTests`.
+
+**`DECISIÓN-PENDIENTE-CAT-05` se resolvió por defecto asumido, no por ratificación.** Se preguntó
+dos veces sin respuesta, así que se implementó la recomendación —`name` único por tenant, con
+`IX_tax_rates_tenant_name` y `422 catalog.tax_rate.name_taken`—. **Todavía no hay datos**, así que
+cambiarla cuesta una migración vacía; después de la primera carga, no.
+
+**Una prueba de `CAT-02` se borró a propósito.**
+`ProductWriteApiTests.TaxRatePermissionsAreNotPublishedBeforeTheirSliceExists` afirmaba que
+`catalog.tax_rate` **no** aparece en `/authorization/catalog`. Su propio comentario decía que se
+borraba cuando `CAT-03` trajera los permisos con su implementación. Su reemplazo, `CA-CAT-03-10`,
+afirma lo contrario y además verifica que **la política resuelva** — la mitad que, si falta, da
+500 en vez de 403.
+
+**Un cambio de comportamiento fuera del recurso, declarado:** el mensaje de
+`concurrency.conflict` en `CatalogUnitOfWork` pasó de *"The product changed…"* a *"The catalog
+record changed…"*. El `catch` lo comparten los dos agregados. El `code`, que es el contrato, no
+cambió, y ninguna prueba assertaba sobre ese texto.
+
+**La partición `CAT-03a`/`CAT-03b` se ejecutó como estaba declarada**, en secuencia y en la misma
+sesión. No hizo falta partir el commit.
+
+**Sin commit.**
+
+### 2026-08-12 — Apertura de `CAT-03`: spec escrito, sin código, con dos decisiones abiertas
+
+**Estado:** `CAT-03` pasa a `In Progress`. Se escribió
+[`03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md`](../03-modulos/catalog/slices/CAT-03-api-de-tasas-de-impuesto.md)
+con 11 criterios de aceptación. **No se escribió una sola línea de código** — el spec es el
+primer artefacto, y el tramo 1 arranca por el RED del dominio `TaxRate`.
+
+**La partición se declaró antes, no después.** `CAT-03a` (dominio, persistencia, migración,
+permisos y los dos `GET`) y `CAT-03b` (escrituras y validadores), con ~250 y ~300 líneas
+estimadas. `CAT-02` se midió en 1043 líneas recién al querer commitear y hubo que partirlo
+retroactivamente; acá la previsión está escrita desde el arranque, con la salvedad explícita de
+que si `CAT-03a` mide menos de 400 no se parte.
+
+**De dónde salió el trabajo.** El owner pidió enriquecer `Product` con nombre, descripción,
+código, imagen, estado, precio, impuesto, moneda, stock y escala de precios. Contrastado contra
+la descomposición de módulos y contra el código, esa lista cruzaba tres fronteras:
+
+| Campo | Resolución del owner, 2026-08-12 |
+|---|---|
+| `nombre`, `código`, `estado` | Ya existen en `Product` |
+| `descripción`, `imagen`, `precio`, `moneda` | Entran a `catalog` — son `CAT-04` |
+| `impuesto` | FK a `TaxRate`, que no existe: por eso `CAT-03` va primero |
+| `escala de precios` | Queda en `pricing`, como el gate y `RN-030`..`RN-037` ya declaraban |
+| **`stock`** | **Fuera del alcance del proyecto** |
+
+**Por qué `stock` salió, que es la decisión que más ahorra:** no tenía `RF` que lo sustentara
+—regla dura, "no inventar"— ni módulo en el mapa de seis. Y como `int` en `Product`, movido
+desde `orders`, era el mismo *lost update* que la revisión de 4 lentes encontró en `CAT-02`,
+pero sin historial para auditarlo. Sacarlo ahora costó una línea.
+
+**Lo que queda pendiente y hay que resolver, en este orden:**
+
+1. **`DECISIÓN-PENDIENTE-CAT-05` — ¿el `name` de una tasa es único por tenant?** Bloquea la
+   migración `AddTaxRates`, **no** el tramo 1. Recomendación registrada en el spec: sí, con
+   `IX_tax_rates_tenant_name` y `422 catalog.tax_rate.name_taken`. Agregar el índice después es
+   migración sobre datos ya sucios.
+2. **`DECISIÓN-PENDIENTE-CAT-06` — precedencia de precio contra `pricing`.** Bloquea `CAT-04`.
+   Se preguntó y quedó sin respuesta explícita, así que **se asumió un default y se dejó
+   escrito** en el spec: gana `pricing`, `Product.Price` es precio base de fallback. Si el owner
+   quiere lo contrario, se cambia una línea del spec y no hay código que rehacer.
+3. **Escribir en el gate `CAT-00` las tres decisiones de la tabla de arriba.** El gate cerró
+   declarando el modelo de `Product` con **"Ningún campo más"**, y vive en
+   `qep-frontend/sdd/03-modulos/catalog/gate.md`, que es autoridad del otro repo. **No se tocó
+   desde este lado.** Sin eso, quien lea el gate dentro de dos semanas ve la lista vieja y tiene
+   razón.
+
+**Verificado contra el código antes de escribir el spec, no citado de memoria:** `Product` hoy
+tiene `Id`, `TenantId`, `Name`, `Code`, `IsActive`, `Version`, `CreatedAt`, `UpdatedAt`
+(`Product.cs:40-66`); `CatalogPermissions` tiene sólo los dos de producto, y su comentario
+(`CatalogPermissions.cs:6-12`) declara que los de `tax_rate` "vuelven con `CAT-03`, junto a su
+implementación"; y las políticas se registran a mano en
+`QepServiceCollectionExtensions.cs:359-364`. El checkout de `qep-frontend` estaba en `develop`
+al leer el gate — comprobado, porque el 2026-08-11 leerlo desde una rama vieja produjo dos
+hallazgos falsos.
+
+**Sin commit.** El trabajo de esta sesión son dos archivos de `sdd/`: el spec nuevo y este
+ledger.
+
+### 2026-08-11 — Remediación del RBAC: paso 1 **aplicado**, corte detenido antes del paso 2
+
+**Los manifiestos NO viven en este repositorio.** Se escribieron primero en `ops/` y se
+movieron el mismo día, borrados de acá sin haber llegado a commitearse. El motivo no es de
+prolijidad: el `ClusterRole` y su `ClusterRoleBinding` están declarados en
+`migracion-k8s/k8s/platform/azure-devops-agent/rbac.yaml`, que es un recurso de **kustomize**.
+El paso 3 borra el `ClusterRoleBinding`, y el próximo `kubectl apply -k` de ese directorio
+**lo vuelve a crear, en silencio**. Remediar desde `qep-backend` estaba garantizado a
+revertirse en el siguiente apply de plataforma.
+
+La regla que queda: el corte no es "¿es RBAC?", es **"¿de quién es el radio?"**. Lo que sólo
+afecta a `prod-qep-backend` puede vivir acá —`ops/rbac-deployer-secrets.yaml` lo hace—; lo que
+cruza namespaces es de plataforma.
+
+| Archivo, en `migracion-k8s` | Paso | Estado |
+| --- | --- | --- |
+| `k8s/platform/azure-devops-agent/rolebindings.yaml` | 1 — 25 RoleBindings | **aplicado** el 2026-08-11 |
+| `k8s/platform/azure-devops-agent/rbac.yaml` | 2 — partir el ClusterRole | declarado, **sin aplicar** |
+| `kustomization.yaml`, `README.md`, `docs/04-migracion-azure-devops.md` | contexto | actualizados |
+
+**Los 3 dudosos se resolvieron, y ninguno lleva `RoleBinding`:** `sonarqube` va por
+`kubectl apply -k` sobre `cp-01`, `ingress-smoke` por `scripts/deploy-ingress-smoke-test.sh`
+y `cnpg-system`/`barman-cloud` por el playbook `84-cnpg-backups.yml`. La lista de 25 derivada
+del `regcred` era exacta.
+
+**Aplicado:** `kubectl apply -f ops/rbac-deployer-rolebindings.yaml` → 25 `created`.
+Verificado: 25 `RoleBinding` con `roleRef=azure-devops-deployer`, el `ClusterRoleBinding`
+sigue vivo, y `auth can-i create deployments` sigue dando `yes` en `prod-qep-backend`,
+`prod-lulo-erp-backend`, `sonarqube` y `cnpg-system`. **Cero cambio observable**, que es lo
+esperado: RBAC es unión y mientras el `ClusterRoleBinding` exista los permisos se suman.
+
+**El rollback ya no necesita un archivo aparte:** el `ClusterRoleBinding` que el paso 3
+destruye está versionado en el git de `migracion-k8s`, así que deshacerlo es `git revert` del
+commit que lo quitó, más el apply. Eso hizo innecesario el `ops/rbac-deployer-rollback.yaml`
+que se había escrito acá.
+
+**Detenido antes del paso 2, por decisión del owner el 2026-08-11.** Los pasos 2 y 3 son el
+corte: afectan a las 25 aplicaciones a la vez y el `ClusterRole` es infraestructura
+compartida de devops. El paso 1 es el único que se podía dar sin certeza, porque una lista
+incompleta no hace daño mientras el `ClusterRoleBinding` cubra a todos.
+
+**Ya no falta ningún dato:** el repo de plataforma respondió las dos preguntas que se le
+iban a hacer a devops. Lo que queda es la decisión de correr el corte.
+
+**Trampa armada, a sabiendas:** `rbac.yaml` ya declara el estado post-migración, así que **el
+próximo `kubectl apply -k k8s/platform/azure-devops-agent` ejecuta el paso 2**, incluso si se
+corre por otra razón —rotar el PAT, por ejemplo—. Está anunciado en un banner al tope del
+archivo. Para el corte conviene `apply -f rbac.yaml -f rolebindings.yaml`, no `-k`.
+
+**Falsa alarma descartada:** el `--dry-run=server` reportaba `secret/azure-devops-agent-pat
+configured`, que parecía que un apply iba a pisar el PAT vivo. No: comparados por SHA-256 el
+local y el del clúster son idénticos (84 bytes, mismo hash). El `configured` lo produce
+`stringData`, que es campo de sólo escritura y el servidor nunca devuelve, así que el parche
+de tres vías nunca sale vacío. Vale para cualquier Secret aplicado con `stringData`.
+
+**Bloqueante concreto del paso 3:** `cnpg-system`, `ingress-smoke` y `sonarqube` no tienen
+`RoleBinding`. Si el pipeline los despliega, el paso 3 les corta el deploy. No se puede
+resolver desde el clúster —`kubectl-client-side-apply` no prueba el actor—; lo resuelven las
+definiciones de pipeline en Azure DevOps.
+
+**Trampa de YAML que costó dos intentos:** los anchors (`&labels` / `*labels`) **no cruzan
+documentos**. El `---` los invalida y `kubectl` corta con `unknown anchor`. En un archivo
+multi-documento los bloques van repetidos. Y `Get-Content` en PowerShell 5.1 lee UTF-8 como
+ANSI: reconstruir un archivo con acentos por ese camino lo deja en mojibake.
+
+### 2026-08-11 — Limpieza de Secrets huérfanos en `prod-qep-backend`: uno borrado, uno retenido
+
+Fuera del alcance del método (`DECISIÓN-PENDIENTE-INFRA-01`). Salió al auditar el radio de
+exposición del hallazgo de RBAC: de los 6 Secrets del namespace, 3 no los referencia nadie.
+
+**Borrado: `api-qep-qcode-co-tls`** (TLS, cert-manager, creado el 2026-08-05). Huérfano
+probado, no inferido: **ningún objeto `Certificate` lo posee** —el único que existe es
+`qep-api-qcode-co-tls`, así que cert-manager no lo iba a renovar ni recrear—, ningún Pod,
+ServiceAccount ni Ingress lo referencia, y `k8s/prod-wildcard-certificate.yaml` apunta a
+`lulocrm-wildcard-tls`, otro nombre. Sobró de un rename de host: sus `alt-names` son
+`api-qep.qcode.co` y el Ingress vivo sirve `qep-api.qcode.co`. Post-borrado el `Certificate`
+en uso sigue `Ready=True`. Reversible: cert-manager lo reemite si alguna vez hiciera falta.
+
+**Retenido por decisión del owner: `prod-qep-backend`** (Opaque, 2026-08-02). Nada lo
+referencia —el Deployment consume `qep-backend-secret` por `envFrom.secretRef` y nada más—,
+así que borrarlo no rompería lo que corre. **Pero no es config vieja de la app: son
+credenciales de base**, con el juego de claves de CloudNativePG (`database`, `host`,
+`password`, `port`, `uri`, `username`). Tiene las **mismas claves y los mismos tamaños byte a
+byte** que `qep-postgres`, lo que lo hacía parecer un duplicado inocuo.
+
+**No lo es.** Comparados por `SHA-256` de `.data` —sin imprimir ningún valor— dan distinto:
+`3554e7fe…0e01de2` contra `af0edbbe…6c6aab`. Mismas claves, mismos tamaños, contenido
+diferente. Borrarlo destruye valores únicos y es irreversible, así que se frenó y el owner
+decidió conservarlo.
+
+**Queda abierto:** cuál de los dos passwords es el vigente. Los dos son del 2026-08-02 y
+`qep-backend-secret` es del 2026-08-11, posterior a la rotación del incidente de ese día, lo
+que sugiere que ambos quedaron pre-rotación — pero eso es lectura de fechas, no verificación.
+Se resuelve contra CNPG en el namespace `database`, no leyendo los valores. `qep-postgres`
+está en la misma situación y tampoco se tocó.
+
+**Técnica reusable:** comparar dos Secrets por hash de `.data` prueba o descarta que sean
+idénticos sin exponerlos. El valor entra a una variable y sólo sale el hash. Es la forma de
+decidir un borrado sin romper la regla de no imprimir secretos.
+
+### 2026-08-11 — Plan de remediación del RBAC del deployer (propuesto, no aplicado)
+
+Fuera del alcance del método por `DECISIÓN-PENDIENTE-INFRA-01`: no lleva slice ni spec. Entra
+acá porque la exención no alcanza al handoff.
+
+**Se re-verificó el hallazgo anterior contra `contabo-prod` con comandos read-only** (`get`,
+`auth can-i`). El núcleo se sostiene íntegro: el `ClusterRole` `azure-devops-deployer` tiene
+exactamente las cuatro reglas documentadas, lo ata **un solo** `ClusterRoleBinding` sin ningún
+`RoleBinding`, no hay `pod-security.kubernetes.io/enforce` en ningún namespace, no hay
+webhook de admisión que restrinja pods y no hay `ValidatingAdmissionPolicy` alguna. La SA
+sigue sin poder crear `roles`, `rolebindings`, `serviceaccounts`, `pods`, `daemonsets` ni
+`statefulsets`.
+
+**Cuatro correcciones a lo que decía el handoff anterior:**
+
+1. **Son 38 namespaces, no 15.** El radio de acción es 2,5× lo documentado.
+2. **`monitoring` tiene 34 Secrets** —el mayor depósito del clúster, casi 5× `database`— y el
+   handoff no lo mencionaba. `database` tiene 7 y `prod-qep-backend` 6.
+3. **La SA tiene `patch` y `update` sobre `namespaces` en todo el clúster.** PSA se configura
+   con etiquetas **en el objeto Namespace**, así que activar Pod Security Admission sin
+   quitarle antes ese permiso es decorativo: el agente comprometido borra la etiqueta. **El
+   orden de la remediación no es negociable por esto.**
+4. **La SA no tiene `delete` en ningún recurso.** Un `RoleBinding` faltante se manifiesta como
+   `Forbidden` en el `apply` y rompe el pipeline en rojo — falla ruidosa, no silenciosa. Eso
+   es lo que hace tolerable la migración.
+
+**Y una distinción que el handoff anterior mezclaba:** montar un Secret en un Pod es legal
+bajo `baseline` **y** bajo `restricted`. PSA **no** cierra el robo de Secrets; cierra el salto
+de Pod privilegiado a nodo. Lo que cierra el robo de Secrets es acotar el RBAC. Son dos
+controles para dos amenazas distintas, no uno redundante.
+
+**Inventario de consumidores.** Un único sujeto usa el `ClusterRole`: la SA
+`azure-devops-agent`. Los namespaces con cargas aplicadas por `kubectl-client-side-apply`
+—firma del pipeline compartido `devops/pipeline-templates` `k8s/deploy.yml`— son **27**, más
+`prod-carnivore-bot`, que tiene Service e Ingress sin Deployment. `n8n` está **vacío**: sólo un
+PVC de 10 GiB, sin carga. Todo lo de `helm` (monitoring, cert-manager, ingress-nginx,
+cilium, metrics-server) y lo del operador CNPG (`database`) **no** lo despliega el agente.
+Salvedad: `kubectl-client-side-apply` no prueba el actor —un admin con kubectl deja la misma
+firma—, así que la lista autoritativa son las definiciones de pipeline en Azure DevOps y la
+confirma devops, no este inventario.
+
+**Estado PSA de las cargas actuales, calculado desde los specs de los 93 pods** (sin
+`--dry-run`, que es escritura): incumplen `baseline` sólo `kube-system` (14 de 17),
+`monitoring` (6 de 15), `ingress-nginx` (2 de 2) y `sonarqube` (1). **Los 28 namespaces de
+aplicación, `azure-devops-agent`, `database`, `cert-manager` y `cnpg-system` cumplen `baseline`
+hoy, sin tocar un manifiesto.** Más: `database`, `cert-manager` y `cnpg-system` cumplen
+`restricted` completo. `kube-system` **no puede** llevar `baseline` —son los componentes del
+plano de control— así que PSA no lo protege; lo protege el paso 1.
+
+**Plan propuesto a devops, en este orden:**
+
+1. Crear los `RoleBinding` por namespace contra el mismo `ClusterRole` (un `RoleBinding` a un
+   `ClusterRole` sólo concede en su namespace: no hacen falta 28 `Role`). Aditivo, riesgo cero,
+   sin ventana.
+2. Quitar `namespaces` de las reglas del `ClusterRole` y moverlo a uno residual con
+   `get`/`list`/`watch` únicamente. Cierra el vector del punto 3.
+
+   **Esto no cuesta nada, y se puede probar.** El único reparo era que el pipeline aplica
+   `k8s/<env>-namespace.yaml` como primer manifiesto, y `namespaces` es cluster-scoped: un
+   `RoleBinding` no lo puede conceder. Pero el namespace **ya está creado antes** de que el
+   pipeline corra. La cadena: los 25 namespaces que despliega el agente tienen un Secret
+   `regcred` de tipo `kubernetes.io/dockerconfigjson` —sin él la imagen de Docker Hub no baja
+   y los pods quedan en `ImagePullBackOff`—; los 25 los gestiona `kubectl-client-side-apply`;
+   y la SA tiene `create secrets = no` en **todos** ellos salvo `prod-qep-backend`, donde el
+   `Role` acotado se creó el 2026-08-11, mucho después. Un Secret no puede existir en un
+   namespace inexistente. Por lo tanto **una persona con kubectl ya crea el namespace y su
+   `regcred` en cada onboarding**, y el `apply` del manifiesto de namespace es un no-op sobre
+   un objeto que siempre preexiste.
+
+   Consecuencia operativa, que es el mejor argumento a favor de todo el plan: **la migración
+   no inventa un proceso manual nuevo, extiende uno que ya existe.** El `RoleBinding` se suma
+   al runbook de alta que hoy ya tiene "crear namespace + crear regcred". Un renglón más.
+3. Borrar el `ClusterRoleBinding`. **Único paso destructivo, un solo objeto, rollback =
+   volver a aplicarlo.**
+4. PSA por olas: `database` a `restricted`; los 28 de aplicación a `baseline`;
+   `kube-system`, `ingress-nginx`, `monitoring` y `sonarqube` a `privileged` explícito con
+   `audit=baseline`.
+
+**Riesgo que queda aceptado:** el agente conserva `create`/`patch` sobre cargas en los ~28
+namespaces que despliega, y por lo tanto puede leer los Secrets de esos namespaces —incluidos
+los 6 de `prod-qep-backend`, con la cadena de conexión. Es inherente a ser el deployer y no lo
+arregla el RBAC. Lo que la migración compra es sacar de ese radio a `kube-system`, `database`,
+`monitoring`, `cert-manager`, `cnpg-system` e `ingress-nginx`.
+
+**No se aplicó nada y no se ejecutó ninguna prueba de explotación.** Todo sale de `get` y de
+`auth can-i`, que es evaluación. Ningún valor de Secret se leyó: los conteos salen de
+`get secrets` sin `-o`, que no imprime `.data`.
 
 ### 2026-08-11 — Auditoría de RBAC: el `Role` acotado no es una frontera real
 

@@ -354,29 +354,11 @@ public sealed class ProductWriteApiTests
         Assert.Empty(percent);
     }
 
-    /// <summary>
-    /// Los permisos de tasas de impuesto son de CAT-03, declarado fuera de alcance en el spec
-    /// de CAT-02. Publicarlos antes hace que un owner cargue hoy un permiso de gestión sobre
-    /// algo que no existe, y que el frontend lo lea de /authorization/me como si existiera.
-    /// Esta prueba se borra cuando CAT-03 los traiga con su implementación.
-    /// </summary>
-    [Fact]
-    public async Task TaxRatePermissionsAreNotPublishedBeforeTheirSliceExists()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(
-            factory, SubjectId, TenantId, [.. ManagePermissions, "tenancy.membership.read"]);
-
-        var response = await client.GetAsync(
-            $"/api/v1/tenants/{TenantId}/authorization/catalog",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync(
-            TestContext.Current.CancellationToken);
-        Assert.DoesNotContain("catalog.tax_rate", body, StringComparison.Ordinal);
-    }
+    // TaxRatePermissionsAreNotPublishedBeforeTheirSliceExists vivía acá y se borró en CAT-03,
+    // tal como su propio comentario anticipaba: afirmaba que catalog.tax_rate NO aparece en
+    // /authorization/catalog, y CAT-03 trajo los dos permisos junto con sus endpoints. Su
+    // reemplazo es CA-CAT-03-10 en TaxRateApiTests, que ahora afirma lo contrario y además
+    // verifica que la política resuelva.
 
     /// <summary>
     /// Hallazgo A de la revisión de CAT-02, al que llegaron por separado los lentes de
@@ -423,7 +405,8 @@ public sealed class ProductWriteApiTests
         Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
 
         // Recién ahora escribe el primero, sobre una copia que ya no refleja la base.
-        stale.Update("Vela de soja premium", "VS-002", DateTimeOffset.UtcNow);
+        stale.Update(
+            "Vela de soja premium", "VS-002", ProductDetails.Empty, DateTimeOffset.UtcNow);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
             () => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));

@@ -97,6 +97,33 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeactivateProductCommand, ProductDto>,
             DeactivateProductHandler>();
+        // Los handlers se registran uno por uno, no por escaneo de ensamblado. Un caso de uso
+        // nuevo que se olvide acá compila, mapea su endpoint y falla recién en runtime con 500
+        // al no poder resolverlo el dispatcher — el mismo modo de falla que un permiso sin su
+        // AddPolicy. Los cinco de tasas costaron una corrida entera de las pruebas de
+        // integración: 18 de 18 en rojo con InternalServerError.
+        services.AddScoped<
+            IQueryHandler<ListTaxRatesQuery, IReadOnlyList<TaxRateDto>>,
+            ListTaxRatesHandler>();
+        services.AddScoped<
+            IQueryHandler<GetTaxRateQuery, TaxRateDto>,
+            GetTaxRateHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateTaxRateCommand, TaxRateDto>,
+            CreateTaxRateHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateTaxRateCommand, TaxRateDto>,
+            UpdateTaxRateHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateTaxRateCommand, TaxRateDto>,
+            DeactivateTaxRateHandler>();
+        // CAT-06. Los handlers se registran a mano, uno por uno: olvidarse de esta línea deja el
+        // endpoint mapeado y el dispatcher sin a quién llamar, y el síntoma es **500, no 404** —
+        // no se parece en nada a la causa. Es el mismo defecto que el README documenta para las
+        // políticas de permiso.
+        services.AddScoped<
+            ICommandHandler<DeleteTaxRateCommand, TaxRateDeletedResult>,
+            DeleteTaxRateHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddAuditInfrastructure(configuration);
@@ -105,6 +132,12 @@ public static class QepServiceCollectionExtensions
         services.AddNotificationsInfrastructure(configuration);
         services.AddStorageInfrastructure(configuration);
         services.AddCatalogInfrastructure(configuration);
+
+        // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
+        // ningún módulo referencia al otro, el composition root los cablea. Va después de los
+        // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
+        services.AddScoped<IProductImageLookup, ProductImageLookup>();
+
         AddAuthorizationCapability(services);
         services.AddQepObservability(configuration, environment);
         AddAuthentication(services, configuration, environment);
@@ -140,7 +173,9 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileDelete,
                 StoragePermissions.FilePublish,
                 CatalogPermissions.ProductRead,
-                CatalogPermissions.ProductManage
+                CatalogPermissions.ProductManage,
+                CatalogPermissions.TaxRateRead,
+                CatalogPermissions.TaxRateManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -151,7 +186,10 @@ public static class QepServiceCollectionExtensions
             [
                 TenancyPermissions.SettingsRead,
                 TenancyPermissions.MembershipRead,
-                CatalogPermissions.ProductRead
+                CatalogPermissions.ProductRead,
+                // Sólo lectura: cambiar una tasa mueve los totales de toda cotización, así que
+                // TaxRateManage es high y queda en tenancy.owner. Ratificado en el gate CAT-00.
+                CatalogPermissions.TaxRateRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -219,6 +257,18 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar e inactivar productos.",
             "Catalog",
             "medium"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.TaxRateRead,
+            "Leer tasas de impuesto",
+            "Permite consultar las tasas de impuesto del tenant.",
+            "Catalog",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.TaxRateManage,
+            "Gestionar tasas de impuesto",
+            "Permite crear, editar e inactivar tasas de impuesto.",
+            "Catalog",
+            "high"));
     }
 
     private static void AddAuthentication(
@@ -361,7 +411,17 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, CatalogPermissions.ProductRead))
             .AddPolicy(
                 CatalogPermissions.ProductManage,
-                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage));
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage))
+            // La otra mitad del permiso. Sin esta política RequireAuthorization no resuelve y el
+            // síntoma es 500, no 403 — un error que no se parece en nada a su causa. Por eso
+            // CA-CAT-03-10 verifica que la política resuelva, y no sólo que el permiso figure en
+            // el catálogo.
+            .AddPolicy(
+                CatalogPermissions.TaxRateRead,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateRead))
+            .AddPolicy(
+                CatalogPermissions.TaxRateManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateManage));
     }
 
     private static void AddPermissionRequirement(
