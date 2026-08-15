@@ -53,6 +53,12 @@ es que los que hay **contradicen decisiones ya tomadas**. Verificado el 2026-08-
 | `price` y `currency` **requeridos** | opcionales, y acoplados entre sí | Un producto sin precio es válido |
 | `/api/v1/catalog/products` | `/api/v1/tenants/{tenantId}/catalog/products` | Sin `tenantId` da 404 |
 
+> **Hecho el 2026-08-15**, en `qep-frontend`: commits `94a538c` (código) y `a6e92f4` (spec de
+> `CAT-01`). Suite `510/510`, `tsc -b` y `oxlint` limpios, `vite build` correcto. Se retiraron
+> los tres campos fuera de contrato, las rutas pasan a llevar el tenant, la imagen se sube contra
+> `Storage` de verdad y se retiró el mock de catálogo. **El ledger de ese repo no se tocó**:
+> tenía cambios de su developer staged sin commitear.
+
 **El spec de `CAT-01` ya lo había previsto:** abrió `DECISIÓN-PENDIENTE-CAT-01-02` con la
 instrucción literal de *"no cerrar el slice con estos campos como contrato hasta resolverla"*. Las
 decisiones del owner del 2026-08-12 la resolvieron y el frontend no se enteró. **Alinearlo es
