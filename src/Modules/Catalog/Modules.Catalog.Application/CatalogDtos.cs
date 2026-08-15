@@ -5,6 +5,11 @@ public sealed record ProductDto(
     string Name,
     string Code,
     bool IsActive,
+    string? Description,
+    Guid? ImageFileId,
+    decimal? Price,
+    string? Currency,
+    Guid? TaxRateId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -13,6 +18,11 @@ public sealed record ProductResponse(
     string Name,
     string Code,
     bool IsActive,
+    string? Description,
+    Guid? ImageFileId,
+    decimal? Price,
+    string? Currency,
+    Guid? TaxRateId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -22,9 +32,26 @@ public sealed record ProductsResponse(IReadOnlyCollection<ProductResponse> Items
 // /deactivate. Un booleano editable convertiría la desactivación en un PUT común y la
 // dejaría sin su propia entrada de auditoría, el mismo razonamiento que mantuvo suspender
 // aparte de editar roles en AUTH-06.
-public sealed record CreateProductRequest(string Name, string Code);
+//
+// Los cinco de CAT-04 sí viajan, y son opcionales: un producto sin ninguno sigue siendo válido.
+// En el PUT, mandarlos en null los **limpia** — el verbo reemplaza el recurso entero.
+public sealed record CreateProductRequest(
+    string Name,
+    string Code,
+    string? Description,
+    Guid? ImageFileId,
+    decimal? Price,
+    string? Currency,
+    Guid? TaxRateId);
 
-public sealed record UpdateProductRequest(string Name, string Code);
+public sealed record UpdateProductRequest(
+    string Name,
+    string Code,
+    string? Description,
+    Guid? ImageFileId,
+    decimal? Price,
+    string? Currency,
+    Guid? TaxRateId);
 
 public sealed record TaxRateDto(
     Guid Id,

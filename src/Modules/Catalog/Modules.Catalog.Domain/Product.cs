@@ -25,12 +25,14 @@ public sealed class Product
         Guid tenantId,
         string name,
         string code,
+        ProductDetails details,
         DateTimeOffset occurredAt)
     {
         Id = id;
         TenantId = tenantId;
         Name = name;
         Code = code;
+        Apply(details);
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -47,6 +49,39 @@ public sealed class Product
     public string Code { get; private set; }
 
     public bool IsActive { get; private set; }
+
+    // --- CAT-04: propiedades opcionales. Los cinco nacen nullable porque hay productos ya
+    // cargados: una columna NOT NULL sin default los rompe, y un default inventado sería peor
+    // —un precio 0 es un dato falso que se ve igual que uno real.
+
+    public string? Description { get; private set; }
+
+    /// <summary>
+    /// Cuál de los archivos del producto es su imagen principal. **Referencia blanda, sin FK.**
+    ///
+    /// `Storage` ya modela la propiedad al revés —`CreateFileRequest` lleva `OwnerId` y
+    /// `OwnerType`— pero eso responde *qué archivos pertenecen a este producto*, que pueden ser
+    /// varios. *Cuál es la portada* es dato del catálogo, no del almacenamiento.
+    ///
+    /// Sin foreign key a propósito: `catalog` no puede referenciar `storage.file_resources` sin
+    /// romper "ningún módulo lee las tablas de otro".
+    /// </summary>
+    public Guid? ImageFileId { get; private set; }
+
+    /// <summary>
+    /// Precio **base** de lista. `pricing` lo sobrescribe cuando exista
+    /// (`DECISIÓN-PENDIENTE-CAT-06`); éste es el fallback cuando ninguna lista resuelve.
+    /// </summary>
+    public decimal? Price { get; private set; }
+
+    /// <summary>Código ISO-4217 de tres letras, en mayúsculas. Va con <see cref="Price"/>.</summary>
+    public string? Currency { get; private set; }
+
+    /// <summary>
+    /// Tasa de impuesto del producto. La FK de base garantiza que la fila exista, **pero no que
+    /// sea del mismo tenant**: eso lo verifica el handler antes de asignarla.
+    /// </summary>
+    public TaxRateId? TaxRateId { get; private set; }
 
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Tenant</c> y <c>Membership</c>. Cada mutación
@@ -70,17 +105,37 @@ public sealed class Product
         Guid tenantId,
         string name,
         string code,
+        ProductDetails details,
         DateTimeOffset occurredAt) =>
-        new(id, tenantId, NormalizeName(name), NormalizeCode(code), occurredAt);
+        new(id, tenantId, NormalizeName(name), NormalizeCode(code), details, occurredAt);
 
-    public void Update(string name, string code, DateTimeOffset occurredAt)
+    public void Update(
+        string name,
+        string code,
+        ProductDetails details,
+        DateTimeOffset occurredAt)
     {
         EnsureActive();
 
         Name = NormalizeName(name);
         Code = NormalizeCode(code);
+        Apply(details);
         Version++;
         UpdatedAt = occurredAt;
+    }
+
+    // Asigna los cinco siempre, incluidos los null. Se puede **limpiar** un campo, no sólo
+    // setearlo: una implementación que ignore los null "para no pisar" deja campos imborrables y
+    // pasa todas las demás pruebas. Por eso CA-CAT-04-03 existe.
+    private void Apply(ProductDetails details)
+    {
+        var normalized = details.Normalized();
+
+        Description = normalized.Description;
+        ImageFileId = normalized.ImageFileId;
+        Price = normalized.Price;
+        Currency = normalized.Currency;
+        TaxRateId = normalized.TaxRateId;
     }
 
     public void Deactivate(DateTimeOffset occurredAt)

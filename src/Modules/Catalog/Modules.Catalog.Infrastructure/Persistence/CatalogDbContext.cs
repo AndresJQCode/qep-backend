@@ -36,6 +36,36 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("code")
             .HasMaxLength(Product.CodeMaxLength);
         product.Property(value => value.IsActive).HasColumnName("is_active");
+        // CAT-04. Los cinco nullable: hay productos ya cargados y una columna NOT NULL sin
+        // default los rompe.
+        product.Property(value => value.Description)
+            .HasColumnName("description")
+            .HasMaxLength(ProductDetails.DescriptionMaxLength);
+        // Sin FK: apunta a storage.file_resources, y catalog no referencia las tablas de otro
+        // módulo. Es un Guid suelto, como cualquier referencia entre módulos de este monolito.
+        product.Property(value => value.ImageFileId).HasColumnName("image_file_id");
+        product.Property(value => value.Price)
+            .HasColumnName("price")
+            .HasPrecision(18, 2);
+        product.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasMaxLength(ProductDetails.CurrencyLength)
+            .IsFixedLength();
+        product.Property(value => value.TaxRateId)
+            .HasColumnName("tax_rate_id")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new TaxRateId(value.Value) : null);
+        // Acá sí hay FK: las dos tablas viven en el esquema catalog, del mismo módulo. RESTRICT y
+        // no CASCADE — borrar una tasa no debe borrar productos.
+        //
+        // Pero la FK NO sabe de tenants: garantiza que la fila exista, no que sea del tenant del
+        // producto. Eso lo verifica ProductTaxRateResolver en el handler, y lo cubre
+        // CA-CAT-04-07.
+        product.HasOne<TaxRate>()
+            .WithMany()
+            .HasForeignKey(value => value.TaxRateId)
+            .OnDelete(DeleteBehavior.Restrict);
         product.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();

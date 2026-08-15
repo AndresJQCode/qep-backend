@@ -9,7 +9,12 @@ public sealed record UpdateProductCommand(
     Guid TenantId,
     Guid ProductId,
     string Name,
-    string Code) : ICommand<ProductDto>;
+    string Code,
+    string? Description,
+    Guid? ImageFileId,
+    decimal? Price,
+    string? Currency,
+    Guid? TaxRateId) : ICommand<ProductDto>;
 
 public sealed class UpdateProductValidator : AbstractValidator<UpdateProductCommand>
 {
@@ -21,11 +26,20 @@ public sealed class UpdateProductValidator : AbstractValidator<UpdateProductComm
         RuleFor(command => command.Code)
             .NotEmpty()
             .MaximumLength(Product.CodeMaxLength);
+        RuleFor(command => command.Description)
+            .MaximumLength(ProductDetails.DescriptionMaxLength);
+        RuleFor(command => command.Price)
+            .GreaterThanOrEqualTo(0m)
+            .When(command => command.Price.HasValue);
+        RuleFor(command => command.Currency)
+            .Length(ProductDetails.CurrencyLength)
+            .When(command => !string.IsNullOrWhiteSpace(command.Currency));
     }
 }
 
 public sealed class UpdateProductHandler(
     IProductRepository repository,
+    ITaxRateRepository taxRateRepository,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -46,8 +60,24 @@ public sealed class UpdateProductHandler(
             command.TenantId, new ProductId(command.ProductId), cancellationToken)
             ?? throw ProductNotFound.For(command.ProductId);
 
+        var taxRateId = await ProductTaxRateResolver.ResolveAsync(
+            taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
+
         var now = clock.UtcNow;
-        product.Update(command.Name, command.Code, now);
+
+        // Los cinco campos se mandan siempre, incluidos los null: el PUT reemplaza el recurso
+        // entero, así que un campo ausente se limpia. Es lo que verifica CA-CAT-04-03.
+        product.Update(
+            command.Name,
+            command.Code,
+            new ProductDetails(
+                command.Description,
+                command.ImageFileId,
+                command.Price,
+                command.Currency,
+                taxRateId),
+            now);
+
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

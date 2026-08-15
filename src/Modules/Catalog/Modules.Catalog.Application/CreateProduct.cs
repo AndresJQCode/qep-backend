@@ -5,8 +5,15 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
-public sealed record CreateProductCommand(Guid TenantId, string Name, string Code)
-    : ICommand<ProductDto>;
+public sealed record CreateProductCommand(
+    Guid TenantId,
+    string Name,
+    string Code,
+    string? Description,
+    Guid? ImageFileId,
+    decimal? Price,
+    string? Currency,
+    Guid? TaxRateId) : ICommand<ProductDto>;
 
 // El dominio hace cumplir las mismas reglas y tiraría un 422 con un solo código. El validador
 // existe para que la respuesta lleve el mapa de errores por campo que ApiExceptionHandler arma
@@ -21,11 +28,20 @@ public sealed class CreateProductValidator : AbstractValidator<CreateProductComm
         RuleFor(command => command.Code)
             .NotEmpty()
             .MaximumLength(Product.CodeMaxLength);
+        RuleFor(command => command.Description)
+            .MaximumLength(ProductDetails.DescriptionMaxLength);
+        RuleFor(command => command.Price)
+            .GreaterThanOrEqualTo(0m)
+            .When(command => command.Price.HasValue);
+        RuleFor(command => command.Currency)
+            .Length(ProductDetails.CurrencyLength)
+            .When(command => !string.IsNullOrWhiteSpace(command.Currency));
     }
 }
 
 public sealed class CreateProductHandler(
     IProductRepository repository,
+    ITaxRateRepository taxRateRepository,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -46,9 +62,24 @@ public sealed class CreateProductHandler(
             executionContext, command.TenantId, CatalogPermissions.ProductManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
+        // Antes de construir el agregado: la FK garantiza que la tasa exista, no que sea de este
+        // tenant. Ver ProductTaxRateResolver.
+        var taxRateId = await ProductTaxRateResolver.ResolveAsync(
+            taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
+
         var now = clock.UtcNow;
         var product = Product.Create(
-            ProductId.New(), command.TenantId, command.Name, command.Code, now);
+            ProductId.New(),
+            command.TenantId,
+            command.Name,
+            command.Code,
+            new ProductDetails(
+                command.Description,
+                command.ImageFileId,
+                command.Price,
+                command.Currency,
+                taxRateId),
+            now);
 
         repository.Add(product);
         auditPublisher.Publish(

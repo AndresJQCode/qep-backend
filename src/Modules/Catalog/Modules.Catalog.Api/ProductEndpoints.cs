@@ -83,7 +83,15 @@ public static class ProductEndpoints
         CancellationToken cancellationToken)
     {
         var product = await dispatcher.SendAsync(
-            new CreateProductCommand(tenantId, request.Name, request.Code),
+            new CreateProductCommand(
+                tenantId,
+                request.Name,
+                request.Code,
+                request.Description,
+                request.ImageFileId,
+                request.Price,
+                request.Currency,
+                request.TaxRateId),
             cancellationToken);
 
         return Results.Created(
@@ -99,7 +107,16 @@ public static class ProductEndpoints
         CancellationToken cancellationToken)
     {
         var product = await dispatcher.SendAsync(
-            new UpdateProductCommand(tenantId, productId, request.Name, request.Code),
+            new UpdateProductCommand(
+                tenantId,
+                productId,
+                request.Name,
+                request.Code,
+                request.Description,
+                request.ImageFileId,
+                request.Price,
+                request.Currency,
+                request.TaxRateId),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
@@ -123,6 +140,11 @@ public static class ProductEndpoints
         product.Name,
         product.Code,
         product.IsActive,
+        product.Description,
+        product.ImageFileId,
+        product.Price,
+        product.Currency,
+        product.TaxRateId,
         product.CreatedAt,
         product.UpdatedAt);
 }
