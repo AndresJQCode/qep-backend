@@ -47,6 +47,17 @@ public static class ProductEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // La vuelta de deactivate (CAT-07). Verbo dedicado y no un isActive editable en el PUT,
+        // que es la decisión que CAT-02b ya tomó para el camino de ida: un booleano en el PUT
+        // dejaría el cambio de estado sin evento de auditoría propio y sin invariante que lo
+        // custodie. Sin permiso nuevo — activar es administrar.
+        group.MapPost("/products/{productId:guid}/activate", ActivateProductAsync)
+            .RequireAuthorization(CatalogPermissions.ProductManage)
+            .Produces<ProductResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -130,6 +141,19 @@ public static class ProductEndpoints
     {
         var product = await dispatcher.SendAsync(
             new DeactivateProductCommand(tenantId, productId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(product));
+    }
+
+    private static async Task<IResult> ActivateProductAsync(
+        Guid tenantId,
+        Guid productId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var product = await dispatcher.SendAsync(
+            new ActivateProductCommand(tenantId, productId),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));

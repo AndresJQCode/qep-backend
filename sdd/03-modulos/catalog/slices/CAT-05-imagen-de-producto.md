@@ -49,8 +49,22 @@ Y `FileOwnerType` ni siquiera **tiene** `Product`: sólo `User`, `Entity` y `Sys
 
 - **Subir el archivo.** Es de `Storage` y ya funciona. Este slice no toca el flujo de carga.
 - **Borrar la imagen de `Storage` al desasignarla.** Ver `DECISIÓN-PENDIENTE-CAT-08`.
-- **Varias imágenes por producto.** `Storage` ya responde *qué archivos son de este producto* por
-  `OwnerId`/`OwnerType`; `Product.ImageFileId` responde *cuál es la portada*, que es una sola.
+- **Varias imágenes por producto.** `Product.ImageFileId` responde *cuál es la portada*, que es
+  una sola. La galería es de `Storage`, que sí guarda a qué producto pertenece cada archivo por
+  `OwnerId`/`OwnerType`.
+
+  > **Corregido el 2026-08-16, con el slice ya cerrado.** Este ítem decía que «`Storage` ya
+  > responde *qué archivos son de este producto* por `OwnerId`/`OwnerType`». **Es falso, y no lo
+  > era tampoco cuando se escribió:** `IFileResourceRepository.SearchAsync` filtra por `tenantId`,
+  > `search`, `status`, `kind`, `category`, `tag` y paginación — **`OwnerId` no está**. Los dos
+  > campos se escriben al crear el archivo y se devuelven en `FileResourceResponse`, pero no hay
+  > forma de **consultar** por ellos: el dato entra y no sale.
+  >
+  > La exclusión de alcance **sigue en pie** —este slice es la portada, no la galería—, pero se
+  > justificó con una capacidad que nadie verificó contra el código. La galería necesita su
+  > propio slice: el filtro por owner en `SearchAsync` y su query param en el listado de
+  > `Storage`. `SDD-ADR-01`: gana el código, y el documento se corrige.
+
 - **Todo el frontend.** Los cinco campos de `CAT-04` todavía no están en `qep-frontend`, y
   `catalog.api.ts` apunta a rutas sin `tenantId`. Es fila del ledger del **otro** repo.
 - **Firmar URLs de descarga por producto.** Ver decisión 4.
@@ -401,6 +415,7 @@ van `N/A`: es un slice de backend.
 | --- | --- |
 | `DECISIÓN-PENDIENTE-CAT-08` — ¿desasignar la portada borra el archivo? Implementado que **no** | Decisión de producto |
 | `DECISIÓN-PENDIENTE-CAT-09` — ¿la portada debe pertenecer al producto? Implementado que **no** se exige | Decisión de producto |
+| **La galería de varias fotos por producto no es consultable.** `SearchAsync` no filtra por `OwnerId`, así que los archivos marcados como del producto no se pueden listar. Ver la corrección del 2026-08-16 en «Fuera de alcance» | Slice nuevo de `Storage`, todavía sin ID |
 | `FindManyAsync` hace una lectura por id | `IFileResourceRepository` no tiene método por lote, y agregárselo es cambiarle el contrato a `Storage` desde afuera. Lo pide su dueño cuando duela |
 | Los cinco campos de `CAT-04` y `imageUrl` **no están en el frontend** | Fila del ledger de `qep-frontend` (`CAT-01`) |
 | Hallazgo `C` de `CAT-04` — `ApiExceptionHandler` filtra `exception.Message` | `src/Api`, afecta a todos los módulos |
