@@ -270,10 +270,57 @@ forma degradada.
 Desktop se cayó a mitad de sesión**: los 147 fallos de integración de la primera regresión fueron
 todos `DockerUnavailableException` en 10-11 segundos uniformes, ninguno llegó a una aserción.
 
+### Tramo 3 — runtime contra la API local: 10 de 10 (2026-08-17)
+
+Los nueve criterios endpoint por endpoint contra `http://localhost:5199`, más el desdoblamiento de
+`CA-CAT-07-09` en sus dos mitades. **Todos en verde:**
+
+```txt
+  OK   CA-CAT-07-02  -> 422   already_active
+  OK   CA-CAT-07-06  -> 403   sigue inactivo en base: f
+  OK   CA-CAT-07-05  -> 404
+  OK   CA-CAT-07-04  -> 404   el ajeno sigue inactivo: f
+  OK   CA-CAT-07-09a -> 422   code_taken
+  OK   CA-CAT-07-01  -> 200   isActive:true / base: t
+  OK   CA-CAT-07-09b -> t     activar el primero responde 200 y queda activo
+  OK   CA-CAT-07-08  -> 3     updated_at > created_at: t
+  OK   CA-CAT-07-03  -> 200   nombre actualizado
+  OK   CA-CAT-07-07  -> 1     una sola activación exitosa; los 422 y 403 no dejaron fila
+```
+
+**`CA-CAT-07-02` se probó primero, sobre el producto todavía activo**, que es su orden natural:
+un producto recién creado ya está activo, así que el rechazo se ejercita sin preparar nada.
+
+**`CA-CAT-07-04` y `CA-CAT-07-06` se verificaron en base, no por status HTTP.** Después del 404 y
+del 403, `SELECT is_active` devolvió `f` en los dos casos: el efecto no ocurrió, y no sólo la
+respuesta lo dice.
+
+**`CA-CAT-07-07`, por lo que escribió y por lo que no.** Una fila `catalog.product.activated` en
+`platform.outbox_messages` sobre el producto, con `resourceId` apuntándole. Sobre ese mismo
+producto hubo **tres** intentos de activación —el 422 de `-02`, el 403 de `-06` y el 200 de `-01`—
+y el outbox tiene **una** fila: el rechazo y la transacción abortan juntos.
+
+#### Los dos «fallos» de la primera corrida eran del verificador
+
+Vale registrarlos porque los dos se parecían a defectos del slice y ninguno lo era:
+
+1. **`CA-CAT-07-07` dio 0 eventos.** El script filtraba por `payload->>'entityId'`, y el campo del
+   payload de auditoría se llama **`resourceId`**. La consulta sin filtro devolvía 1 desde el
+   principio. Un verificador que busca por un campo inexistente **siempre** devuelve cero, que es
+   indistinguible de «la auditoría no se escribió».
+2. **`CA-CAT-07-06` reportó `4` en vez de `403`.** Truncamiento al capturar el `%{http_code}` de
+   `curl.exe`. El `curl.exe` crudo devuelve `http_code=403`.
+
+**Trampa de entorno de esta sesión: Docker Desktop se cayó dos veces.** La segunda dejó los dos
+puertos de PostgreSQL cerrados y sin servicio nativo, así que el runtime no podía ni arrancar —la
+cadena de conexión es requerida. Confirmado que la base es `dev_lulo_crm_v2`, la única del
+contenedor `postgres18` con esquema `catalog`, buscándola por `information_schema.schemata` y no
+por memoria.
+
 ### Tramos pendientes
 
 | Tramo | Qué falta |
 |---|---|
-| Runtime | Los criterios contra la API local, con la auditoría verificada en base |
 | Gate | La **sexta** operación de `products` en `CAT-00`, que vive en `qep-frontend`. Sin esto no cumple el DoD |
 | Revisión | Pendiente de decidir: `CAT-05` y `CAT-06` se autorrevisaron, y este slice toca frontera de tenant y permisos |
+| Ledger | La entrada de handoff de esta sesión en `sdd/02-plan/plan-maestro.md` |
