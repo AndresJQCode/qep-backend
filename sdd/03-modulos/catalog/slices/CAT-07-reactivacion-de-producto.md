@@ -1,6 +1,6 @@
 # `CAT-07` — Reactivación de producto
 
-> **Estado:** **In Progress** — abierto el 2026-08-15
+> **Estado:** **Complete** — 2026-08-17, abierto el 2026-08-15
 > **Módulo:** `catalog` — ficha y gate en `qep-frontend/sdd/03-modulos/catalog/`
 > **Depende de:** `CAT-02b` (`Complete`) — creó `Product.Deactivate` y el invariante
 > `EnsureActive`; `CAT-04` (`Complete`) — creó `ProductDetails` y la FK a `TaxRate`
@@ -317,10 +317,56 @@ cadena de conexión es requerida. Confirmado que la base es `dev_lulo_crm_v2`, l
 contenedor `postgres18` con esquema `catalog`, buscándola por `information_schema.schemata` y no
 por memoria.
 
-### Tramos pendientes
+### Tramo 4 — el gate, la revisión y el cierre (2026-08-17)
 
-| Tramo | Qué falta |
-|---|---|
-| Gate | La **sexta** operación de `products` en `CAT-00`, que vive en `qep-frontend`. Sin esto no cumple el DoD |
-| Revisión | Pendiente de decidir: `CAT-05` y `CAT-06` se autorrevisaron, y este slice toca frontera de tenant y permisos |
-| Ledger | La entrada de handoff de esta sesión en `sdd/02-plan/plan-maestro.md` |
+**El gate `CAT-00` corrió.** Se agregó la sexta operación de `products` al contrato, en
+`qep-frontend` (`84710cd`, mergeado a `develop` en `8efaa9d`). De paso se corrigió un conteo que ya
+estaba mal: decía «las diez operaciones coinciden **una a una** con las que el frontend ya
+consume», y eso quedó falso el 2026-08-15 cuando `CAT-06` sumó el `DELETE` sin tocar la frase.
+Ahora son **doce**, y queda declarado que `activate` es la única que el frontend **no** consume
+—no hay `activateProduct` en `catalog.api.ts`, verificado—. Es el caso inverso al de
+`deleteTaxRate`, donde el frontend iba adelante y el backend debía.
+
+**Se escribió sin pisarle el árbol de trabajo al otro developer:** `qep-frontend` estaba en
+`explore/admin-shell-redesign`, así que se usó un **worktree** aparte en vez de cambiarle la rama.
+Y la base fue `develop` **local**, no `origin/develop`, que tenía 8 commits sin publicar —incluido
+`17bbdfe`—: arrancar del remoto habría borrado el `DELETE` de `CAT-06` del gate.
+
+**Revisión con lente ciego, y con eso se salda la deuda de método.** `CAT-05` y `CAT-06` se
+autorrevisaron; éste no. Riesgo **medio** —disparado por el cambio ejecutable en
+`QepServiceCollectionExtensions.cs`—, un lente `review-reliability`, **cero hallazgos
+bloqueantes**, receipt `review-46e2905483eb87ae`.
+
+El lente marcó dos huecos de cobertura —carreras de concurrencia sobre `Version` y activación
+entrelazada con desactivación— y los clasificó **preexistentes**, no introducidos: `Deactivate` y
+`Update` cargan el mismo hueco en la base, y `Activate` sólo iguala ese nivel. Esa clasificación es
+la parte que vale; un lente que llamara «hallazgo» a eso no serviría para nada.
+
+**Lo que se hizo en el orden equivocado, y se declara.** Los merges y el push salieron **antes** de
+la revisión, con lo que el gate `pre-push` respondió `allow` por la razón incómoda:
+
+```txt
+"reason": "the publication range is empty: every commit reachable from HEAD is already
+           published on the push destination, so this push delivers nothing and no
+           review receipt governs it"
+```
+
+El receipt existe y está `approved`, pero **no gobernó esta entrega**. No se reescribe historia
+publicada por un resultado sin hallazgos; queda como regla para el próximo slice: revisar, validar
+el gate, y recién ahí publicar.
+
+### Cierre — `Complete` el 2026-08-17
+
+**Los 9 criterios cubiertos por prueba automática y verificados en runtime.** Los ítems de UI van
+`N/A`: es un slice de backend. El ítem «`dotnet format` sin hallazgos en las rutas del slice» queda
+cumplido de forma **degradada**, declarado arriba.
+
+**Lo que este slice deja abierto, y no es suyo:**
+
+| Qué | Dónde vive |
+| --- | --- |
+| **`TaxRate` tiene la misma asimetría que tenía `Product`** — `Deactivate` sin vuelta | Slice nuevo de `catalog`, sin ID todavía. El camino ya está trazado por éste |
+| La galería de varias fotos por producto | Slice nuevo de `Storage`, sin ID — ver la corrección del 2026-08-16 al spec de `CAT-05` |
+| Cualquier botón de reactivar en la UI | Fila del ledger de `qep-frontend` |
+| `dotnet format` falla en todo el repositorio | Deuda preexistente, ya registrada en el ledger |
+| `NU1903` sobre `SSH.NET` | Dependencia transitiva; va a frenar CI |

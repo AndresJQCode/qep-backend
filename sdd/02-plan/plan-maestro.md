@@ -26,8 +26,9 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **`CAT-07` — reactivación de producto**, `In Progress` desde el 2026-08-15. Spec en [`03-modulos/catalog/slices/CAT-07-reactivacion-de-producto.md`](../03-modulos/catalog/slices/CAT-07-reactivacion-de-producto.md), con 9 criterios. **Abierto y sin una línea de código todavía**, verificado el 2026-08-16: `rg Activate src/Modules/Catalog` sólo devuelve `Deactivate` —no hay `ActivateProduct.cs`, ni endpoint `/activate`, ni prueba— y la sección «Evidencia de cierre» del spec dice literal *«Pendiente — el slice está abierto»*. **El spec está sin commitear** (`??` en `git status`), que es lo que hizo que este campo quedara diciendo «Ninguno». **Este campo estuvo mal desde el 2026-08-15 y se corrigió el 2026-08-16:** al cerrar `CAT-06` se escribió «Ninguno, y no se abrió nada nuevo», y después en la misma sesión se abrió `CAT-07` sin volver acá. La tabla de slices sí lo tenía bien |
-| Último slice cerrado | **`CAT-06` — borrado de tasa de impuesto**, `Complete` el 2026-08-15, abierto el mismo día. `DELETE` con la restricción que la FK `RESTRICT` de `CAT-04` ya imponía, devuelta como **422 `catalog.tax_rate.in_use`** en vez de 500. **Commiteado en `35346ea` (`feat`) y `1de7d5a` (`docs`).** Integración de `catalog` `77/77`, regresión con **299 en verde** y los 5 de `SDD-CT-14` por nombre, **runtime 8 de 8**. Evidencia completa en su fila de la tabla de slices y en el handoff del 2026-08-15. **Rotado el 2026-08-16:** este campo decía `CAT-04`, que dejó de ser el último cuando `CAT-05` y `CAT-06` cerraron después, el mismo día |
+| Slice activo | **Ninguno.** `CAT-07` cerró el 2026-08-17 y no se abrió nada nuevo: **un slice a la vez en este repositorio**. **Antes de abrir el próximo, leer «Qué sigue» abajo:** hay dos candidatos sin ID —la galería de fotos por producto y la reactivación de `TaxRate`— y ninguno está elegido |
+| Último slice cerrado | **`CAT-07` — reactivación de producto**, `Complete` el 2026-08-17, abierto el 2026-08-15. `POST .../products/{productId}/activate`, la mitad faltante de `RF-020`: hasta este slice un producto inactivo era **terminal**. **Commiteado en `d8fdd81` y `5a9d092` (`feat`), `77d11ce`, `412d2a6`, `17473eb` y `afbbdb3` (`docs`)**, mergeado a `develop` (`14bd6a6`) y a `main` (`4d4d9c8`). Unitarias `59/59`, arquitectura `17/17` sin cambios, integración de `catalog` `86/86`, regresión **312 en verde**, **runtime 10 de 10**. **Corrió el gate `CAT-00`** (`84710cd` en `qep-frontend`). **Salda la deuda de método:** revisado con **lente ciego**, `review-reliability`, **cero hallazgos bloqueantes**, receipt `review-46e2905483eb87ae`. **Lo que salió en orden equivocado:** el push fue antes de la revisión, así que el gate `pre-push` respondió `allow` con `reason: "the publication range is empty"` — el receipt existe pero no gobernó la entrega |
+| Slice cerrado antes | **`CAT-06` — borrado de tasa de impuesto**, `Complete` el 2026-08-15, abierto el mismo día. `DELETE` con la restricción que la FK `RESTRICT` de `CAT-04` ya imponía, devuelta como **422 `catalog.tax_rate.in_use`** en vez de 500. **Commiteado en `35346ea` (`feat`) y `1de7d5a` (`docs`).** Integración de `catalog` `77/77`, regresión con **299 en verde** y los 5 de `SDD-CT-14` por nombre, **runtime 8 de 8**. Evidencia completa en su fila de la tabla de slices y en el handoff del 2026-08-15. **Rotado el 2026-08-16:** este campo decía `CAT-04`, que dejó de ser el último cuando `CAT-05` y `CAT-06` cerraron después, el mismo día |
 | Slice anterior | **`CAT-05` — imagen de producto**, `Complete` el 2026-08-15. El pegamento con `Storage`: cierra la fuga entre tenants que `CAT-04` había dejado abierta en `ImageFileId`, con el puerto `IProductImageLookup` en `catalog` y el adaptador en `Bootstrapper`. **Commiteado en `fee92ef` (`feat`) y `be8d802` (`docs`).** Unitarias `55/55`, arquitectura `17/17`, integración `69/69`, regresión con **291 en verde**, **runtime 16 de 16**. **Spec corregido el 2026-08-16**: justificaba dejar la galería fuera de alcance diciendo que `Storage` ya listaba los archivos de un producto por `OwnerId`, y `SearchAsync` no filtra por owner. La exclusión sigue en pie; la razón era falsa. **Deuda de método: fue autorrevisión, no 4 lentes ciegos.** **Rotado el 2026-08-16:** este campo decía `CAT-03` con estado `In Progress`, que además ya era `Complete` desde el 2026-08-13 |
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
@@ -36,12 +37,21 @@ historial de chat.
 
 ### Próxima acción ejecutable
 
-**El slice activo es `CAT-07` — reactivación de producto**, abierto el 2026-08-15 y todavía sin
-código. Este párrafo decía «No hay slice activo en este repositorio», y **quedó falso el mismo día
-en que se escribió**: se redactó al cerrar `CAT-06` y después, en la misma sesión, se abrió
-`CAT-07` sin volver acá. Corregido el 2026-08-16 contra el código y `git status`.
+**No hay slice activo en este repositorio.** `CAT-07` cerró el 2026-08-17 y no se abrió nada
+nuevo.
 
-**Lo que sí cerró**: `CAT-04` y `CAT-05` el 2026-08-15, y con ellos **la capacidad completa de
+**Hay dos candidatos, ninguno elegido y ninguno con ID todavía:**
+
+| Candidato | De dónde sale | Qué habría que hacer |
+| --- | --- | --- |
+| **Galería de fotos por producto** | La corrección del 2026-08-16 al spec de `CAT-05`: se dio por hecho que `Storage` ya listaba los archivos de un producto por `OwnerId`, y **no lo hace** | Filtro por owner en `IFileResourceRepository.SearchAsync` y su query param en el listado de `Storage`. Es de `Storage`, no de `catalog` |
+| **Reactivación de `TaxRate`** | Deuda declarada al cerrar `CAT-07`: `TaxRate` tiene la **misma asimetría** que tenía `Product` — `Deactivate` sin vuelta | Espejar `CAT-07` sobre `TaxRate`. El camino ya está trazado, con lo que es el más barato de los dos |
+
+**Y una obligación que no es un slice:** revisar **antes** de publicar. En `CAT-07` los merges y el
+push salieron primero, así que el gate `pre-push` no gobernó la entrega. El próximo slice
+revisa, valida el gate, y recién ahí publica.
+
+**Lo que cerró antes**: `CAT-04` y `CAT-05` el 2026-08-15, y con ellos **la capacidad completa de
 subir imágenes y asignarlas a productos**, que es lo que el owner pidió: `Storage` sube,
 `catalog` verifica y guarda cuál es la portada, y la respuesta trae la URL —**la portada, no la
 galería**; ver la corrección del 2026-08-16 al spec de `CAT-05`.
@@ -224,9 +234,84 @@ Owner: Andres Jaramillo
 | `CAT-04` | **`Product` enriquecido:** `descripción`, `imagen`, `precio`, `moneda` y FK a `TaxRate` | `CAT-03` | **Complete** | Abierto el 2026-08-13, spec en [`CAT-04-propiedades-de-producto.md`](../03-modulos/catalog/slices/CAT-04-propiedades-de-producto.md) con 11 criterios. Commiteado el 2026-08-15 en `85b87c8`. `ProductDetails` como value object, migración `AddProductDetails` con 5 columnas nullable y FK `RESTRICT`. Unitarias `44/44`, integración `50/50`, arquitectura `16/16`, regresión sin cambios con los 5 de `SDD-CT-14` por nombre. **Runtime 11 de 11**, con la auditoría probada por lo que **no** escribió y `CA-CAT-04-11` verificado sobre datos reales del 2026-08-11. **`CA-CAT-04-07` verificado contra el mecanismo ausente** y confirmado en runtime: no persiste. **Revisión con 4 lentes ciegos —salda la deuda de método de `CAT-03`— con el lente de riesgo limpio.** **Los 5 hallazgos propios cerrados el 2026-08-15 en `a9575a5`** (tramo 6): `A` y `F` con reglas de validador que faltaban, `D` con `ProductWriteRules` incluido por los dos validadores, `E` con `ProductDetails` no posicional, y `B` **decidido: se traduce** la violación de FK. Integración `55/55`, regresión con **265 en verde** y los 5 de `SDD-CT-14` por nombre. **Cerrado el 2026-08-15:** el gate `CAT-00` se corrigió en `qep-frontend` (`38e5abe`) y con eso el slice cumple el DoD. `C` es de `src/Api` y no pertenece a este slice. `stock` **fuera del alcance del proyecto**; `escala de precios` es de `pricing` |
 | `CAT-05` | **Imagen de producto:** el pegamento con `Storage` — validación de `ImageFileId` y `imageUrl` en la respuesta | `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-05-imagen-de-producto.md`](../03-modulos/catalog/slices/CAT-05-imagen-de-producto.md) con 11 criterios. **Partición `CAT-05a`/`CAT-05b` declarada antes de escribir código.** Cierra la fuga que `CAT-04` dejó abierta: `ImageFileId` entraba sin verificar existencia, estado, tipo ni **tenant**, y sin FK que lo respaldara. `catalog` **no** referencia `Storage`: el puerto `IProductImageLookup` se declara en `catalog`, el adaptador vive en `Bootstrapper` y `CatalogLayerTests` lo verifica. `Storage` suma `FileOwnerType.Product` y deja de caer en silencio a `User`. Unitarias `55/55`, arquitectura `17/17`, integración `69/69`, regresión con **291 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 16 de 16**, con `owner_type` verificado en base y la auditoría probada por lo que **no** escribió. **`CA-CAT-05-01` verificado contra el mecanismo ausente**: sin la comparación de tenant responde `Created`. **La revisión encontró un bloqueante propio y se corrigió**: la escritura quedaba cerrada y la **lectura** abierta —un producto anterior al slice con imagen ajena filtraba su URL en el `GET` y el listado. **Deuda de método: fue autorrevisión, no 4 lentes ciegos.** **Spec corregido el 2026-08-16** —sin reabrir el slice—: el ítem de «Fuera de alcance» justificaba dejar afuera la galería diciendo que `Storage` ya listaba los archivos de un producto por `OwnerId`, y `SearchAsync` **no filtra por owner**. La exclusión sigue en pie; la razón era falsa |
 | `CAT-06` | **Borrado de tasa de impuesto** — `DELETE` con la restricción que la FK ya impone | `CAT-03`, `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-06-borrado-de-tasa-de-impuesto.md`](../03-modulos/catalog/slices/CAT-06-borrado-de-tasa-de-impuesto.md) con 8 criterios. **Sale de una deuda que encontró la alineación de `CAT-01`:** el frontend ya tenía el botón y pegaba a una ruta inexistente. No borra siempre: la FK `RESTRICT` de `CAT-04` impide borrar una tasa en uso, y el endpoint lo devuelve como **422 `catalog.tax_rate.in_use`** en vez de 500. Se comprueba dos veces —consulta previa para el caso normal, traducción de la violación de FK para la carrera— y **la misma constraint se discrimina por dos causas opuestas** vía `DbUpdateException.Entries`. Integración de `catalog` `77/77`, regresión con **299 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 8 de 8**, con el aislamiento verificado por conteo en base y la atomicidad por la auditoría que el 422 **no** escribió. **Defecto encontrado en el camino:** los handlers se registran a mano en el composition root, y olvidar la línea da **500, no 404** — quedó documentado ahí mismo. Corre el gate `CAT-00`, escrito en `qep-frontend` (`17bbdfe`) |
-| `CAT-07` | **Reactivación de producto** — `POST .../products/{id}/activate`, la vuelta que `deactivate` nunca tuvo | `CAT-02b`, `CAT-04` | **In Progress** | Abierto el 2026-08-15, spec en [`CAT-07-reactivacion-de-producto.md`](../03-modulos/catalog/slices/CAT-07-reactivacion-de-producto.md) con 9 criterios. **No es funcionalidad nueva: es la mitad faltante de `RF-020`**, «Administrar productos activos/**inactivos**», que el gate ya verificó literal. Hoy un producto inactivo es **terminal**: `Update` abre con `EnsureActive()` y da 422, no hay ruta de activación y `catalog` no expone `DELETE` de producto — la única salida es un `UPDATE` por SQL. **El riesgo que parece haber y no hay:** `IX_products_tenant_code` es único **sin filtro parcial**, así que desactivar nunca liberó el código y reactivar no puede colisionar; `Activate` no revalida unicidad. Mismo comportamiento que el hallazgo `B` de `CAT-03`. Sin permiso nuevo. Corre el alcance del gate `CAT-00`, que ratificó cinco operaciones de `products` y ninguna es `activate` |
+| `CAT-07` | **Reactivación de producto** — `POST .../products/{id}/activate`, la vuelta que `deactivate` nunca tuvo | `CAT-02b`, `CAT-04` | **Complete** | Abierto el 2026-08-15, cerrado el 2026-08-17. Spec en [`CAT-07-reactivacion-de-producto.md`](../03-modulos/catalog/slices/CAT-07-reactivacion-de-producto.md) con 9 criterios, **todos con prueba automática y verificados en runtime**. **No es funcionalidad nueva: es la mitad faltante de `RF-020`**, «Administrar productos activos/**inactivos**», que el gate ya verificó literal. Antes de este slice un producto inactivo era **terminal**: `Update` abre con `EnsureActive()` y da 422, no había ruta de activación y `catalog` no expone `DELETE` de producto — la única salida era un `UPDATE` por SQL. **El riesgo que parece haber y no hay:** `IX_products_tenant_code` es único **sin filtro parcial**, así que desactivar nunca liberó el código y reactivar no puede colisionar; `Activate` no revalida unicidad, y `CA-CAT-07-09` lo ancla. Sin permiso nuevo. Unitarias `59/59`, arquitectura `17/17` **sin cambios**, integración de `catalog` `86/86` (eran 77), regresión con **312 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 10 de 10**, con `is_active` verificado en base tras el 404 y el 403, y la auditoría probada por lo que **no** escribió. **`CA-CAT-07-08` verificado contra el mecanismo ausente**: sin `Version++` la prueba da `Expected: 3 / Actual: 2`. **Corrió el gate `CAT-00`**, que ahora declara la sexta operación de `products` (`84710cd` en `qep-frontend`). **Y salda la deuda de método que `CAT-05` y `CAT-06` venían arrastrando:** se revisó con **lente ciego** (`review-reliability`, riesgo medio), **cero hallazgos bloqueantes**, receipt `review-46e2905483eb87ae` |
 
 ## Handoff
+
+### 2026-08-17 — `CAT-07` cerrado, y la deuda de los lentes ciegos saldada
+
+**El slice, de punta a punta en una sesión.** `POST .../products/{productId}/activate`: dominio,
+Application, Api, registro del handler, 4 unitarias, 9 de integración, runtime y gate. El detalle
+con la evidencia literal está en el spec; acá va lo que no vive ahí.
+
+**`Activate` es un espejo de `Deactivate`, y eso fue una decisión, no pereza.** El lente lo
+confirmó paso a paso: autorizar antes de leer el repositorio, `ProductNotFound` antes de mutar,
+`auditPublisher.Publish` antes de `SaveChangesAsync`. Cuando el módulo ya tiene el camino de ida
+resuelto, la vuelta no se diseña de nuevo.
+
+**Se saldó la deuda de método.** `CAT-05` y `CAT-06` se autorrevisaron; éste no. Riesgo **medio**
+por el cambio ejecutable en `QepServiceCollectionExtensions.cs`, un lente —`review-reliability`—,
+**cero hallazgos bloqueantes**, receipt `review-46e2905483eb87ae`. El lente marcó dos huecos de
+cobertura —carreras de concurrencia sobre `Version`, y activación entrelazada con desactivación— y
+los clasificó **preexistentes**, no introducidos: `Deactivate` y `Update` tienen el mismo hueco.
+Esa clasificación es la parte que importa; un lente que llamara «hallazgo» a eso no serviría.
+
+**Lo que se hizo en el orden equivocado, y se declara.** Los merges y el push salieron **antes** de
+la revisión, así que el gate `pre-push` respondió `allow` por la razón incómoda:
+
+```txt
+"reason": "the publication range is empty: every commit reachable from HEAD is already
+           published on the push destination, so this push delivers nothing and no
+           review receipt governs it"
+```
+
+El receipt existe y está `approved`, pero **no gobernó esta entrega**. Revisar y después publicar,
+no al revés. No se reescribe historia publicada por un resultado sin hallazgos; queda anotado para
+el próximo slice.
+
+**El gate `CAT-00` corrió, y de paso se corrigió un conteo que ya estaba mal.** La tabla del
+contrato decía «las diez operaciones coinciden **una a una** con las que el frontend ya consume», y
+eso quedó falso el 2026-08-15 cuando `CAT-06` sumó el `DELETE` sin tocar la frase. Ahora son
+**doce**, y se declara cuál es la única que el frontend **no** consume: `activate`. No hay
+`activateProduct` en `catalog.api.ts`, verificado. Es el caso inverso al de `deleteTaxRate`, donde
+el frontend iba adelante y el backend debía.
+
+**Cómo se escribió el gate sin pisarle el árbol a nadie.** `qep-frontend` tiene su propio developer
+y su checkout estaba en `explore/admin-shell-redesign`. Se usó un **worktree** aparte
+(`qep-frontend-worktrees/cat-00-activate`) en vez de cambiarle la rama. Y la base fue `develop`
+**local**, no `origin/develop`: tenía 8 commits sin publicar, incluido `17bbdfe`, así que arrancar
+del remoto habría borrado el `DELETE` de `CAT-06` del gate sin que nadie lo notara.
+
+**`dotnet format` no se pudo evaluar, y se dice en vez de omitirse.** Reporta **17608** hallazgos
+en todo el repositorio y marca de la línea 1 a la última archivos que este slice nunca tocó
+—`TenancyUnitOfWork.cs`, `CatalogDtos.cs`, `UserDirectory.cs`—. Cuando un archivo entero está
+marcado no es estilo, es configuración. Los dos archivos nuevos del slice tienen **cero**
+menciones. El ítem del DoD queda cumplido de forma **degradada**, no cumplido a secas.
+
+**Deuda que este slice deja declarada, y no es suya:** `TaxRate` tiene la misma asimetría que
+tenía `Product` —`Deactivate` sin vuelta— y es su propio slice, sin ID todavía.
+
+#### Trampas de entorno de la sesión, las cuatro reales
+
+| Qué | Síntoma | Cómo se detecta |
+| --- | --- | --- |
+| `Api.exe` corriendo | `dotnet build` falla por archivo bloqueado | Ya documentado; se confirmó |
+| **Docker Desktop se cayó dos veces** | **Todos** los assemblies de integración fallan en 10-11 s uniformes con `DockerUnavailableException`, ninguno llega a una aserción | Uniformidad de duración + cero superados = infraestructura, no código |
+| `Convert.ToInt32(object)` | Rompe el build por `CA1305` con warnings-as-errors | Compilación |
+| **`Product.Version` es `long`, la columna `bigint`** | El cast a `int` **compila** y revienta en runtime con `InvalidCastException` | 8 de 9 en verde y la novena en rojo |
+
+**Y una del verificador, que es la que más engaña:** el runtime dio 0 eventos de auditoría porque
+el script filtraba `payload->>'entityId'`, y el campo se llama **`resourceId`**. Una consulta por un
+campo inexistente **siempre** devuelve cero, y ese cero es indistinguible de «la auditoría no se
+escribió». Antes de creerle a un conteo en 0, correr la consulta sin el filtro y mirar un payload
+real.
+
+**Commits.** En `qep-backend`: `77d11ce` (abrir el slice), `d8fdd81` (dominio), `412d2a6`,
+`5a9d092` (Application y Api), `17473eb`, `afbbdb3` (evidencia). Mergeados a `develop` (`14bd6a6`)
+y a `main` (`4d4d9c8`), los dos publicados. En `qep-frontend`: `84710cd`, mergeado a `develop`
+(`8efaa9d`) y publicado — **ese push llevó también los 8 commits que `develop` local tenía sin
+publicar desde antes**, todos del mismo autor, entre ellos un `fix(lint)` que toca código del otro
+developer.
 
 ### 2026-08-16 — Corrección documental sobre `CAT-05`: la galería que el spec daba por hecha
 
