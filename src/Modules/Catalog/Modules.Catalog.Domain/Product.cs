@@ -152,6 +152,26 @@ public sealed class Product
         UpdatedAt = occurredAt;
     }
 
+    // La vuelta de Deactivate, que hasta CAT-07 no existia: un producto inactivo era terminal,
+    // porque Update abre con EnsureActive() y ningun metodo devolvia IsActive a true.
+    //
+    // No revalida la unicidad del codigo a proposito. IX_products_tenant_code es unico **sin
+    // filtro parcial**, asi que desactivar nunca libero el codigo y reactivar no puede colisionar
+    // con nadie. Si alguien le agrega un filtro parcial al indice, CA-CAT-07-09 se cae y avisa.
+    public void Activate(DateTimeOffset occurredAt)
+    {
+        if (IsActive)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.already_active",
+                "The product is already active.");
+        }
+
+        IsActive = true;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
     private void EnsureActive()
     {
         if (!IsActive)

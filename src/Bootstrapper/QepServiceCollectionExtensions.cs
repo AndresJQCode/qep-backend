@@ -97,6 +97,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeactivateProductCommand, ProductDto>,
             DeactivateProductHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateProductCommand, ProductDto>,
+            ActivateProductHandler>();
         // Los handlers se registran uno por uno, no por escaneo de ensamblado. Un caso de uso
         // nuevo que se olvide acá compila, mapea su endpoint y falla recién en runtime con 500
         // al no poder resolverlo el dispatcher — el mismo modo de falla que un permiso sin su
