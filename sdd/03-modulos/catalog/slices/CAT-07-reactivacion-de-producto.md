@@ -195,13 +195,85 @@ es la prueba que ancla esa afirmación contra el día en que alguien le agregue 
 bloqueaba el build. Es el gotcha que el `CLAUDE.md` del repo ya documenta; se detuvo el proceso y
 el build salió derecho.
 
+### Tramo 2 — Application, Api y los 9 CA contra PostgreSQL (2026-08-16)
+
+**RED de integración literal, y del tipo que el spec exige** — no un 500, sino el 404 de ruta por
+endpoint ausente:
+
+```txt
+Modules.Catalog.IntegrationTests.ProductActivationApiTests.ActivateBringsAnInactiveProductBackAndPersistsIt
+Assert.Equal() Failure: Values differ
+Expected: OK
+Actual:   NotFound
+```
+
+**GREEN:** `Correctas! - Con error: 0, Superado: 9, Total: 9`.
+
+`ActivateProduct.cs` espeja a `DeactivateProduct.cs` línea por línea: autorización **antes** de
+tocar el repositorio, `ProductNotFound.For` si no aparece, y el `auditPublisher.Publish` de
+`catalog.product.activated` dentro de la misma transacción que la escritura. El endpoint es un
+verbo dedicado, no un `isActive` en el `PUT`. Y el handler quedó registrado en
+`QepServiceCollectionExtensions` — el riesgo número uno de este spec.
+
+#### La prueba contra el mecanismo ausente
+
+`CA-CAT-07-08` es el criterio que ancla el defecto silencioso, así que se verificó saboteándolo.
+Se quitó `Version++` de `Product.Activate` y la prueba se puso roja, literal:
+
+```txt
+Modules.Catalog.UnitTests.ProductTests.ActivateAdvancesTheConcurrencyToken
+Assert.Equal() Failure: Values differ
+Expected: 3
+Actual:   2
+```
+
+Ese `2` es el producto activado **sin avanzar el token de concurrencia optimista**: dos
+escrituras que se solapan se pisarían en silencio, y ninguna aserción sobre `IsActive` lo notaría.
+El sabotaje se restauró y se verificó con `git diff`, que no reporta el archivo.
+
+#### Dos trampas de las pruebas, no del código
+
+1. **`Convert.ToInt32(object)` rompe el build.** `CA1305` con warnings-as-errors: el
+   comportamiento depende de la configuración regional. Va cast directo.
+2. **`Product.Version` es `long` y la columna es `bigint`.** El cast a `int` **compila** y revienta
+   en runtime con `InvalidCastException`. Se descubrió con 8 de 9 en verde y la novena en rojo.
+
+#### Regresión: 312 en verde, cero regresión
+
+`dotnet build Backend.slnx` → `Compilación correcta. 0 Advertencia(s), 0 Errores`.
+`Modules.Catalog.IntegrationTests` pasó de `77` a **`86/86`**; unitarias `59/59`; arquitectura
+`17/17` **sin cambios**, que es lo que el spec pedía.
+
+Los **5** fallos de `SDD-CT-14` verificados **por nombre, no por conteo**:
+
+```txt
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.LogoutRevokesTheSessionCookie
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.MutatingRequestWithoutCsrfHeaderIsRejected
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.RoleDowngradeRemovesPermissionsOnTheNextRequest
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken
+Modules.Tenancy.IntegrationTests.RealAuthenticationApiTests.SuspendingMembershipRevokesTheMembersActiveSession
+```
+
+#### `dotnet format` no se pudo evaluar, y hay que decirlo
+
+El DoD pide «sin hallazgos en las rutas del slice». Hoy **eso no es evaluable**: `dotnet format
+--verify-no-changes` reporta **17608** hallazgos en todo el repositorio, y archivos que este slice
+nunca tocó —`TenancyUnitOfWork.cs`, `CatalogDtos.cs`, `UserDirectory.cs`— aparecen marcados
+**desde la línea 1 hasta la última**. Cuando un archivo entero está marcado no es estilo: es
+configuración. `ActivateProduct.cs` y `ProductActivationApiTests.cs` tienen **cero** menciones.
+
+Es deuda preexistente —el ledger ya la registraba como «`dotnet format` falla en todo el
+repositorio»— y arreglarla no es de este slice. Queda declarado que el ítem del DoD se cumple de
+forma degradada.
+
+**Trampas de entorno de esta sesión:** `Api.exe` corriendo bloqueó el primer build, y **Docker
+Desktop se cayó a mitad de sesión**: los 147 fallos de integración de la primera regresión fueron
+todos `DockerUnavailableException` en 10-11 segundos uniformes, ninguno llegó a una aserción.
+
 ### Tramos pendientes
 
 | Tramo | Qué falta |
 |---|---|
-| Application | `ActivateProductCommand` y su handler, con `CatalogAuthorization.EnsureAuthorized` **antes** del repositorio y el outbox `catalog.product.activated` en la misma transacción |
-| Api | `MapPost(".../activate")` con `catalog.product.manage`, **más el registro del handler en `QepServiceCollectionExtensions`** — sin esa línea el síntoma es 500, no 404 |
-| Integración | Los 9 CA contra PostgreSQL real |
 | Runtime | Los criterios contra la API local, con la auditoría verificada en base |
 | Gate | La **sexta** operación de `products` en `CAT-00`, que vive en `qep-frontend`. Sin esto no cumple el DoD |
 | Revisión | Pendiente de decidir: `CAT-05` y `CAT-06` se autorrevisaron, y este slice toca frontera de tenant y permisos |
