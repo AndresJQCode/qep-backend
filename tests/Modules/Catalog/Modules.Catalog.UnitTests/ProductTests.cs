@@ -343,4 +343,62 @@ public sealed class ProductTests
 
         Assert.Equal(2, product.Version);
     }
+
+    // CA-CAT-07-01, en el dominio: activar un producto inactivo lo devuelve a activo y mueve
+    // UpdatedAt a la hora de la operacion, no a la de creacion.
+    [Fact]
+    public void ActivateTurnsProductActiveAndAdvancesUpdatedAt()
+    {
+        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, Now);
+        product.Deactivate(Now.AddMinutes(5));
+        var later = Now.AddMinutes(10);
+
+        product.Activate(later);
+
+        Assert.True(product.IsActive);
+        Assert.Equal(later, product.UpdatedAt);
+    }
+
+    // CA-CAT-07-02: activar algo ya activo es un error de negocio, no un exito silencioso.
+    // Espeja DeactivateRejectsAnAlreadyInactiveProduct; el codigo se deriva del que ya existe.
+    [Fact]
+    public void ActivateRejectsAnAlreadyActiveProduct()
+    {
+        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, Now);
+
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            product.Activate(Now.AddMinutes(5)));
+
+        Assert.Equal("catalog.product.already_active", error.Code);
+    }
+
+    // CA-CAT-07-08: Version es el token de concurrencia optimista. Sin el incremento, dos
+    // escrituras que se solapan se pisan en silencio y ninguna asercion sobre IsActive lo nota.
+    // Create deja 1, Deactivate 2, Activate 3.
+    [Fact]
+    public void ActivateAdvancesTheConcurrencyToken()
+    {
+        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, Now);
+        product.Deactivate(Now.AddMinutes(5));
+
+        product.Activate(Now.AddMinutes(10));
+
+        Assert.Equal(3, product.Version);
+    }
+
+    // CA-CAT-07-03, que es el criterio que justifica el slice: sin esto se puede entregar un
+    // Activate que responde bien y deja el producto igual de inservible, porque Update sigue
+    // abriendo con EnsureActive().
+    [Fact]
+    public void ActivateReopensUpdate()
+    {
+        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, Now);
+        product.Deactivate(Now.AddMinutes(5));
+        product.Activate(Now.AddMinutes(10));
+
+        product.Update("Vela de coco", "VS-002", ProductDetails.Empty, Now.AddMinutes(15));
+
+        Assert.Equal("Vela de coco", product.Name);
+        Assert.Equal("VS-002", product.Code);
+    }
 }
