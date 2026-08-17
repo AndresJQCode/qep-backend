@@ -159,4 +159,49 @@ El gate ratificó **cinco** operaciones para `products` (`gate.md:109-113`) y ni
 
 ## Evidencia de cierre
 
-_Pendiente — el slice está abierto._
+Se completa al terminar. Ver `qep-frontend/sdd/00-metodo/definition-of-done.md`.
+
+### Tramo 1 — el dominio: `Product.Activate` (2026-08-16)
+
+**RED literal, antes de escribir una línea de implementación.** Las cuatro unitarias se
+escribieron contra un método que no existía, y el proyecto no compiló:
+
+```txt
+ProductTests.cs(356,17): error CS1061: "Product" no contiene una definición para "Activate"
+ProductTests.cs(370,21): error CS1061: "Product" no contiene una definición para "Activate"
+ProductTests.cs(384,17): error CS1061: "Product" no contiene una definición para "Activate"
+ProductTests.cs(397,17): error CS1061: "Product" no contiene una definición para "Activate"
+```
+
+Un error por prueba, y **por el motivo correcto**: el método ausente, no una aserción que falla.
+
+**Las cuatro pruebas, y qué criterio ancla cada una:**
+
+| Prueba | Criterio | Qué sostiene |
+|---|---|---|
+| `ActivateTurnsProductActiveAndAdvancesUpdatedAt` | `CA-CAT-07-01` | Vuelve a activo y `UpdatedAt` toma la hora de la operación |
+| `ActivateRejectsAnAlreadyActiveProduct` | `CA-CAT-07-02` | `catalog.product.already_active`, derivado de `already_inactive` |
+| `ActivateAdvancesTheConcurrencyToken` | `CA-CAT-07-08` | `Version` pasa de 2 a 3. Sin esta, el olvido de `Version++` no lo nota ninguna aserción sobre `IsActive` |
+| `ActivateReopensUpdate` | `CA-CAT-07-03` | Activar y **después** editar. Es el criterio que justifica el slice |
+
+**GREEN:** `Correctas! - Con error: 0, Superado: 59, Total: 59` — eran 55 al cerrar `CAT-05`.
+
+**`Activate` no revalida la unicidad del código, y eso es deliberado.** Quedó escrito en el
+comentario del método, no sólo en este spec: `IX_products_tenant_code` es único **sin filtro
+parcial**, así que desactivar nunca liberó el código y reactivar no puede colisionar. `CA-CAT-07-09`
+es la prueba que ancla esa afirmación contra el día en que alguien le agregue un filtro parcial.
+
+**Trampa de entorno que costó el primer intento:** `Api.exe` estaba corriendo (PID 4816) y
+bloqueaba el build. Es el gotcha que el `CLAUDE.md` del repo ya documenta; se detuvo el proceso y
+el build salió derecho.
+
+### Tramos pendientes
+
+| Tramo | Qué falta |
+|---|---|
+| Application | `ActivateProductCommand` y su handler, con `CatalogAuthorization.EnsureAuthorized` **antes** del repositorio y el outbox `catalog.product.activated` en la misma transacción |
+| Api | `MapPost(".../activate")` con `catalog.product.manage`, **más el registro del handler en `QepServiceCollectionExtensions`** — sin esa línea el síntoma es 500, no 404 |
+| Integración | Los 9 CA contra PostgreSQL real |
+| Runtime | Los criterios contra la API local, con la auditoría verificada en base |
+| Gate | La **sexta** operación de `products` en `CAT-00`, que vive en `qep-frontend`. Sin esto no cumple el DoD |
+| Revisión | Pendiente de decidir: `CAT-05` y `CAT-06` se autorrevisaron, y este slice toca frontera de tenant y permisos |
