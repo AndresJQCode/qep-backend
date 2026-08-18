@@ -1,6 +1,6 @@
 # `CAT-09` — Galería de fotos por producto
 
-> **Estado:** **In Progress** — abierto el 2026-08-17
+> **Estado:** **Complete** — 2026-08-18, abierto el 2026-08-17
 > **Módulo:** `catalog` — ficha y gate en `qep-frontend/sdd/03-modulos/catalog/`
 > **Depende de:** `CAT-05` (`Complete`) — introdujo `FileOwnerType.Product` y el puerto
 > `IProductImageLookup`
@@ -256,10 +256,32 @@ de `curl.exe` se captura en su **propia invocación** y no dentro de un array de
 PowerShell, que es lo que lo truncaba a `4` en los runtimes de `CAT-07` y `CAT-08`. Los 9 criterios
 salieron a la primera.
 
-### Tramos pendientes
+### Tramo 3 — el gate (2026-08-18)
 
-| Tramo | Qué falta |
-|---|---|
-| Gate | Los dos query params en `CAT-00`, con la deuda de `Storage` declarada |
-| Revisión | Lente ciego. `CA-CAT-09-06` es frontera de tenant |
-| Ledger | La entrada de handoff en `sdd/02-plan/plan-maestro.md` |
+**Se escribió distinto a los tres anteriores, y a propósito.** La ruta es
+`/api/v1/tenants/{tenantId}/files`, que **la expone `Storage`, no `catalog`**. Meterla entre las
+trece operaciones de la tabla del contrato habría mentido sobre qué módulo la sirve, así que va en
+una sección propia —«Lo que `catalog` necesita de `Storage`»— con la corrección al spec de `CAT-05`
+y la deuda del módulo sin ficha, las dos escritas ahí.
+
+Commit `37b2b72` en `qep-frontend`, desde un worktree sobre `develop`, sin tocar el árbol de
+trabajo del otro developer.
+
+**Que esa fila tenga que vivir en el gate de otro módulo es, en sí, el argumento**: el contrato de
+`Storage` se está guardando en el lugar equivocado porque `Storage` no tiene dónde guardarlo.
+
+### Cierre — `Complete` el 2026-08-18
+
+**Los 8 criterios cubiertos por prueba automática y verificados en runtime.** Los ítems de UI van
+`N/A`: es un slice de backend. El ítem de `dotnet format` queda cumplido de forma **degradada**,
+por la deuda preexistente ya registrada en el ledger.
+
+**Lo que este slice deja abierto, y no es suyo:**
+
+| Qué | Dónde vive |
+| --- | --- |
+| **`Storage` sin ficha, sin gate y sin prefijo** — segunda modificación desde afuera | Decisión de método, para el owner. **La tercera vez debería abrir el módulo** |
+| El filtro `status` que ante un valor inválido devuelve la lista **sin filtrar** | Señalizado en `StorageEndpoints.cs`. Es contrato preexistente |
+| La grilla de fotos en la UI | Fila del ledger de `qep-frontend` |
+| `dotnet format` falla en todo el repositorio | Deuda preexistente |
+| `NU1903` sobre `SSH.NET` | Dependencia transitiva; va a frenar CI |
