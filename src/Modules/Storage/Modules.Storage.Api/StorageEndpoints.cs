@@ -120,14 +120,23 @@ public static class StorageEndpoints
         string? kind = null,
         string? category = null,
         string? tag = null,
+        Guid? ownerId = null,
+        string? ownerType = null,
         int page = 1,
         int pageSize = 20)
     {
+        // DEUDA DECLARADA (CAT-09): este parseo del status cae en null cuando el string no
+        // parsea, así que ?status=Basura devuelve la lista SIN FILTRAR, como si no se hubiera
+        // pedido nada. Es el mismo fallback silencioso que CAT-05 corrigió en el POST. No se
+        // corrige acá porque es un cambio de contrato de un filtro preexistente que ningún
+        // criterio de CAT-09 necesita — pero el filtro que CAT-09 agrega no lo repite.
         var parsedStatus = Enum.TryParse<FileResourceStatus>(status, ignoreCase: true, out var value)
             ? value
             : (FileResourceStatus?)null;
+        var owner = FileOwnerFilter.Resolve(ownerId, ownerType);
         var result = await dispatcher.QueryAsync(
-            new ListFilesQuery(tenantId, search, parsedStatus, kind, category, tag, page, pageSize),
+            new ListFilesQuery(
+                tenantId, search, parsedStatus, kind, category, tag, owner, page, pageSize),
             cancellationToken);
         return Results.Ok(new PagedFilesResponse(
             result.Items.Select(ToResponse).ToArray(),

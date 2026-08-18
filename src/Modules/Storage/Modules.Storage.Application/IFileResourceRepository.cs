@@ -15,6 +15,9 @@ public interface IFileResourceRepository
         string? kind,
         string? category,
         string? tag,
+        // CAT-09: a qué entidad pertenecen los archivos que se piden. null = sin filtrar por
+        // dueño, que es el comportamiento que este método tuvo hasta ahora.
+        FileOwnerFilter? owner,
         int page,
         int pageSize,
         CancellationToken cancellationToken);

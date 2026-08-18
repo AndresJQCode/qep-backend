@@ -22,6 +22,7 @@ internal sealed class FileResourceRepository(StorageDbContext dbContext) : IFile
         string? kind,
         string? category,
         string? tag,
+        FileOwnerFilter? owner,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -33,6 +34,17 @@ internal sealed class FileResourceRepository(StorageDbContext dbContext) : IFile
                 resource.TenantId == tenantId &&
                 resource.Status != FileResourceStatus.Deleted &&
                 resource.Status != FileResourceStatus.Purged);
+
+        // CAT-09. Va **después** del filtro de tenant y nunca en su lugar: el owner acota dentro
+        // del tenant, no lo reemplaza. Un OwnerId es único de por sí, así que filtrar sólo por él
+        // parecería funcionar en las pruebas y publicaría la biblioteca ajena en cuanto dos
+        // tenants compartieran un id. Lo cubre CA-CAT-09-06.
+        if (owner is { } selectedOwner)
+        {
+            query = query.Where(resource =>
+                resource.OwnerType == selectedOwner.OwnerType &&
+                resource.OwnerId == selectedOwner.OwnerId);
+        }
 
         if (!string.IsNullOrWhiteSpace(search))
         {
