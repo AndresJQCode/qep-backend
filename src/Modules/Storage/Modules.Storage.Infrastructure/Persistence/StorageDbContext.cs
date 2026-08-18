@@ -52,6 +52,11 @@ public sealed class StorageDbContext(DbContextOptions<StorageDbContext> options)
         file.HasIndex(value => new { value.TenantId, value.Status, value.CreatedAt, value.Id });
         file.HasIndex(value => new { value.TenantId, value.Category });
         file.HasIndex(value => value.Tags).HasMethod("gin");
+        // CAT-09. Ninguno de los índices de arriba sirve para la galería de una entidad: filtran
+        // por status, categoría o tags. El tenant va primero porque está en todas las consultas,
+        // y el tipo antes del id por ser el de menor cardinalidad.
+        file.HasIndex(value => new { value.TenantId, value.OwnerType, value.OwnerId })
+            .HasDatabaseName("IX_file_resources_tenant_owner");
 
         var variant = modelBuilder.Entity<FileVariant>();
         variant.ToTable("file_variants", "storage");
