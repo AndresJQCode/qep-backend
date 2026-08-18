@@ -159,6 +159,12 @@ public sealed class TaxRateActivationApiTests
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         Assert.False(await QueryIsActiveAsync(connection, id));
+
+        // El 403 tampoco deja rastro en el outbox, y esto hay que afirmarlo acá y no sólo en el
+        // runtime: si alguien moviera el auditPublisher.Publish por encima de
+        // CatalogAuthorization.EnsureAuthorized, la fila de auditoría aparecería sin que el estado
+        // cambiara, y una aserción que sólo mire is_active seguiría en verde.
+        Assert.Empty(await QueryAuditEventsAsync(connection, "catalog.tax_rate.activated", id));
     }
 
     // CA-CAT-08-07: la auditoría se prueba por lo que escribe **y** por lo que no. El 422 y la
