@@ -43,27 +43,33 @@ historial de chat.
 2026-08-18 y con él se agotó la lista: `catalog` quedó **simétrico** —`Product` y `TaxRate` tienen
 los dos su `activate`— y la galería, que era el último pendiente heredado, está construida.
 
-**Lo que queda anotado no es un slice: es una decisión de método que conviene tomar antes del
-próximo.**
+**Queda una decisión abierta que sí es trabajo: `SDD-OD-23`**, el filtro `status` del listado de
+archivos que ante un valor inválido devuelve la lista **sin filtrar**. Es de la capability
+`Storage`, y por `AGENTS.md` §4a se corrige dentro del slice que lo necesite o en un slice hermano
+—nunca en silencio—. Hoy no bloquea a nadie.
 
-> **`Storage` va por su segunda modificación desde afuera y sigue sin ficha, sin gate y sin
-> prefijo reservado.** `CAT-05` lo tocó primero —agregó `FileOwnerType.Product` y terminó un
-> fallback silencioso— y `CAT-09` volvió, esta vez con un filtro de repositorio, un índice y una
-> migración. Los dos bajo ID de `catalog`, porque el consumidor era catálogo y el precedente lo
-> habilitaba.
+> **Corrección del 2026-08-18: acá decía que había que abrir `storage` como módulo. Es falso.**
 >
-> **`CAT-09` declaró que la tercera vez debería abrir el módulo**, y el gate de `catalog` ahora
-> tiene una fila que describe una ruta de `Storage` — que es exactamente la señal de que el
-> contrato se está guardando en el lugar equivocado.
+> Esta sección afirmaba que `Storage` «va por su segunda modificación desde afuera y sigue sin
+> ficha, sin gate y sin prefijo», y planteaba como próxima decisión «¿se abre `storage` como
+> módulo?». **El método dice lo contrario, y por escrito:**
 >
-> La pregunta para el owner no es «¿qué slice sigue?» sino **«¿se abre `storage` como módulo, con
-> su G1, su prefijo y su gate?»**. Si la respuesta es sí, ese es el próximo trabajo y no un slice
-> de producto. Si es no, hay que decir por qué, porque el atajo ya se tomó dos veces.
-
-**Y una deuda de contrato que `CAT-09` señalizó en el código sin corregir:** el filtro `status` del
-listado de archivos cae en silencio ante un valor inválido —`?status=Basura` devuelve la lista
-**sin filtrar**—, que es el mismo fallback que `CAT-05` corrigió en el `POST`. Está comentado en
-`StorageEndpoints.cs`, en el lugar donde alguien lo va a leer.
+> - `01-contexto/registro-de-modulos.md` § «Capabilities de plataforma» nombra a **`Storage`** en
+>   la lista: «No son módulos de este proyecto. Se **consumen**, no se reescriben».
+> - `00-metodo/apertura-de-modulo.md` § «Cuándo NO abrir un módulo» lo pone como la **primera** de
+>   sus cuatro señales: «infraestructura que varios módulos usan igual → capability de plataforma;
+>   se consume, no se crea». Y aclara que las cuatro «salieron de casos reales de este proyecto».
+>
+> **`CAT-05` y `CAT-09` no tomaron ningún atajo:** hicieron lo que el método define para una
+> capability. La deuda que este ledger declaró no existía.
+>
+> **Lo que sí faltaba, y era real:** `AGENTS.md` §4a exige que el defecto de una capability se
+> registre como `SDD-OD-*` con evidencia de código. `CAT-09` cumplió las otras tres condiciones
+> —corrección acotada dentro del slice, y RED en el proyecto de pruebas de la capability— pero
+> **nunca registró el `SDD-OD-*`**. Se corrige con `SDD-OD-22` y `SDD-OD-23`, abajo.
+>
+> Verificado contra `apertura-de-modulo.md`, `registro-de-modulos.md` y `AGENTS.md` §4a el
+> 2026-08-18. `SDD-ADR-01`: gana el método escrito.
 
 **Y lo que le toca al otro repo, que ya no depende de acá:** el gate declara **dos** operaciones
 que el frontend no consume —`activate` de `products` y de `tax-rates`—. Sin ellas la UI no tiene
@@ -243,6 +249,23 @@ comandos con su resultado real. Sigue siendo obligatoria. El precedente es la se
 2026-08-11: sin ese handoff se habría perdido que la plantilla de deploy aplica una lista
 blanca y no el directorio, que es lo que evitó una caída de producción.
 
+## Decisiones abiertas
+
+Las de este repositorio. Formato y numeración en
+`qep-frontend/sdd/00-metodo/convenciones-de-id.md`: **`SDD-OD-*` es una serie global entre los dos
+repos**, así que un ID nuevo se toma verificando el máximo en **todas las ramas de los dos**, no
+sólo en `develop`. El 2026-08-18 el máximo ocupado era `SDD-OD-21`, en una rama de `qep-frontend`
+que todavía no está mergeada.
+
+`AGENTS.md` §4a exige que un defecto de una **capability de plataforma** —`Storage`, `Identity`,
+`Tenancy`, `Authorization`, `Audit`, `Notifications`— se registre acá con evidencia de código
+antes de corregirse. Corregir en silencio está prohibido; corregir **no** lo está.
+
+| ID | Qué | Evidencia | Estado |
+| --- | --- | --- | --- |
+| `SDD-OD-22` | **`SearchAsync` no podía filtrar por dueño.** `OwnerId` y `OwnerType` se escribían al crear el archivo y se devolvían en `FileResourceResponse`, pero no había forma de consultar por ellos: el dato entraba y no salía | `IFileResourceRepository.SearchAsync` recibía `tenantId`, `search`, `status`, `kind`, `category`, `tag` y paginación — sin `OwnerId`. Y ninguno de los cuatro índices de `file_resources` servía para filtrarlo | **Cerrada 2026-08-18 por `CAT-09`**, que agregó el filtro, el índice `IX_file_resources_tenant_owner` y su migración. Se registra **retroactivamente**: el slice la corrigió sin haberla registrado antes, que es la mitad de §4a que faltó |
+| `SDD-OD-23` | **El filtro `status` del listado de archivos cae en silencio.** `?status=Basura` devuelve la lista **sin filtrar**, como si no se hubiera pedido nada | `StorageEndpoints.cs`, `ListAsync`: `Enum.TryParse` sin `Enum.IsDefined`, con `?? null` como salida. Es el mismo fallback que `CAT-05` corrigió en el `POST`, donde un `ownerType` inválido se volvía `User` y devolvía `201` | **Abierta.** No bloquea a nadie hoy. Cambiar el contrato de un filtro preexistente necesita decisión del owner; el `POST` sienta el precedente de que un valor inválido debe fallar. Señalizado en el código |
+
 ## Ledger de slices — Módulo `catalog`
 
 Ficha y gate: `qep-frontend/sdd/03-modulos/catalog/` · Estado del módulo: `En curso` ·
@@ -259,9 +282,47 @@ Owner: Andres Jaramillo
 | `CAT-06` | **Borrado de tasa de impuesto** — `DELETE` con la restricción que la FK ya impone | `CAT-03`, `CAT-04` | **Complete** | Abierto y cerrado el 2026-08-15, spec en [`CAT-06-borrado-de-tasa-de-impuesto.md`](../03-modulos/catalog/slices/CAT-06-borrado-de-tasa-de-impuesto.md) con 8 criterios. **Sale de una deuda que encontró la alineación de `CAT-01`:** el frontend ya tenía el botón y pegaba a una ruta inexistente. No borra siempre: la FK `RESTRICT` de `CAT-04` impide borrar una tasa en uso, y el endpoint lo devuelve como **422 `catalog.tax_rate.in_use`** en vez de 500. Se comprueba dos veces —consulta previa para el caso normal, traducción de la violación de FK para la carrera— y **la misma constraint se discrimina por dos causas opuestas** vía `DbUpdateException.Entries`. Integración de `catalog` `77/77`, regresión con **299 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 8 de 8**, con el aislamiento verificado por conteo en base y la atomicidad por la auditoría que el 422 **no** escribió. **Defecto encontrado en el camino:** los handlers se registran a mano en el composition root, y olvidar la línea da **500, no 404** — quedó documentado ahí mismo. Corre el gate `CAT-00`, escrito en `qep-frontend` (`17bbdfe`) |
 | `CAT-07` | **Reactivación de producto** — `POST .../products/{id}/activate`, la vuelta que `deactivate` nunca tuvo | `CAT-02b`, `CAT-04` | **Complete** | Abierto el 2026-08-15, cerrado el 2026-08-17. Spec en [`CAT-07-reactivacion-de-producto.md`](../03-modulos/catalog/slices/CAT-07-reactivacion-de-producto.md) con 9 criterios, **todos con prueba automática y verificados en runtime**. **No es funcionalidad nueva: es la mitad faltante de `RF-020`**, «Administrar productos activos/**inactivos**», que el gate ya verificó literal. Antes de este slice un producto inactivo era **terminal**: `Update` abre con `EnsureActive()` y da 422, no había ruta de activación y `catalog` no expone `DELETE` de producto — la única salida era un `UPDATE` por SQL. **El riesgo que parece haber y no hay:** `IX_products_tenant_code` es único **sin filtro parcial**, así que desactivar nunca liberó el código y reactivar no puede colisionar; `Activate` no revalida unicidad, y `CA-CAT-07-09` lo ancla. Sin permiso nuevo. Unitarias `59/59`, arquitectura `17/17` **sin cambios**, integración de `catalog` `86/86` (eran 77), regresión con **312 en verde** y los 5 de `SDD-CT-14` por nombre. **Runtime 10 de 10**, con `is_active` verificado en base tras el 404 y el 403, y la auditoría probada por lo que **no** escribió. **`CA-CAT-07-08` verificado contra el mecanismo ausente**: sin `Version++` la prueba da `Expected: 3 / Actual: 2`. **Corrió el gate `CAT-00`**, que ahora declara la sexta operación de `products` (`84710cd` en `qep-frontend`). **Y salda la deuda de método que `CAT-05` y `CAT-06` venían arrastrando:** se revisó con **lente ciego** (`review-reliability`, riesgo medio), **cero hallazgos bloqueantes**, receipt `review-46e2905483eb87ae` |
 | `CAT-08` | **Reactivación de tasa de impuesto** — `POST .../tax-rates/{id}/activate`, la salida del atolladero que dejó `CAT-06` | `CAT-03`, `CAT-06` | **Complete** | Abierto y cerrado el 2026-08-17, spec en [`CAT-08-reactivacion-de-tasa-de-impuesto.md`](../03-modulos/catalog/slices/CAT-08-reactivacion-de-tasa-de-impuesto.md) con 10 criterios. **Sale de la deuda que `CAT-07` declaró**, y resultó peor que el defecto de `Product`: cruzado con el `DELETE` de `CAT-06`, una tasa inactiva **que algún producto usa** no se podía editar (`422 inactive`), ni borrar (`422 in_use` por la FK `RESTRICT`), ni desactivar. **Ninguna salida por la API**, sólo `UPDATE` por SQL — y desactivar por error no duele en el momento, porque `ProductTaxRateResolver` acepta tasas inactivas a propósito. **`CA-CAT-08-10` reproduce el atolladero entero antes de resolverlo**, y el lente lo verificó contra el riesgo de ser teatro: quitar el guard de `Update` **o** el `RESTRICT` del `DELETE` lo pone rojo antes del paso de activación. Unitarias `63/63`, arquitectura `17/17` sin cambios, integración de `catalog` `96/96` (eran 86), regresión **326 en verde**, **runtime 14 de 14**. **`CA-CAT-08-08` verificado contra el mecanismo ausente**, con las otras tres pruebas verdes bajo el sabotaje. **Corrió el gate `CAT-00`** (séptima operación de `tax-rates`, `1f66e3c` en `qep-frontend`). **Revisión con lente ciego en dos pasadas**, receipt `review-b0167a985b84f879`: cero bloqueantes, una `SUGGESTION` aplicada que cerró un hueco de **detección** —el 403 no verificaba la ausencia de fila en el outbox—. **Gate validado antes de publicar**, con `base_relationship_valid: true`. Con esto `catalog` queda **simétrico**: ninguna entidad tiene ya un estado terminal sin salida |
-| `CAT-09` | **Galería de fotos por producto** — filtro por dueño en el listado de archivos | `CAT-05` | **Complete** | Abierto y cerrado el 2026-08-18, spec en [`CAT-09-galeria-de-fotos-por-producto.md`](../03-modulos/catalog/slices/CAT-09-galeria-de-fotos-por-producto.md) con 8 criterios. **Sale de un error del spec de `CAT-05`**, corregido el 2026-08-16: daba por hecho que `Storage` ya listaba los archivos de un producto por `OwnerId`, y `SearchAsync` **no filtraba por él** — el dato entraba y no salía. `FileOwnerFilter` exige los dos campos juntos (`422 owner_filter_incomplete`) y **falla ante un `ownerType` inválido en vez de ignorarlo**, que es el error que `CAT-05` ya corrigió una vez en el `POST`. **Lo que no se veía desde afuera:** ninguno de los cuatro índices de `file_resources` servía para filtrar por dueño, así que el slice trajo `IX_file_resources_tenant_owner` **y migración**. Unitarias de `Storage` `50/50` (eran 36), integración `11/11` (eran 2), arquitectura `17/17` sin cambios, regresión **349 en verde**, **runtime 9 de 9**. **`CA-CAT-09-06` verificado contra el mecanismo ausente**: sin el filtro de tenant da `Expected: 0 / Actual: 1` — el archivo del otro tenant. **Corrió el gate `CAT-00`** en sección aparte (`37b2b72`), porque la ruta la expone `Storage` y no `catalog`. **Deuda declarada: es la segunda vez que se modifica `Storage` desde afuera sin ficha propia; la tercera debería abrir el módulo** |
+| `CAT-09` | **Galería de fotos por producto** — filtro por dueño en el listado de archivos | `CAT-05` | **Complete** | Abierto y cerrado el 2026-08-18, spec en [`CAT-09-galeria-de-fotos-por-producto.md`](../03-modulos/catalog/slices/CAT-09-galeria-de-fotos-por-producto.md) con 8 criterios. **Sale de un error del spec de `CAT-05`**, corregido el 2026-08-16: daba por hecho que `Storage` ya listaba los archivos de un producto por `OwnerId`, y `SearchAsync` **no filtraba por él** — el dato entraba y no salía. `FileOwnerFilter` exige los dos campos juntos (`422 owner_filter_incomplete`) y **falla ante un `ownerType` inválido en vez de ignorarlo**, que es el error que `CAT-05` ya corrigió una vez en el `POST`. **Lo que no se veía desde afuera:** ninguno de los cuatro índices de `file_resources` servía para filtrar por dueño, así que el slice trajo `IX_file_resources_tenant_owner` **y migración**. Unitarias de `Storage` `50/50` (eran 36), integración `11/11` (eran 2), arquitectura `17/17` sin cambios, regresión **349 en verde**, **runtime 9 de 9**. **`CA-CAT-09-06` verificado contra el mecanismo ausente**: sin el filtro de tenant da `Expected: 0 / Actual: 1` — el archivo del otro tenant. **Corrió el gate `CAT-00`** en sección aparte (`37b2b72`), porque la ruta la expone `Storage` y no `catalog`. **`Storage` es una capability de plataforma**, así que el ID de `catalog` es lo que el método define y no una excepción; lo que faltaba era el `SDD-OD-*` de `AGENTS.md` §4a, registrado el 2026-08-18 como **`SDD-OD-22`**. La fila decía antes que había que abrir el módulo: ver la corrección en «Próxima acción ejecutable» |
 
 ## Handoff
+
+### 2026-08-18 (cont.) — `Storage` no se abre como módulo: el método ya lo resolvió
+
+**El owner pidió abrir `storage` como módulo, siguiendo lo que este mismo ledger recomendaba. Se
+leyó el método antes de ejecutarlo, y el método dice que no.**
+
+`00-metodo/apertura-de-modulo.md` tiene una sección «Cuándo NO abrir un módulo» con cuatro señales,
+y la **primera** describe exactamente este caso:
+
+> | Es infraestructura que varios módulos usan igual | Capability de plataforma. Se consume, no se crea |
+>
+> Las cuatro salieron de casos reales de este proyecto.
+
+Y `01-contexto/registro-de-modulos.md` nombra a `Storage` en la lista de capabilities: «No son
+módulos de este proyecto. Se **consumen**, no se reescriben».
+
+**El error fue propio, y estaba en dos documentos.** El spec de `CAT-09` y este ledger declaraban
+que `Storage` «sigue sin ficha, sin gate y sin prefijo» como si fuera una carencia, y que «la
+tercera vez debería abrir el módulo». Se escribió sin verificar `apertura-de-modulo.md`. Los dos
+documentos quedaron corregidos, con el bloque citado en cada uno.
+
+**Lo que sí faltaba, y era real.** `AGENTS.md` §4a — «Defecto en una capability» — pide cuatro
+cosas cuando un slice choca con un hueco de una capability. `CAT-09` cumplió tres: corrección
+acotada dentro del slice, `Repos afectados` declarado, y evidencia RED **en el proyecto de pruebas
+de la capability** (`Modules.Storage.UnitTests` y `Modules.Storage.IntegrationTests`, no sólo en
+quien la descubrió). **La que faltó es la primera: registrar el defecto como `SDD-OD-*` con
+evidencia de código.** Se corrige con `SDD-OD-22` —el hueco de `SearchAsync`, cerrada
+retroactivamente por `CAT-09`— y `SDD-OD-23` —el fallback silencioso del filtro `status`, abierta—,
+en la sección «Decisiones abiertas» que este ledger no tenía y ahora sí.
+
+**Un detalle de numeración que casi cuesta una colisión.** `SDD-OD-*` es una **serie global entre
+los dos repos**. Los primeros IDs libres parecían ser el 17 y el 18 mirando `develop` del
+frontend — pero `git log --all -S` mostró que el 17 al 21 ya estaban tomados por el módulo
+`account`, en una rama sin mergear. Los IDs no se reasignan, así que se tomaron **22 y 23**. Para
+la próxima: buscar el máximo en **todas las ramas de los dos repos**, no en la rama publicada.
+
+**Lo que esto no cambia:** ni una línea de código. `CAT-09` sigue `Complete` y correcto; lo que
+estaba mal era cómo dos documentos describían su relación con el método.
 
 ### 2026-08-18 — `CAT-09`: el dato que entraba y no salía
 

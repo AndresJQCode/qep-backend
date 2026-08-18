@@ -30,16 +30,32 @@ justificó con una capacidad que nadie verificó contra el código. Este slice l
 
 ## Por qué es un slice de `catalog` y no de `storage`
 
-`Storage` no tiene ficha, ni gate, ni prefijo reservado en `convenciones-de-id.md`: es
-infraestructura transversal que el método nunca modeló como módulo de producto, igual que `Audit`,
-`Notifications` y `Authorization`.
+**`Storage` es una capability de plataforma, no un módulo de producto**, y el método lo dice por su
+nombre. `01-contexto/registro-de-modulos.md`, § «Capabilities de plataforma»:
 
-**El precedente es `CAT-05`**, que modificó `Storage` —agregó `FileOwnerType.Product` y terminó el
-fallback silencioso del `OwnerType`— bajo un ID de `catalog`, porque el slice era de catálogo y
-`Storage` era el medio. Acá pasa lo mismo: el disparador y el consumidor son de catálogo.
+> No son módulos de este proyecto. Se **consumen**, no se reescriben […] **Identity, Tenancy,
+> Authorization, Audit, Storage, Notifications, Conversations, Reporting.**
 
-**Se declara la deuda que esto acumula:** es la **segunda** vez que `Storage` se modifica desde
-afuera sin ficha propia. La tercera debería abrir el módulo, no repetir el atajo.
+Y `00-metodo/apertura-de-modulo.md`, § «Cuándo NO abrir un módulo», lo pone como la primera de las
+cuatro señales: «infraestructura que varios módulos usan igual → capability de plataforma; se
+consume, no se crea».
+
+**Por eso el slice lleva ID de `catalog`:** no es un atajo ni una excepción, es el camino que el
+método define. `CAT-05` hizo lo mismo cuando agregó `FileOwnerType.Product` y terminó el fallback
+silencioso del `OwnerType`.
+
+**Lo que sí exige `AGENTS.md` §4a**, «Defecto en una capability», es que la corrección **no sea
+silenciosa**: el hueco se registra en el ledger como `SDD-OD-*` con evidencia de código, y la
+corrección lleva su RED en el proyecto de pruebas de la capability —no sólo en el módulo que la
+descubrió—. Este slice cumple lo segundo (`Modules.Storage.UnitTests` y
+`Modules.Storage.IntegrationTests`) y lo primero se registra como **`SDD-OD-22`**.
+
+> **Corrección del 2026-08-18.** Este apartado decía que `Storage` «no tiene ficha, ni gate, ni
+> prefijo» como si fuera una carencia, y declaraba una deuda: «la tercera vez debería abrir el
+> módulo, no repetir el atajo». **Es falso, y no se verificó contra el método antes de escribirlo.**
+> `apertura-de-modulo.md` prohíbe abrir un módulo para esto, y `registro-de-modulos.md` ya clasifica
+> a `Storage` como capability. No falta nada: lo que faltaba era el `SDD-OD-*` de §4a, y se corrige
+> acá. `SDD-ADR-01`: gana el método escrito, y el documento se corrige.
 
 ## Lo que hay que construir, y lo que no se ve leyendo el endpoint
 
@@ -262,13 +278,21 @@ salieron a la primera.
 `/api/v1/tenants/{tenantId}/files`, que **la expone `Storage`, no `catalog`**. Meterla entre las
 trece operaciones de la tabla del contrato habría mentido sobre qué módulo la sirve, así que va en
 una sección propia —«Lo que `catalog` necesita de `Storage`»— con la corrección al spec de `CAT-05`
-y la deuda del módulo sin ficha, las dos escritas ahí.
+escrita ahí.
 
 Commit `37b2b72` en `qep-frontend`, desde un worktree sobre `develop`, sin tocar el árbol de
 trabajo del otro developer.
 
-**Que esa fila tenga que vivir en el gate de otro módulo es, en sí, el argumento**: el contrato de
-`Storage` se está guardando en el lugar equivocado porque `Storage` no tiene dónde guardarlo.
+**Que la fila viva en el gate del módulo que la consume no es un problema: es la forma.** Una
+capability de plataforma se consume, y lo que el gate de `catalog` declara es **qué necesita
+`catalog` de `Storage`** — no el contrato de `Storage`, que es de su código. La sección se llama
+así por eso.
+
+> **Corregido el 2026-08-18.** Este apartado cerraba diciendo que «el contrato de `Storage` se está
+> guardando en el lugar equivocado porque `Storage` no tiene dónde guardarlo», y el bloque del gate
+> hablaba de «la deuda del módulo sin ficha». Las dos cosas partían del mismo error: tratar la
+> condición de capability como una carencia. No lo es. Ver «Por qué es un slice de `catalog` y no
+> de `storage`».
 
 ### Cierre — `Complete` el 2026-08-18
 
@@ -280,8 +304,7 @@ por la deuda preexistente ya registrada en el ledger.
 
 | Qué | Dónde vive |
 | --- | --- |
-| **`Storage` sin ficha, sin gate y sin prefijo** — segunda modificación desde afuera | Decisión de método, para el owner. **La tercera vez debería abrir el módulo** |
-| El filtro `status` que ante un valor inválido devuelve la lista **sin filtrar** | Señalizado en `StorageEndpoints.cs`. Es contrato preexistente |
+| El filtro `status` que ante un valor inválido devuelve la lista **sin filtrar** | **`SDD-OD-23`** en el ledger, y señalizado en `StorageEndpoints.cs`. Es contrato preexistente de la capability |
 | La grilla de fotos en la UI | Fila del ledger de `qep-frontend` |
 | `dotnet format` falla en todo el repositorio | Deuda preexistente |
 | `NU1903` sobre `SSH.NET` | Dependencia transitiva; va a frenar CI |
