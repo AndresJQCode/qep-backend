@@ -120,6 +120,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeactivateTaxRateCommand, TaxRateDto>,
             DeactivateTaxRateHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateTaxRateCommand, TaxRateDto>,
+            ActivateTaxRateHandler>();
         // CAT-06. Los handlers se registran a mano, uno por uno: olvidarse de esta línea deja el
         // endpoint mapeado y el dispatcher sin a quién llamar, y el síntoma es **500, no 404** —
         // no se parece en nada a la causa. Es el mismo defecto que el README documenta para las

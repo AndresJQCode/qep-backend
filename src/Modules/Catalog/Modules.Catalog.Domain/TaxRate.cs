@@ -96,6 +96,27 @@ public sealed class TaxRate
         UpdatedAt = occurredAt;
     }
 
+    // La vuelta de Deactivate, que hasta CAT-08 no existia. Sin ella una tasa inactiva que algun
+    // producto usa quedaba atrapada: el PUT la rechaza por EnsureActive(), el DELETE de CAT-06 la
+    // rechaza por la FK RESTRICT, y no habia forma de sacarla de ahi salvo un UPDATE por SQL.
+    //
+    // No revalida la unicidad del nombre a proposito. IX_tax_rates_tenant_name es unico **sin
+    // filtro parcial**, asi que desactivar nunca libero el nombre y reactivar no puede colisionar
+    // con nadie. Si alguien le agrega un filtro parcial al indice, CA-CAT-08-09 se cae y avisa.
+    public void Activate(DateTimeOffset occurredAt)
+    {
+        if (IsActive)
+        {
+            throw new CatalogDomainException(
+                "catalog.tax_rate.already_active",
+                "The tax rate is already active.");
+        }
+
+        IsActive = true;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
     private void EnsureActive()
     {
         if (!IsActive)
