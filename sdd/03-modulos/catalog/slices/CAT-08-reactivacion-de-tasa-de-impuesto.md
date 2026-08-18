@@ -1,6 +1,6 @@
 # `CAT-08` — Reactivación de tasa de impuesto
 
-> **Estado:** **In Progress** — abierto el 2026-08-17
+> **Estado:** **Complete** — 2026-08-17, abierto el mismo día
 > **Módulo:** `catalog` — ficha y gate en `qep-frontend/sdd/03-modulos/catalog/`
 > **Depende de:** `CAT-03` (`Complete`) — creó `TaxRate.Deactivate` y el invariante
 > `EnsureActive`; `CAT-06` (`Complete`) — creó el `DELETE`, que es la mitad de este problema
@@ -251,10 +251,67 @@ dentro de un array de argumentos de PowerShell. **Es exactamente el mismo error 
 de `CAT-07`**, y volvió a pasar porque se reusó el script. Verificado con `curl.exe` directo:
 `activate=403`, y la tasa sigue en `f`. El código nunca estuvo mal; el medidor sí, dos veces.
 
-### Tramos pendientes
+### Tramo 3 — el gate y la revisión (2026-08-17)
 
-| Tramo | Qué falta |
-|---|---|
-| Gate | La **séptima** operación de `tax-rates` en `CAT-00`, que vive en `qep-frontend` |
-| Revisión | Lente ciego, como `CAT-07` |
-| Ledger | La entrada de handoff en `sdd/02-plan/plan-maestro.md` |
+**El gate `CAT-00` corrió.** Séptima operación de `tax-rates`, escrita en `qep-frontend` desde un
+worktree sobre `develop`, sin tocar el árbol de trabajo del otro developer. El conteo del contrato
+pasó de doce a **trece**, y ahora son **dos** las operaciones que el frontend no consume: las dos
+de `activate`. No hay `activateProduct` ni `activateTaxRate` en `catalog.api.ts`, verificado.
+
+**Revisión con lente ciego, en dos pasadas.** `review-reliability`, riesgo medio.
+
+La primera devolvió **cero hallazgos bloqueantes** y dos `SUGGESTION`. La segunda —sobre el hueco
+de detección del camino del 403— **se aplicó**, y el lente la reevaluó: cierra el hueco, no
+introduce nada. Veredicto final: **candidato limpio, sin `BLOCKING` ni `WARNING`**. Receipt
+`review-b0167a985b84f879`.
+
+**Qué era ese hueco, porque vale más que la corrección.** `CA-CAT-08-07` probaba que el **422** no
+deja rastro en el outbox, pero el camino del **403** sólo se verificaba en runtime:
+`ActivateRequiresTheManagePermission` miraba `is_active` y nada más. Si alguien moviera el
+`auditPublisher.Publish` por encima de `CatalogAuthorization.EnsureAuthorized`, aparecería una fila
+de auditoría de una operación que nunca ocurrió — y la prueba habría seguido en verde. Era un
+agujero de **detección**, no de comportamiento: el código estaba bien, la red que lo sostiene no.
+
+**Lo que el lente no marcó como hallazgo, y es la parte que importa.** Verificó `CA-CAT-08-10`
+contra el riesgo de ser teatro y concluyó que no lo es: quitar el guard de `Update` **o** la
+semántica `RESTRICT` del `DELETE` la pondría roja antes de llegar siquiera al paso de activación.
+Y la falta de prueba de contención sobre `Version` la clasificó **preexistente**, no introducida:
+`Deactivate` y `Update` cargan el mismo hueco.
+
+**Esta vez el gate se validó antes de publicar**, que es la regla que `CAT-07` dejó escrita después
+de hacerlo al revés:
+
+```txt
+"result": "allow"
+"reason": "authoritative transaction, current repository target, and content-bound artifacts match"
+base_relationship_valid: true
+```
+
+Es la diferencia con el `allow` vacío que `CAT-07` obtuvo por publicar primero.
+
+#### Un error propio, corregido antes de publicar
+
+El primer intento de revisión congeló un candidato que incluía `.atl/skill-registry.md` y su
+cache — dos archivos que el owner había decidido **explícitamente** dejar fuera de los commits, y
+que se colaron igual en el commit del código. Se detectó al mirar el manifiesto de rutas del
+candidato, que traía 9 archivos en vez de 7.
+
+Como no estaba publicado, se rehicieron los dos commits sin ellos y se rehizo la revisión sobre el
+candidato limpio. **La lección no es «revisar el `git add`»**: es que el manifiesto de rutas del
+candidato es la última oportunidad de ver qué se está por publicar, y hay que leerlo.
+
+### Cierre — `Complete` el 2026-08-17
+
+**Los 10 criterios cubiertos por prueba automática y verificados en runtime.** Los ítems de UI van
+`N/A`: es un slice de backend. El ítem «`dotnet format` sin hallazgos en las rutas del slice` queda
+cumplido de forma **degradada**, por la deuda preexistente ya registrada en el ledger.
+
+**Lo que este slice deja abierto, y no es suyo:**
+
+| Qué | Dónde vive |
+| --- | --- |
+| Contención concurrente sobre `Version` sin prueba | Deuda de patrón compartida con `Deactivate` y `Update`. La marcó el lente como preexistente |
+| Los botones de reactivar, tasa y producto, en la UI | Fila del ledger de `qep-frontend`. Son las dos operaciones del gate que el frontend no consume |
+| La galería de varias fotos por producto | Slice nuevo de `Storage`, sin ID |
+| `dotnet format` falla en todo el repositorio | Deuda preexistente |
+| `NU1903` sobre `SSH.NET` | Dependencia transitiva; va a frenar CI |
