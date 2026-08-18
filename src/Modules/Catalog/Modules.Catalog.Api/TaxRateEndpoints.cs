@@ -50,6 +50,16 @@ public static class TaxRateEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // CAT-08. La vuelta de deactivate, y la salida del atolladero que CAT-06 dejó sin querer:
+        // una tasa inactiva que algún producto usa no se puede editar —EnsureActive— ni borrar
+        // —la FK es RESTRICT—, así que sin esto la única salida era un UPDATE por SQL.
+        group.MapPost("/tax-rates/{taxRateId:guid}/activate", ActivateTaxRateAsync)
+            .RequireAuthorization(CatalogPermissions.TaxRateManage)
+            .Produces<TaxRateResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // CAT-06. Sin permiso propio: borrar es administrar, el mismo criterio con el que
         // deactivate tampoco tiene el suyo. El 422 es el caso que hace falta declarar: una tasa
         // que algún producto usa no se puede borrar, porque la FK es RESTRICT.
@@ -139,6 +149,19 @@ public static class TaxRateEndpoints
     {
         var taxRate = await dispatcher.SendAsync(
             new DeactivateTaxRateCommand(tenantId, taxRateId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(taxRate));
+    }
+
+    private static async Task<IResult> ActivateTaxRateAsync(
+        Guid tenantId,
+        Guid taxRateId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var taxRate = await dispatcher.SendAsync(
+            new ActivateTaxRateCommand(tenantId, taxRateId),
             cancellationToken);
 
         return Results.Ok(ToResponse(taxRate));

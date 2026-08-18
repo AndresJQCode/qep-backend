@@ -169,4 +169,62 @@ public sealed class TaxRateTests
 
         Assert.Equal("catalog.tax_rate.inactive", error.Code);
     }
+
+    // CA-CAT-08-01, en el dominio: activar una tasa inactiva la devuelve a activa y mueve
+    // UpdatedAt a la hora de la operacion.
+    [Fact]
+    public void ActivateTurnsTaxRateActiveAndAdvancesUpdatedAt()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        taxRate.Deactivate(Now.AddMinutes(5));
+        var later = Now.AddMinutes(10);
+
+        taxRate.Activate(later);
+
+        Assert.True(taxRate.IsActive);
+        Assert.Equal(later, taxRate.UpdatedAt);
+    }
+
+    // CA-CAT-08-02: activar algo ya activo es un error de negocio, no un exito silencioso.
+    // Espeja DeactivateRejectsAnAlreadyInactiveTaxRate; el codigo se deriva del que ya existe.
+    [Fact]
+    public void ActivateRejectsAnAlreadyActiveTaxRate()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            taxRate.Activate(Now.AddMinutes(5)));
+
+        Assert.Equal("catalog.tax_rate.already_active", error.Code);
+    }
+
+    // CA-CAT-08-08: Version es el token de concurrencia optimista. Sin el incremento, dos
+    // escrituras que se solapan se pisan en silencio y ninguna asercion sobre IsActive lo nota.
+    // Create deja 1, Deactivate 2, Activate 3.
+    [Fact]
+    public void ActivateAdvancesTheConcurrencyToken()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        taxRate.Deactivate(Now.AddMinutes(5));
+
+        taxRate.Activate(Now.AddMinutes(10));
+
+        Assert.Equal(3, taxRate.Version);
+    }
+
+    // CA-CAT-08-03, que es el criterio minimo que justifica el slice: sin esto se puede entregar
+    // un Activate que responde bien y deja la tasa igual de congelada, porque Update sigue
+    // abriendo con EnsureActive().
+    [Fact]
+    public void ActivateReopensUpdate()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        taxRate.Deactivate(Now.AddMinutes(5));
+        taxRate.Activate(Now.AddMinutes(10));
+
+        taxRate.Update("IVA reducido", 5, Now.AddMinutes(15));
+
+        Assert.Equal("IVA reducido", taxRate.Name);
+        Assert.Equal(5, taxRate.Percentage);
+    }
 }
