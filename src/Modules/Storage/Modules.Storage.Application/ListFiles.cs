@@ -11,6 +11,7 @@ public sealed record ListFilesQuery(
     string? Kind,
     string? Category,
     string? Tag,
+    FileOwnerFilter? Owner,
     int Page,
     int PageSize) : IQuery<PagedFilesDto>;
 
@@ -36,6 +37,7 @@ public sealed class ListFilesHandler(
             query.Kind,
             query.Category,
             query.Tag,
+            query.Owner,
             page,
             pageSize,
             cancellationToken);
