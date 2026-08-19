@@ -12,6 +12,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     public DbSet<Session> Sessions => Set<Session>();
 
+    public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IdentityInboxMessage> Inbox => Set<IdentityInboxMessage>();
@@ -23,6 +25,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ConfigureUser(modelBuilder);
         ConfigureProviderLink(modelBuilder);
         ConfigureSession(modelBuilder);
+        ConfigureUserPreference(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías de emisión/revocación de sesión
         // commiteen atómicas en la transacción de este contexto (ADR 0019), igual que Tenancy.
@@ -57,6 +60,38 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .OnDelete(DeleteBehavior.Cascade);
         user.Navigation(value => value.ProviderLinks)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    /// <summary>
+    /// ACC-03. La clave es el par <c>(user_id, tenant_id)</c>: la preferencia es del usuario
+    /// en cada tenant (SDD-OD-17).
+    /// </summary>
+    private static void ConfigureUserPreference(ModelBuilder modelBuilder)
+    {
+        var preference = modelBuilder.Entity<UserPreference>();
+        preference.ToTable("user_preferences", "identity");
+        preference.HasKey(value => new { value.UserId, value.TenantId });
+        preference.Property(value => value.UserId)
+            .HasColumnName("user_id")
+            .HasConversion(id => id.Value, value => new UserId(value));
+        // Sin clave foránea, y a propósito: `tenants` vive en el esquema de Tenancy y ningún
+        // módulo referencia tablas de otro — ArchitectureTests lo verifica. La integridad la
+        // da que este tenant_id siempre pasó por la verificación de membresía de
+        // ExternalClaimsTransformation antes de llegar acá.
+        preference.Property(value => value.TenantId).HasColumnName("tenant_id");
+        preference.Property(value => value.ColorScheme)
+            .HasColumnName("color_scheme")
+            .HasMaxLength(32);
+        preference.Property(value => value.Mode)
+            .HasColumnName("mode")
+            .HasConversion<string>()
+            .HasMaxLength(10);
+        preference.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        preference.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(value => value.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureProviderLink(ModelBuilder modelBuilder)

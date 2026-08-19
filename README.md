@@ -81,6 +81,19 @@ La configuración base está en `src/Api/appsettings.json` y puede
 sobrescribirse con variables de entorno, secretos de usuario o los mecanismos
 estándar de configuración de ASP.NET Core.
 
+[`src/Api/appsettings.example.json`](src/Api/appsettings.example.json) es el
+**inventario completo de claves** que la aplicación lee, con sus valores por
+defecto reales y un placeholder `<user-secrets: ...>` donde el valor es una
+credencial. No lo carga nadie —está excluido del output en `Api.csproj`— y no
+se copia sobre `appsettings.json`: se lee para saber qué existe. Los secretos
+siguen yendo por [secretos de usuario](#secretos-de-usuario), nunca en un
+`appsettings*.json`.
+
+Las claves obligatorias no se deducen de ese archivo sino de los validadores que
+corren con `ValidateOnStart` (`StorageOptionsValidator`,
+`NotificationsOptionsValidator`, `SessionOptionsValidator`,
+`AuditOptionsValidator`): si algo falta, la API **no arranca**.
+
 `ConnectionStrings:QepDatabase` **no está en `appsettings.json`**, a propósito:
 lleva una contraseña, y la regla de este repositorio es que una credencial nunca
 se compromete en un `appsettings*.json`. Se provee por secretos de usuario en
@@ -92,8 +105,23 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase` | **sin valor por defecto — requerido** | Conexión compartida por los módulos. Ausente ⇒ la API no inicia |
 | `OpenTelemetry:Endpoint` | `http://localhost:4317` | Exportación OTLP de trazas y métricas |
 | `OTEL_SERVICE_NAME` | sin definir (cae a `qep-api`) | `service.name` del recurso; en k8s lo fija el Deployment |
+| `Authentication:UseDevelopmentStub` | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque |
 | `Authentication:Authority` | ausente (cae a `https://accounts.google.com`) | Emisor OIDC; sólo se define para pisar el de Google |
 | `Authentication:Audience` | ausente | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId` |
+| `Authentication:Session:CookieName` | `qep_session` | Nombre de la cookie de sesión |
+| `Authentication:Session:AbsoluteLifetimeDays` | `30` | Vida máxima de la sesión. Debe ser positiva y ≥ `IdleTimeoutDays` |
+| `Authentication:Session:IdleTimeoutDays` | `7` | Expiración por inactividad |
+| `Registration:PublicTenantSignupEnabled` | `true` en `appsettings.json` | Alta pública de tenants. **Ausente ⇒ `false`**: se lee con `GetValue<bool>` |
+| `Notifications:EmailProvider` | `infobip` en `appsettings.json` (default del binding: `log`) | `log` o `infobip`. Con `infobip`, las tres claves `Notifications:Infobip:*` pasan a ser requeridas |
+| `Notifications:LoginUrl` | `http://localhost:3002/login` | URL absoluta que se inserta en los emails |
+| `Audit:SecurityRetentionDays` | `2555` (~7 años) | Ventana de retención de auditoría de seguridad. Debe ser positiva |
+| `Audit:OperationalRetentionDays` | `730` (2 años) | Ventana de retención de auditoría operativa. Debe ser positiva |
+| `Storage:PresignedUrlMinutes` | `5` | Vigencia de la URL firmada. Debe ser positiva |
+| `Storage:StagingRetentionHours` | `24` | Retención de los objetos en staging. Debe ser positiva |
+| `Storage:StagingCleanupMinutes` | `60` | Período del barrido de staging. Debe ser positivo |
+| `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
+| `Storage:ClamAv:Enabled` | `false` | Escaneo de malware. Con `true`, `Host` no puede estar vacío |
+| `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds` | `clamav` / `3310` / `30` | Destino del escaneo. `Port` entre 1 y 65535 |
 
 Ejemplo con variables de entorno:
 
@@ -127,9 +155,15 @@ dotnet user-secrets set "Authentication:Google:ClientId" "<google-oauth-client-i
 Infobip (email transaccional, ADR 0018 — solo con `Notifications:EmailProvider=infobip`):
 
 ```powershell
-dotnet user-secrets set "Notifications:BaseUrl" "<https://xxxxx.api.infobip.com>" --project src/Api
-dotnet user-secrets set "Notifications:ApiKey"  "<infobip-api-key>"                --project src/Api
+dotnet user-secrets set "Notifications:Infobip:BaseUrl" "<https://xxxxx.api.infobip.com>" --project src/Api
+dotnet user-secrets set "Notifications:Infobip:ApiKey"  "<infobip-api-key>"                --project src/Api
 ```
+
+> El prefijo `Infobip:` no es opcional: `NotificationsOptions` bindea la sección
+> `Notifications` y las credenciales cuelgan de `Infobip`. Setear
+> `Notifications:ApiKey` a secas no lo lee nadie, y el arranque falla con
+> `Notifications:Infobip:ApiKey is required` sin pista de que el problema es el
+> prefijo.
 
 Cloudflare R2 (object storage obligatorio, ADR 0020):
 
@@ -140,7 +174,16 @@ dotnet user-secrets set "Storage:R2:SecretAccessKey" "<secret-access-key>" --pro
 dotnet user-secrets set "Storage:R2:Bucket"          "<bucket>"          --project src/Api
 # Endpoint opcional; si se omite se deriva como https://<AccountId>.r2.cloudflarestorage.com
 dotnet user-secrets set "Storage:R2:Endpoint"        "https://<account-id>.r2.cloudflarestorage.com" --project src/Api
+
+# Bucket público y su dominio. Van de a dos o ninguno; sin ellos, publicar un archivo
+# responde 422 storage.public.not_configured y el imageUrl de producto es siempre null.
+dotnet user-secrets set "Storage:R2:PublicBucket"    "<bucket-publico>"  --project src/Api
+dotnet user-secrets set "Storage:R2:PublicBaseUrl"   "https://<dominio-publico>" --project src/Api
 ```
+
+`PublicBaseUrl` se concatena con la clave del objeto **sin validación alguna**: si el dominio
+no está conectado al bucket público en Cloudflare, la API responde `200` y devuelve una URL
+que no carga. Verifique abriendo el `publicUrl` de la respuesta antes de darlo por bueno.
 
 No existe fallback local. La validación de arranque exige `AccessKeyId`,
 `SecretAccessKey`, `Bucket` y `Endpoint` o `AccountId` en todos los ambientes.
@@ -240,6 +283,11 @@ Inventario completo de la superficie HTTP. Las secciones siguientes desarrollan
 sólo la configuración del tenant y la invitación de memberships, con ejemplos
 ejecutables; el resto se documenta en el spec de su slice y en el documento
 OpenAPI (`/openapi/v1.json`, sólo en `Development`).
+
+Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
+
+- [Imágenes de producto](docs/integracion-imagenes-de-producto.md) — subir a R2,
+  publicar y asignar la portada, con los códigos de error que la UI debe distinguir.
 
 | Grupo de rutas | Operaciones | Autorización |
 |---|---|---|

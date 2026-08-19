@@ -51,16 +51,25 @@ public sealed class RealAuthenticationApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
 
-        var (_, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        var url = $"/api/v1/tenants/{tenantId}/settings";
+
+        // El control positivo, y no es decorado: mientras SDD-CT-14 estuvo abierta TODO el flujo
+        // respondía Unauthorized, así que esta prueba pasaba esperando exactamente lo que estaba
+        // roto — verde sin verificar nada. Afirmar primero que el MISMO endpoint sí responde con
+        // la cookie es lo que hace que el 401 de abajo signifique «lo rechazó el pinning de
+        // esquema» y no «acá no entra nadie».
+        using var withCookie = new HttpRequestMessage(HttpMethod.Get, url);
+        withCookie.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        var allowed = await owner.SendAsync(withCookie, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
 
         // Un cliente nuevo sin cookie, sólo con un bearer token de Google todavía válido —
         // este es exactamente el bypass que la separación de esquemas GoogleBearer/QepSession
         // (QepServiceCollectionExtensions.AddAuthentication) existe para impedir.
-        using var bearerOnlyClient = factory.CreateClient();
+        using var bearerOnlyClient = CreateClient(factory);
         var token = IssueGoogleIdToken(Guid.NewGuid().ToString(), NewEmail(), emailVerified: true);
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get,
-            $"/api/v1/tenants/{tenantId}/settings");
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         request.Headers.Add("X-Tenant-Id", tenantId.ToString());
@@ -159,7 +168,7 @@ public sealed class RealAuthenticationApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(invited);
 
-        using var member = factory.CreateClient();
+        using var member = CreateClient(factory);
         var memberToken = IssueGoogleIdToken(
             Guid.NewGuid().ToString(),
             memberEmail,
@@ -228,7 +237,7 @@ public sealed class RealAuthenticationApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(invited);
 
-        using var secondOwner = factory.CreateClient();
+        using var secondOwner = CreateClient(factory);
         var token = IssueGoogleIdToken(
             Guid.NewGuid().ToString(),
             secondOwnerEmail,
@@ -289,10 +298,11 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
     }
 
+    // Todo cliente de esta suite se crea acá, y sobre https. Ver CreateClient.
     private static async Task<(HttpClient Client, Guid TenantId)> RegisterOwnerAndTenantAsync(
         QepApiFactory factory)
     {
-        var client = factory.CreateClient();
+        var client = CreateClient(factory);
         var token = IssueGoogleIdToken(Guid.NewGuid().ToString(), NewEmail(), emailVerified: true);
 
         using var request = new HttpRequestMessage(
@@ -411,6 +421,24 @@ public sealed class RealAuthenticationApiTests
     private sealed record RegisterTenantPayload(Guid TenantId, Guid OwnerUserId);
 
     private sealed record MembershipPayload(Guid Id, Guid UserId, long Version);
+
+    /// <summary>
+    /// Cliente sobre **https**, y no es cosmético: es lo que hace que la cookie de sesión viaje.
+    ///
+    /// `SessionCookieWriter` marca la cookie `Secure` en todo entorno que no sea `Development` ni
+    /// `Local` (`SessionCookieWriter.cs:20`), y esta suite corre a propósito en `IntegrationTests`
+    /// para ejercitar la rama de auth real. Con el `http://localhost` que
+    /// `WebApplicationFactory` usa por defecto, el `CookieContainer` **acepta** la cookie y
+    /// **no la reenvía**: el servidor la emite, el cliente la guarda, y ningún request posterior
+    /// la lleva. El síntoma es `Unauthorized` en cualquier punto del flujo, que no se parece en
+    /// nada a su causa — y fue `SDD-CT-14` durante cuatro slices.
+    ///
+    /// Centralizado para que no se desincronice, por el mismo criterio con el que
+    /// `SessionCookieWriter` centraliza los flags de la cookie del lado del servidor.
+    /// </summary>
+    private static HttpClient CreateClient(QepApiFactory factory) =>
+        factory.CreateClient(
+            new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
 
     private sealed class QepApiFactory(string connectionString)
         : WebApplicationFactory<Program>

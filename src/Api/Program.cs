@@ -78,6 +78,7 @@ app.MapScalarApiReference("/scalar/v1")
 app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }))
     .AllowAnonymous();
 app.MapAuthSessionEndpoints();
+app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
 app.MapAuthorizationCatalogEndpoints();
 app.MapTenantSettingsEndpoints();

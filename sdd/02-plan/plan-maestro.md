@@ -26,7 +26,7 @@ historial de chat.
 | --- | --- |
 | Fase activa | Fase 2 — módulos de producto. `catalog` es el primero con gate cerrado |
 | Módulo activo | `catalog` — `En curso`, gate `CAT-00` cerrado el 2026-08-10 |
-| Slice activo | **Ninguno.** `CAT-09` cerró el 2026-08-18 y no se abrió nada nuevo: **un slice a la vez en este repositorio**. **No hay candidato en cola.** Lo que queda anotado no es un slice sino una decisión de método: `Storage` va por su **segunda** modificación desde afuera y sigue sin ficha ni prefijo. Ver «Próxima acción ejecutable» |
+| Slice activo | **`ACC-03` — preferencias de apariencia por usuario y tenant**, abierto el 2026-08-18. Es el primer slice del módulo `account`, cuyo gate `ACC-00` cerró ese mismo día. Antes de él el ledger decía: «**Ninguno.** `CAT-09` cerró el 2026-08-18 y no se abrió nada nuevo: **un slice a la vez en este repositorio**» — se respeta, `CAT-09` estaba cerrado |
 | Último slice cerrado | **`CAT-09` — galería de fotos por producto**, `Complete` el 2026-08-18, abierto el mismo día. Filtro por `ownerId`/`ownerType` en el listado de archivos, con `IX_file_resources_tenant_owner` y su migración. **Sale de un error del spec de `CAT-05`**, corregido el 2026-08-16: ese slice dio por hecho que `Storage` ya listaba los archivos de un producto por `OwnerId`, y **`SearchAsync` no filtraba por él** — el dato entraba y no salía. Unitarias de `Storage` `50/50` (eran 36), integración de `Storage` `11/11` (eran 2), arquitectura `17/17` sin cambios, regresión **349 en verde** con los 5 de `SDD-CT-14` por nombre, **runtime 9 de 9**. **`CA-CAT-09-06` verificado contra el mecanismo ausente**: sin el filtro de tenant da `Expected: 0 / Actual: 1`, y ese `1` es el archivo del otro tenant. **Corrió el gate `CAT-00`** (`37b2b72` en `qep-frontend`), en sección aparte porque la ruta es de `Storage` y no de `catalog` |
 | Slice cerrado antes | **`CAT-08` — reactivación de tasa de impuesto**, `Complete` el 2026-08-17, abierto el mismo día. `POST .../tax-rates/{taxRateId}/activate`. **Sale de una deuda declarada al cerrar `CAT-07`**, y resultó ser un defecto peor que el de `Product`: cruzado con el `DELETE` de `CAT-06`, una tasa inactiva **que algún producto usa** no se podía editar —`422 inactive`—, ni borrar —`422 in_use` por la FK `RESTRICT`—, ni desactivar. **No quedaba ninguna salida por la API**, sólo un `UPDATE` por SQL. Unitarias `63/63`, arquitectura `17/17` sin cambios, integración de `catalog` `96/96` (eran 86), regresión **326 en verde** con los 5 de `SDD-CT-14` por nombre, **runtime 14 de 14**. **`CA-CAT-08-08` verificado contra el mecanismo ausente**, y las otras tres pruebas quedaron verdes con el sabotaje puesto — que es lo que justifica que exista. **Corrió el gate `CAT-00`** (séptima operación de `tax-rates`, `1f66e3c` en `qep-frontend`). **Revisado con lente ciego en dos pasadas**, receipt `review-b0167a985b84f879`: cero bloqueantes, y una `SUGGESTION` aplicada que cerró un hueco de detección real. **Y esta vez el gate se validó antes de publicar**, con `base_relationship_valid: true` |
 | Slice cerrado antes | **`CAT-07` — reactivación de producto**, `Complete` el 2026-08-17, abierto el 2026-08-15. `POST .../products/{productId}/activate`, la mitad faltante de `RF-020`: hasta este slice un producto inactivo era **terminal**. **Commiteado en `d8fdd81` y `5a9d092` (`feat`), `77d11ce`, `412d2a6`, `17473eb` y `afbbdb3` (`docs`)**, mergeado a `develop` (`14bd6a6`) y a `main` (`4d4d9c8`). Unitarias `59/59`, arquitectura `17/17` sin cambios, integración de `catalog` `86/86`, regresión **312 en verde**, **runtime 10 de 10**. **Corrió el gate `CAT-00`** (`84710cd` en `qep-frontend`). **Salda la deuda de método:** revisado con **lente ciego**, `review-reliability`, **cero hallazgos bloqueantes**, receipt `review-46e2905483eb87ae`. **Lo que salió en orden equivocado:** el push fue antes de la revisión, así que el gate `pre-push` respondió `allow` con `reason: "the publication range is empty"` — el receipt existe pero no gobernó la entrega |
@@ -35,7 +35,7 @@ historial de chat.
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
 | Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01` cerrada el 2026-08-11 por el owner: infraestructura y despliegue quedan explícitamente fuera del alcance del método.** No se abre módulo de plataforma ni se reserva prefijo. El corte es **por efecto, no por carpeta** —ver «Alcance del método» abajo—, y la obligación que **no** desaparece es la entrada de handoff en este ledger. Pendiente que deja: es una decisión estructural, así que `convenciones-de-id.md` pide que produzca un `SDD-ADR-*`. **`SDD-ADR-09` cerrado el 2026-08-11 en `qep-frontend`, commit `35e6f93` sobre `develop`.** Revisado contra sus fuentes antes de entrar: los cuatro commits citados, los cuatro archivos, el conteo de prefijos y la lista blanca de manifiestos de la plantilla de deploy. El mismo commit agrega al índice la fila de `SDD-ADR-08`, que estaba en el cuerpo del documento desde `3aca4a9` y no en la tabla. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure. **Tres decisiones del owner del 2026-08-12, sobre el modelo de `Product`:** `descripción`, `imagen`, `precio` y `moneda` entran a `catalog` (`CAT-04`); la **escala de precios** queda en `pricing`, como el gate ya declaraba; y **`stock` queda fuera del alcance del proyecto** — no tenía `RF` que lo sustentara ni módulo en el mapa, y como campo suelto era el candidato a corromperse por escrituras concurrentes. **Las tres corren el alcance del gate `CAT-00`**, que cerró con "Ningún campo más", así que hay que escribirlas ahí. **Dos abiertas nuevas: `DECISIÓN-PENDIENTE-CAT-05`** —¿el `name` de una tasa es único por tenant? Recomendado que sí; bloquea la migración `AddTaxRates`— y **`DECISIÓN-PENDIENTE-CAT-06`** —cuando exista `pricing`, ¿gana la lista o `Product.Price`? Default asumido y declarado: gana `pricing`, y `Product.Price` es precio base de fallback; bloquea `CAT-04`, no `CAT-03` |
-| Contradicciones abiertas | `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
+| Contradicciones abiertas | **`SDD-CT-21` y `SDD-CT-22` (nuevas, 2026-08-18, las dos **cerradas** el mismo día): ver la entrada de handoff «El flujo de imagen de producto no funcionaba de punta a punta».** **`SDD-CT-20` cerrada el 2026-08-18** subiendo `Testcontainers.PostgreSql` a `4.14.0` (`f59cdbd`); el `restore` de `Modules.Storage.IntegrationTests` pasa con exit 0 y sin `NU1903`. Se conserva su descripción porque el síntoma vuelve si alguien revierte la versión: **ningún proyecto de `*.IntegrationTests` compilaba en este repositorio.** `dotnet build` falla con `error NU1903: El paquete "SSH.NET" 2025.1.0 tiene una vulnerabilidad de gravedad alta conocida` en los **cinco** proyectos de integración —Catalog, Tenancy, Audit, Storage y Notifications—. `SSH.NET` es transitivo de `Testcontainers`, y el repo trata el aviso de auditoría de NuGet como error. **Verificado ajeno a `ACC-03`** con `git stash`: sin ninguno de sus cambios, `Modules.Catalog.IntegrationTests` falla igual. Consecuencia: **ningún slice puede dar evidencia de integración hasta que se resuelva**, y `ACC-03` quedó `In Progress` por eso. Salidas posibles, las dos con efecto sobre la postura de seguridad del repo y por lo tanto decisión del owner: subir `Testcontainers` a una versión cuyo `SSH.NET` no esté afectado, o suprimir el aviso puntual con `NuGetAuditSuppress`. No se tocó nada: `AGENTS.md` §4a pide que un defecto se registre, no que se arregle en silencio. `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
 
 ### Próxima acción ejecutable
 
@@ -135,15 +135,44 @@ docker start postgres18
 $env:ASPNETCORE_ENVIRONMENT = "Development"
 $env:ASPNETCORE_URLS = "http://localhost:5199"
 $env:Authentication__UseDevelopmentStub = "true"
-$env:Storage__R2__PublicBucket = "qep-public"
-$env:Storage__R2__PublicBaseUrl = "https://cdn.qep.test"
 dotnet run --project src/Api --no-launch-profile -p:NuGetAudit=false
 ```
 
-Sin `--no-launch-profile` los dos perfiles fijan el stub en `false` y todo devuelve `401`. Sin las
-dos variables de `PublicBucket`/`PublicBaseUrl`, `imageUrl` viene siempre en `null`: van de a dos
-o el validador de opciones no arranca. **La base local es `dev_lulo_crm_v2` y el usuario de psql
-es `postgres`**, no `qep`.
+Sin `--no-launch-profile` los dos perfiles fijan el stub en `false` y todo devuelve `401`. **La
+base local es `dev_lulo_crm_v2` y el usuario de psql es `postgres`**, no `qep`.
+
+**Los tres nombres de R2 van por user-secrets, una sola vez, y no por variable de entorno**
+(corregido el 2026-08-18; ver abajo por qué):
+
+```powershell
+dotnet user-secrets set "Storage:R2:Bucket"        "qep-private"                 --project src/Api
+dotnet user-secrets set "Storage:R2:PublicBucket"  "qep"                         --project src/Api
+dotnet user-secrets set "Storage:R2:PublicBaseUrl" "https://assets-qep.qcode.co" --project src/Api
+```
+
+`PublicBucket` y `PublicBaseUrl` van **de a dos o ninguno**: `IsConfigured` exige los dos, y sin
+ellos publicar responde `422 storage.public.not_configured` y `imageUrl` viene siempre en `null`.
+
+> **Corregido el 2026-08-18, y las tres correcciones costaron una jornada del developer de
+> frontend.** Esta secuencia decía `$env:Storage__R2__PublicBucket = "qep-public"` y
+> `$env:Storage__R2__PublicBaseUrl = "https://cdn.qep.test"`. **Los dos valores eran falsos:** el
+> bucket público se llama `qep` y el dominio es `https://assets-qep.qcode.co`. `cdn.qep.test` no
+> existe, y como el backend concatena `{PublicBaseUrl}/{key}` sin validar nada, publicar devuelve
+> `200` con una URL que no carga en ningún lado — el único punto del flujo donde el error no se
+> manifiesta como error.
+>
+> **Y faltaba `Storage:R2:Bucket`, que es el que importa.** Al no estar en esta secuencia, nadie
+> lo revisó: en user-secrets estaba `lulo-crm-private`, heredado de Lulo CRM igual que la base
+> `dev_lulo_crm_v2`. El backend firmaba las URLs de subida contra el bucket de otro producto, así
+> que el CORS aplicado sobre `qep-private` no servía de nada y R2 respondía
+> `CORS not configured for this bucket`. Los archivos de prueba de ese día quedaron en
+> `lulo-crm-private`.
+>
+> **Van por user-secrets y no por `$env:` por una razón verificada:** cuando la API se arranca
+> desde el IDE con depurador —que es como trabaja el developer de este repo— las variables de
+> entorno exportadas en una terminal **no llegan a ese proceso**. user-secrets sí, porque se lee
+> del disco al construir el host. Una secuencia basada en `$env:` sólo funciona para quien
+> arranca por línea de comandos.
 
 ---
 
@@ -284,7 +313,171 @@ Owner: Andres Jaramillo
 | `CAT-08` | **Reactivación de tasa de impuesto** — `POST .../tax-rates/{id}/activate`, la salida del atolladero que dejó `CAT-06` | `CAT-03`, `CAT-06` | **Complete** | Abierto y cerrado el 2026-08-17, spec en [`CAT-08-reactivacion-de-tasa-de-impuesto.md`](../03-modulos/catalog/slices/CAT-08-reactivacion-de-tasa-de-impuesto.md) con 10 criterios. **Sale de la deuda que `CAT-07` declaró**, y resultó peor que el defecto de `Product`: cruzado con el `DELETE` de `CAT-06`, una tasa inactiva **que algún producto usa** no se podía editar (`422 inactive`), ni borrar (`422 in_use` por la FK `RESTRICT`), ni desactivar. **Ninguna salida por la API**, sólo `UPDATE` por SQL — y desactivar por error no duele en el momento, porque `ProductTaxRateResolver` acepta tasas inactivas a propósito. **`CA-CAT-08-10` reproduce el atolladero entero antes de resolverlo**, y el lente lo verificó contra el riesgo de ser teatro: quitar el guard de `Update` **o** el `RESTRICT` del `DELETE` lo pone rojo antes del paso de activación. Unitarias `63/63`, arquitectura `17/17` sin cambios, integración de `catalog` `96/96` (eran 86), regresión **326 en verde**, **runtime 14 de 14**. **`CA-CAT-08-08` verificado contra el mecanismo ausente**, con las otras tres pruebas verdes bajo el sabotaje. **Corrió el gate `CAT-00`** (séptima operación de `tax-rates`, `1f66e3c` en `qep-frontend`). **Revisión con lente ciego en dos pasadas**, receipt `review-b0167a985b84f879`: cero bloqueantes, una `SUGGESTION` aplicada que cerró un hueco de **detección** —el 403 no verificaba la ausencia de fila en el outbox—. **Gate validado antes de publicar**, con `base_relationship_valid: true`. Con esto `catalog` queda **simétrico**: ninguna entidad tiene ya un estado terminal sin salida |
 | `CAT-09` | **Galería de fotos por producto** — filtro por dueño en el listado de archivos | `CAT-05` | **Complete** | Abierto y cerrado el 2026-08-18, spec en [`CAT-09-galeria-de-fotos-por-producto.md`](../03-modulos/catalog/slices/CAT-09-galeria-de-fotos-por-producto.md) con 8 criterios. **Sale de un error del spec de `CAT-05`**, corregido el 2026-08-16: daba por hecho que `Storage` ya listaba los archivos de un producto por `OwnerId`, y `SearchAsync` **no filtraba por él** — el dato entraba y no salía. `FileOwnerFilter` exige los dos campos juntos (`422 owner_filter_incomplete`) y **falla ante un `ownerType` inválido en vez de ignorarlo**, que es el error que `CAT-05` ya corrigió una vez en el `POST`. **Lo que no se veía desde afuera:** ninguno de los cuatro índices de `file_resources` servía para filtrar por dueño, así que el slice trajo `IX_file_resources_tenant_owner` **y migración**. Unitarias de `Storage` `50/50` (eran 36), integración `11/11` (eran 2), arquitectura `17/17` sin cambios, regresión **349 en verde**, **runtime 9 de 9**. **`CA-CAT-09-06` verificado contra el mecanismo ausente**: sin el filtro de tenant da `Expected: 0 / Actual: 1` — el archivo del otro tenant. **Corrió el gate `CAT-00`** en sección aparte (`37b2b72`), porque la ruta la expone `Storage` y no `catalog`. **`Storage` es una capability de plataforma**, así que el ID de `catalog` es lo que el método define y no una excepción; lo que faltaba era el `SDD-OD-*` de `AGENTS.md` §4a, registrado el 2026-08-18 como **`SDD-OD-22`**. La fila decía antes que había que abrir el módulo: ver la corrección en «Próxima acción ejecutable» |
 
+## Ledger de slices — Módulo `account`
+
+Ficha y gate: `qep-frontend/sdd/03-modulos/account/` · Estado del módulo: `Autorizado` ·
+Owner: Andres Jaramillo · Gate `ACC-00` **cerrado el 2026-08-18**, con el contrato `v1`
+declarado en el propio gate.
+
+`ACC-01` y `ACC-02` están reservados para `qep-frontend` y **no aparecen acá**: una fila de
+slice vive en exactamente un ledger. Este repositorio lleva `ACC-03`, que es el que construye
+el contrato. El número no indica orden de ejecución — éste va primero, porque sin contrato no
+hay UI que lo consuma.
+
+| ID | Resultado revisable | Depende de | Estado | Evidencia / commit / PR |
+| --- | --- | --- | --- | --- |
+| `ACC-03` | **Preferencias de apariencia por usuario y tenant** — entidad, tabla, y `GET`/`PUT /api/v1/auth/preferences` | `ACC-00` (gate cerrado) | **In Progress** | Abierto el 2026-08-18, spec en [`ACC-03-preferencias-de-apariencia.md`](../03-modulos/account/slices/ACC-03-preferencias-de-apariencia.md). **RED literal:** `error CS0103: El nombre 'UserPreference' no existe en el contexto actual`, más `ThemeMode`, en `UserPreferenceTests.cs` — la entidad no existía. **GREEN unitario:** `Correctas! - Con error: 0, Superado: 19, Total: 19` en `Modules.Identity.UnitTests` (eran 13). **Suite completa de lo que compila:** 8 proyectos, **201 pruebas, 0 fallos**, con `ArchitectureTests` en `17/17` — que es `CA-ACC-03-11`: la entidad nueva no rompió las capas. `dotnet build src/Api/Api.csproj` → `Compilación correcta, 0 Errores`. Migración `20260818153515_AddUserPreferences` revisada a mano: crea sólo `identity.user_preferences`, PK compuesta `(user_id, tenant_id)`, FK a `users` con `CASCADE` y **sin FK a Tenancy**, que es la regla de aislamiento entre módulos. **Corrección hecha en el ciclo:** una prueba propia daba por malformado el esquema `"UPPER"`, pero la convención del repo —`User.NormalizeEmail`, `NormalizeProvider`— es **normalizar**, no rechazar; se corrigió la prueba, no el código. **Sigue `In Progress`:** faltan las pruebas de integración, bloqueadas por `SDD-CT-20`, y el runtime |
+
 ## Handoff
+
+### 2026-08-18 (cont. 3) — El flujo de imagen de producto no funcionaba de punta a punta
+
+**Sale de una consulta del developer de frontend, no de un slice.** Preguntó cómo cargar la
+imagen principal de un producto; al escribir la guía contra el código aparecieron **tres defectos
+encadenados** que dejaban el flujo inservible, y ninguno era visible desde las pruebas.
+
+**Lo que se rompía, en orden de aparición:**
+
+| # | Síntoma | Causa |
+|---|---|---|
+| 1 | `No 'Access-Control-Allow-Origin' header is present` en el `PUT` de subida | Configuración local, no código: `Storage:R2:Bucket` tenía `lulo-crm-private` en user-secrets, heredado de Lulo CRM igual que la base `dev_lulo_crm_v2`. El backend firmaba contra el bucket de otro producto, así que el CORS aplicado sobre `qep-private` no intervenía. R2 respondía literal `CORS not configured for this bucket` |
+| 2 | `500 STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER not implemented` en `complete` | `AWSSDK.S3` v4 manda un checksum CRC32 en trailer HTTP; R2 no implementa trailers. **`SDD-CT-21`** |
+| 3 | `500 STREAMING-AWS4-HMAC-SHA256-PAYLOAD not implemented`, ya sin `TRAILER` | Apagado el trailer, el SDK seguía firmando el cuerpo en chunks. Se apaga **por request**: no hay propiedad global ni variable de entorno que lo gobierne. **`SDD-CT-21`** |
+| 4 | `500 No service for type ICommandHandler<PublishFileCommand, FileResourceDto>` | `PublishFileHandler` y `UnpublishFileHandler` **nunca se registraron**. **`SDD-CT-22`** |
+
+**`SDD-CT-22` es el que más pesa: la publicación nunca funcionó, en ningún ambiente.** Los
+endpoints de `/files/{id}/publication` estaban mapeados con su permiso desde que se escribieron.
+Y como `imageUrl` de producto sólo tiene valor si el archivo fue publicado, **la mitad de lectura
+de `CAT-05b` estuvo muerta desde el día uno** sin que ninguna prueba lo notara. El ledger había
+advertido ese riesgo textualmente al cerrar `CAT-06` —«olvidar la línea da 500, no 404»— y volvió
+a pasar igual: advertirlo en prosa se demostró insuficiente.
+
+**Por qué ninguna prueba los veía.** Las pruebas sustituyen `IObjectStorage` por un doble en
+memoria, y la subida del navegador va por URL prefirmada sin tocar el SDK. Los defectos 2 y 3
+sólo se manifiestan contra R2 real, en `complete`, que es la primera escritura que el backend
+hace con el cliente S3. El 4 sólo por la ruta HTTP.
+
+**Las dos pruebas que cierran el agujero, ambas verificadas contra el mecanismo ausente:**
+
+- `ArchitectureTests/CompositionRootTests` — descubre por reflexión **todo** `ICommand<>`/`IQuery<>`
+  de los ensamblados `Modules.*.Application` y exige que cada uno tenga su handler registrado.
+  Los ensamblados se cargan por patrón de archivo y no por un tipo ancla por módulo, porque un
+  ancla hay que acordarse de agregarla y el olvido es justo lo que la prueba atrapa. **RED con el
+  mecanismo ausente:** quitando el registro de `PublishFileHandler` da
+  ``Estos casos de uso no tienen su handler registrado en QepServiceCollectionExtensions, así que
+  su endpoint responde 500: PublishFileCommand -> ICommandHandler`2``.
+- `Modules.Storage.UnitTests/R2ObjectStorageTests` — los cuatro interruptores de compatibilidad
+  con R2. **RED con el mecanismo ausente:** quitando los cuatro,
+  `Con error: 2, Superado: 50, Total: 52`, con `Assert.False() Failure` y
+  `Assert.Equal() Failure: Values differ`.
+
+**Verificación:**
+
+| Qué | Resultado |
+|---|---|
+| `dotnet build Backend.slnx` | `Compilación correcta, 0 Advertencia(s), 0 Errores` |
+| Unitarias + arquitectura | **205 en verde**, eran 201. `ArchitectureTests` 19/19 (eran 17), `Modules.Storage.UnitTests` 52 (eran 50) |
+| Runtime de `complete` | `200` con `status: Available` y variante `thumbnail` 320×320, 7.930 bytes sobre un original de 50.616 |
+| Runtime de `publication` | **Confirmado funcionando por el owner** |
+| Integración | **No corridas.** Ver deuda abajo |
+
+**El build hay que correrlo con `-p:BaseOutputPath` a un directorio aparte mientras `Api.exe` esté
+levantado con depurador:** los 42 errores que devuelve el build normal son todos `MSB3021`/
+`MSB3027` de copia de DLL, ninguno de compilación. Es el gotcha ya documentado, pero conviene
+saber que tiene salida sin matar el proceso.
+
+**Configuración corregida, y es lo que más costó:** los tres nombres de R2 pasan a user-secrets y
+salen de la secuencia de `$env:` del ledger. Cuando la API se arranca **desde el IDE con
+depurador** —que es como trabaja este repo— lo exportado en una terminal no llega a ese proceso.
+La secuencia anterior además tenía dos valores falsos (`qep-public` y `cdn.qep.test`) y **omitía
+`Storage:R2:Bucket`**, que era el que estaba mal.
+
+**Documentos tocados:** `docs/integracion-imagenes-de-producto.md` (nuevo, la guía que consume el
+frontend), `ops/r2-cors-public.example.json` (nuevo), `README.md` y este ledger.
+
+**Commits:** `f59cdbd` (`chore(deps)`, cierra `SDD-CT-20`), `6dcaba6` (`fix(storage)`, los tres
+defectos), `c8293b5` (`docs(storage)`), `d1a9d81` (`feat(ACC-03)`), `ad0b2ba` (`test(AUTH-12)`),
+más el commit de las dos pruebas. Rama `feat/acc-03-preferencias-usuario`, publicada.
+
+**Deuda que queda, declarada y no escondida:**
+
+1. **Las pruebas de integración no se corrieron.** `SDD-CT-20` ya está cerrada, así que ahora
+   compilan: es lo que falta para cerrar `ACC-03`, que sigue `In Progress`.
+2. **`complete` no es atómico ante un fallo tardío.** `PromoteAsync` copia el objeto a `files/`
+   antes de subir las variantes, y el `SaveChangesAsync` viene al final. Al fallar en el medio
+   —como pasó las cuatro veces de hoy— el objeto queda promovido en R2 y el registro en
+   `PendingUpload`; cada reintento deja otra copia. No lo introdujo este trabajo, pero quedó a la
+   vista y merece su propio `SDD-CT`.
+3. **Archivos huérfanos** de los intentos de hoy, algunos en `lulo-crm-private`, el bucket de otro
+   producto.
+4. **`CA-CAT-05-09` merece revisión.** El ledger lo da por verificado en runtime, y el endpoint de
+   publicación no podía responder: se verificó por otro camino que no ejercitaba el `PUT`.
+5. **Ninguno de estos cambios pasó por spec.** Son correcciones de defecto sobre capacidades ya
+   construidas; encajan como `SDD-CH-*`, y la revisión con lentes ciegos no se corrió.
+
+
+### 2026-08-18 (cont. 2) — `ACC-03`: preferencias de apariencia, y el bloqueo que dejó a la vista
+
+**Primer slice del módulo `account` en este repositorio.** El owner pidió que cada usuario
+pudiera elegir esquema de color y modo claro/oscuro desde su perfil, con la preferencia
+guardada en base de datos. La ficha, el gate `ACC-00` y las decisiones viven en
+`qep-frontend/sdd/03-modulos/account/`; acá va sólo el contrato.
+
+**El gate cerró antes de escribir código, y sirvió.** Obligó a decidir la clave del dato, el
+lugar del endpoint y la verificación de membresía primero, y ahí aparecieron dos cosas que no
+se ven leyendo el pedido:
+
+- **`GET /auth/me` no servía.** Era el candidato obvio para llevar la preferencia, pero
+  `SessionResponse` no está atado a un tenant (`AuthSessionEndpoints.cs:157`) y la preferencia
+  sí lo está desde que `SDD-OD-17` la definió por `(userId, tenantId)`.
+- **El tenant no debía ir en la ruta.** `ExternalClaimsTransformation` ya resuelve
+  `X-Tenant-Id` y **sólo emite el claim `tenant_id` cuando hay membresía activa** — su
+  `ResolvePermissionsAsync` devuelve `null` si no la hay. Leyendo ese claim, la verificación de
+  aislamiento que el gate exigía sale gratis y no se duplica. Y una ruta sin `tenantId` no
+  puede desalinearse del tenant autenticado, que es el defecto que este repositorio ya corrigió
+  una vez en `fix(CLI-01)`.
+
+**Lo construido:** `UserPreference` y `ThemeMode` en `Modules.Identity.Domain`,
+`IUserPreferenceService` en Application, su implementación en Infrastructure, la tabla
+`identity.user_preferences` con su migración, y `GET`/`PUT /api/v1/auth/preferences` en
+`src/Api/AuthPreferenceEndpoints.cs`.
+
+**Dos decisiones de frontera que conviene no re-discutir:**
+
+- **`tenant_id` sin clave foránea.** `Tenancy` vive en otro esquema y ningún módulo referencia
+  tablas de otro. La integridad la da que ese `tenant_id` siempre pasó por la verificación de
+  membresía antes de llegar.
+- **`colorScheme` se valida por forma, no contra un catálogo cerrado.** La ficha de `account`
+  declara que el catálogo es suyo; duplicarlo acá crearía dos autoridades y agregar un esquema
+  pasaría a necesitar un deploy del backend. `mode` sí es cerrado: son dos valores.
+
+**RED:** `error CS0103: El nombre 'UserPreference' no existe en el contexto actual` (y
+`ThemeMode`), en `UserPreferenceTests.cs`. **GREEN:** `Correctas! - Con error: 0, Superado: 19,
+Total: 19` en `Modules.Identity.UnitTests`, de 13 que había. **Suite de todo lo que compila:**
+8 proyectos, **201 pruebas, 0 fallos**, con `ArchitectureTests` en `17/17`.
+
+**Corrección hecha dentro del ciclo:** una prueba propia daba por malformado el esquema
+`"UPPER"`. La convención de este dominio —`User.NormalizeEmail`, `NormalizeProvider`— es
+**normalizar**, no rechazar. Se corrigió la prueba, no el código: el código seguía la
+convención y la prueba no.
+
+**El hallazgo que importa más que el slice: `SDD-CT-20`.** Al correr la suite completa apareció
+que **ningún proyecto de `*.IntegrationTests` compila en este repositorio**: `error NU1903`
+por `SSH.NET 2025.1.0`, transitivo de `Testcontainers`, con el aviso de auditoría de NuGet
+tratado como error. Son los cinco. **Verificado ajeno a este slice con `git stash`:** sin
+ninguno de sus cambios, `Modules.Catalog.IntegrationTests` falla igual. No se tocó nada —
+`AGENTS.md` §4a pide registrar el defecto, no arreglarlo en silencio— y las dos salidas
+posibles (subir `Testcontainers`, o `NuGetAuditSuppress` puntual) afectan la postura de
+seguridad del repo, así que son decisión del owner.
+
+- **Documentos tocados:** `sdd/03-modulos/account/slices/ACC-03-preferencias-de-apariencia.md`
+  (nuevo), este ledger (sección de `account`, `SDD-CT-20`, estado global, este handoff).
+- **Estado:** `ACC-03` queda **`In Progress`**, no `Complete`. Le falta lo que `SDD-CT-20`
+  bloquea —las pruebas de integración de los `CA` de aislamiento y de error— más aplicar la
+  migración contra una base real y el runtime.
+- **Siguiente:** decidir `SDD-CT-20`. Sin eso, `CA-ACC-03-01` a `-10` no tienen cómo
+  verificarse, y ningún slice futuro de este repositorio tampoco.
+
 
 ### 2026-08-18 (cont.) — `Storage` no se abre como módulo: el método ya lo resolvió
 

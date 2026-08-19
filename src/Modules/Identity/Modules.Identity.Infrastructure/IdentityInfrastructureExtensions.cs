@@ -31,6 +31,7 @@ public static class IdentityInfrastructureExtensions
         services.AddScoped<IOwnerProvisioning, OwnerProvisioningService>();
         services.AddScoped<IProviderIdentityResolver, ProviderIdentityResolver>();
         services.AddScoped<IUserDirectory, UserDirectory>();
+        services.AddScoped<IUserPreferenceService, UserPreferenceService>();
 
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<IIdentityAuditRecorder, IdentityAuditRecorder>();

@@ -10,6 +10,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- CompositionRootTests verifica que todo caso de uso tenga su handler registrado, y el
+         registro vive acá. Los LayerTests siguen comparando ensamblados de módulo entre sí: esta
+         referencia no los afecta. -->
+    <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Application\Modules.Audit.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
