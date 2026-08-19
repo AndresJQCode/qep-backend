@@ -11,6 +11,8 @@
     <ProjectReference Include="..\Modules\Catalog\Modules.Catalog.Infrastructure\Modules.Catalog.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Api\Modules.Companies.Api.csproj" />
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Customers\Modules.Customers.Api\Modules.Customers.Api.csproj" />
+    <ProjectReference Include="..\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Storage\Modules.Storage.Api\Modules.Storage.Api.csproj" />

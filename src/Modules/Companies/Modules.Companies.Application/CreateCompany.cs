@@ -8,7 +8,7 @@ namespace Modules.Companies.Application;
 public sealed record CreateCompanyCommand(
     Guid TenantId,
     string Name,
-    string AccountNumber,
+    IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
     string? Phone,
     string? Email,
@@ -47,7 +47,7 @@ public sealed class CreateCompanyHandler(
             CompanyId.New(),
             command.TenantId,
             command.Name,
-            command.AccountNumber,
+            command.BankAccounts.ToDomain(),
             command.TaxId,
             new CompanyContactInfo
             {
@@ -66,9 +66,10 @@ public sealed class CreateCompanyHandler(
             "success",
             now);
 
-        // La unicidad del numero de cuenta NO se comprueba con un SELECT previo: entre la
-        // consulta y el commit cabe otra transaccion, y el unico arbitro real es
-        // IX_companies_tenant_account_number. La violacion la traduce CompaniesUnitOfWork.
+        // Desde EMP-08 no queda ninguna unicidad que arbitre la base para este agregado: la
+        // regla que sobrevive —que una empresa no repita la misma cuenta— es invariante del
+        // agregado y ya la hizo cumplir Company.Create en memoria. Por eso este SaveChanges no
+        // tiene detras ninguna rama de traduccion de 23505.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return company.ToDto();

@@ -9,6 +9,8 @@
     <ProjectReference Include="..\Modules\Catalog\Modules.Catalog.Infrastructure\Modules.Catalog.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Application\Modules.Companies.Application.csproj" />
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Customers\Modules.Customers.Application\Modules.Customers.Application.csproj" />
+    <ProjectReference Include="..\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
     <ProjectReference Include="..\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />

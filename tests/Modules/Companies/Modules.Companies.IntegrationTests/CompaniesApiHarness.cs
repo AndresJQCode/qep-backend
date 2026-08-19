@@ -66,7 +66,23 @@ internal static class CompaniesApiHarness
             CompaniesPermissions.CompanyRead,
             CompaniesPermissions.CompanyManage);
 
-    /// <summary>Da de alta una empresa y devuelve la respuesta ya deserializada.</summary>
+    /// <summary>
+    /// El cuerpo de una cuenta bancaria. Sirve para armar la lista de un POST o un PUT sin repetir
+    /// el objeto anonimo en cada prueba.
+    /// </summary>
+    public static object BankAccount(
+        string accountNumber,
+        string bankName = "Bancolombia",
+        string currency = "COP") =>
+        new { bankName, accountNumber, currency };
+
+    /// <summary>
+    /// Da de alta una empresa con una sola cuenta y devuelve la respuesta ya deserializada.
+    ///
+    /// Sigue tomando el numero suelto porque es lo que la mayoria de las pruebas necesita —una
+    /// empresa cualquiera, distinguible por su numero—. Las que ejercen la coleccion arman el
+    /// cuerpo a mano con <see cref="BankAccount"/>.
+    /// </summary>
     public static async Task<CompanyResponse> CreateCompanyAsync(
         HttpClient client,
         string name,
@@ -79,7 +95,15 @@ internal static class CompaniesApiHarness
     {
         var response = await client.PostAsJsonAsync(
             CompaniesUrl(tenantId),
-            new { name, accountNumber, taxId, phone, email, address },
+            new
+            {
+                name,
+                bankAccounts = new[] { BankAccount(accountNumber) },
+                taxId,
+                phone,
+                email,
+                address
+            },
             TestContext.Current.CancellationToken);
 
         response.EnsureSuccessStatusCode();

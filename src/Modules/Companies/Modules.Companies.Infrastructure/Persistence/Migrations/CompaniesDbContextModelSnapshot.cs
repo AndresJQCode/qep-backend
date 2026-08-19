@@ -28,12 +28,6 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<string>("AccountNumber")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("account_number");
-
                     b.Property<string>("Address")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
@@ -87,10 +81,6 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_companies_tenant");
 
-                    b.HasIndex("TenantId", "AccountNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_companies_tenant_account_number");
-
                     b.ToTable("companies", "companies");
                 });
 
@@ -140,6 +130,52 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
                         {
                             t.ExcludeFromMigrations();
                         });
+                });
+
+            modelBuilder.Entity("Modules.Companies.Domain.Company", b =>
+                {
+                    b.OwnsMany("Modules.Companies.Domain.CompanyBankAccount", "BankAccounts", b1 =>
+                        {
+                            b1.Property<Guid>("company_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("integer")
+                                .HasColumnName("ordinal");
+
+                            NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b1.Property<int>("Id"));
+
+                            b1.Property<string>("AccountNumber")
+                                .IsRequired()
+                                .HasMaxLength(32)
+                                .HasColumnType("character varying(32)")
+                                .HasColumnName("account_number");
+
+                            b1.Property<string>("BankName")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("bank_name");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("currency");
+
+                            b1.HasKey("company_id", "Id");
+
+                            b1.HasIndex("AccountNumber")
+                                .HasDatabaseName("IX_company_bank_accounts_account_number");
+
+                            b1.ToTable("company_bank_accounts", "companies");
+
+                            b1.WithOwner()
+                                .HasForeignKey("company_id");
+                        });
+
+                    b.Navigation("BankAccounts");
                 });
 #pragma warning restore 612, 618
         }

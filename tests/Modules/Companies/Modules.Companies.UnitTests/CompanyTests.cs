@@ -2,6 +2,10 @@ using Modules.Companies.Domain;
 
 namespace Modules.Companies.UnitTests;
 
+/// <summary>
+/// El agregado empresa. Lo que hace a sus cuentas bancarias vive aparte, en
+/// <see cref="CompanyBankAccountTests"/>.
+/// </summary>
 public sealed class CompanyTests
 {
     private static readonly DateTimeOffset Now =
@@ -10,29 +14,37 @@ public sealed class CompanyTests
     private static readonly Guid TenantId =
         Guid.Parse("01900000-0000-7000-8000-000000000001");
 
+    private static CompanyBankAccount[] Accounts(string accountNumber = "CTA-000123") =>
+    [
+        new()
+        {
+            BankName = "Bancolombia",
+            AccountNumber = accountNumber,
+            Currency = "COP"
+        }
+    ];
+
     private static Company Create(
         string name = "Andes Logistica S.A.S.",
-        string accountNumber = "CTA-000123",
         string taxId = "900.111.222-3",
         CompanyContactInfo? contact = null) =>
         Company.Create(
             CompanyId.New(),
             TenantId,
             name,
-            accountNumber,
+            Accounts(),
             taxId,
             contact ?? CompanyContactInfo.Empty,
             Now);
 
-    // El indice unico trata " CTA-1" y "CTA-1" como dos numeros de cuenta distintos, cosa que
-    // nadie leyendo la lista haria. Recortar es parte del invariante, no higiene del llamador.
+    // Recortar es parte del invariante, no higiene del llamador: sin recortar, " Andes" y "Andes"
+    // son dos nombres distintos para cualquier comparacion.
     [Fact]
     public void CreateTrimsTheIdentifyingFields()
     {
-        var company = Create(name: "  Andes  ", accountNumber: " CTA-1 ", taxId: " 900-1 ");
+        var company = Create(name: "  Andes  ", taxId: " 900-1 ");
 
         Assert.Equal("Andes", company.Name);
-        Assert.Equal("CTA-1", company.AccountNumber);
         Assert.Equal("900-1", company.TaxId);
     }
 
@@ -60,17 +72,6 @@ public sealed class CompanyTests
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public void CreateRejectsABlankAccountNumber(string accountNumber)
-    {
-        var exception = Assert.Throws<CompaniesDomainException>(
-            () => Create(accountNumber: accountNumber));
-
-        Assert.Equal("companies.company.account_number_required", exception.Code);
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
     public void CreateRejectsABlankTaxId(string taxId)
     {
         var exception = Assert.Throws<CompaniesDomainException>(() => Create(taxId: taxId));
@@ -87,15 +88,6 @@ public sealed class CompanyTests
             () => Create(name: new string('a', Company.NameMaxLength + 1)));
 
         Assert.Equal("companies.company.name_too_long", exception.Code);
-    }
-
-    [Fact]
-    public void CreateRejectsAnAccountNumberLongerThanTheColumn()
-    {
-        var exception = Assert.Throws<CompaniesDomainException>(
-            () => Create(accountNumber: new string('1', Company.AccountNumberMaxLength + 1)));
-
-        Assert.Equal("companies.company.account_number_too_long", exception.Code);
     }
 
     [Fact]
@@ -184,7 +176,7 @@ public sealed class CompanyTests
 
         company.Update(
             "Andes Logistica S.A.S.",
-            "CTA-000123",
+            Accounts(),
             "900.111.222-3",
             CompanyContactInfo.Empty,
             Now.AddMinutes(5));
@@ -200,11 +192,30 @@ public sealed class CompanyTests
         var company = Create();
         var later = Now.AddMinutes(5);
 
-        company.Update("Otro", "CTA-2", "900-2", CompanyContactInfo.Empty, later);
+        company.Update("Otro", Accounts("CTA-2"), "900-2", CompanyContactInfo.Empty, later);
 
         Assert.Equal(2, company.Version);
         Assert.Equal(later, company.UpdatedAt);
         Assert.Equal(Now, company.CreatedAt);
+    }
+
+    // Update valida todo antes de asignar nada. Sin eso, un nombre valido seguido de un NIT
+    // invalido dejaba el nombre nuevo pegado en la instancia que EF sigue rastreando, aunque el
+    // llamador se lleve un 422 que dice que no se guardo nada.
+    [Fact]
+    public void UpdateLeavesTheCompanyUntouchedWhenALaterFieldIsRejected()
+    {
+        var company = Create(name: "Andes");
+
+        Assert.Throws<CompaniesDomainException>(() => company.Update(
+            "Nombre nuevo",
+            Accounts(),
+            "   ",
+            CompanyContactInfo.Empty,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("Andes", company.Name);
+        Assert.Equal(1, company.Version);
     }
 
     [Fact]
@@ -214,7 +225,7 @@ public sealed class CompanyTests
         company.Deactivate(Now);
 
         var exception = Assert.Throws<CompaniesDomainException>(
-            () => company.Update("Otro", "CTA-2", "900-2", CompanyContactInfo.Empty, Now));
+            () => company.Update("Otro", Accounts("CTA-2"), "900-2", CompanyContactInfo.Empty, Now));
 
         Assert.Equal("companies.company.inactive", exception.Code);
     }
@@ -249,7 +260,7 @@ public sealed class CompanyTests
         company.Deactivate(Now);
 
         company.Activate(Now.AddMinutes(1));
-        company.Update("Otro", "CTA-2", "900-2", CompanyContactInfo.Empty, Now.AddMinutes(2));
+        company.Update("Otro", Accounts("CTA-2"), "900-2", CompanyContactInfo.Empty, Now.AddMinutes(2));
 
         Assert.True(company.IsActive);
         Assert.Equal("Otro", company.Name);

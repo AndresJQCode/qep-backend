@@ -91,7 +91,7 @@ public sealed class CompanyActivationApiTests
             new
             {
                 name = "Andes Logistica S.A.",
-                accountNumber = "CTA-000123",
+                bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3"
             },
             TestContext.Current.CancellationToken);
@@ -102,11 +102,12 @@ public sealed class CompanyActivationApiTests
         Assert.Contains("companies.company.inactive", body, StringComparison.Ordinal);
     }
 
-    // Reactivar no revalida la unicidad del numero de cuenta, y no hace falta:
-    // IX_companies_tenant_account_number es unico **sin filtro parcial**, asi que desactivar
-    // nunca libero el numero. Si alguien le agrega un filtro parcial al indice, esta prueba avisa.
+    // Desde EMP-08 el numero de cuenta no es unico por tenant, asi que el estado de una empresa
+    // no puede condicionar el alta de otra. Antes esto era un 422 —el indice unico lo prohibia
+    // incluso con la primera inactiva—; ahora es un alta normal. La prueba se queda para que el
+    // dia que alguien reintroduzca una unicidad global se ponga roja en vez de pasar en silencio.
     [Fact]
-    public async Task DeactivatingDoesNotFreeTheAccountNumber()
+    public async Task DeactivatingDoesNotBlockAnotherCompanyFromUsingTheSameNumber()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -119,12 +120,12 @@ public sealed class CompanyActivationApiTests
             new
             {
                 name = "Otra Empresa S.A.S.",
-                accountNumber = "CTA-000123",
+                bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "830.222.333-4"
             },
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     // Activar es administrar: no estrena permiso propio, pero tampoco lo alcanza el de lectura.

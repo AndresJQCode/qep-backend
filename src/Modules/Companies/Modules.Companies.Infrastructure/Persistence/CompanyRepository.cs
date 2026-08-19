@@ -40,13 +40,22 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
             // catalogo entero —coincide con cualquier caracter—, que es lo contrario de filtrar.
             // Lo encontro la revision de fiabilidad de CAT-02, sobre este mismo codigo.
             //
-            // Busca por nombre y por numero de cuenta, que es lo que hace hoy el consumidor
-            // (mockFetchCompanies en companies.fixtures.ts). El NIT no entra: nadie lo escribe de
-            // memoria en un buscador, y agregarlo despues no rompe a nadie.
+            // Busca por nombre y por numero de cuenta. El NIT no entra: nadie lo escribe de memoria
+            // en un buscador, y agregarlo despues no rompe a nadie.
+            //
+            // Desde EMP-08 el numero vive en la coleccion, asi que la condicion pasa a ser "alguna
+            // de sus cuentas coincide" y EF la traduce a un EXISTS sobre company_bank_accounts.
+            // Coincidir en una sola alcanza: quien escribe un numero en el buscador quiere la
+            // empresa que lo tiene.
+            //
+            // El nombre del banco no entra todavia. Es defendible que entre —"todas las de
+            // Bancolombia" es una busqueda razonable—, pero cambia lo que el usuario espera de la
+            // caja y eso lo decide el gate del modulo, no este slice.
             var pattern = $"%{EscapeLikeWildcards(term)}%";
             query = query.Where(company =>
                 EF.Functions.ILike(company.Name, pattern, LikeEscapeCharacter) ||
-                EF.Functions.ILike(company.AccountNumber, pattern, LikeEscapeCharacter));
+                company.BankAccounts.Any(account =>
+                    EF.Functions.ILike(account.AccountNumber, pattern, LikeEscapeCharacter)));
         }
 
         return await query

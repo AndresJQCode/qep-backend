@@ -89,7 +89,9 @@ public sealed class CompanyApiTests
         var byAccount = await ListAsync(client, "?search=000456");
 
         Assert.Equal("Andes Logistica S.A.S.", Assert.Single(byName.Items).Name);
-        Assert.Equal("CTA-000456", Assert.Single(byAccount.Items).AccountNumber);
+        Assert.Equal(
+            "CTA-000456",
+            Assert.Single(Assert.Single(byAccount.Items).AccountNumbers));
     }
 
     // `%` y `_` son comodines de LIKE: sin escaparlos, `?search=_` devuelve el listado entero
@@ -129,8 +131,12 @@ public sealed class CompanyApiTests
         var inactive = await ListAsync(client, "?status=inactive");
         var all = await ListAsync(client, string.Empty);
 
-        Assert.Equal("CTA-000123", Assert.Single(active.Items).AccountNumber);
-        Assert.Equal("CTA-000456", Assert.Single(inactive.Items).AccountNumber);
+        Assert.Equal(
+            "CTA-000123",
+            Assert.Single(Assert.Single(active.Items).AccountNumbers));
+        Assert.Equal(
+            "CTA-000456",
+            Assert.Single(Assert.Single(inactive.Items).AccountNumbers));
         Assert.Equal(2, all.Items.Count);
     }
 
