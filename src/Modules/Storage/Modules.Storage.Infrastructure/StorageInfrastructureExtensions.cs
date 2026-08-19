@@ -64,6 +64,14 @@ public static class StorageInfrastructureExtensions
             ServiceURL = endpoint,
             ForcePathStyle = true,
             AuthenticationRegion = "auto",
+            // AWSSDK.S3 v4 calcula un checksum CRC32 y lo manda en un trailer HTTP salvo que se
+            // le pida lo contrario. R2 no implementa trailers y responde 500
+            // "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER not implemented". Va acá y no en una
+            // variable de entorno porque el destino es R2 siempre (ADR 0020): que la aplicación
+            // funcione contra su único almacenamiento no puede depender de que alguien recuerde
+            // exportar algo antes de arrancar.
+            RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
+            ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED,
         };
         var credentials = new BasicAWSCredentials(r2.AccessKeyId, r2.SecretAccessKey);
         return new AmazonS3Client(credentials, config);

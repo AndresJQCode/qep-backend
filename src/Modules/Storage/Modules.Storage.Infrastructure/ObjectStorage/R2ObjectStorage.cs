@@ -98,6 +98,14 @@ internal sealed class R2ObjectStorage(IAmazonS3 client, IOptions<StorageOptions>
                 Key = key,
                 InputStream = stream,
                 ContentType = contentType,
+                // R2 no implementa el cuerpo firmado en chunks: responde 500
+                // "STREAMING-AWS4-HMAC-SHA256-PAYLOAD not implemented". El SDK lo usa por
+                // defecto cuando la carga va por InputStream, así que hay que apagarlo a mano.
+                // Con la firma de payload desactivada el cuerpo viaja como UNSIGNED-PAYLOAD,
+                // que es lo que R2 espera; la integridad la sigue dando TLS, y el llamador
+                // verifica el ETag contra el checksum que ya conoce.
+                UseChunkEncoding = false,
+                DisablePayloadSigning = true,
             },
             cancellationToken);
     }
