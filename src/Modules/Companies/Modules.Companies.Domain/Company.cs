@@ -1,28 +1,32 @@
 namespace Modules.Companies.Domain;
 
 /// <summary>
-/// Una empresa del tenant: la contraparte con la que se factura y se cotiza, identificada por su
-/// numero de cuenta (RF-091). Guarda solo los datos maestros vivos; un documento congela su
-/// propia copia de a quien se le emitio.
+/// Una empresa del tenant: la contraparte con la que se factura y se cotiza. Guarda solo los datos
+/// maestros vivos; un documento congela su propia copia de a quien se le emitio.
+///
+/// Sus cuentas bancarias son una coleccion (<see cref="CompanyBankAccount"/>) desde EMP-08. Antes
+/// era un unico <c>AccountNumber</c> plano, unico por tenant. Ese cambio no contradice a
+/// <c>RF-091</c> —"Registrar los datos de la empresa, incluido el numero de cuenta", que no dice
+/// ni unico ni uno solo—, sino a la unicidad por tenant que este modulo habia agregado de mas.
 /// </summary>
 public sealed class Company
 {
     // Espejan los anchos de columna de companies.companies. Guardar aca significa que un valor
     // demasiado largo falla como 422 con codigo de dominio en vez de llegar a PostgreSQL y
-    // volver como 500 server.unexpected. Los tres salen del schema del formulario que ya existe
-    // en el frontend (features/companies/types/company-form.schema.ts).
+    // volver como 500 server.unexpected. Los dos salen del schema del formulario que ya existe
+    // en el frontend (features/companies/types/company-form.schema.ts). El del numero de cuenta
+    // se mudo con la columna: vive en CompanyBankAccount.
     public const int NameMaxLength = 160;
 
-    public const int AccountNumberMaxLength = 32;
-
     public const int TaxIdMaxLength = 32;
+
+    private readonly List<CompanyBankAccount> _bankAccounts = [];
 
     // EF Core materializa por aca. El codigo nunca construye el agregado asi: Create es el unico
     // punto de entrada, y es el que hace cumplir los invariantes.
     private Company()
     {
         Name = string.Empty;
-        AccountNumber = string.Empty;
         TaxId = string.Empty;
     }
 
@@ -30,7 +34,7 @@ public sealed class Company
         CompanyId id,
         Guid tenantId,
         string name,
-        string accountNumber,
+        IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt)
@@ -38,8 +42,8 @@ public sealed class Company
         Id = id;
         TenantId = tenantId;
         Name = name;
-        AccountNumber = accountNumber;
         TaxId = taxId;
+        _bankAccounts.AddRange(bankAccounts);
         Apply(contact);
         IsActive = true;
         Version = 1;
@@ -53,15 +57,22 @@ public sealed class Company
 
     public string Name { get; private set; }
 
-    /// <summary>Unico por tenant; la unicidad vive en IX_companies_tenant_account_number.</summary>
-    public string AccountNumber { get; private set; }
+    /// <summary>
+    /// Las cuentas bancarias de la empresa, en el orden en que se cargaron. **Al menos una.**
+    ///
+    /// La unicidad vive dentro de la empresa —la misma terna banco/numero/moneda no se carga dos
+    /// veces— y no en un indice de base. Es invariante del agregado: la coleccion entera se
+    /// valida en memoria antes de tocar nada, asi que no hace falta que PostgreSQL arbitre ni que
+    /// la unidad de trabajo traduzca un 23505. Por eso <c>IX_companies_tenant_account_number</c>
+    /// desaparecio en EMP-08 en vez de mudarse a la tabla hija: la regla que hacia cumplir —dos
+    /// empresas distintas no comparten numero de cuenta— no salia de ningun requisito.
+    /// </summary>
+    public IReadOnlyList<CompanyBankAccount> BankAccounts => _bankAccounts;
 
     /// <summary>
-    /// NIT. **No es unico todavia.** El unico duplicado que el frontend rechaza hoy es el del
-    /// numero de cuenta (companies.fixtures.ts), y un NIT repetido en dos empresas del mismo
-    /// tenant puede ser un error de datos o una sucursal — nadie lo decidio. Si el gate del
-    /// modulo lo cierra en "unico", es un segundo indice unico **con su propio codigo de
-    /// dominio**, nunca una rama compartida con la del numero de cuenta.
+    /// NIT. **No es unico todavia.** Un NIT repetido en dos empresas del mismo tenant puede ser un
+    /// error de datos o una sucursal — nadie lo decidio. Si el gate del modulo lo cierra en
+    /// "unico", es un indice unico **con su propio codigo de dominio**.
     /// </summary>
     public string TaxId { get; private set; }
 
@@ -94,7 +105,7 @@ public sealed class Company
         CompanyId id,
         Guid tenantId,
         string name,
-        string accountNumber,
+        IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt) =>
@@ -102,24 +113,40 @@ public sealed class Company
             id,
             tenantId,
             NormalizeName(name),
-            NormalizeAccountNumber(accountNumber),
+            NormalizeBankAccounts(bankAccounts),
             NormalizeTaxId(taxId),
             contact,
             occurredAt);
 
+    /// <summary>
+    /// Reemplaza el recurso entero, coleccion de cuentas incluida: lo que no viene en el cuerpo se
+    /// **quita**.
+    /// </summary>
     public void Update(
         string name,
-        string accountNumber,
+        IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
 
-        Name = NormalizeName(name);
-        AccountNumber = NormalizeAccountNumber(accountNumber);
-        TaxId = NormalizeTaxId(taxId);
-        Apply(contact);
+        // Todo se normaliza a locales **antes** de asignar nada. Asignar campo por campo mientras
+        // se valida deja el agregado a medio escribir cuando el tercero falla: el 422 le dice al
+        // llamador que no se guardo nada, pero la instancia en memoria ya tiene el nombre nuevo, y
+        // esa es la que EF persiste en el siguiente SaveChanges de la misma unidad de trabajo.
+        // Con la coleccion el sintoma es peor —una empresa sin ninguna cuenta— porque vaciarla es
+        // parte de reemplazarla.
+        var normalizedName = NormalizeName(name);
+        var normalizedAccounts = NormalizeBankAccounts(bankAccounts);
+        var normalizedTaxId = NormalizeTaxId(taxId);
+        var normalizedContact = contact.Normalized();
+
+        Name = normalizedName;
+        TaxId = normalizedTaxId;
+        _bankAccounts.Clear();
+        _bankAccounts.AddRange(normalizedAccounts);
+        Assign(normalizedContact);
         Version++;
         UpdatedAt = occurredAt;
     }
@@ -127,10 +154,10 @@ public sealed class Company
     // Asigna los tres siempre, incluidos los null. Se puede **limpiar** un campo, no solo
     // setearlo: una implementacion que ignore los null "para no pisar" deja campos imborrables y
     // pasa todas las demas pruebas. Por eso UpdateClearsTheOptionalFieldsThatArriveNull existe.
-    private void Apply(CompanyContactInfo contact)
-    {
-        var normalized = contact.Normalized();
+    private void Apply(CompanyContactInfo contact) => Assign(contact.Normalized());
 
+    private void Assign(CompanyContactInfo normalized)
+    {
         Phone = normalized.Phone;
         Email = normalized.Email;
         Address = normalized.Address;
@@ -154,10 +181,9 @@ public sealed class Company
     // con EnsureActive() y ningun otro metodo devuelve IsActive a true. Es la falta que CAT-07
     // tuvo que corregir en producto despues, y que aca nace cubierta.
     //
-    // No revalida la unicidad del numero de cuenta a proposito:
-    // IX_companies_tenant_account_number es unico **sin filtro parcial**, asi que desactivar
-    // nunca libero el numero y reactivar no puede colisionar con nadie. Si alguien le agrega un
-    // filtro parcial al indice, esta suposicion deja de valer.
+    // Desde EMP-08 tampoco hay nada que revalidar al reactivar: la unicidad del numero de cuenta
+    // dejo de ser global al tenant, asi que desactivar nunca "libero" un numero que reactivar
+    // pudiera encontrar tomado.
     public void Activate(DateTimeOffset occurredAt)
     {
         if (IsActive)
@@ -182,14 +208,53 @@ public sealed class Company
         }
     }
 
-    // Recortar espacios es parte del invariante, no higiene del llamador: el indice unico trata
-    // " CTA-1" y "CTA-1" como dos numeros de cuenta distintos, cosa que nadie leyendo la lista
-    // haria.
-    //
-    // No se pasa a mayusculas. Seria defendible para un numero de cuenta, pero nada en el
-    // frontend ni en los requisitos dice que "cta-1" y "CTA-1" sean el mismo, y el precedente
-    // del modulo vecino —Product.Code— tampoco lo hace. Si el gate decide lo contrario, el
-    // cambio es aca y viene con su migracion.
+    /// <summary>
+    /// Normaliza cada cuenta y hace cumplir los invariantes de la coleccion: cuantas hay y que no
+    /// se repitan.
+    ///
+    /// El orden importa. Los duplicados se buscan sobre las cuentas **ya normalizadas**, porque
+    /// sobre las crudas " CTA-1" y "CTA-1" pasan como dos. Y el tope se comprueba antes de
+    /// normalizar una por una: si llegan diez mil, rechazar en O(1) es mejor que recortar diez mil
+    /// cadenas para terminar rechazando igual.
+    /// </summary>
+    private static List<CompanyBankAccount> NormalizeBankAccounts(
+        IReadOnlyCollection<CompanyBankAccount> bankAccounts)
+    {
+        if (bankAccounts.Count == 0)
+        {
+            throw new CompaniesDomainException(
+                "companies.company.bank_accounts_required",
+                "The company needs at least one bank account.");
+        }
+
+        if (bankAccounts.Count > CompanyBankAccount.MaxPerCompany)
+        {
+            throw new CompaniesDomainException(
+                "companies.company.bank_accounts_too_many",
+                $"A company cannot have more than {CompanyBankAccount.MaxPerCompany} bank accounts.");
+        }
+
+        var normalized = new List<CompanyBankAccount>(bankAccounts.Count);
+        var seen = new HashSet<(string, string, string)>();
+
+        foreach (var account in bankAccounts.Select(account => account.Normalized()))
+        {
+            if (!seen.Add(account.DeduplicationKey()))
+            {
+                throw new CompaniesDomainException(
+                    "companies.company.bank_account_duplicated",
+                    "The same bank account is listed more than once.");
+            }
+
+            normalized.Add(account);
+        }
+
+        return normalized;
+    }
+
+    // Recortar espacios es parte del invariante, no higiene del llamador: sin recortar, " Andes" y
+    // "Andes" son dos nombres distintos para cualquier comparacion, cosa que nadie leyendo la
+    // lista haria.
     private static string NormalizeName(string name) =>
         Normalize(
             name,
@@ -198,15 +263,6 @@ public sealed class Company
             "The company name is required.",
             "companies.company.name_too_long",
             $"The company name cannot exceed {NameMaxLength} characters.");
-
-    private static string NormalizeAccountNumber(string accountNumber) =>
-        Normalize(
-            accountNumber,
-            AccountNumberMaxLength,
-            "companies.company.account_number_required",
-            "The company account number is required.",
-            "companies.company.account_number_too_long",
-            $"The company account number cannot exceed {AccountNumberMaxLength} characters.");
 
     private static string NormalizeTaxId(string taxId) =>
         Normalize(

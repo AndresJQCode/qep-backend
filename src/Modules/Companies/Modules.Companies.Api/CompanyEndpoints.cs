@@ -105,7 +105,7 @@ public static class CompanyEndpoints
             new CreateCompanyCommand(
                 tenantId,
                 request.Name,
-                request.AccountNumber,
+                request.BankAccounts,
                 request.TaxId,
                 request.Phone,
                 request.Email,
@@ -129,7 +129,7 @@ public static class CompanyEndpoints
                 tenantId,
                 companyId,
                 request.Name,
-                request.AccountNumber,
+                request.BankAccounts,
                 request.TaxId,
                 request.Phone,
                 request.Email,
@@ -168,7 +168,7 @@ public static class CompanyEndpoints
     private static CompanyResponse ToResponse(CompanyDto company) => new(
         company.Id,
         company.Name,
-        company.AccountNumber,
+        company.BankAccounts,
         company.TaxId,
         company.IsActive,
         company.Phone,
@@ -177,10 +177,12 @@ public static class CompanyEndpoints
         company.CreatedAt,
         company.UpdatedAt);
 
+    // Del detalle de cada cuenta la grilla solo recibe el numero. Ver el porque en
+    // CompanyListItemResponse.
     private static CompanyListItemResponse ToListItem(CompanyDto company) => new(
         company.Id,
         company.Name,
-        company.AccountNumber,
+        company.BankAccounts.Select(account => account.AccountNumber).ToArray(),
         company.TaxId,
         company.Phone,
         company.IsActive);

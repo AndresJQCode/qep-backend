@@ -9,7 +9,7 @@ public sealed record UpdateCompanyCommand(
     Guid TenantId,
     Guid CompanyId,
     string Name,
-    string AccountNumber,
+    IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
     string? Phone,
     string? Email,
@@ -48,10 +48,12 @@ public sealed class UpdateCompanyHandler(
         var now = clock.UtcNow;
 
         // Los tres opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
-        // entero, asi que un campo ausente se limpia.
+        // entero, asi que un campo ausente se limpia. La coleccion de cuentas sigue la misma
+        // regla — la lista que llega es la lista que queda, y quitar una cuenta es mandar el PUT
+        // sin ella.
         company.Update(
             command.Name,
-            command.AccountNumber,
+            command.BankAccounts.ToDomain(),
             command.TaxId,
             new CompanyContactInfo
             {

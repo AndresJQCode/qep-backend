@@ -35,10 +35,11 @@ public sealed class CompaniesLayerTests
             typeof(CompanyEndpoints).Assembly);
     }
 
-    // Traducir un error de base es tarea de Infrastructure, no de Application: la violacion de
-    // unicidad en IX_companies_tenant_account_number se vuelve
-    // companies.company.account_number_taken ahi. Esto protege la frontera con la que se cerro
-    // SDD-CT-06.
+    // Traducir un error de base es tarea de Infrastructure, no de Application. La frontera se fijo
+    // con SDD-CT-06, cuando la violacion de IX_companies_tenant_account_number se traducia en
+    // CompaniesUnitOfWork; EMP-08 borro ese indice, pero la regla no se movio — el conflicto de
+    // concurrencia se sigue traduciendo ahi, y el dia que vuelva a haber un indice unico su
+    // traduccion va al mismo lugar.
     [Fact]
     public void ApplicationDoesNotReferencePersistenceLibraries()
     {
