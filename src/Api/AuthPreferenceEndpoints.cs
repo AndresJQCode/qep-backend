@@ -90,7 +90,13 @@ public static class AuthPreferenceEndpoints
         userId = Guid.Empty;
         tenantId = Guid.Empty;
 
-        var rawUserId = httpContext.User.FindFirstValue(QepClaimTypes.QepSubject);
+        // `qep_sub` con fallback a `sub`, igual que AuthorizationCatalogEndpoints:59-60 y
+        // HttpExecutionContext:17-19. El id interno lo pone la cookie de sesión y lo resuelve
+        // ExternalClaimsTransformation; el stub de desarrollo —que es el esquema por defecto en
+        // Development, y el que usan las pruebas de integración— sólo pone `sub`. Leer nada más
+        // que `qep_sub` deja el endpoint respondiendo 403 en todo el entorno de desarrollo.
+        var rawUserId = httpContext.User.FindFirstValue(QepClaimTypes.QepSubject)
+            ?? httpContext.User.FindFirstValue(QepClaimTypes.SubjectId);
         var rawTenantId = httpContext.User.FindFirstValue(QepClaimTypes.TenantId);
 
         return Guid.TryParse(rawUserId, out userId)
