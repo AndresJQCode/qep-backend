@@ -15,6 +15,12 @@
     <ProjectReference Include="..\Modules\Storage\Modules.Storage.Infrastructure\Modules.Storage.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Plantilla de configuración: se documenta, no se ejecuta. El SDK Web la tomaría
+         como Content por el glob appsettings.*.json y la copiaría al output. -->
+    <Content Remove="appsettings.example.json" />
+    <None Include="appsettings.example.json" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Microsoft.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />

@@ -135,15 +135,44 @@ docker start postgres18
 $env:ASPNETCORE_ENVIRONMENT = "Development"
 $env:ASPNETCORE_URLS = "http://localhost:5199"
 $env:Authentication__UseDevelopmentStub = "true"
-$env:Storage__R2__PublicBucket = "qep-public"
-$env:Storage__R2__PublicBaseUrl = "https://cdn.qep.test"
 dotnet run --project src/Api --no-launch-profile -p:NuGetAudit=false
 ```
 
-Sin `--no-launch-profile` los dos perfiles fijan el stub en `false` y todo devuelve `401`. Sin las
-dos variables de `PublicBucket`/`PublicBaseUrl`, `imageUrl` viene siempre en `null`: van de a dos
-o el validador de opciones no arranca. **La base local es `dev_lulo_crm_v2` y el usuario de psql
-es `postgres`**, no `qep`.
+Sin `--no-launch-profile` los dos perfiles fijan el stub en `false` y todo devuelve `401`. **La
+base local es `dev_lulo_crm_v2` y el usuario de psql es `postgres`**, no `qep`.
+
+**Los tres nombres de R2 van por user-secrets, una sola vez, y no por variable de entorno**
+(corregido el 2026-08-18; ver abajo por qué):
+
+```powershell
+dotnet user-secrets set "Storage:R2:Bucket"        "qep-private"                 --project src/Api
+dotnet user-secrets set "Storage:R2:PublicBucket"  "qep"                         --project src/Api
+dotnet user-secrets set "Storage:R2:PublicBaseUrl" "https://assets-qep.qcode.co" --project src/Api
+```
+
+`PublicBucket` y `PublicBaseUrl` van **de a dos o ninguno**: `IsConfigured` exige los dos, y sin
+ellos publicar responde `422 storage.public.not_configured` y `imageUrl` viene siempre en `null`.
+
+> **Corregido el 2026-08-18, y las tres correcciones costaron una jornada del developer de
+> frontend.** Esta secuencia decía `$env:Storage__R2__PublicBucket = "qep-public"` y
+> `$env:Storage__R2__PublicBaseUrl = "https://cdn.qep.test"`. **Los dos valores eran falsos:** el
+> bucket público se llama `qep` y el dominio es `https://assets-qep.qcode.co`. `cdn.qep.test` no
+> existe, y como el backend concatena `{PublicBaseUrl}/{key}` sin validar nada, publicar devuelve
+> `200` con una URL que no carga en ningún lado — el único punto del flujo donde el error no se
+> manifiesta como error.
+>
+> **Y faltaba `Storage:R2:Bucket`, que es el que importa.** Al no estar en esta secuencia, nadie
+> lo revisó: en user-secrets estaba `lulo-crm-private`, heredado de Lulo CRM igual que la base
+> `dev_lulo_crm_v2`. El backend firmaba las URLs de subida contra el bucket de otro producto, así
+> que el CORS aplicado sobre `qep-private` no servía de nada y R2 respondía
+> `CORS not configured for this bucket`. Los archivos de prueba de ese día quedaron en
+> `lulo-crm-private`.
+>
+> **Van por user-secrets y no por `$env:` por una razón verificada:** cuando la API se arranca
+> desde el IDE con depurador —que es como trabaja el developer de este repo— las variables de
+> entorno exportadas en una terminal **no llegan a ese proceso**. user-secrets sí, porque se lee
+> del disco al construir el host. Una secuencia basada en `$env:` sólo funciona para quien
+> arranca por línea de comandos.
 
 ---
 
