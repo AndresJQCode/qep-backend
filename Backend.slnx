@@ -1,4 +1,4 @@
-<Solution>
+﻿<Solution>
   <Folder Name="/src/">
     <Project Path="src/Api/Api.csproj" />
     <Project Path="src/Bootstrapper/Bootstrapper.csproj" />
@@ -67,6 +67,7 @@
     <Project Path="tests/Modules/Catalog/Modules.Catalog.IntegrationTests/Modules.Catalog.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Identity/">
+    <Project Path="tests/Modules/Identity/Modules.Identity.IntegrationTests/Modules.Identity.IntegrationTests.csproj" />
     <Project Path="tests/Modules/Identity/Modules.Identity.UnitTests/Modules.Identity.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Notifications/">

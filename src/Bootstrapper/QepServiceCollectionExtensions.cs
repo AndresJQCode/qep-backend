@@ -80,6 +80,12 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<SoftDeleteFileCommand, Modules.Storage.Application.SoftDeleteResult>,
             SoftDeleteFileHandler>();
         services.AddScoped<
+            ICommandHandler<PublishFileCommand, FileResourceDto>,
+            PublishFileHandler>();
+        services.AddScoped<
+            ICommandHandler<UnpublishFileCommand, FileResourceDto>,
+            UnpublishFileHandler>();
+        services.AddScoped<
             IQueryHandler<ListFilesQuery, PagedFilesDto>,
             ListFilesHandler>();
         services.AddScoped<
