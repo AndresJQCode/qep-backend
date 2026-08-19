@@ -5,12 +5,12 @@ quien consume la API desde `qep-frontend`.
 
 Todo lo que sigue está verificado contra el código de este repositorio, no contra
 documentación. Ante cualquier diferencia con la respuesta real de la API, **gana la API**
-(`SDD-ADR-01`) y este documento se corrige.
+y este documento se corrige.
 
-| Capacidad | Estado |
-| --- | --- |
-| **Portada del producto** — subir, publicar y asignar la imagen principal | **Disponible de punta a punta** |
-| **Galería** — listar las imágenes de un producto | **Disponible.** Ver [§ La galería](#el-resto-de-las-imágenes-la-galería) |
+| Capacidad                                                                | Estado                                                                   |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| **Portada del producto** — subir, publicar y asignar la imagen principal | **Disponible de punta a punta**                                          |
+| **Galería** — listar las imágenes de un producto                         | **Disponible.** Ver [§ La galería](#el-resto-de-las-imágenes-la-galería) |
 
 Slices que las construyeron: `CAT-04` (el campo `imageFileId`), `CAT-05a` (las validaciones),
 `CAT-05b` (el `imageUrl` derivado) y `CAT-09` (el filtro por dueño en el listado de archivos). El inventario de rutas está en
@@ -208,22 +208,22 @@ X-Qep-Client: web
 Los tres primeros aparecen al asignar la portada y los tres son `422`. Un mensaje genérico acá
 deja a la persona sin saber qué corregir.
 
-| `code` | HTTP | Qué pasó |
-| --- | --- | --- |
-| `catalog.product.image_not_found` | 422 | El archivo no existe **o pertenece a otro tenant**. Los dos casos comparten código a propósito: distinguirlos confirmaría que el id existe en otro tenant |
-| `catalog.product.image_not_available` | 422 | Falta el paso 4, o el archivo quedó en cuarentena |
-| `catalog.product.image_not_an_image` | 422 | El archivo existe pero su `mimeType` no empieza con `image/`. Un PDF subido correctamente cae acá |
-| `storage.file.mime_mismatch` | 422 | La extensión y el `mimeType` declarados no se corresponden |
-| `storage.file.type_not_allowed` | 422 | Extensión fuera de la lista |
-| `storage.file.size_invalid` | 422 | Excede 25 MB, o el tamaño real no coincide con el declarado |
-| `storage.file.content_mismatch` | 422 | Los bytes no son del tipo declarado — típicamente un archivo renombrado. Va a cuarentena |
-| `storage.image.invalid` | 422 | La imagen no se pudo decodificar. Cuarentena |
-| `storage.image.dimensions_too_large` | 422 | Más de 40 megapíxeles. Puede pesar poco y aun así rechazarse: es límite de dimensiones, no de bytes |
-| `storage.object.missing` | 428 | Se llamó a `complete` sin que el `PUT` del paso 3 haya llegado. Se reintenta el paso 3, no éste |
-| `storage.public.not_configured` | 422 | El almacenamiento público no está configurado en ese ambiente. No es error de la UI |
-| `storage.file.owner_type_invalid` | 422 | `ownerType` fuera del conjunto admitido, al subir o al filtrar la galería |
-| `storage.file.owner_filter_incomplete` | 422 | Se mandó `ownerId` sin `ownerType`, o al revés. Van juntos o no va ninguno |
-| `validation.failed` | 422 | Errores de campo del producto. Trae el objeto `errors` con los mensajes por propiedad |
+| `code`                                 | HTTP | Qué pasó                                                                                                                                                  |
+| -------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog.product.image_not_found`      | 422  | El archivo no existe **o pertenece a otro tenant**. Los dos casos comparten código a propósito: distinguirlos confirmaría que el id existe en otro tenant |
+| `catalog.product.image_not_available`  | 422  | Falta el paso 4, o el archivo quedó en cuarentena                                                                                                         |
+| `catalog.product.image_not_an_image`   | 422  | El archivo existe pero su `mimeType` no empieza con `image/`. Un PDF subido correctamente cae acá                                                         |
+| `storage.file.mime_mismatch`           | 422  | La extensión y el `mimeType` declarados no se corresponden                                                                                                |
+| `storage.file.type_not_allowed`        | 422  | Extensión fuera de la lista                                                                                                                               |
+| `storage.file.size_invalid`            | 422  | Excede 25 MB, o el tamaño real no coincide con el declarado                                                                                               |
+| `storage.file.content_mismatch`        | 422  | Los bytes no son del tipo declarado — típicamente un archivo renombrado. Va a cuarentena                                                                  |
+| `storage.image.invalid`                | 422  | La imagen no se pudo decodificar. Cuarentena                                                                                                              |
+| `storage.image.dimensions_too_large`   | 422  | Más de 40 megapíxeles. Puede pesar poco y aun así rechazarse: es límite de dimensiones, no de bytes                                                       |
+| `storage.object.missing`               | 428  | Se llamó a `complete` sin que el `PUT` del paso 3 haya llegado. Se reintenta el paso 3, no éste                                                           |
+| `storage.public.not_configured`        | 422  | El almacenamiento público no está configurado en ese ambiente. No es error de la UI                                                                       |
+| `storage.file.owner_type_invalid`      | 422  | `ownerType` fuera del conjunto admitido, al subir o al filtrar la galería                                                                                 |
+| `storage.file.owner_filter_incomplete` | 422  | Se mandó `ownerId` sin `ownerType`, o al revés. Van juntos o no va ninguno                                                                                |
+| `validation.failed`                    | 422  | Errores de campo del producto. Trae el objeto `errors` con los mensajes por propiedad                                                                     |
 
 ## El resto de las imágenes: la galería
 
@@ -269,7 +269,9 @@ const json = { "Content-Type": "application/json", "X-Qep-Client": "web" };
 
 // 2 — sesión de carga
 const session = await fetch(`${base}/files`, {
-  method: "POST", credentials: "include", headers: json,
+  method: "POST",
+  credentials: "include",
+  headers: json,
   body: JSON.stringify({
     ownerId: productId,
     ownerType: "Product",
@@ -288,17 +290,23 @@ await fetch(session.uploadUrl, {
 
 // 4 — cerrar la carga
 await fetch(`${base}/files/${session.fileResourceId}/complete`, {
-  method: "POST", credentials: "include", headers: json,
+  method: "POST",
+  credentials: "include",
+  headers: json,
 });
 
 // 5 — publicar para tener una URL directa
 await fetch(`${base}/files/${session.fileResourceId}/publication`, {
-  method: "PUT", credentials: "include", headers: json,
+  method: "PUT",
+  credentials: "include",
+  headers: json,
 });
 
 // 6 — asignar la portada (PUT completo, con todos los campos del producto)
 await fetch(`${base}/catalog/products/${productId}`, {
-  method: "PUT", credentials: "include", headers: json,
+  method: "PUT",
+  credentials: "include",
+  headers: json,
   body: JSON.stringify({ ...product, imageFileId: session.fileResourceId }),
 });
 ```

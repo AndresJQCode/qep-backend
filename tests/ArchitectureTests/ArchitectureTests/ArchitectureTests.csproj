@@ -22,6 +22,14 @@
     <ProjectReference Include="..\..\..\src\Modules\Catalog\Modules.Catalog.Application\Modules.Catalog.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Catalog\Modules.Catalog.Domain\Modules.Catalog.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Catalog\Modules.Catalog.Infrastructure\Modules.Catalog.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Api\Modules.Companies.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Customers\Modules.Customers.Api\Modules.Customers.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Customers\Modules.Customers.Application\Modules.Customers.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Customers\Modules.Customers.Domain\Modules.Customers.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Application\Modules.Companies.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Domain\Modules.Companies.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Domain\Modules.Identity.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
