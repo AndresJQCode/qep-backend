@@ -57,14 +57,14 @@ Al iniciar, la API aplica automáticamente las migraciones de los módulos
 Tenancy e Identity. En `Development`, si aún no existen tenants, también crea el
 tenant de demostración.
 
-| Recurso | Dirección |
-|---|---|
-| API | `http://localhost:5100` |
-| Health check | `http://localhost:5100/health/live` |
+| Recurso                              | Dirección                               |
+| ------------------------------------ | --------------------------------------- |
+| API                                  | `http://localhost:5100`                 |
+| Health check                         | `http://localhost:5100/health/live`     |
 | Documento OpenAPI (solo Development) | `http://localhost:5100/openapi/v1.json` |
-| PostgreSQL | `localhost:5432` |
-| OTLP gRPC / HTTP | `localhost:4317` / `localhost:4318` |
-| Métricas del collector | `http://localhost:8889/metrics` |
+| PostgreSQL                           | `localhost:5432`                        |
+| OTLP gRPC / HTTP                     | `localhost:4317` / `localhost:4318`     |
+| Métricas del collector               | `http://localhost:8889/metrics`         |
 
 Para detener la infraestructura:
 
@@ -100,28 +100,28 @@ se compromete en un `appsettings*.json`. Se provee por secretos de usuario en
 local y por variable de entorno en k8s
 ([`prod-secret.yaml`](k8s/prod-secret.yaml), no el ConfigMap: lleva contraseña).
 
-| Clave | Valor local | Uso |
-|---|---|---|
-| `ConnectionStrings:QepDatabase` | **sin valor por defecto — requerido** | Conexión compartida por los módulos. Ausente ⇒ la API no inicia |
-| `OpenTelemetry:Endpoint` | `http://localhost:4317` | Exportación OTLP de trazas y métricas |
-| `OTEL_SERVICE_NAME` | sin definir (cae a `qep-api`) | `service.name` del recurso; en k8s lo fija el Deployment |
-| `Authentication:UseDevelopmentStub` | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque |
-| `Authentication:Authority` | ausente (cae a `https://accounts.google.com`) | Emisor OIDC; sólo se define para pisar el de Google |
-| `Authentication:Audience` | ausente | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId` |
-| `Authentication:Session:CookieName` | `qep_session` | Nombre de la cookie de sesión |
-| `Authentication:Session:AbsoluteLifetimeDays` | `30` | Vida máxima de la sesión. Debe ser positiva y ≥ `IdleTimeoutDays` |
-| `Authentication:Session:IdleTimeoutDays` | `7` | Expiración por inactividad |
-| `Registration:PublicTenantSignupEnabled` | `true` en `appsettings.json` | Alta pública de tenants. **Ausente ⇒ `false`**: se lee con `GetValue<bool>` |
-| `Notifications:EmailProvider` | `infobip` en `appsettings.json` (default del binding: `log`) | `log` o `infobip`. Con `infobip`, las tres claves `Notifications:Infobip:*` pasan a ser requeridas |
-| `Notifications:LoginUrl` | `http://localhost:3002/login` | URL absoluta que se inserta en los emails |
-| `Audit:SecurityRetentionDays` | `2555` (~7 años) | Ventana de retención de auditoría de seguridad. Debe ser positiva |
-| `Audit:OperationalRetentionDays` | `730` (2 años) | Ventana de retención de auditoría operativa. Debe ser positiva |
-| `Storage:PresignedUrlMinutes` | `5` | Vigencia de la URL firmada. Debe ser positiva |
-| `Storage:StagingRetentionHours` | `24` | Retención de los objetos en staging. Debe ser positiva |
-| `Storage:StagingCleanupMinutes` | `60` | Período del barrido de staging. Debe ser positivo |
-| `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
-| `Storage:ClamAv:Enabled` | `false` | Escaneo de malware. Con `true`, `Host` no puede estar vacío |
-| `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds` | `clamav` / `3310` / `30` | Destino del escaneo. `Port` entre 1 y 65535 |
+| Clave                                                  | Valor local                                                                                   | Uso                                                                                                                 |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
+| `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
+| `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
+| `Authentication:UseDevelopmentStub`                    | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque                                |
+| `Authentication:Authority`                             | ausente (cae a `https://accounts.google.com`)                                                 | Emisor OIDC; sólo se define para pisar el de Google                                                                 |
+| `Authentication:Audience`                              | ausente                                                                                       | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId`                      |
+| `Authentication:Session:CookieName`                    | `qep_session`                                                                                 | Nombre de la cookie de sesión                                                                                       |
+| `Authentication:Session:AbsoluteLifetimeDays`          | `30`                                                                                          | Vida máxima de la sesión. Debe ser positiva y ≥ `IdleTimeoutDays`                                                   |
+| `Authentication:Session:IdleTimeoutDays`               | `7`                                                                                           | Expiración por inactividad                                                                                          |
+| `Registration:PublicTenantSignupEnabled`               | `true` en `appsettings.json`                                                                  | Alta pública de tenants. **Ausente ⇒ `false`**: se lee con `GetValue<bool>`                                         |
+| `Notifications:EmailProvider`                          | `infobip` en `appsettings.json` (default del binding: `log`)                                  | `log` o `infobip`. Con `infobip`, las tres claves `Notifications:Infobip:*` pasan a ser requeridas                  |
+| `Notifications:LoginUrl`                               | `http://localhost:3002/login`                                                                 | URL absoluta que se inserta en los emails                                                                           |
+| `Audit:SecurityRetentionDays`                          | `2555` (~7 años)                                                                              | Ventana de retención de auditoría de seguridad. Debe ser positiva                                                   |
+| `Audit:OperationalRetentionDays`                       | `730` (2 años)                                                                                | Ventana de retención de auditoría operativa. Debe ser positiva                                                      |
+| `Storage:PresignedUrlMinutes`                          | `5`                                                                                           | Vigencia de la URL firmada. Debe ser positiva                                                                       |
+| `Storage:StagingRetentionHours`                        | `24`                                                                                          | Retención de los objetos en staging. Debe ser positiva                                                              |
+| `Storage:StagingCleanupMinutes`                        | `60`                                                                                          | Período del barrido de staging. Debe ser positivo                                                                   |
+| `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
+| `Storage:ClamAv:Enabled`                               | `false`                                                                                       | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                         |
+| `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                      | Destino del escaneo. `Port` entre 1 y 65535                                                                         |
 
 Ejemplo con variables de entorno:
 
@@ -232,10 +232,10 @@ bandera de configuración `Authentication:UseDevelopmentStub`, resuelta en
 `AddAuthentication` de
 [`QepServiceCollectionExtensions`](src/Bootstrapper/QepServiceCollectionExtensions.cs):
 
-| `Authentication:UseDevelopmentStub` | Esquema activo | Cómo autentica |
-|---|---|---|
-| `true` | Stub por encabezados (`DevelopmentAuthenticationHandler`) | Lee `X-Subject-Id`, `X-Tenant-Id`, `X-Permissions` opcional. Sin proveedor real. |
-| `false` (**por defecto**) | JWT Bearer (Google, ADR 0014/0015) | Valida el token del proveedor; exige `Authentication:Google:ClientId` (o `Authentication:Audience`) y `Authentication:Authority`. |
+| `Authentication:UseDevelopmentStub` | Esquema activo                                            | Cómo autentica                                                                                                                    |
+| ----------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `true`                              | Stub por encabezados (`DevelopmentAuthenticationHandler`) | Lee `X-Subject-Id`, `X-Tenant-Id`, `X-Permissions` opcional. Sin proveedor real.                                                  |
+| `false` (**por defecto**)           | JWT Bearer (Google, ADR 0014/0015)                        | Valida el token del proveedor; exige `Authentication:Google:ClientId` (o `Authentication:Audience`) y `Authentication:Authority`. |
 
 Si la bandera no se define, su valor por defecto es **`true` solo en el ambiente
 `Development`** y `false` en cualquier otro. Esto conserva el stub sin fricción en
@@ -289,19 +289,19 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 - [Imágenes de producto](docs/integracion-imagenes-de-producto.md) — subir a R2,
   publicar y asignar la portada, con los códigos de error que la UI debe distinguir.
 
-| Grupo de rutas | Operaciones | Autorización |
-|---|---|---|
-| `/health/live` | `GET` | anónimo |
-| `/api/v1/auth/registration-policy` | `GET` | anónimo |
-| `/api/v1/auth/register-tenant` | `POST` | token del proveedor OIDC |
-| `/api/v1/auth/session` | `POST` | token del proveedor OIDC |
-| `/api/v1/auth/me`, `/api/v1/auth/logout` | `GET`, `POST` | sólo autenticación |
-| `/api/v1/tenants/{tenantId}/authorization/me` | `GET` | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
-| `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET` | `tenancy.membership.read` |
-| `/api/v1/tenants/{tenantId}/settings` | `GET`, `PATCH` | `tenancy.settings.read` / `.update` |
-| `/api/v1/tenants/{tenantId}/memberships` | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles` por membership | `tenancy.membership.invite` / `.read` / `.manage` |
-| `/api/v1/tenants/{tenantId}/catalog/products` | `GET`, `POST`, `PUT`, y `deactivate` por producto | `catalog.product.read` / `.manage` |
-| `/api/v1/tenants/{tenantId}/files` | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete` |
+| Grupo de rutas                                     | Operaciones                                                                                 | Autorización                                                                                 |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `/health/live`                                     | `GET`                                                                                       | anónimo                                                                                      |
+| `/api/v1/auth/registration-policy`                 | `GET`                                                                                       | anónimo                                                                                      |
+| `/api/v1/auth/register-tenant`                     | `POST`                                                                                      | token del proveedor OIDC                                                                     |
+| `/api/v1/auth/session`                             | `POST`                                                                                      | token del proveedor OIDC                                                                     |
+| `/api/v1/auth/me`, `/api/v1/auth/logout`           | `GET`, `POST`                                                                               | sólo autenticación                                                                           |
+| `/api/v1/tenants/{tenantId}/authorization/me`      | `GET`                                                                                       | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
+| `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `tenancy.membership.read`                                                                    |
+| `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PATCH`                                                                              | `tenancy.settings.read` / `.update`                                                          |
+| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles` por membership                  | `tenancy.membership.invite` / `.read` / `.manage`                                            |
+| `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 **403, nunca 404**, cuando el recurso pertenece a otro tenant.
@@ -316,9 +316,9 @@ Es anónimo y responde `200 OK` con `{"status":"healthy"}`.
 
 ### Configuración del tenant
 
-| Método | Ruta | Permiso |
-|---|---|---|
-| `GET` | `/api/v1/tenants/{tenantId}/settings` | `tenancy.settings.read` |
+| Método  | Ruta                                  | Permiso                   |
+| ------- | ------------------------------------- | ------------------------- |
+| `GET`   | `/api/v1/tenants/{tenantId}/settings` | `tenancy.settings.read`   |
 | `PATCH` | `/api/v1/tenants/{tenantId}/settings` | `tenancy.settings.update` |
 
 El `GET` devuelve la configuración y un encabezado `ETag` con su versión. El
@@ -373,8 +373,8 @@ Formatos de fecha admitidos: `yyyy-MM-dd`, `dd/MM/yyyy` y `MM/dd/yyyy`.
 
 ### Invitación de memberships
 
-| Método | Ruta | Permiso |
-|---|---|---|
+| Método | Ruta                                     | Permiso                     |
+| ------ | ---------------------------------------- | --------------------------- |
 | `POST` | `/api/v1/tenants/{tenantId}/memberships` | `tenancy.membership.invite` |
 
 La operación obtiene o crea en Identity un usuario invitado, y después crea su
@@ -419,14 +419,14 @@ Membership existente sin crear duplicados.
 Los errores usan `ProblemDetails` e incluyen `code` y `traceId`; los errores de
 validación también incluyen un mapa `errors`.
 
-| Estado | Significado |
-|---|---|
-| `401` | No se pudo autenticar la solicitud |
-| `403` | Falta el permiso o el tenant de la ruta no coincide con el contexto |
-| `404` | No existe el tenant solicitado |
-| `412` | El `ETag` enviado ya no es la versión vigente |
-| `422` | Falló una validación o regla de dominio |
-| `428` | Falta un encabezado `If-Match` válido |
+| Estado | Significado                                                         |
+| ------ | ------------------------------------------------------------------- |
+| `401`  | No se pudo autenticar la solicitud                                  |
+| `403`  | Falta el permiso o el tenant de la ruta no coincide con el contexto |
+| `404`  | No existe el tenant solicitado                                      |
+| `412`  | El `ETag` enviado ya no es la versión vigente                       |
+| `422`  | Falló una validación o regla de dominio                             |
+| `428`  | Falta un encabezado `If-Match` válido                               |
 
 ## Arquitectura y persistencia
 
@@ -518,15 +518,15 @@ UseExceptionHandler → UseAuthentication → UseAuthorization → endpoints
 `ApiExceptionHandler` (`IExceptionHandler`) centraliza el mapeo de excepciones
 a `ProblemDetails` (RFC 7807):
 
-| Excepción | Código HTTP |
-|---|---|
-| `ResourceNotFoundException` | 404 |
-| `RequestForbiddenException` | 403 |
-| `RequestConcurrencyException` | 412 |
-| `PreconditionRequiredException` | 428 |
+| Excepción                                | Código HTTP                      |
+| ---------------------------------------- | -------------------------------- |
+| `ResourceNotFoundException`              | 404                              |
+| `RequestForbiddenException`              | 403                              |
+| `RequestConcurrencyException`            | 412                              |
+| `PreconditionRequiredException`          | 428                              |
 | `ValidationException` (FluentValidation) | 422, con mapa `errors` por campo |
-| `DomainException` | 422 |
-| Cualquier otra | 500 |
+| `DomainException`                        | 422                              |
+| Cualquier otra                           | 500                              |
 
 Toda respuesta de error incluye `code` y `traceId` en las extensiones del
 `ProblemDetails`. No hay middleware propio de resolución de tenant: el tenant
@@ -629,14 +629,14 @@ configurado en
 [`QepObservability`](src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs).
 Instrumentación activa:
 
-| Instrumentación | Aporta |
-|---|---|
-| `AddAspNetCoreInstrumentation` (traza + métrica) | Span raíz por request y el histograma `http.server.request.duration` (p50/p95/p99 por ruta) |
-| `AddHttpClientInstrumentation` | Spans de llamadas salientes con `HttpClient` |
-| `AddNpgsql` (Npgsql.OpenTelemetry) | Un span hijo por comando SQL bajo el span del request; expone N+1 como spans idénticos repetidos |
-| Meter `Npgsql` | Conexiones busy/idle/waiting del pool (`db.client.connection.*`) |
-| `AddRuntimeInstrumentation` | GC, heap, threadpool, contención — distingue degradación de la app vs. de la base |
-| `ActivitySource`/`Meter` propios (`Qep.Platform`) | Instrumentación manual específica del dominio |
+| Instrumentación                                   | Aporta                                                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `AddAspNetCoreInstrumentation` (traza + métrica)  | Span raíz por request y el histograma `http.server.request.duration` (p50/p95/p99 por ruta)      |
+| `AddHttpClientInstrumentation`                    | Spans de llamadas salientes con `HttpClient`                                                     |
+| `AddNpgsql` (Npgsql.OpenTelemetry)                | Un span hijo por comando SQL bajo el span del request; expone N+1 como spans idénticos repetidos |
+| Meter `Npgsql`                                    | Conexiones busy/idle/waiting del pool (`db.client.connection.*`)                                 |
+| `AddRuntimeInstrumentation`                       | GC, heap, threadpool, contención — distingue degradación de la app vs. de la base                |
+| `ActivitySource`/`Meter` propios (`Qep.Platform`) | Instrumentación manual específica del dominio                                                    |
 
 Exporta todo vía OTLP al endpoint de `OpenTelemetry:Endpoint` (o, si no está
 configurado, al que resuelva la variable estándar `OTEL_EXPORTER_OTLP_ENDPOINT`
@@ -706,81 +706,3 @@ La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones
 repetidas, concurrencia con `ETag`, escritura de auditoría/Outbox e idempotencia
 de Inbox.
-
-## Glosario SDD
-
-Este repositorio trabaja con **Spec-Driven Development (SDD)**: ningún cambio de código
-existe fuera de un spec con ID. El método es autoridad única y vive en
-`qep-frontend/sdd/00-metodo/`; acá sólo se resume el vocabulario que aparece en commits,
-specs, PRs y en el ledger de este repo ([`sdd/`](sdd/)).
-
-### Unidades de trabajo
-
-| Término | Qué es |
-|---|---|
-| **Slice** | Rebanada vertical entregable y revisable: dominio, API, autorización, auditoría, UI y pruebas de una capacidad concreta. Unidad de ejecución del método. Máximo ~400 líneas autoradas de diff. |
-| **Slice partido** | Slice que superó el tamaño revisable y se dividió con sufijo de letra (`CAT-02a`, `CAT-02b`). El ID padre permanece como fila en el ledger; los IDs siguientes **no** se renumeran. |
-| **Módulo** | Frontera de negocio con responsabilidad, dueños y contratos propios (`catalog`, `auth`, `customers`). Un módulo por carpeta en `03-modulos/`. |
-| **Ficha de módulo** | `03-modulos/<modulo>/README.md`: qué posee, qué **no** posee, de qué depende, qué expone. Sin ficha no hay slice. |
-| **Capability de plataforma** | Infraestructura que varios módulos consumen igual (Identity, Tenancy, Authorization, Audit, Storage, Notifications). Se consume, no se reimplementa; tocarla exige registrar la decisión. |
-
-### Gobierno y estado
-
-| Término | Qué es |
-|---|---|
-| **Gate** | Punto de autorización que un módulo debe cerrar para avanzar de estado. Se documenta en `03-modulos/<modulo>/gate.md` y reserva el ID `<PREFIJO>-00`. Sin gate cerrado no hay código. |
-| **G1 → G4** | Las cuatro transiciones de un módulo: **G1** ficha escrita, **G2** gate cerrado, **G3** primer slice, **G4** cierre. Procedimiento en `00-metodo/apertura-de-modulo.md`. |
-| **Estados de módulo** | `Propuesto` (sin frontera escrita) → `Definido` (ficha lista) → `Autorizado` (gate cerrado) → `En curso` (hay slices) → `Estable` (lo planificado cerró). Viven en `01-contexto/registro-de-modulos.md`. |
-| **Estados de slice** | `Pending`, `In Progress` (uno solo a la vez por repositorio), `Blocked` (con ID de decisión), `Complete` (DoD cumplido con evidencia). |
-| **Ledger** | [`sdd/02-plan/plan-maestro.md`](sdd/02-plan/plan-maestro.md): registro único de slices, estado, evidencia, commits y decisiones. Cada repo tiene el suyo y **una fila de slice vive en un solo ledger**. |
-| **Handoff** | Entrada de cierre de sesión en el ledger: qué quedó hecho, qué falta y cuál es la próxima acción segura. Se escribe siempre, incluso si el trabajo quedó bloqueado o sin commit. |
-| **Autoridad** | Qué gana ante una discrepancia. El código de los dos repos manda sobre cualquier documento; el documento se corrige (`SDD-ADR-01`). |
-
-### IDs y trazabilidad
-
-| ID | Qué identifica | Dónde vive |
-|---|---|---|
-| `<PREFIJO>-<NN>` | Slice (`CAT-02`, `AUTH-03`) | `03-modulos/<modulo>/slices/` |
-| `<PREFIJO>-00` | Gate del módulo (`CLI-00`) | `03-modulos/<modulo>/gate.md` |
-| `CA-<PREFIJO>-<NN>-<MM>` | **Criterio de aceptación** verificable de un slice | dentro del spec del slice |
-| `SDD-OD-<NN>` | **Decisión abierta**: pregunta sin responder que puede bloquear trabajo | ledger |
-| `SDD-CT-<NN>` | **Contradicción**: dos fuentes que se contradicen, o un defecto conocido sin cerrar | ledger |
-| `SDD-ADR-<NN>` | **Decisión de arquitectura** ya tomada, con evidencia | `01-contexto/decisiones-de-arquitectura.md` |
-| `RN-<NNN>` / `RF-<NNN>` | Regla de negocio / requisito funcional | `04-requisitos/` (nunca se implementa leyendo desde ahí; se cita por ID) |
-
-Cerrar un `SDD-OD-*` de efecto estructural produce un `SDD-ADR-*`; la fila original se
-conserva apuntando a él. **Un ID emitido nunca cambia y nunca se reutiliza.**
-
-La cadena de trazabilidad exigida:
-
-```txt
-commit -> slice (PREFIJO-NN) -> criterio (CA-PREFIJO-NN-MM) -> regla del módulo
-       -> requisito de negocio (RN-* / RF-*) | decisión (SDD-ADR-*)
-       | contrato existente (código, con archivo y línea)
-```
-
-### Ciclo de ejecución
-
-| Término | Qué es |
-|---|---|
-| **RED** | Prueba escrita antes de la implementación, que falla **por la razón esperada**. |
-| **GREEN** | Mínimo código que la pasa, sin adelantar el slice siguiente. |
-| **Evidencia literal** | El mensaje de fallo real y el conteo real (`8/8`), copiados al ledger. `"las pruebas pasan"` no es evidencia. |
-| **DoD** (*Definition of Done*) | Checklist de cierre de un slice: contrato, pruebas, build, seguridad, datos, auditoría, revisión y trazabilidad. Un ítem que no aplica se marca `N/A` **con la razón**. Vive en `00-metodo/definition-of-done.md`. |
-| **DECISIÓN-PENDIENTE** | Marca lo que falta en vez de inventarlo. Campos, estados, rutas, permisos y códigos de error deben existir en el código o en el spec; lo que no, se registra, no se asume. |
-
-### Revisión
-
-**Revisión adversarial**: lectura del diff buscando que falle, no que apruebe. Se elige el
-**lente** según el riesgo dominante:
-
-| Señal dominante en el diff | Lente |
-|---|---|
-| Nombres, estructura, mantenibilidad | **legibilidad** |
-| Comportamiento, estado, pruebas, regresiones | **fiabilidad** |
-| Fallos parciales, recuperación, dependencias degradadas | **resiliencia** |
-| Seguridad, permisos, exposición de datos, arquitectura | **riesgo** |
-
-Un diff que toca auth, permisos o pagos, o que supera 400 líneas, corre los cuatro lentes.
-Se admite **una sola transacción de corrección** por revisión: los hallazgos posteriores van
-a un slice de seguimiento, no reabren la revisión.
