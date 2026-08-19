@@ -74,4 +74,8 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
             cancellationToken);
 
     public void Add(Company company) => dbContext.Companies.Add(company);
+
+    // Las cuentas bancarias se van con la empresa sin que este método las toque: son una colección
+    // owned, y EF emite el DELETE de las filas hijas antes que el del padre.
+    public void Remove(Company company) => dbContext.Companies.Remove(company);
 }
