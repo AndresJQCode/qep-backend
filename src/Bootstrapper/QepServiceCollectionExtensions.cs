@@ -140,7 +140,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteTaxRateCommand, TaxRateDeletedResult>,
             DeleteTaxRateHandler>();
-        // EMP. Los seis van aca por la misma razon que los de tasas: el dispatcher resuelve por
+        // EMP. Los siete van aca por la misma razon que los de tasas: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
         services.AddScoped<
@@ -161,6 +161,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ActivateCompanyCommand, CompanyDto>,
             ActivateCompanyHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
+            DeleteCompanyHandler>();
         // CLI. Los siete van aca por la misma razon que los de empresas: el dispatcher resuelve
         // por registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y
         // falla recien en runtime con 500 al no encontrar handler.

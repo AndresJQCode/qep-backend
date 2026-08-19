@@ -54,13 +54,25 @@ public static class CompanyEndpoints
         // La vuelta de deactivate. Verbo dedicado y no un isActive editable en el PUT: un booleano
         // dejaria el cambio de estado sin evento de auditoria propio y sin invariante que lo
         // custodie. Sin permiso nuevo — activar es administrar.
-        //
-        // No hay DELETE. Una empresa la referencian cotizaciones y documentos ya emitidos, y
-        // borrarla en duro deja huerfano lo que ya se emitio; catalog tampoco borra productos.
-        // Si el gate del modulo decide lo contrario, el verbo llega con su propio slice.
         group.MapPost("/{companyId:guid}/activate", ActivateCompanyAsync)
             .RequireAuthorization(CompaniesPermissions.CompanyManage)
             .Produces<CompanyResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Borrado en duro, y no el mismo caso que desactivar: desactivar conserva la empresa y su
+        // historia, borrar es para la que se cargó por error y nadie usó todavía. Sin permiso
+        // propio: borrar es administrar, el mismo criterio con el que deactivate tampoco estrena
+        // uno.
+        //
+        // El 422 es el caso que hace falta declarar: una empresa que otro registro referencia no
+        // se puede borrar. Hoy ningún módulo la referencia —Quotes no existe—, así que ese status
+        // todavía no se alcanza por HTTP; queda declarado porque la clave foránea que lo produzca
+        // llega con el módulo que la cree, no con un cambio acá.
+        group.MapDelete("/{companyId:guid}", DeleteCompanyAsync)
+            .RequireAuthorization(CompaniesPermissions.CompanyManage)
+            .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -163,6 +175,19 @@ public static class CompanyEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(company));
+    }
+
+    private static async Task<IResult> DeleteCompanyAsync(
+        Guid tenantId,
+        Guid companyId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteCompanyCommand(tenantId, companyId),
+            cancellationToken);
+
+        return Results.NoContent();
     }
 
     private static CompanyResponse ToResponse(CompanyDto company) => new(

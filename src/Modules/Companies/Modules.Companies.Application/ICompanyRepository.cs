@@ -18,4 +18,9 @@ public interface ICompanyRepository
         CancellationToken cancellationToken);
 
     void Add(Company company);
+
+    // Borrado en duro, y con el agregado ya cargado por FindAsync: un Remove por id necesitaría
+    // una entidad stub y perdería el filtro por tenant que hace el Find. Si alguna clave foránea
+    // apunta a la empresa, quien frena es PostgreSQL en el commit — ver DeleteCompanyHandler.
+    void Remove(Company company);
 }
