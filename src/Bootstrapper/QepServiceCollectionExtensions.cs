@@ -15,6 +15,8 @@ using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
+using Modules.Companies.Application;
+using Modules.Companies.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
@@ -136,14 +138,37 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteTaxRateCommand, TaxRateDeletedResult>,
             DeleteTaxRateHandler>();
+        // EMP. Los seis van aca por la misma razon que los de tasas: el dispatcher resuelve por
+        // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
+        // recien en runtime con 500 al no encontrar handler.
+        services.AddScoped<
+            IQueryHandler<ListCompaniesQuery, IReadOnlyList<CompanyDto>>,
+            ListCompaniesHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCompanyQuery, CompanyDto>,
+            GetCompanyHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateCompanyCommand, CompanyDto>,
+            CreateCompanyHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCompanyCommand, CompanyDto>,
+            UpdateCompanyHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateCompanyCommand, CompanyDto>,
+            DeactivateCompanyHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateCompanyCommand, CompanyDto>,
+            ActivateCompanyHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
         services.AddNotificationsInfrastructure(configuration);
         services.AddStorageInfrastructure(configuration);
         services.AddCatalogInfrastructure(configuration);
+        services.AddCompaniesInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -187,7 +212,9 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.ProductRead,
                 CatalogPermissions.ProductManage,
                 CatalogPermissions.TaxRateRead,
-                CatalogPermissions.TaxRateManage
+                CatalogPermissions.TaxRateManage,
+                CompaniesPermissions.CompanyRead,
+                CompaniesPermissions.CompanyManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -201,7 +228,10 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.ProductRead,
                 // Sólo lectura: cambiar una tasa mueve los totales de toda cotización, así que
                 // TaxRateManage es high y queda en tenancy.owner. Ratificado en el gate CAT-00.
-                CatalogPermissions.TaxRateRead
+                CatalogPermissions.TaxRateRead,
+                // Solo lectura, mismo criterio que producto: un miembro cotiza contra las
+                // empresas que ya existen; darlas de alta y desactivarlas es de owner.
+                CompaniesPermissions.CompanyRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -281,6 +311,18 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar e inactivar tasas de impuesto.",
             "Catalog",
             "high"));
+        services.AddSingleton(new PermissionDefinition(
+            CompaniesPermissions.CompanyRead,
+            "Leer empresas",
+            "Permite consultar las empresas del tenant.",
+            "Companies",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            CompaniesPermissions.CompanyManage,
+            "Gestionar empresas",
+            "Permite crear, editar, inactivar y reactivar empresas.",
+            "Companies",
+            "medium"));
     }
 
     private static void AddAuthentication(
@@ -424,6 +466,12 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CatalogPermissions.ProductManage,
                 policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage))
+            .AddPolicy(
+                CompaniesPermissions.CompanyRead,
+                policy => AddPermissionRequirement(policy, CompaniesPermissions.CompanyRead))
+            .AddPolicy(
+                CompaniesPermissions.CompanyManage,
+                policy => AddPermissionRequirement(policy, CompaniesPermissions.CompanyManage))
             // La otra mitad del permiso. Sin esta política RequireAuthorization no resuelve y el
             // síntoma es 500, no 403 — un error que no se parece en nada a su causa. Por eso
             // CA-CAT-03-10 verifica que la política resuelva, y no sólo que el permiso figure en

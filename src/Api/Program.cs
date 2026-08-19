@@ -7,6 +7,8 @@ using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
 using Modules.Catalog.Api;
 using Modules.Catalog.Infrastructure;
+using Modules.Companies.Api;
+using Modules.Companies.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Storage.Api;
@@ -86,6 +88,7 @@ app.MapMembershipEndpoints();
 app.MapStorageEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
+app.MapCompanyEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
@@ -101,6 +104,8 @@ await app.Services.InitializeNotificationsDatabaseAsync(
 await app.Services.InitializeStorageDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCatalogDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+await app.Services.InitializeCompaniesDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.RunAsync();
 
