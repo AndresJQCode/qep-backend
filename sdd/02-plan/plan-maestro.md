@@ -35,7 +35,7 @@ historial de chat.
 | Último slice completado | **`CAT-02` (`a` y `b`), el 2026-08-11** — el primero cerrado en este ledger. La historia previa de backend —`AUTH-04`, `AUTH-05`, `AUTH-11`— vive en el ledger del frontend: eran slices de dos repos con un solo spec, y `SDD-ADR-08` decidió **no partirlos retroactivamente** porque están `Complete` y renumerar borra trazabilidad |
 | Último commit verificado | Sesión del 2026-08-11, en tres: `ec5540e` (`fix(config)`: quitar la cadena de conexión de `appsettings.json`), `55f36e6` (`docs(readme)`) y el que cierra esta entrada del ledger. Antes: `ccd2eca` (`chore(i18n)` — **contiene además un cambio funcional en `Program.cs` que su mensaje no declara**; ver Handoff), `797c099` (`docs(CAT-02b)`), `3c2c9ec` (`feat(CAT-02b)`), `968c4a8` (`feat(CAT-02)`), `594ee11` (`docs(SDD-ADR-08,CAT-02)`). Rama **`feature/catalog-api`**, sin publicar; se creó rama en vez de commitear sobre `main`, que es la rama por defecto de este repo. Se suma **`84ebc5c`** (`fix(config)`: credenciales de k8s a un Secret propio), del handoff del 2026-08-11. Incluye `CLAUDE.md`, que **nunca estuvo versionado**: entra acá por decisión explícita del owner, y con eso queda cerrada la decisión que este ledger venía registrando como no tomada |
 | Decisiones abiertas | **`DECISIÓN-PENDIENTE-INFRA-01` cerrada el 2026-08-11 por el owner: infraestructura y despliegue quedan explícitamente fuera del alcance del método.** No se abre módulo de plataforma ni se reserva prefijo. El corte es **por efecto, no por carpeta** —ver «Alcance del método» abajo—, y la obligación que **no** desaparece es la entrada de handoff en este ledger. Pendiente que deja: es una decisión estructural, así que `convenciones-de-id.md` pide que produzca un `SDD-ADR-*`. **`SDD-ADR-09` cerrado el 2026-08-11 en `qep-frontend`, commit `35e6f93` sobre `develop`.** Revisado contra sus fuentes antes de entrar: los cuatro commits citados, los cuatro archivos, el conteo de prefijos y la lista blanca de manifiestos de la plantilla de deploy. El mismo commit agrega al índice la fila de `SDD-ADR-08`, que estaba en el cuerpo del documento desde `3aca4a9` y no en la tabla. **`DECISIÓN-PENDIENTE-CAT-04` cerrada el 2026-08-10 por el owner:** el `code` de producto es único por tenant, con `IX_products_tenant_code` y traducción a `422 catalog.product.code_taken` en Infrastructure. **Tres decisiones del owner del 2026-08-12, sobre el modelo de `Product`:** `descripción`, `imagen`, `precio` y `moneda` entran a `catalog` (`CAT-04`); la **escala de precios** queda en `pricing`, como el gate ya declaraba; y **`stock` queda fuera del alcance del proyecto** — no tenía `RF` que lo sustentara ni módulo en el mapa, y como campo suelto era el candidato a corromperse por escrituras concurrentes. **Las tres corren el alcance del gate `CAT-00`**, que cerró con "Ningún campo más", así que hay que escribirlas ahí. **Dos abiertas nuevas: `DECISIÓN-PENDIENTE-CAT-05`** —¿el `name` de una tasa es único por tenant? Recomendado que sí; bloquea la migración `AddTaxRates`— y **`DECISIÓN-PENDIENTE-CAT-06`** —cuando exista `pricing`, ¿gana la lista o `Product.Price`? Default asumido y declarado: gana `pricing`, y `Product.Price` es precio base de fallback; bloquea `CAT-04`, no `CAT-03` |
-| Contradicciones abiertas | **`SDD-CT-20` (nueva, 2026-08-18): ningún proyecto de `*.IntegrationTests` compila en este repositorio.** `dotnet build` falla con `error NU1903: El paquete "SSH.NET" 2025.1.0 tiene una vulnerabilidad de gravedad alta conocida` en los **cinco** proyectos de integración —Catalog, Tenancy, Audit, Storage y Notifications—. `SSH.NET` es transitivo de `Testcontainers`, y el repo trata el aviso de auditoría de NuGet como error. **Verificado ajeno a `ACC-03`** con `git stash`: sin ninguno de sus cambios, `Modules.Catalog.IntegrationTests` falla igual. Consecuencia: **ningún slice puede dar evidencia de integración hasta que se resuelva**, y `ACC-03` quedó `In Progress` por eso. Salidas posibles, las dos con efecto sobre la postura de seguridad del repo y por lo tanto decisión del owner: subir `Testcontainers` a una versión cuyo `SSH.NET` no esté afectado, o suprimir el aviso puntual con `NuGetAuditSuppress`. No se tocó nada: `AGENTS.md` §4a pide que un defecto se registre, no que se arregle en silencio. `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
+| Contradicciones abiertas | **`SDD-CT-21` y `SDD-CT-22` (nuevas, 2026-08-18, las dos **cerradas** el mismo día): ver la entrada de handoff «El flujo de imagen de producto no funcionaba de punta a punta».** **`SDD-CT-20` cerrada el 2026-08-18** subiendo `Testcontainers.PostgreSql` a `4.14.0` (`f59cdbd`); el `restore` de `Modules.Storage.IntegrationTests` pasa con exit 0 y sin `NU1903`. Se conserva su descripción porque el síntoma vuelve si alguien revierte la versión: **ningún proyecto de `*.IntegrationTests` compilaba en este repositorio.** `dotnet build` falla con `error NU1903: El paquete "SSH.NET" 2025.1.0 tiene una vulnerabilidad de gravedad alta conocida` en los **cinco** proyectos de integración —Catalog, Tenancy, Audit, Storage y Notifications—. `SSH.NET` es transitivo de `Testcontainers`, y el repo trata el aviso de auditoría de NuGet como error. **Verificado ajeno a `ACC-03`** con `git stash`: sin ninguno de sus cambios, `Modules.Catalog.IntegrationTests` falla igual. Consecuencia: **ningún slice puede dar evidencia de integración hasta que se resuelva**, y `ACC-03` quedó `In Progress` por eso. Salidas posibles, las dos con efecto sobre la postura de seguridad del repo y por lo tanto decisión del owner: subir `Testcontainers` a una versión cuyo `SSH.NET` no esté afectado, o suprimir el aviso puntual con `NuGetAuditSuppress`. No se tocó nada: `AGENTS.md` §4a pide que un defecto se registre, no que se arregle en silencio. `SDD-CT-14` — parcialmente cerrada: siguen fallando 5 pruebas de `RealAuthenticationApiTests` con `Expected: Created / Actual: Unauthorized`. `SDD-CT-07` — un registro de tenant fallido deja un usuario huérfano en `identity.users`; no bloquea, pide slice de mantenimiento. `SDD-CT-08` — `500` intermitente en `POST /auth/register-tenant`, no reproducida. Las tres se registran en el ledger del frontend, que sigue siendo el registro de contradicciones del producto |
 
 ### Próxima acción ejecutable
 
@@ -329,6 +329,92 @@ hay UI que lo consuma.
 | `ACC-03` | **Preferencias de apariencia por usuario y tenant** — entidad, tabla, y `GET`/`PUT /api/v1/auth/preferences` | `ACC-00` (gate cerrado) | **In Progress** | Abierto el 2026-08-18, spec en [`ACC-03-preferencias-de-apariencia.md`](../03-modulos/account/slices/ACC-03-preferencias-de-apariencia.md). **RED literal:** `error CS0103: El nombre 'UserPreference' no existe en el contexto actual`, más `ThemeMode`, en `UserPreferenceTests.cs` — la entidad no existía. **GREEN unitario:** `Correctas! - Con error: 0, Superado: 19, Total: 19` en `Modules.Identity.UnitTests` (eran 13). **Suite completa de lo que compila:** 8 proyectos, **201 pruebas, 0 fallos**, con `ArchitectureTests` en `17/17` — que es `CA-ACC-03-11`: la entidad nueva no rompió las capas. `dotnet build src/Api/Api.csproj` → `Compilación correcta, 0 Errores`. Migración `20260818153515_AddUserPreferences` revisada a mano: crea sólo `identity.user_preferences`, PK compuesta `(user_id, tenant_id)`, FK a `users` con `CASCADE` y **sin FK a Tenancy**, que es la regla de aislamiento entre módulos. **Corrección hecha en el ciclo:** una prueba propia daba por malformado el esquema `"UPPER"`, pero la convención del repo —`User.NormalizeEmail`, `NormalizeProvider`— es **normalizar**, no rechazar; se corrigió la prueba, no el código. **Sigue `In Progress`:** faltan las pruebas de integración, bloqueadas por `SDD-CT-20`, y el runtime |
 
 ## Handoff
+
+### 2026-08-18 (cont. 3) — El flujo de imagen de producto no funcionaba de punta a punta
+
+**Sale de una consulta del developer de frontend, no de un slice.** Preguntó cómo cargar la
+imagen principal de un producto; al escribir la guía contra el código aparecieron **tres defectos
+encadenados** que dejaban el flujo inservible, y ninguno era visible desde las pruebas.
+
+**Lo que se rompía, en orden de aparición:**
+
+| # | Síntoma | Causa |
+|---|---|---|
+| 1 | `No 'Access-Control-Allow-Origin' header is present` en el `PUT` de subida | Configuración local, no código: `Storage:R2:Bucket` tenía `lulo-crm-private` en user-secrets, heredado de Lulo CRM igual que la base `dev_lulo_crm_v2`. El backend firmaba contra el bucket de otro producto, así que el CORS aplicado sobre `qep-private` no intervenía. R2 respondía literal `CORS not configured for this bucket` |
+| 2 | `500 STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER not implemented` en `complete` | `AWSSDK.S3` v4 manda un checksum CRC32 en trailer HTTP; R2 no implementa trailers. **`SDD-CT-21`** |
+| 3 | `500 STREAMING-AWS4-HMAC-SHA256-PAYLOAD not implemented`, ya sin `TRAILER` | Apagado el trailer, el SDK seguía firmando el cuerpo en chunks. Se apaga **por request**: no hay propiedad global ni variable de entorno que lo gobierne. **`SDD-CT-21`** |
+| 4 | `500 No service for type ICommandHandler<PublishFileCommand, FileResourceDto>` | `PublishFileHandler` y `UnpublishFileHandler` **nunca se registraron**. **`SDD-CT-22`** |
+
+**`SDD-CT-22` es el que más pesa: la publicación nunca funcionó, en ningún ambiente.** Los
+endpoints de `/files/{id}/publication` estaban mapeados con su permiso desde que se escribieron.
+Y como `imageUrl` de producto sólo tiene valor si el archivo fue publicado, **la mitad de lectura
+de `CAT-05b` estuvo muerta desde el día uno** sin que ninguna prueba lo notara. El ledger había
+advertido ese riesgo textualmente al cerrar `CAT-06` —«olvidar la línea da 500, no 404»— y volvió
+a pasar igual: advertirlo en prosa se demostró insuficiente.
+
+**Por qué ninguna prueba los veía.** Las pruebas sustituyen `IObjectStorage` por un doble en
+memoria, y la subida del navegador va por URL prefirmada sin tocar el SDK. Los defectos 2 y 3
+sólo se manifiestan contra R2 real, en `complete`, que es la primera escritura que el backend
+hace con el cliente S3. El 4 sólo por la ruta HTTP.
+
+**Las dos pruebas que cierran el agujero, ambas verificadas contra el mecanismo ausente:**
+
+- `ArchitectureTests/CompositionRootTests` — descubre por reflexión **todo** `ICommand<>`/`IQuery<>`
+  de los ensamblados `Modules.*.Application` y exige que cada uno tenga su handler registrado.
+  Los ensamblados se cargan por patrón de archivo y no por un tipo ancla por módulo, porque un
+  ancla hay que acordarse de agregarla y el olvido es justo lo que la prueba atrapa. **RED con el
+  mecanismo ausente:** quitando el registro de `PublishFileHandler` da
+  ``Estos casos de uso no tienen su handler registrado en QepServiceCollectionExtensions, así que
+  su endpoint responde 500: PublishFileCommand -> ICommandHandler`2``.
+- `Modules.Storage.UnitTests/R2ObjectStorageTests` — los cuatro interruptores de compatibilidad
+  con R2. **RED con el mecanismo ausente:** quitando los cuatro,
+  `Con error: 2, Superado: 50, Total: 52`, con `Assert.False() Failure` y
+  `Assert.Equal() Failure: Values differ`.
+
+**Verificación:**
+
+| Qué | Resultado |
+|---|---|
+| `dotnet build Backend.slnx` | `Compilación correcta, 0 Advertencia(s), 0 Errores` |
+| Unitarias + arquitectura | **205 en verde**, eran 201. `ArchitectureTests` 19/19 (eran 17), `Modules.Storage.UnitTests` 52 (eran 50) |
+| Runtime de `complete` | `200` con `status: Available` y variante `thumbnail` 320×320, 7.930 bytes sobre un original de 50.616 |
+| Runtime de `publication` | **Confirmado funcionando por el owner** |
+| Integración | **No corridas.** Ver deuda abajo |
+
+**El build hay que correrlo con `-p:BaseOutputPath` a un directorio aparte mientras `Api.exe` esté
+levantado con depurador:** los 42 errores que devuelve el build normal son todos `MSB3021`/
+`MSB3027` de copia de DLL, ninguno de compilación. Es el gotcha ya documentado, pero conviene
+saber que tiene salida sin matar el proceso.
+
+**Configuración corregida, y es lo que más costó:** los tres nombres de R2 pasan a user-secrets y
+salen de la secuencia de `$env:` del ledger. Cuando la API se arranca **desde el IDE con
+depurador** —que es como trabaja este repo— lo exportado en una terminal no llega a ese proceso.
+La secuencia anterior además tenía dos valores falsos (`qep-public` y `cdn.qep.test`) y **omitía
+`Storage:R2:Bucket`**, que era el que estaba mal.
+
+**Documentos tocados:** `docs/integracion-imagenes-de-producto.md` (nuevo, la guía que consume el
+frontend), `ops/r2-cors-public.example.json` (nuevo), `README.md` y este ledger.
+
+**Commits:** `f59cdbd` (`chore(deps)`, cierra `SDD-CT-20`), `6dcaba6` (`fix(storage)`, los tres
+defectos), `c8293b5` (`docs(storage)`), `d1a9d81` (`feat(ACC-03)`), `ad0b2ba` (`test(AUTH-12)`),
+más el commit de las dos pruebas. Rama `feat/acc-03-preferencias-usuario`, publicada.
+
+**Deuda que queda, declarada y no escondida:**
+
+1. **Las pruebas de integración no se corrieron.** `SDD-CT-20` ya está cerrada, así que ahora
+   compilan: es lo que falta para cerrar `ACC-03`, que sigue `In Progress`.
+2. **`complete` no es atómico ante un fallo tardío.** `PromoteAsync` copia el objeto a `files/`
+   antes de subir las variantes, y el `SaveChangesAsync` viene al final. Al fallar en el medio
+   —como pasó las cuatro veces de hoy— el objeto queda promovido en R2 y el registro en
+   `PendingUpload`; cada reintento deja otra copia. No lo introdujo este trabajo, pero quedó a la
+   vista y merece su propio `SDD-CT`.
+3. **Archivos huérfanos** de los intentos de hoy, algunos en `lulo-crm-private`, el bucket de otro
+   producto.
+4. **`CA-CAT-05-09` merece revisión.** El ledger lo da por verificado en runtime, y el endpoint de
+   publicación no podía responder: se verificó por otro camino que no ejercitaba el `PUT`.
+5. **Ninguno de estos cambios pasó por spec.** Son correcciones de defecto sobre capacidades ya
+   construidas; encajan como `SDD-CH-*`, y la revisión con lentes ciegos no se corrió.
+
 
 ### 2026-08-18 (cont. 2) — `ACC-03`: preferencias de apariencia, y el bloqueo que dejó a la vista
 
