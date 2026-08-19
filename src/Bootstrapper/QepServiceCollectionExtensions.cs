@@ -17,6 +17,8 @@ using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
 using Modules.Companies.Infrastructure;
+using Modules.Customers.Application;
+using Modules.Customers.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
@@ -159,9 +161,34 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ActivateCompanyCommand, CompanyDto>,
             ActivateCompanyHandler>();
+        // CLI. Los siete van aca por la misma razon que los de empresas: el dispatcher resuelve
+        // por registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y
+        // falla recien en runtime con 500 al no encontrar handler.
+        services.AddScoped<
+            IQueryHandler<ListCustomersQuery, CustomerPage>,
+            ListCustomersHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCustomerQuery, CustomerDto>,
+            GetCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateCustomerCommand, CustomerDto>,
+            CreateCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCustomerCommand, CustomerDto>,
+            UpdateCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateCustomerCommand, CustomerDto>,
+            DeactivateCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateCustomerCommand, CustomerDto>,
+            ActivateCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>,
+            ImportCustomersHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -169,6 +196,7 @@ public static class QepServiceCollectionExtensions
         services.AddStorageInfrastructure(configuration);
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
+        services.AddCustomersInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -214,7 +242,10 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.TaxRateRead,
                 CatalogPermissions.TaxRateManage,
                 CompaniesPermissions.CompanyRead,
-                CompaniesPermissions.CompanyManage
+                CompaniesPermissions.CompanyManage,
+                CustomersPermissions.CustomerRead,
+                CustomersPermissions.CustomerManage,
+                CustomersPermissions.CustomerImport
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -231,7 +262,13 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.TaxRateRead,
                 // Solo lectura, mismo criterio que producto: un miembro cotiza contra las
                 // empresas que ya existen; darlas de alta y desactivarlas es de owner.
-                CompaniesPermissions.CompanyRead
+                CompaniesPermissions.CompanyRead,
+                // Lectura y gestion: dar de alta y editar clientes es el trabajo diario de un
+                // asesor, a diferencia de empresas y productos, que son datos maestros que
+                // configura el owner. Importar queda afuera — mil clientes de una vez no es la
+                // misma autoridad, y el gate CLI-00 pide mapearlo por separado.
+                CustomersPermissions.CustomerRead,
+                CustomersPermissions.CustomerManage
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -323,6 +360,27 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar, inactivar y reactivar empresas.",
             "Companies",
             "medium"));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerRead,
+            "Leer clientes",
+            "Permite consultar el listado y el detalle de los clientes del tenant.",
+            "Customers",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerManage,
+            "Gestionar clientes",
+            "Permite crear, editar, inactivar y reactivar clientes.",
+            "Customers",
+            "medium"));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerImport,
+            "Importar clientes",
+            "Permite cargar clientes masivamente desde un archivo Excel.",
+            "Customers",
+            // Alto y no medio: una carga masiva escribe cientos de registros de datos personales
+            // de una sola vez, y el gate CLI-00 todavia tiene abierta la politica de retencion de
+            // PII. Separado de manage justamente para poder darlo a menos gente.
+            "high"));
     }
 
     private static void AddAuthentication(
@@ -481,7 +539,16 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateRead))
             .AddPolicy(
                 CatalogPermissions.TaxRateManage,
-                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateManage));
+                policy => AddPermissionRequirement(policy, CatalogPermissions.TaxRateManage))
+            .AddPolicy(
+                CustomersPermissions.CustomerRead,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerRead))
+            .AddPolicy(
+                CustomersPermissions.CustomerManage,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerManage))
+            .AddPolicy(
+                CustomersPermissions.CustomerImport,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerImport));
     }
 
     private static void AddPermissionRequirement(

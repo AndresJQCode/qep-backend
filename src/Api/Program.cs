@@ -9,6 +9,8 @@ using Modules.Catalog.Api;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Api;
 using Modules.Companies.Infrastructure;
+using Modules.Customers.Api;
+using Modules.Customers.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Storage.Api;
@@ -89,6 +91,7 @@ app.MapStorageEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
 app.MapCompanyEndpoints();
+app.MapCustomerEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
@@ -104,6 +107,8 @@ await app.Services.InitializeNotificationsDatabaseAsync(
 await app.Services.InitializeStorageDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCatalogDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+await app.Services.InitializeCustomersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCompaniesDatabaseAsync(
     app.Lifetime.ApplicationStopping);

@@ -30,6 +30,12 @@
     <Project Path="src/Modules/Companies/Modules.Companies.Domain/Modules.Companies.Domain.csproj" />
     <Project Path="src/Modules/Companies/Modules.Companies.Infrastructure/Modules.Companies.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Customers/">
+    <Project Path="src/Modules/Customers/Modules.Customers.Api/Modules.Customers.Api.csproj" />
+    <Project Path="src/Modules/Customers/Modules.Customers.Application/Modules.Customers.Application.csproj" />
+    <Project Path="src/Modules/Customers/Modules.Customers.Domain/Modules.Customers.Domain.csproj" />
+    <Project Path="src/Modules/Customers/Modules.Customers.Infrastructure/Modules.Customers.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Identity/">
     <Project Path="src/Modules/Identity/Modules.Identity.Application/Modules.Identity.Application.csproj" />
     <Project Path="src/Modules/Identity/Modules.Identity.Domain/Modules.Identity.Domain.csproj" />
@@ -75,6 +81,10 @@
   <Folder Name="/tests/Modules/Companies/">
     <Project Path="tests/Modules/Companies/Modules.Companies.UnitTests/Modules.Companies.UnitTests.csproj" />
     <Project Path="tests/Modules/Companies/Modules.Companies.IntegrationTests/Modules.Companies.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Customers/">
+    <Project Path="tests/Modules/Customers/Modules.Customers.UnitTests/Modules.Customers.UnitTests.csproj" />
+    <Project Path="tests/Modules/Customers/Modules.Customers.IntegrationTests/Modules.Customers.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Identity/">
     <Project Path="tests/Modules/Identity/Modules.Identity.IntegrationTests/Modules.Identity.IntegrationTests.csproj" />
