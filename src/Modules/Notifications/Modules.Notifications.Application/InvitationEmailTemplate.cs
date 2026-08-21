@@ -11,18 +11,18 @@ public static class InvitationEmailTemplate
 
     public static EmailMessage Render(string recipientAddress, Guid tenantId, string loginUrl)
     {
-        const string subject = "Te invitaron a QCode Enterprise Platform";
+        const string subject = "Te invitaron a Origen Botánico";
 
         var textBody =
             $"Hola,\n\n" +
-            $"Has sido invitado a una organización en QCode Enterprise Platform.\n" +
+            $"Has sido invitado a una organización en Origen Botánico.\n" +
             $"Inicia sesión con tu cuenta de Google para aceptar la invitación:\n\n" +
             $"{loginUrl}\n\n" +
             $"Si no esperabas esta invitación, puedes ignorar este mensaje.\n";
 
         var htmlBody =
             $"<p>Hola,</p>" +
-            $"<p>Has sido invitado a una organización en <strong>QCode Enterprise Platform</strong>.</p>" +
+            $"<p>Has sido invitado a una organización en <strong>Origen Botánico</strong>.</p>" +
             $"<p>Inicia sesión con tu cuenta de Google para aceptar la invitación:</p>" +
             $"<p><a href=\"{loginUrl}\">Aceptar invitación</a></p>" +
             $"<p>Si no esperabas esta invitación, puedes ignorar este mensaje.</p>";
