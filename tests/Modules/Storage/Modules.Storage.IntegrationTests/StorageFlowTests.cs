@@ -225,6 +225,11 @@ public sealed class StorageFlowTests
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
+            // Fijado, nunca heredado de appsettings.json. SDD-CT-17: sin esto hereda
+            // "infobip" y, sin sus claves, NotificationsOptionsValidator tira al arrancar
+            // antes de que la prueba llegue a su aserción — enmascarado en local por los
+            // user-secrets de Infobip de cada developer, pero no en CI.
+            builder.UseSetting("Notifications:EmailProvider", "log");
             AddR2TestSettings(builder);
             builder.ConfigureServices(services =>
             {
