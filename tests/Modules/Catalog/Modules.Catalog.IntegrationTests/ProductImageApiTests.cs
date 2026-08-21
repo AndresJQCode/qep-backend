@@ -84,7 +84,8 @@ public sealed class ProductImageApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            imageFileId = Guid.CreateVersion7()
+            imageFileId = Guid.CreateVersion7(),
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -109,7 +110,8 @@ public sealed class ProductImageApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            imageFileId = pending
+            imageFileId = pending,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -135,7 +137,8 @@ public sealed class ProductImageApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            imageFileId = pdf
+            imageFileId = pdf,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -160,7 +163,8 @@ public sealed class ProductImageApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            imageFileId = image
+            imageFileId = image,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -187,19 +191,20 @@ public sealed class ProductImageApiTests
         var withoutImage = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
         {
             name = "Sin portada",
-            code = "SP-001"
+            code = "SP-001",
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         }));
         Assert.Null(withoutImage.ImageFileId);
 
         var assigned = await ReadProductAsync(await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{withoutImage.Id}",
-            new { name = "Sin portada", code = "SP-001", imageFileId = image },
+            new { name = "Sin portada", code = "SP-001", imageFileId = image, pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken));
         Assert.Equal(image, assigned.ImageFileId);
 
         var cleared = await ReadProductAsync(await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{withoutImage.Id}",
-            new { name = "Sin portada", code = "SP-001" },
+            new { name = "Sin portada", code = "SP-001", pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken));
         Assert.Null(cleared.ImageFileId);
     }
@@ -293,7 +298,8 @@ public sealed class ProductImageApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            imageFileId = image
+            imageFileId = image,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         }));
 
         var fetched = await ReadProductAsync(await client.GetAsync(
@@ -334,15 +340,18 @@ public sealed class ProductImageApiTests
         {
             name = "Con portada",
             code = "CP-001",
-            imageFileId = first
+            imageFileId = first,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
         await CreateProductAsync(client, TenantId, new
         {
             name = "Con otra portada",
             code = "CP-002",
-            imageFileId = second
+            imageFileId = second,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
-        await CreateProductAsync(client, TenantId, new { name = "Sin portada", code = "SP-001" });
+        await CreateProductAsync(
+            client, TenantId, new { name = "Sin portada", code = "SP-001", pricing = new { baseUsd = 10m, finalUsd = 10m } });
 
         var products = await ListAsync(client, TenantId);
 

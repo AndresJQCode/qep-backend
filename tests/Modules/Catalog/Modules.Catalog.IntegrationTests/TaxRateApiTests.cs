@@ -384,11 +384,11 @@ public sealed class TaxRateApiTests
 
         await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-001" },
+            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken);
         var productClash = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Otra vela", code = "VS-001" },
+            new { name = "Otra vela", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken);
         var productBody = await productClash.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);

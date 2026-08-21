@@ -100,9 +100,9 @@ public static class ProductEndpoints
                 request.Code,
                 request.Description,
                 request.ImageFileId,
-                request.Price,
                 request.Currency,
-                request.TaxRateId),
+                request.TaxRateId,
+                request.Pricing),
             cancellationToken);
 
         return Results.Created(
@@ -125,9 +125,9 @@ public static class ProductEndpoints
                 request.Code,
                 request.Description,
                 request.ImageFileId,
-                request.Price,
                 request.Currency,
-                request.TaxRateId),
+                request.TaxRateId,
+                request.Pricing),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
@@ -167,9 +167,14 @@ public static class ProductEndpoints
         product.Description,
         product.ImageFileId,
         product.ImageUrl,
-        product.Price,
         product.Currency,
         product.TaxRateId,
+        product.PriceBaseUsd,
+        product.PriceBaseCop,
+        product.PriceFinalUsd,
+        product.PriceFinalCop,
+        product.Discount,
+        product.PriceScales,
         product.CreatedAt,
         product.UpdatedAt);
 }

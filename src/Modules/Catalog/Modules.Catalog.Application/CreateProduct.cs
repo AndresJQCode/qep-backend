@@ -11,15 +11,20 @@ public sealed record CreateProductCommand(
     string Code,
     string? Description,
     Guid? ImageFileId,
-    decimal? Price,
     string? Currency,
-    Guid? TaxRateId) : ICommand<ProductDto>, IProductWriteCommand;
+    Guid? TaxRateId,
+    ProductPricingRequest Pricing) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
-// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes.
+// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes. CAT-09: el precio y
+// las escalas siguen el mismo criterio, con su propio ProductPricingRules.
 public sealed class CreateProductValidator : AbstractValidator<CreateProductCommand>
 {
-    public CreateProductValidator() => Include(new ProductWriteRules());
+    public CreateProductValidator()
+    {
+        Include(new ProductWriteRules());
+        RuleFor(command => command.Pricing).SetValidator(new ProductPricingRules());
+    }
 }
 
 public sealed class CreateProductHandler(
@@ -66,10 +71,10 @@ public sealed class CreateProductHandler(
             {
                 Description = command.Description,
                 ImageFileId = image?.FileId,
-                Price = command.Price,
                 Currency = command.Currency,
                 TaxRateId = taxRateId
             },
+            command.Pricing.ToDomain(),
             now);
 
         repository.Add(product);
