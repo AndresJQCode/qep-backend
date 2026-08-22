@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
@@ -14,7 +14,7 @@ public sealed class MembershipApiTests
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
     private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
-    private static readonly string[] DefaultRoles = ["tenancy.member"];
+    private static readonly string[] DefaultRoles = ["advisor"];
     private static readonly string[] UnknownRoles = ["tenancy.unknown"];
 
     [Fact]
@@ -184,14 +184,17 @@ public sealed class MembershipApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(catalog);
         Assert.False(string.IsNullOrWhiteSpace(catalog!.CatalogVersion));
-        Assert.Contains(catalog!.Roles, role => role.Role == "tenancy.owner");
+        Assert.Contains(catalog!.Roles, role => role.Role == "admin");
         Assert.Contains(catalog.Roles, role =>
-            role.Role == "tenancy.owner" && role.RiskLevel == "high");
-        Assert.Contains(catalog.Roles, role => role.Role == "tenancy.member");
+            role.Role == "admin" && role.RiskLevel == "high");
+        Assert.Contains(catalog.Roles, role => role.Role == "advisor");
+        Assert.Contains(catalog.Roles, role => role.Role == "billing");
+        Assert.DoesNotContain(catalog.Roles, role => role.Role == "tenancy.owner");
+        Assert.DoesNotContain(catalog.Roles, role => role.Role == "tenancy.member");
         Assert.Contains(
             catalog.Permissions,
             permission =>
-                permission.Permission == "tenancy.membership.manage" &&
+                permission.Permission == "advisorship.manage" &&
                 permission.DisplayName == "Gestionar miembros y roles");
     }
 
@@ -529,7 +532,7 @@ public sealed class MembershipApiTests
         await SetStateAsync(database, membership!.Id, "Suspended");
 
         using var readerOnly = CreateClient(factory, SubjectId, TenantId);
-        readerOnly.DefaultRequestHeaders.Add("X-Permissions", "tenancy.membership.read");
+        readerOnly.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
 
         var response = await ReactivateAsync(readerOnly, TenantId, membership.Id);
 

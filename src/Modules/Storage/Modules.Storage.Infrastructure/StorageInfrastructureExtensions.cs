@@ -1,12 +1,12 @@
-﻿using Amazon.Runtime;
+using Amazon.Runtime;
 using Amazon.S3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Storage.Application;
-using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.Imaging;
+using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.Scanning;
 

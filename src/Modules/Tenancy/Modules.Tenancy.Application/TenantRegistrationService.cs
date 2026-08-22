@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Modules.Audit.Application;
 using Modules.Tenancy.Domain;
 
@@ -13,7 +13,7 @@ public sealed class TenantRegistrationService(
     IClock clock)
     : ITenantRegistration
 {
-    private static readonly string[] OwnerRoles = ["tenancy.owner"];
+    private static readonly string[] AdminRoles = ["admin"];
     private const string Origin = "registration";
 
     public async Task<Guid> RegisterOwnerTenantAsync(
@@ -38,7 +38,7 @@ public sealed class TenantRegistrationService(
             MembershipId.New(),
             ownerUserId,
             tenant.Id,
-            OwnerRoles,
+            AdminRoles,
             Origin,
             now);
         membershipRepository.Add(membership);

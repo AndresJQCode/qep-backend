@@ -1,4 +1,9 @@
-﻿using FluentValidation;
+using Bootstrapper.Authentication;
+using Bootstrapper.Messaging;
+using BuildingBlocks.Application;
+using BuildingBlocks.Infrastructure;
+using BuildingBlocks.Observability;
+using FluentValidation;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -7,19 +12,14 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
-using Bootstrapper.Authentication;
-using Bootstrapper.Messaging;
-using BuildingBlocks.Application;
-using BuildingBlocks.Infrastructure;
-using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
+using Modules.Authorization.Application;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
 using Modules.Companies.Infrastructure;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
-using Modules.Authorization.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Storage.Application;
@@ -224,18 +224,23 @@ public static class QepServiceCollectionExtensions
             AuthorizationService>();
         services.AddScoped<IRolePermissionChecker, RolePermissionChecker>();
         services.AddScoped<IRoleReferenceValidator, RoleReferenceValidator>();
+        // Las claves de rol van en inglés y sin prefijo de módulo: a diferencia de un permiso,
+        // que es propiedad del módulo que protege el caso de uso (`catalog.product.read`), el
+        // rol es transversal al tenant y no pertenece a ninguno. El label que ve la persona es
+        // `DisplayName`, en español, y el cliente no traduce la clave: la muestra tal cual la
+        // manda el catálogo.
         services.AddSingleton(new RoleDefinition(
-            "tenancy.owner",
-            "Propietario",
+            "admin",
+            "Administrador",
             "Administra la configuración, membresías y capacidades base del tenant.",
             "Tenancy",
             "high",
             [
                 TenancyPermissions.SettingsRead,
                 TenancyPermissions.SettingsUpdate,
-                TenancyPermissions.MembershipInvite,
-                TenancyPermissions.MembershipRead,
-                TenancyPermissions.MembershipManage,
+                TenancyPermissions.AdvisorshipInvite,
+                TenancyPermissions.AdvisorshipRead,
+                TenancyPermissions.AdvisorshipManage,
                 StoragePermissions.FileUpload,
                 StoragePermissions.FileRead,
                 StoragePermissions.FileDelete,
@@ -251,27 +256,42 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport
             ]));
         services.AddSingleton(new RoleDefinition(
-            "tenancy.member",
-            "Miembro",
-            "Acceso operativo básico al tenant y lectura de información común.",
+            "advisor",
+            "Asesora",
+            "Gestiona clientes y consulta los datos maestros con los que cotiza.",
             "Tenancy",
             "medium",
             [
                 TenancyPermissions.SettingsRead,
-                TenancyPermissions.MembershipRead,
+                TenancyPermissions.AdvisorshipRead,
                 CatalogPermissions.ProductRead,
                 // Sólo lectura: cambiar una tasa mueve los totales de toda cotización, así que
-                // TaxRateManage es high y queda en tenancy.owner. Ratificado en el gate CAT-00.
+                // TaxRateManage es high y queda en admin. Ratificado en el gate CAT-00.
                 CatalogPermissions.TaxRateRead,
-                // Solo lectura, mismo criterio que producto: un miembro cotiza contra las
-                // empresas que ya existen; darlas de alta y desactivarlas es de owner.
+                // Solo lectura, mismo criterio que producto: una asesora cotiza contra las
+                // empresas que ya existen; darlas de alta y desactivarlas es de admin.
                 CompaniesPermissions.CompanyRead,
-                // Lectura y gestion: dar de alta y editar clientes es el trabajo diario de un
-                // asesor, a diferencia de empresas y productos, que son datos maestros que
-                // configura el owner. Importar queda afuera — mil clientes de una vez no es la
+                // Lectura y gestion: dar de alta y editar clientes es el trabajo diario de una
+                // asesora, a diferencia de empresas y productos, que son datos maestros que
+                // configura el admin. Importar queda afuera — mil clientes de una vez no es la
                 // misma autoridad, y el gate CLI-00 pide mapearlo por separado.
                 CustomersPermissions.CustomerRead,
                 CustomersPermissions.CustomerManage
+            ]));
+        services.AddSingleton(new RoleDefinition(
+            "billing",
+            "Facturación",
+            "Consulta la información de clientes necesaria para facturar.",
+            "Tenancy",
+            "medium",
+            [
+                TenancyPermissions.SettingsRead,
+                CustomersPermissions.CustomerRead
+                // DECISIÓN PENDIENTE: el alcance pedido para este rol es "ver clientes,
+                // cotizaciones y ventas". Sólo el primero existe hoy — no hay módulo Quotes ni
+                // Sales, así que tampoco hay permiso que otorgar. Cuando esos módulos declaren
+                // sus permisos de lectura, se agregan acá y el rol queda completo. Hasta
+                // entonces `billing` es deliberadamente más chico que su definición de negocio.
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -286,19 +306,19 @@ public static class QepServiceCollectionExtensions
             "Tenancy",
             "high"));
         services.AddSingleton(new PermissionDefinition(
-            TenancyPermissions.MembershipInvite,
+            TenancyPermissions.AdvisorshipInvite,
             "Invitar miembros",
             "Permite invitar usuarios al tenant.",
             "Tenancy",
             "medium"));
         services.AddSingleton(new PermissionDefinition(
-            TenancyPermissions.MembershipRead,
+            TenancyPermissions.AdvisorshipRead,
             "Leer miembros",
             "Permite consultar membresías y catálogo de roles/permisos.",
             "Tenancy",
             "low"));
         services.AddSingleton(new PermissionDefinition(
-            TenancyPermissions.MembershipManage,
+            TenancyPermissions.AdvisorshipManage,
             "Gestionar miembros y roles",
             "Permite suspender, remover y cambiar roles de miembros.",
             "Tenancy",
@@ -495,20 +515,20 @@ public static class QepServiceCollectionExtensions
                     policy,
                     TenancyPermissions.SettingsUpdate))
             .AddPolicy(
-                TenancyPermissions.MembershipInvite,
+                TenancyPermissions.AdvisorshipInvite,
                 policy => AddPermissionRequirement(
                     policy,
-                    TenancyPermissions.MembershipInvite))
+                    TenancyPermissions.AdvisorshipInvite))
             .AddPolicy(
-                TenancyPermissions.MembershipRead,
+                TenancyPermissions.AdvisorshipRead,
                 policy => AddPermissionRequirement(
                     policy,
-                    TenancyPermissions.MembershipRead))
+                    TenancyPermissions.AdvisorshipRead))
             .AddPolicy(
-                TenancyPermissions.MembershipManage,
+                TenancyPermissions.AdvisorshipManage,
                 policy => AddPermissionRequirement(
                     policy,
-                    TenancyPermissions.MembershipManage))
+                    TenancyPermissions.AdvisorshipManage))
             .AddPolicy(
                 StoragePermissions.FileUpload,
                 policy => AddPermissionRequirement(policy, StoragePermissions.FileUpload))

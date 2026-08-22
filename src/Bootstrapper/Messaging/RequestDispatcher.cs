@@ -1,5 +1,5 @@
-﻿using Microsoft.Extensions.DependencyInjection;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Bootstrapper.Messaging;
 

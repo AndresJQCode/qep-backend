@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Application;
+namespace Modules.Identity.Application;
 
 /// <summary>
 /// Consulta de sólo lectura de atributos básicos de usuario para otros módulos (por ejemplo

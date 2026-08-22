@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Infrastructure.Persistence;
+namespace Modules.Identity.Infrastructure.Persistence;
 
 // Guarda de idempotencia por consumidor: un id de mensaje de outbox ya procesado por el
 // consumidor de este módulo. (consumer, message_id) es único.

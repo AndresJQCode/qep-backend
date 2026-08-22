@@ -70,7 +70,7 @@ public sealed class ReactivateMemberHandler(
     private void EnsureAuthorized(TenantId tenantId)
     {
         if (executionContext.TenantId != tenantId ||
-            !executionContext.HasPermission(TenancyPermissions.MembershipManage))
+            !executionContext.HasPermission(TenancyPermissions.AdvisorshipManage))
         {
             throw new RequestForbiddenException(
                 "authorization.denied",

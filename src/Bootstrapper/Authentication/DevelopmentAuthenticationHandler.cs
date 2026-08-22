@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
@@ -67,9 +67,9 @@ internal sealed class DevelopmentAuthenticationHandler(
             [
                 TenancyPermissions.SettingsRead,
                 TenancyPermissions.SettingsUpdate,
-                TenancyPermissions.MembershipInvite,
-                TenancyPermissions.MembershipRead,
-                TenancyPermissions.MembershipManage
+                TenancyPermissions.AdvisorshipInvite,
+                TenancyPermissions.AdvisorshipRead,
+                TenancyPermissions.AdvisorshipManage
             ];
         }
 

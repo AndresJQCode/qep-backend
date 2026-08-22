@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Modules.Notifications.Infrastructure;
 using Modules.Notifications.Infrastructure.Channels;
 

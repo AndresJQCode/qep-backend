@@ -280,14 +280,14 @@ public sealed class ProductWriteApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        // El endpoint del catálogo está protegido por tenancy.membership.read, cuya definición
+        // El endpoint del catálogo está protegido por advisorship.read, cuya definición
         // dice "consultar membresías y catálogo de roles/permisos". Tener los permisos de catalog
         // no alcanza para leer el catálogo que los publica.
         using var client = CreateClient(
             factory,
             SubjectId,
             TenantId,
-            [.. ManagePermissions, "tenancy.membership.read"]);
+            [.. ManagePermissions, "advisorship.read"]);
 
         var response = await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/authorization/catalog",

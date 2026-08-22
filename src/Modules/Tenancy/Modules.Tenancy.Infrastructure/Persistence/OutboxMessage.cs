@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Infrastructure.Persistence;
+namespace Modules.Tenancy.Infrastructure.Persistence;
 
 internal sealed class OutboxMessage
 {

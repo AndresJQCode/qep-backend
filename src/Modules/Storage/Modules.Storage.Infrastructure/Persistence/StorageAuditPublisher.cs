@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Modules.Storage.Application;
 
 namespace Modules.Storage.Infrastructure.Persistence;

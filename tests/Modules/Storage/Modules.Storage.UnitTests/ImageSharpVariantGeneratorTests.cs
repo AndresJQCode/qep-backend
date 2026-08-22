@@ -1,4 +1,4 @@
-﻿using Modules.Storage.Infrastructure.Imaging;
+using Modules.Storage.Infrastructure.Imaging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 

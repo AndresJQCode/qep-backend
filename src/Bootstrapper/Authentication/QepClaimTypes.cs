@@ -1,4 +1,4 @@
-﻿namespace Bootstrapper.Authentication;
+namespace Bootstrapper.Authentication;
 
 public static class QepClaimTypes
 {

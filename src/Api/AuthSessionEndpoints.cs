@@ -1,8 +1,8 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
+using Bootstrapper.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-using Bootstrapper.Authentication;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Tenancy.Application;

@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Domain;
+namespace Modules.Identity.Domain;
 
 /// <summary>
 /// Vincula el subject de un proveedor de identidad externo con un usuario interno. El par

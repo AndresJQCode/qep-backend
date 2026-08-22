@@ -1,4 +1,4 @@
-﻿using Modules.Tenancy.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Tenancy.UnitTests;
 
@@ -160,13 +160,13 @@ public sealed class MembershipTests
         membership.PullDomainEvents();
 
         membership.ChangeRoles(
-            [" tenancy.owner ", "tenancy.owner", "tenancy.member"],
+            [" admin ", "admin", "advisor"],
             InvitedAt.AddHours(1));
 
-        Assert.Equal(["tenancy.owner", "tenancy.member"], membership.Roles);
+        Assert.Equal(["admin", "advisor"], membership.Roles);
         var domainEvent = Assert.Single(membership.DomainEvents);
         var changed = Assert.IsType<MembershipRolesChangedDomainEvent>(domainEvent);
-        Assert.Equal(["tenancy.member"], changed.PreviousRoles);
+        Assert.Equal(["advisor"], changed.PreviousRoles);
         Assert.Equal(membership.Roles, changed.NewRoles);
     }
 
@@ -188,7 +188,7 @@ public sealed class MembershipTests
         membership.Remove(InvitedAt.AddHours(1));
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.ChangeRoles(["tenancy.owner"], InvitedAt.AddHours(2)));
+            membership.ChangeRoles(["admin"], InvitedAt.AddHours(2)));
 
         Assert.Equal("tenancy.membership.already_terminal", exception.Code);
     }
@@ -246,7 +246,7 @@ public sealed class MembershipTests
         membership.PullDomainEvents();
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
 
-        membership.Reinvite(["tenancy.member"], lapsed, Ttl);
+        membership.Reinvite(["advisor"], lapsed, Ttl);
 
         var domainEvent = Assert.Single(membership.DomainEvents);
         var invited = Assert.IsType<MembershipInvitedDomainEvent>(domainEvent);
@@ -261,7 +261,7 @@ public sealed class MembershipTests
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
         Assert.True(membership.Expire(lapsed));
 
-        membership.Reinvite(["tenancy.member"], lapsed, Ttl);
+        membership.Reinvite(["advisor"], lapsed, Ttl);
 
         Assert.Equal(MembershipState.Invited, membership.State);
         Assert.Equal(lapsed + Ttl, membership.ExpiresAt);
@@ -278,7 +278,7 @@ public sealed class MembershipTests
         var withinWindow = InvitedAt + TimeSpan.FromHours(1);
 
         var error = Assert.Throws<TenantDomainException>(
-            () => membership.Reinvite(["tenancy.member"], withinWindow, Ttl));
+            () => membership.Reinvite(["advisor"], withinWindow, Ttl));
 
         Assert.Equal("tenancy.membership.invitation_still_valid", error.Code);
         Assert.Equal(MembershipState.Invited, membership.State);
@@ -293,7 +293,7 @@ public sealed class MembershipTests
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
-                ["tenancy.member"],
+                ["advisor"],
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
@@ -316,7 +316,7 @@ public sealed class MembershipTests
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
-                ["tenancy.member"],
+                ["advisor"],
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
@@ -333,7 +333,7 @@ public sealed class MembershipTests
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
-                ["tenancy.member"],
+                ["advisor"],
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
@@ -357,7 +357,7 @@ public sealed class MembershipTests
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
-        Assert.Equal(["tenancy.member"], membership.Roles);
+        Assert.Equal(["advisor"], membership.Roles);
     }
 
     /// <summary>
@@ -450,7 +450,7 @@ public sealed class MembershipTests
             MembershipId.New(),
             userId,
             TenantId.New(),
-            ["tenancy.member"],
+            ["advisor"],
             "invitation",
             InvitedAt,
             Ttl);

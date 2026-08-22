@@ -1,4 +1,4 @@
-﻿using Modules.Authorization.Application;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
 
 namespace Modules.Authorization.UnitTests;
@@ -10,13 +10,13 @@ public sealed class AuthorizationServiceTests
 
     private static readonly RoleCatalog Catalog = new(
     [
-        new RoleDefinition("tenancy.owner",
+        new RoleDefinition("admin",
             "Owner",
             "Owner role",
             "Tenancy",
             "high",
-            ["tenancy.settings.read", "tenancy.settings.update", "tenancy.membership.invite"]),
-        new RoleDefinition("tenancy.member",
+            ["tenancy.settings.read", "tenancy.settings.update", "advisorship.invite"]),
+        new RoleDefinition("advisor",
             "Member",
             "Member role",
             "Tenancy",
@@ -41,13 +41,13 @@ public sealed class AuthorizationServiceTests
     public async Task OwnerIsAllowedPrivilegedActions()
     {
         var service = new AuthorizationService(
-            new FakeDirectory(["tenancy.owner"]), Catalog);
+            new FakeDirectory(["admin"]), Catalog);
 
         Assert.True((await service.AuthorizeAsync(
             Subject, Tenant, "tenancy.settings.update",
             TestContext.Current.CancellationToken)).Allowed);
         Assert.True((await service.AuthorizeAsync(
-            Subject, Tenant, "tenancy.membership.invite",
+            Subject, Tenant, "advisorship.invite",
             TestContext.Current.CancellationToken)).Allowed);
     }
 
@@ -55,7 +55,7 @@ public sealed class AuthorizationServiceTests
     public async Task MemberIsDeniedPrivilegedActionsButAllowedRead()
     {
         var service = new AuthorizationService(
-            new FakeDirectory(["tenancy.member"]), Catalog);
+            new FakeDirectory(["advisor"]), Catalog);
 
         Assert.True((await service.AuthorizeAsync(
             Subject, Tenant, "tenancy.settings.read",
@@ -72,7 +72,7 @@ public sealed class AuthorizationServiceTests
     public async Task ResolvePermissionsDedupesAcrossRoles()
     {
         var service = new AuthorizationService(
-            new FakeDirectory(["tenancy.owner", "tenancy.member"]), Catalog);
+            new FakeDirectory(["admin", "advisor"]), Catalog);
 
         var permissions = await service.ResolvePermissionsAsync(
             Subject, Tenant, TestContext.Current.CancellationToken);

@@ -1,4 +1,4 @@
-﻿namespace BuildingBlocks.Domain;
+namespace BuildingBlocks.Domain;
 
 public abstract class DomainException(string code, string message) : Exception(message)
 {

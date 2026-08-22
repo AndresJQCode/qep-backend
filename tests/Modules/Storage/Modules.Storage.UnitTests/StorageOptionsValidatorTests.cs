@@ -1,4 +1,4 @@
-﻿using Modules.Storage.Infrastructure;
+using Modules.Storage.Infrastructure;
 
 namespace Modules.Storage.UnitTests;
 

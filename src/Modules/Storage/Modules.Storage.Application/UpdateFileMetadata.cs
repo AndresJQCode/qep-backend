@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Modules.Storage.Domain;
 using Modules.Tenancy.Application;
 

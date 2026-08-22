@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;

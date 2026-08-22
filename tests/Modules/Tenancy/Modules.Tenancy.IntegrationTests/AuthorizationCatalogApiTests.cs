@@ -23,7 +23,7 @@ public sealed class AuthorizationCatalogApiTests
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ReadOnlyPermissions =
-        ["tenancy.membership.read", "tenancy.settings.read"];
+        ["advisorship.read", "tenancy.settings.read"];
 
     private static readonly string[] UnknownPermissionOnly = ["none.at.all"];
 
@@ -40,7 +40,7 @@ public sealed class AuthorizationCatalogApiTests
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add(
             "X-Permissions",
-            "tenancy.membership.read,tenancy.settings.read");
+            "advisorship.read,tenancy.settings.read");
 
         var response = await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/authorization/me",

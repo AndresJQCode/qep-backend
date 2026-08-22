@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Modules.Audit.Application;
 using Modules.Tenancy.Domain;
 

@@ -1,4 +1,4 @@
-﻿namespace BuildingBlocks.Application;
+namespace BuildingBlocks.Application;
 
 public sealed class ResourceNotFoundException(string code, string message) : Exception(message)
 {

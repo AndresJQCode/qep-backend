@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Infrastructure.Persistence;
+namespace Modules.Storage.Infrastructure.Persistence;
 
 // Proyección de escritura del Outbox de plataforma (propiedad de Tenancy). Storage inserta
 // acá los eventos de auditoría operativa en la misma transacción que la operación de archivo;

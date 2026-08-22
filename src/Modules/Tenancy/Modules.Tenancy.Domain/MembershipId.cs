@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Domain;
+namespace Modules.Tenancy.Domain;
 
 public readonly record struct MembershipId(Guid Value)
 {

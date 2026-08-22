@@ -1,6 +1,6 @@
-﻿using System.Security.Claims;
-using Microsoft.Extensions.Options;
+using System.Security.Claims;
 using Bootstrapper.Authentication;
+using Microsoft.Extensions.Options;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Tenancy.Application;

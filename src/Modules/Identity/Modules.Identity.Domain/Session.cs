@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Domain;
+namespace Modules.Identity.Domain;
 
 /// <summary>
 /// Una sesión autenticada del lado del servidor, identificada ante el navegador por una

@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Application;
+namespace Modules.Identity.Application;
 
 /// <summary>
 /// Resuelve el subject de un proveedor externo al id interno de usuario, para usar en cada

@@ -96,11 +96,11 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // **Sin filtro parcial**: inactivar un cliente no libera su documento. De eso depende que
         // Customer.Activate no tenga que revalidar unicidad.
         customer.HasIndex(value => new
-            {
-                value.TenantId,
-                value.IdentificationType,
-                value.IdentificationNumber
-            })
+        {
+            value.TenantId,
+            value.IdentificationType,
+            value.IdentificationNumber
+        })
             .IsUnique()
             .HasDatabaseName("IX_customers_tenant_identification");
 

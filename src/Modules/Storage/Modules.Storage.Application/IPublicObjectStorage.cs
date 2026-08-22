@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Application;
+namespace Modules.Storage.Application;
 
 public interface IPublicObjectStorage
 {
