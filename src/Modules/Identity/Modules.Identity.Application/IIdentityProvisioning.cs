@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Application;
+namespace Modules.Identity.Application;
 
 /// <summary>
 /// Contrato publicado entre módulos del módulo Identity. Otros módulos dependen de esta

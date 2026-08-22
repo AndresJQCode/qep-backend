@@ -1,4 +1,4 @@
-﻿using Modules.Tenancy.Application;
+using Modules.Tenancy.Application;
 
 namespace Modules.Authorization.Application;
 

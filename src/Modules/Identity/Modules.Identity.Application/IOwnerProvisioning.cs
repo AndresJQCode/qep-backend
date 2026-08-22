@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Application;
+namespace Modules.Identity.Application;
 
 /// <summary>
 /// Aprovisiona el usuario owner de un tenant auto-registrado (ADR 0017). A diferencia de

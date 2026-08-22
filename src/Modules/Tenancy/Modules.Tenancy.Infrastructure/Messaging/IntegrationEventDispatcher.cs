@@ -1,5 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
 using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Modules.Tenancy.Infrastructure.Persistence;
 
 namespace Modules.Tenancy.Infrastructure.Messaging;

@@ -1,4 +1,4 @@
-﻿using Modules.Identity.Application;
+using Modules.Identity.Application;
 
 namespace Modules.Identity.Infrastructure.Persistence;
 

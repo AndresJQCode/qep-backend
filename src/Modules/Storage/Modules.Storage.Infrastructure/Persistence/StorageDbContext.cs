@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Modules.Storage.Domain;
 
 namespace Modules.Storage.Infrastructure.Persistence;

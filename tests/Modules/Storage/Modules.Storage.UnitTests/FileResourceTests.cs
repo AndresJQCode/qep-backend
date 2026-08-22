@@ -1,4 +1,4 @@
-﻿using Modules.Storage.Domain;
+using Modules.Storage.Domain;
 
 namespace Modules.Storage.UnitTests;
 

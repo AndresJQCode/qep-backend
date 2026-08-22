@@ -1,4 +1,4 @@
-﻿namespace Api;
+namespace Api;
 
 public static class RateLimiterPolicies
 {

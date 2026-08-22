@@ -1,5 +1,5 @@
-﻿using FluentValidation;
 using BuildingBlocks.Application;
+using FluentValidation;
 using Modules.Audit.Application;
 using Modules.Tenancy.Domain;
 

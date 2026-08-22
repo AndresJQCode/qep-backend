@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Domain;
+namespace Modules.Identity.Domain;
 
 public enum UserStatus
 {

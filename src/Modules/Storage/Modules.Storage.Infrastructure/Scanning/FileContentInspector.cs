@@ -1,4 +1,4 @@
-﻿using System.IO.Compression;
+using System.IO.Compression;
 using Modules.Storage.Application;
 
 namespace Modules.Storage.Infrastructure.Scanning;

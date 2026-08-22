@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Domain;
+namespace Modules.Storage.Domain;
 
 public sealed class FileVariant
 {

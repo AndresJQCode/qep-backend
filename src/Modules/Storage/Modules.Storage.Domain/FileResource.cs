@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Domain;
+namespace Modules.Storage.Domain;
 
 /// <summary>
 /// El registro lógico en QEP de un archivo o recurso binario; el objeto físico vive en

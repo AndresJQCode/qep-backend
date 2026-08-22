@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Application;
+namespace Modules.Storage.Application;
 
 // Auditoría operativa (ADR 0019, camino de outbox): acumula un evento de auditoría para
 // commitear con la operación de archivo en la misma unidad de trabajo; el worker de

@@ -1,4 +1,4 @@
-﻿namespace Modules.Audit.Infrastructure;
+namespace Modules.Audit.Infrastructure;
 
 // Binding fuertemente tipado de la sección "Audit" de appsettings. Las ventanas de
 // retención siguen el modelo de capacidad aprobado (7 años para seguridad/administración,

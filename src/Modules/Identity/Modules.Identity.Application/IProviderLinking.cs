@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Application;
+namespace Modules.Identity.Application;
 
 /// <summary>
 /// Resultado de un intento de vincular un login externo. Se setea exactamente uno de

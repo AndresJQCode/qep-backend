@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Domain;
+namespace Modules.Identity.Domain;
 
 public readonly record struct UserId(Guid Value)
 {

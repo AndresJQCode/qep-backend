@@ -1,4 +1,4 @@
-﻿namespace Modules.Authorization.Application;
+namespace Modules.Authorization.Application;
 
 public sealed record AuthorizationDecision(bool Allowed, string ReasonCode)
 {

@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Application;
+namespace Modules.Tenancy.Application;
 
 /// <summary>
 /// Valida que las referencias de rol de una membresía apunten a roles conocidos por la

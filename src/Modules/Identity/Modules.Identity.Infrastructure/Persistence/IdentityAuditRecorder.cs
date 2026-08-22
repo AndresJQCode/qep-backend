@@ -1,4 +1,4 @@
-﻿using Modules.Audit.Domain;
+using Modules.Audit.Domain;
 using Modules.Identity.Application;
 
 namespace Modules.Identity.Infrastructure.Persistence;

@@ -1,10 +1,10 @@
-﻿using System.Text.Json;
+using System.Text.Json;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using BuildingBlocks.Application;
 using Modules.Identity.Application;
 using Modules.Notifications.Application;
 using Modules.Notifications.Domain;

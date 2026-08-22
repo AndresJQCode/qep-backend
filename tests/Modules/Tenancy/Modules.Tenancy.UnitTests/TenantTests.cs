@@ -1,4 +1,4 @@
-﻿using Modules.Tenancy.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Tenancy.UnitTests;
 

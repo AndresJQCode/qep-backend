@@ -1,8 +1,8 @@
-using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
+using Npgsql;
 
 namespace Modules.Tenancy.Infrastructure.Persistence;
 
@@ -39,10 +39,10 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
         // se descarta a propósito — un 422 es un resultado esperado, no hay incidente que rastrear.
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException
-                  {
-                      SqlState: UniqueViolation,
-                      ConstraintName: TenantSlugIndex,
-                  })
+            {
+                SqlState: UniqueViolation,
+                ConstraintName: TenantSlugIndex,
+            })
         {
             throw new TenantDomainException(
                 "tenancy.slug.taken",

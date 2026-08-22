@@ -1,4 +1,4 @@
-﻿using Modules.Tenancy.Infrastructure.Persistence;
+using Modules.Tenancy.Infrastructure.Persistence;
 
 namespace Modules.Tenancy.Infrastructure.Messaging;
 

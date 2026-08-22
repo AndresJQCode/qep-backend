@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Application;
+namespace Modules.Tenancy.Application;
 
 /// <summary>
 /// Resuelve si alguna de un conjunto de referencias de rol de membresía concede un permiso

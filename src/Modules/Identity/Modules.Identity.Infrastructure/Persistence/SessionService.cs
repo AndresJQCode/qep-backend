@@ -1,6 +1,6 @@
-﻿using System.Security.Cryptography;
-using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Options;
 using Modules.Identity.Application;
 using Modules.Identity.Domain;
 

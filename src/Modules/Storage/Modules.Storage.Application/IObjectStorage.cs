@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Application;
+namespace Modules.Storage.Application;
 
 // Puerto de salida hacia Cloudflare R2 por su API compatible con S3 (ADR 0020).
 // Las URLs prefirmadas son de vida corta y se emiten sólo tras (re)evaluar la autorización.

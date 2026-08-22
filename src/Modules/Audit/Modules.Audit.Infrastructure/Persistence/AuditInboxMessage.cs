@@ -1,4 +1,4 @@
-﻿namespace Modules.Audit.Infrastructure.Persistence;
+namespace Modules.Audit.Infrastructure.Persistence;
 
 // Guarda de idempotencia por consumidor para la proyección de auditoría operativa: un id de
 // mensaje de outbox ya procesado por este módulo. (consumer, message_id) es único.

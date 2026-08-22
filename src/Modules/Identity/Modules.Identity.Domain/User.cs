@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Domain;
+namespace Modules.Identity.Domain;
 
 /// <summary>
 /// Identidad interna de una persona que puede autenticarse. Según el ADR 0015 un usuario

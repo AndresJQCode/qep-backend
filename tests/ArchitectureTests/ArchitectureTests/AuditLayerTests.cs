@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using Modules.Audit.Application;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure;

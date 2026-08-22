@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Domain;
+namespace Modules.Storage.Domain;
 
 // Ciclo de vida de subida de un recurso de archivo (contrato de capacidad). Sólo Available
 // es descargable; un recurso borrado lógicamente se retiene antes del purgado físico.

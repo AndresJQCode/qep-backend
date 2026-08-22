@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Infrastructure;
+namespace Modules.Identity.Infrastructure;
 
 // Binding fuertemente tipado de la sección "Authentication:Session" de appsettings.
 // Los consumidores inyectan IOptions<QepSessionOptions>; la validación corre al arrancar

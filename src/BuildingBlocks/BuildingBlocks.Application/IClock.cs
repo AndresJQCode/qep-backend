@@ -1,4 +1,4 @@
-﻿namespace BuildingBlocks.Application;
+namespace BuildingBlocks.Application;
 
 public interface IClock
 {

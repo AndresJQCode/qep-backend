@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Modules.Tenancy.Infrastructure.Persistence;
 

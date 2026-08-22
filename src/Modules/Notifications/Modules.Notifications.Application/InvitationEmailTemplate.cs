@@ -1,4 +1,4 @@
-﻿namespace Modules.Notifications.Application;
+namespace Modules.Notifications.Application;
 
 /// <summary>
 /// Renderiza el email de invitación al tenant. Las plantillas publicadas son inmutables y
