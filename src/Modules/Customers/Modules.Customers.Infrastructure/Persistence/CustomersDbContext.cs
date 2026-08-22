@@ -8,6 +8,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 {
     public DbSet<Customer> Customers => Set<Customer>();
 
+    public DbSet<ClientClassification> ClientClassifications => Set<ClientClassification>();
+
     internal DbSet<CustomerCucCounter> CucCounters => Set<CustomerCucCounter>();
 
     internal DbSet<CustomersOutboxMessage> Outbox => Set<CustomersOutboxMessage>();
@@ -15,6 +17,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureCustomer(modelBuilder);
+        ConfigureClientClassification(modelBuilder);
         ConfigureCucCounter(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -111,6 +114,47 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.HasIndex(value => new { value.TenantId, value.Cuc })
             .IsUnique()
             .HasDatabaseName("IX_customers_tenant_cuc");
+    }
+
+    private static void ConfigureClientClassification(ModelBuilder modelBuilder)
+    {
+        var classification = modelBuilder.Entity<ClientClassification>();
+        classification.ToTable("client_classifications", "customers");
+        classification.HasKey(value => value.Id);
+        classification.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new ClientClassificationId(value))
+            .ValueGeneratedNever();
+        classification.Property(value => value.TenantId).HasColumnName("tenant_id");
+        classification.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(ClientClassification.NameMaxLength);
+        classification.Property(value => value.Prefix)
+            .HasColumnName("prefix")
+            .HasMaxLength(ClientClassification.PrefixMaxLength);
+        classification.Property(value => value.IsActive).HasColumnName("is_active");
+        classification.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+        classification.Property(value => value.CreatedAt).HasColumnName("created_at");
+        classification.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        classification.HasIndex(value => value.TenantId)
+            .HasDatabaseName("IX_client_classifications_tenant");
+
+        // La unicidad que promete el nombre. Nombrado a proposito: la capa de infraestructura
+        // discrimina la violacion de unicidad por nombre de indice y no solo por SqlState, mismo
+        // criterio que TaxRate y Customer — la leccion de SDD-CT-06.
+        classification.HasIndex(value => new { value.TenantId, value.Name })
+            .IsUnique()
+            .HasDatabaseName("IX_client_classifications_tenant_name");
+
+        // Su propio indice y su propio codigo de dominio, nunca colapsado con el de arriba: dos
+        // indices unicos en el mismo esquema que se traducen con la misma rama mandan a corregir
+        // el campo equivocado.
+        classification.HasIndex(value => new { value.TenantId, value.Prefix })
+            .IsUnique()
+            .HasDatabaseName("IX_client_classifications_tenant_prefix");
     }
 
     /// <summary>

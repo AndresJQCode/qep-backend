@@ -10,12 +10,15 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     public DbSet<TaxRate> TaxRates => Set<TaxRate>();
 
+    internal DbSet<PriceScale> PriceScales => Set<PriceScale>();
+
     internal DbSet<CatalogOutboxMessage> Outbox => Set<CatalogOutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureProduct(modelBuilder);
         ConfigureTaxRate(modelBuilder);
+        ConfigurePriceScale(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -36,17 +39,14 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("code")
             .HasMaxLength(Product.CodeMaxLength);
         product.Property(value => value.IsActive).HasColumnName("is_active");
-        // CAT-04. Los cinco nullable: hay productos ya cargados y una columna NOT NULL sin
-        // default los rompe.
+        // CAT-04. Nullable: hay productos ya cargados y una columna NOT NULL sin default los
+        // rompe.
         product.Property(value => value.Description)
             .HasColumnName("description")
             .HasMaxLength(ProductDetails.DescriptionMaxLength);
         // Sin FK: apunta a storage.file_resources, y catalog no referencia las tablas de otro
         // módulo. Es un Guid suelto, como cualquier referencia entre módulos de este monolito.
         product.Property(value => value.ImageFileId).HasColumnName("image_file_id");
-        product.Property(value => value.Price)
-            .HasColumnName("price")
-            .HasPrecision(18, 2);
         product.Property(value => value.Currency)
             .HasColumnName("currency")
             .HasMaxLength(ProductDetails.CurrencyLength)
@@ -66,6 +66,24 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.TaxRateId)
             .OnDelete(DeleteBehavior.Restrict);
+        // CAT-09. Independientes de Price/Currency: no los reemplazan.
+        product.Property(value => value.PriceBaseUsd)
+            .HasColumnName("price_base_usd")
+            .HasPrecision(18, 2);
+        product.Property(value => value.PriceBaseCop)
+            .HasColumnName("price_base_cop")
+            .HasPrecision(18, 2);
+        product.Property(value => value.PriceFinalUsd)
+            .HasColumnName("price_final_usd")
+            .HasPrecision(18, 2);
+        product.Property(value => value.PriceFinalCop)
+            .HasColumnName("price_final_cop")
+            .HasPrecision(18, 2);
+        product.Property(value => value.Discount)
+            .HasColumnName("discount")
+            .HasPrecision(5, 2);
+        product.Navigation(value => value.PriceScales)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
         product.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
@@ -109,6 +127,43 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.HasIndex(value => new { value.TenantId, value.Name })
             .IsUnique()
             .HasDatabaseName("IX_tax_rates_tenant_name");
+    }
+
+    private static void ConfigurePriceScale(ModelBuilder modelBuilder)
+    {
+        var scale = modelBuilder.Entity<PriceScale>();
+        scale.ToTable("product_price_scales", "catalog");
+        scale.HasKey(value => value.Id);
+        scale.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new PriceScaleId(value))
+            .ValueGeneratedNever();
+        scale.Property(value => value.ProductId)
+            .HasColumnName("product_id")
+            .HasConversion(id => id.Value, value => new ProductId(value));
+        scale.Property(value => value.TenantId).HasColumnName("tenant_id");
+        scale.Property(value => value.FromUnit).HasColumnName("from_unit");
+        scale.Property(value => value.ToUnit).HasColumnName("to_unit");
+        scale.Property(value => value.Discount).HasColumnName("discount").HasPrecision(5, 2);
+        // Como texto y no como el entero por defecto de EF: una fila legible a simple vista en
+        // sql vale más que los cuatro bytes que ahorra un smallint acá.
+        scale.Property(value => value.Restriction)
+            .HasColumnName("restriction")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        scale.Property(value => value.Multiple).HasColumnName("multiple");
+        scale.Property(value => value.PackagingUnit).HasColumnName("packaging_unit");
+        scale.Property(value => value.FinalUsd).HasColumnName("final_usd").HasPrecision(18, 2);
+        scale.Property(value => value.FinalCop).HasColumnName("final_cop").HasPrecision(18, 2);
+        scale.HasIndex(value => value.ProductId).HasDatabaseName("IX_product_price_scales_product");
+
+        // CASCADE y no RESTRICT, a diferencia de la FK de TaxRate: una escala no tiene sentido
+        // sin su producto — no es una referencia a un catálogo compartido, es parte del mismo
+        // agregado. Borrar el producto debe borrar sus escalas.
+        scale.HasOne<Product>()
+            .WithMany(product => product.PriceScales)
+            .HasForeignKey(value => value.ProductId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

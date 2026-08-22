@@ -26,6 +26,7 @@ public sealed class Product
         string name,
         string code,
         ProductDetails details,
+        ProductPricing pricing,
         DateTimeOffset occurredAt)
     {
         Id = id;
@@ -33,6 +34,7 @@ public sealed class Product
         Name = name;
         Code = code;
         Apply(details);
+        ApplyPricing(pricing);
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -50,11 +52,15 @@ public sealed class Product
 
     public bool IsActive { get; private set; }
 
-    // --- CAT-04: propiedades opcionales. Los cinco nacen nullable porque hay productos ya
-    // cargados: una columna NOT NULL sin default los rompe, y un default inventado sería peor
-    // —un precio 0 es un dato falso que se ve igual que uno real.
+    // --- CAT-04: propiedades opcionales. Nacen nullable porque hay productos ya cargados: una
+    // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por el
+    // precio en USD/COP de más abajo. Currency se mantiene — no es sólo la moneda de Price:
+    // es un dato independiente del producto.
 
     public string? Description { get; private set; }
+
+    /// <summary>Código ISO-4217 de tres letras, en mayúsculas.</summary>
+    public string? Currency { get; private set; }
 
     /// <summary>
     /// Cuál de los archivos del producto es su imagen principal. **Referencia blanda, sin FK.**
@@ -69,19 +75,45 @@ public sealed class Product
     public Guid? ImageFileId { get; private set; }
 
     /// <summary>
-    /// Precio **base** de lista. `pricing` lo sobrescribe cuando exista
-    /// (`DECISIÓN-PENDIENTE-CAT-06`); éste es el fallback cuando ninguna lista resuelve.
-    /// </summary>
-    public decimal? Price { get; private set; }
-
-    /// <summary>Código ISO-4217 de tres letras, en mayúsculas. Va con <see cref="Price"/>.</summary>
-    public string? Currency { get; private set; }
-
-    /// <summary>
     /// Tasa de impuesto del producto. La FK de base garantiza que la fila exista, **pero no que
     /// sea del mismo tenant**: eso lo verifica el handler antes de asignarla.
     /// </summary>
     public TaxRateId? TaxRateId { get; private set; }
+
+    // --- CAT-09: precio base y final en dos monedas fijas, más las escalas por cantidad.
+    // Único precio del producto — reemplazó por completo al viejo Price/Currency, retirado.
+
+    /// <summary>Precio base en dólares. Junto con <see cref="PriceBaseCop"/>, al menos uno de
+    /// los dos es obligatorio: un producto sin precio en ninguna moneda no es válido.</summary>
+    public decimal? PriceBaseUsd { get; private set; }
+
+    /// <summary>Precio base en pesos colombianos. Ver <see cref="PriceBaseUsd"/>.</summary>
+    public decimal? PriceBaseCop { get; private set; }
+
+    /// <summary>
+    /// Precio final en dólares. Lo calcula y manda el cliente — el backend no lo deriva — pero
+    /// lo valida contra <c>PriceBaseUsd × (1 − Discount%)</c> con una tolerancia de un centavo.
+    /// Sólo puede existir si <see cref="PriceBaseUsd"/> existe, y si éste existe aquél es
+    /// obligatorio.
+    /// </summary>
+    public decimal? PriceFinalUsd { get; private set; }
+
+    /// <summary>Precio final en pesos colombianos. Ver <see cref="PriceFinalUsd"/>.</summary>
+    public decimal? PriceFinalCop { get; private set; }
+
+    /// <summary>Porcentaje de descuento, 0 a 100, el mismo para ambas monedas. Null se trata
+    /// como 0% al validar el precio final.</summary>
+    public decimal? Discount { get; private set; }
+
+    private readonly List<PriceScale> _priceScales = [];
+
+    /// <summary>
+    /// Los tramos de precio por cantidad del producto. Se reemplazan enteros en cada
+    /// <see cref="Update"/> — mismo criterio que los cinco opcionales de <see cref="Apply"/>:
+    /// el verbo PUT reemplaza el recurso completo, así que una escala que no viene en el
+    /// request deja de existir.
+    /// </summary>
+    public IReadOnlyCollection<PriceScale> PriceScales => _priceScales;
 
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Tenant</c> y <c>Membership</c>. Cada mutación
@@ -106,13 +138,15 @@ public sealed class Product
         string name,
         string code,
         ProductDetails details,
+        ProductPricing pricing,
         DateTimeOffset occurredAt) =>
-        new(id, tenantId, NormalizeName(name), NormalizeCode(code), details, occurredAt);
+        new(id, tenantId, NormalizeName(name), NormalizeCode(code), details, pricing, occurredAt);
 
     public void Update(
         string name,
         string code,
         ProductDetails details,
+        ProductPricing pricing,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
@@ -120,11 +154,12 @@ public sealed class Product
         Name = NormalizeName(name);
         Code = NormalizeCode(code);
         Apply(details);
+        ApplyPricing(pricing);
         Version++;
         UpdatedAt = occurredAt;
     }
 
-    // Asigna los cinco siempre, incluidos los null. Se puede **limpiar** un campo, no sólo
+    // Asigna los cuatro siempre, incluidos los null. Se puede **limpiar** un campo, no sólo
     // setearlo: una implementación que ignore los null "para no pisar" deja campos imborrables y
     // pasa todas las demás pruebas. Por eso CA-CAT-04-03 existe.
     private void Apply(ProductDetails details)
@@ -133,9 +168,116 @@ public sealed class Product
 
         Description = normalized.Description;
         ImageFileId = normalized.ImageFileId;
-        Price = normalized.Price;
         Currency = normalized.Currency;
         TaxRateId = normalized.TaxRateId;
+    }
+
+    // CAT-09. El descuento validado primero porque el resto de las reglas lo usan para
+    // comparar el precio final; validar montos negativos antes que "al menos una moneda" para
+    // que un valor negativo se reporte como tal y no como si faltara.
+    private void ApplyPricing(ProductPricing pricing)
+    {
+        var discount = pricing.Discount ?? 0m;
+        if (discount < PriceScale.MinDiscount || discount > PriceScale.MaxDiscount)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.discount_out_of_range",
+                $"The product discount must be between {PriceScale.MinDiscount} and {PriceScale.MaxDiscount}.");
+        }
+
+        EnsurePriceNotNegative(pricing.BaseUsd);
+        EnsurePriceNotNegative(pricing.BaseCop);
+        EnsurePriceNotNegative(pricing.FinalUsd);
+        EnsurePriceNotNegative(pricing.FinalCop);
+
+        // Incondicional: todo producto necesita precio en al menos una moneda, sin excepción.
+        if (pricing.BaseUsd is null && pricing.BaseCop is null)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.price_base_currency_required",
+                "The product requires a base price in at least one currency.");
+        }
+
+        ValidateFinalAgainstBase(
+            pricing.FinalUsd,
+            pricing.BaseUsd,
+            discount,
+            "catalog.product.price_final_without_base_usd",
+            "catalog.product.price_final_required_usd",
+            "catalog.product.price_final_mismatch_usd",
+            "USD");
+        ValidateFinalAgainstBase(
+            pricing.FinalCop,
+            pricing.BaseCop,
+            discount,
+            "catalog.product.price_final_without_base_cop",
+            "catalog.product.price_final_required_cop",
+            "catalog.product.price_final_mismatch_cop",
+            "COP");
+
+        PriceBaseUsd = pricing.BaseUsd;
+        PriceBaseCop = pricing.BaseCop;
+        PriceFinalUsd = pricing.FinalUsd;
+        PriceFinalCop = pricing.FinalCop;
+        Discount = discount;
+
+        _priceScales.Clear();
+        foreach (var scale in pricing.Scales)
+        {
+            _priceScales.Add(PriceScale.Create(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
+        }
+    }
+
+    // Pareja obligatoria en los dos sentidos: un
+    // precio final sin base no dice contra qué se calculó, y una base sin su final es un
+    // request a medio llenar que el front nunca debería mandar completo. Además, cuando los dos
+    // existen, el final tiene que ser consistente con base × (1 − descuento%).
+    private static void ValidateFinalAgainstBase(
+        decimal? final,
+        decimal? baseAmount,
+        decimal discount,
+        string withoutBaseCode,
+        string requiredCode,
+        string mismatchCode,
+        string currencyLabel)
+    {
+        if (baseAmount is null)
+        {
+            if (final is not null)
+            {
+                throw new CatalogDomainException(
+                    withoutBaseCode,
+                    $"A final price in {currencyLabel} requires a base price in {currencyLabel}.");
+            }
+
+            return;
+        }
+
+        if (final is null)
+        {
+            throw new CatalogDomainException(
+                requiredCode,
+                $"A base price in {currencyLabel} requires its final price in {currencyLabel}.");
+        }
+
+        var expected = Math.Round(
+            baseAmount.Value * (1 - discount / 100m), 2, MidpointRounding.AwayFromZero);
+        if (Math.Abs(final.Value - expected) > 0.01m)
+        {
+            throw new CatalogDomainException(
+                mismatchCode,
+                $"The final price in {currencyLabel} does not match the base price and the discount.");
+        }
+    }
+
+    private static void EnsurePriceNotNegative(decimal? value)
+    {
+        if (value < 0m)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.price_negative",
+                "A product price cannot be negative.");
+        }
     }
 
     public void Deactivate(DateTimeOffset occurredAt)

@@ -18,11 +18,27 @@ internal static class ProductMapping
         product.Description,
         product.ImageFileId,
         imageUrl,
-        product.Price,
         product.Currency,
         product.TaxRateId?.Value,
+        product.PriceBaseUsd,
+        product.PriceBaseCop,
+        product.PriceFinalUsd,
+        product.PriceFinalCop,
+        product.Discount,
+        product.PriceScales.Select(ToResponse).ToArray(),
         product.CreatedAt,
         product.UpdatedAt);
+
+    private static PriceScaleResponse ToResponse(PriceScale scale) => new(
+        scale.Id.Value,
+        scale.FromUnit,
+        scale.ToUnit,
+        scale.Discount,
+        scale.Restriction.ToWireValue(),
+        scale.Multiple,
+        scale.PackagingUnit,
+        scale.FinalUsd,
+        scale.FinalCop);
 
     /// <summary>
     /// Mapea una colección resolviendo las URLs en **una sola** consulta al puerto.

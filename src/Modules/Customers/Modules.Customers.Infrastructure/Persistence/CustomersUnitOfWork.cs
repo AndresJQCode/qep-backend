@@ -16,6 +16,10 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
 
     private const string CucIndex = "IX_customers_tenant_cuc";
 
+    private const string ClassificationNameIndex = "IX_client_classifications_tenant_name";
+
+    private const string ClassificationPrefixIndex = "IX_client_classifications_tenant_prefix";
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
@@ -50,6 +54,20 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
             throw new CustomersDomainException(
                 "customers.customer.cuc_taken",
                 "The generated CUC is already in use for this tenant.");
+        }
+        catch (DbUpdateException exception)
+            when (IsUniqueViolationOf(exception, ClassificationNameIndex))
+        {
+            throw new CustomersDomainException(
+                "customers.classification.name_taken",
+                "Another client classification in this tenant already uses that name.");
+        }
+        catch (DbUpdateException exception)
+            when (IsUniqueViolationOf(exception, ClassificationPrefixIndex))
+        {
+            throw new CustomersDomainException(
+                "customers.classification.prefix_taken",
+                "Another client classification in this tenant already uses that prefix.");
         }
     }
 

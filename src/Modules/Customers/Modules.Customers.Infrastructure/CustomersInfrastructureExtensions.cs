@@ -24,6 +24,7 @@ public static class CustomersInfrastructureExtensions
                     "customers")));
 
         services.AddScoped<ICustomerRepository, CustomerRepository>();
+        services.AddScoped<IClientClassificationRepository, ClientClassificationRepository>();
         services.AddScoped<ICustomersUnitOfWork, CustomersUnitOfWork>();
         services.AddScoped<ICustomersAuditPublisher, CustomersAuditPublisher>();
         services.AddScoped<ICucGenerator, CucGenerator>();

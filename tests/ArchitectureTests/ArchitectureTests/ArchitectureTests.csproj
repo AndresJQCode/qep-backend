@@ -30,6 +30,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Application\Modules.Companies.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Domain\Modules.Companies.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Api\Modules.Geography.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Application\Modules.Geography.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Domain\Modules.Geography.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Infrastructure\Modules.Geography.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Domain\Modules.Identity.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />

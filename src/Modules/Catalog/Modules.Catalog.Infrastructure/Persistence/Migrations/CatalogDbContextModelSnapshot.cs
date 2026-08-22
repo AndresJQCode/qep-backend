@@ -22,6 +22,65 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Modules.Catalog.Domain.PriceScale", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Discount")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("discount");
+
+                    b.Property<decimal?>("FinalCop")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("final_cop");
+
+                    b.Property<decimal?>("FinalUsd")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("final_usd");
+
+                    b.Property<int>("FromUnit")
+                        .HasColumnType("integer")
+                        .HasColumnName("from_unit");
+
+                    b.Property<int?>("Multiple")
+                        .HasColumnType("integer")
+                        .HasColumnName("multiple");
+
+                    b.Property<int?>("PackagingUnit")
+                        .HasColumnType("integer")
+                        .HasColumnName("packaging_unit");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<string>("Restriction")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("restriction");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<int>("ToUnit")
+                        .HasColumnType("integer")
+                        .HasColumnName("to_unit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductId")
+                        .HasDatabaseName("IX_product_price_scales_product");
+
+                    b.ToTable("product_price_scales", "catalog");
+                });
+
             modelBuilder.Entity("Modules.Catalog.Domain.Product", b =>
                 {
                     b.Property<Guid>("Id")
@@ -49,6 +108,11 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("description");
 
+                    b.Property<decimal?>("Discount")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("discount");
+
                     b.Property<Guid?>("ImageFileId")
                         .HasColumnType("uuid")
                         .HasColumnName("image_file_id");
@@ -63,10 +127,25 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("name");
 
-                    b.Property<decimal?>("Price")
+                    b.Property<decimal?>("PriceBaseCop")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price");
+                        .HasColumnName("price_base_cop");
+
+                    b.Property<decimal?>("PriceBaseUsd")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price_base_usd");
+
+                    b.Property<decimal?>("PriceFinalCop")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price_final_cop");
+
+                    b.Property<decimal?>("PriceFinalUsd")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price_final_usd");
 
                     b.Property<Guid?>("TaxRateId")
                         .HasColumnType("uuid")
@@ -196,12 +275,26 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Catalog.Domain.PriceScale", b =>
+                {
+                    b.HasOne("Modules.Catalog.Domain.Product", null)
+                        .WithMany("PriceScales")
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Catalog.Domain.Product", b =>
                 {
                     b.HasOne("Modules.Catalog.Domain.TaxRate", null)
                         .WithMany()
                         .HasForeignKey("TaxRateId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.Product", b =>
+                {
+                    b.Navigation("PriceScales");
                 });
 #pragma warning restore 612, 618
         }

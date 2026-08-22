@@ -20,6 +20,8 @@ using Modules.Companies.Infrastructure;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
 using Modules.Authorization.Application;
+using Modules.Geography.Application;
+using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Storage.Application;
@@ -188,6 +190,42 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>,
             ImportCustomersHandler>();
+        // El catalogo de clasificaciones de cliente vive en el mismo modulo que Customer pero es
+        // un recurso distinto, con sus propios siete handlers — mismo criterio que los cinco de
+        // TaxRate frente a Product en Catalog. Registrados a mano, uno por uno: un caso de uso
+        // que se olvide compila, mapea su endpoint y falla recien en runtime con 500 al no
+        // encontrar handler.
+        services.AddScoped<
+            IQueryHandler<ListClientClassificationsQuery, IReadOnlyList<ClientClassificationDto>>,
+            ListClientClassificationsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetClientClassificationQuery, ClientClassificationDto>,
+            GetClientClassificationHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateClientClassificationCommand, ClientClassificationDto>,
+            CreateClientClassificationHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateClientClassificationCommand, ClientClassificationDto>,
+            UpdateClientClassificationHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateClientClassificationCommand, ClientClassificationDto>,
+            DeactivateClientClassificationHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateClientClassificationCommand, ClientClassificationDto>,
+            ActivateClientClassificationHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteClientClassificationCommand, ClientClassificationDeletedResult>,
+            DeleteClientClassificationHandler>();
+        // Geography no tiene tenant ni caso de uso de escritura: sólo dos lecturas de datos de
+        // referencia DIVIPOLA. Van acá por la misma razón que el resto — el dispatcher resuelve
+        // por registro explícito, y un caso de uso que se olvide compila, mapea su endpoint y
+        // falla recién en runtime con 500 al no encontrar handler.
+        services.AddScoped<
+            IQueryHandler<ListDepartmentsQuery, IReadOnlyList<DepartmentDto>>,
+            ListDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
+            ListCitiesHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -200,6 +238,7 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
+        services.AddGeographyInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -248,7 +287,9 @@ public static class QepServiceCollectionExtensions
                 CompaniesPermissions.CompanyManage,
                 CustomersPermissions.CustomerRead,
                 CustomersPermissions.CustomerManage,
-                CustomersPermissions.CustomerImport
+                CustomersPermissions.CustomerImport,
+                CustomersPermissions.ClassificationRead,
+                CustomersPermissions.ClassificationManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -271,7 +312,12 @@ public static class QepServiceCollectionExtensions
                 // configura el owner. Importar queda afuera — mil clientes de una vez no es la
                 // misma autoridad, y el gate CLI-00 pide mapearlo por separado.
                 CustomersPermissions.CustomerRead,
-                CustomersPermissions.CustomerManage
+                CustomersPermissions.CustomerManage,
+                // Mismo criterio que CustomerRead/CustomerManage y no el de CustomerImport:
+                // gestionar clasificaciones es trabajo diario de un asesor, no una operacion
+                // privilegiada.
+                CustomersPermissions.ClassificationRead,
+                CustomersPermissions.ClassificationManage
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -384,6 +430,18 @@ public static class QepServiceCollectionExtensions
             // de una sola vez, y el gate CLI-00 todavia tiene abierta la politica de retencion de
             // PII. Separado de manage justamente para poder darlo a menos gente.
             "high"));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.ClassificationRead,
+            "Leer clasificaciones de clientes",
+            "Permite consultar el catalogo de clasificaciones de clientes del tenant.",
+            "Customers",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.ClassificationManage,
+            "Gestionar clasificaciones de clientes",
+            "Permite crear, editar, inactivar, reactivar y eliminar clasificaciones de clientes.",
+            "Customers",
+            "medium"));
     }
 
     private static void AddAuthentication(
@@ -551,7 +609,16 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerManage))
             .AddPolicy(
                 CustomersPermissions.CustomerImport,
-                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerImport));
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerImport))
+            // La otra mitad del permiso de clasificaciones. Sin esta politica RequireAuthorization
+            // no resuelve y el sintoma es 500, no 403 — mismo gotcha que TaxRateRead/TaxRateManage.
+            .AddPolicy(
+                CustomersPermissions.ClassificationRead,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.ClassificationRead))
+            .AddPolicy(
+                CustomersPermissions.ClassificationManage,
+                policy => AddPermissionRequirement(
+                    policy, CustomersPermissions.ClassificationManage));
     }
 
     private static void AddPermissionRequirement(

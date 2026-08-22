@@ -14,7 +14,10 @@ using Testcontainers.PostgreSql;
 namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>
-/// CAT-04 — las cinco propiedades nuevas de `Product`.
+/// CAT-04 — las propiedades opcionales de `Product` (descripción, portada, moneda, tasa de
+/// impuesto). `Price` vivió acá hasta CAT-09, que lo retiró del todo junto con sus pruebas —
+/// el precio del producto es ahora sólo el de CAT-09, en USD/COP. `Currency` se quedó: no es
+/// sólo la moneda de `Price`, es un dato independiente del producto.
 /// </summary>
 public sealed class ProductDetailsApiTests
 {
@@ -97,16 +100,15 @@ public sealed class ProductDetailsApiTests
             code = "VS-001",
             description = "Cera de soja, 200 g",
             imageFileId = image,
-            price = 45000.50m,
             currency = "COP",
-            taxRateId
+            taxRateId,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
         Assert.Equal("Cera de soja, 200 g", created.Description);
         Assert.Equal(image, created.ImageFileId);
-        Assert.Equal(45000.50m, created.Price);
         Assert.Equal("COP", created.Currency);
         Assert.Equal(taxRateId, created.TaxRateId);
 
@@ -115,11 +117,11 @@ public sealed class ProductDetailsApiTests
         var fetched = await ReadProductAsync(await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
             TestContext.Current.CancellationToken));
-        Assert.Equal(45000.50m, fetched.Price);
+        Assert.Equal("COP", fetched.Currency);
         Assert.Equal(taxRateId, fetched.TaxRateId);
     }
 
-    // CA-CAT-04-02: los cinco son opcionales.
+    // CA-CAT-04-02: son opcionales.
     [Fact]
     public async Task CreateWithoutAnyDetailReturnsCreatedWithThemNull()
     {
@@ -128,13 +130,13 @@ public sealed class ProductDetailsApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var response = await CreateProductAsync(
-            client, TenantId, new { name = "Vela de soja", code = "VS-001" });
+            client, TenantId,
+            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
         Assert.Null(created.Description);
         Assert.Null(created.ImageFileId);
-        Assert.Null(created.Price);
         Assert.Null(created.Currency);
         Assert.Null(created.TaxRateId);
     }
@@ -155,45 +157,22 @@ public sealed class ProductDetailsApiTests
             code = "VS-001",
             description = "Cera de soja",
             imageFileId = await UploadImageAsync(client, TenantId, database),
-            price = 45000m,
             currency = "COP",
-            taxRateId
+            taxRateId,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         }));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de soja", code = "VS-001" },
+            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var updated = await ReadProductAsync(response);
         Assert.Null(updated.Description);
         Assert.Null(updated.ImageFileId);
-        Assert.Null(updated.Price);
         Assert.Null(updated.Currency);
         Assert.Null(updated.TaxRateId);
-    }
-
-    // CA-CAT-04-04
-    [Fact]
-    public async Task CreateWithANegativePriceIsUnprocessable()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            price = -1m,
-            currency = "COP"
-        });
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync(
-            TestContext.Current.CancellationToken);
-        Assert.Contains("Price", body, StringComparison.OrdinalIgnoreCase);
     }
 
     // CA-CAT-04-05
@@ -210,8 +189,8 @@ public sealed class ProductDetailsApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            price = 1000m,
-            currency
+            currency,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -229,48 +208,35 @@ public sealed class ProductDetailsApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            price = 1000m,
-            currency = "cop"
+            currency = "cop",
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         }));
 
         Assert.Equal("COP", created.Currency);
     }
 
     /// <summary>
-    /// CA-CAT-04-06, los dos sentidos: una guarda escrita en uno solo deja pasar el otro.
-    ///
-    /// **El código cambió al corregir el hallazgo `A`, y es a propósito.** Antes este caso lo
-    /// rechazaba sólo el invariante de dominio y salía como `catalog.product.price_currency_mismatch`
-    /// sin mapa por campo; ahora lo ataja el validador y sale como `validation.failed` **con**
-    /// `errors`, igual que los otros dos invariantes de CAT-04 —precio negativo y largo de
-    /// moneda—, que siempre tuvieron regla. La tabla de «Riesgos» del spec pedía «invariante de
-    /// dominio **y** validador»; con los dos, el que responde primero es el validador.
-    ///
-    /// El código de dominio no desapareció: sigue siendo la red de abajo para quien llame al
-    /// agregado sin pasar por el validador, y lo cubren las unitarias de `ProductTests`.
+    /// Hallazgo `F` — la regla del validador comprobaba sólo el largo, mientras el dominio además
+    /// exige letras. `"123"` atravesaba el validador y lo rechazaba el dominio, con la misma
+    /// forma del hallazgo `A`: 422 con código, sin mapa por campo.
     /// </summary>
     [Fact]
-    public async Task PriceWithoutCurrencyAndCurrencyWithoutPriceAreBothUnprocessable()
+    public async Task ACurrencyOfThreeNonLettersNamesTheCurrencyFieldInTheErrorMap()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
-        var priceOnly = await CreateProductAsync(client, TenantId, new
+        var response = await CreateProductAsync(client, TenantId, new
         {
             name = "Vela de soja",
             code = "VS-001",
-            price = 45000m
+            currency = "123",
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
-        Assert.Contains("Currency", (await ReadValidationErrorsAsync(priceOnly)).Keys);
 
-        var currencyOnly = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de cera",
-            code = "VC-002",
-            currency = "COP"
-        });
-        Assert.Contains("Price", (await ReadValidationErrorsAsync(currencyOnly)).Keys);
+        var errors = await ReadValidationErrorsAsync(response);
+        Assert.Contains("Currency", errors.Keys);
     }
 
     /// <summary>
@@ -298,7 +264,8 @@ public sealed class ProductDetailsApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            taxRateId = foreignTaxRateId
+            taxRateId = foreignTaxRateId,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -322,7 +289,8 @@ public sealed class ProductDetailsApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            taxRateId = Guid.CreateVersion7()
+            taxRateId = Guid.CreateVersion7(),
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -352,7 +320,8 @@ public sealed class ProductDetailsApiTests
         {
             name = "Vela de soja",
             code = "VS-001",
-            taxRateId
+            taxRateId,
+            pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -368,7 +337,8 @@ public sealed class ProductDetailsApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var created = await ReadProductAsync(await CreateProductAsync(
-            client, TenantId, new { name = "Vela de soja", code = "VS-001" }));
+            client, TenantId,
+            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } }));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
@@ -377,8 +347,7 @@ public sealed class ProductDetailsApiTests
                 name = "Vela de soja",
                 code = "VS-001",
                 description = "Cera de soja, 200 g",
-                price = 45000m,
-                currency = "COP"
+                pricing = new { baseUsd = 10m, finalUsd = 10m }
             },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -392,9 +361,9 @@ public sealed class ProductDetailsApiTests
     /// CA-CAT-04-11 — los productos anteriores a la migración siguen legibles.
     ///
     /// La fila se inserta por SQL con **sólo las columnas viejas**, que es exactamente la forma
-    /// que tiene un producto cargado antes de `AddProductDetails`. Si alguna de las cinco
-    /// columnas nuevas hubiera nacido `NOT NULL`, este `INSERT` fallaría; y si el mapeo no
-    /// tolerara nulos, el `GET` reventaría.
+    /// que tiene un producto cargado antes de `AddProductDetails`. Si alguna de las columnas
+    /// nuevas hubiera nacido `NOT NULL`, este `INSERT` fallaría; y si el mapeo no tolerara
+    /// nulos, el `GET` reventaría.
     /// </summary>
     [Fact]
     public async Task ProductsCreatedBeforeTheMigrationRemainReadableWithNullDetails()
@@ -429,111 +398,8 @@ public sealed class ProductDetailsApiTests
         Assert.Equal("Producto viejo", fetched.Name);
         Assert.Null(fetched.Description);
         Assert.Null(fetched.ImageFileId);
-        Assert.Null(fetched.Price);
         Assert.Null(fetched.Currency);
         Assert.Null(fetched.TaxRateId);
-    }
-
-    /// <summary>
-    /// Hallazgo `A` de la revisión de 4 lentes, en los dos sentidos.
-    ///
-    /// El caso ya devolvía **422**, y por eso la prueba de `CA-CAT-04-06` pasaba: afirmaba sobre
-    /// el status y el código de dominio. Lo que no llevaba es el mapa `errors` por campo, porque
-    /// el emparejamiento precio/moneda lo rechazaba **sólo** el invariante de dominio y ningún
-    /// validador. Un formulario recibía un 422 sin saber qué input marcar.
-    ///
-    /// La tabla de «Riesgos» de este spec pedía «invariante de dominio **y** validador». Esta
-    /// prueba afirma sobre `errors`, que es la parte que la anterior no miraba.
-    /// </summary>
-    [Fact]
-    public async Task APriceWithoutCurrencyNamesTheCurrencyFieldInTheErrorMap()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            price = 45000m
-        });
-
-        var errors = await ReadValidationErrorsAsync(response);
-        Assert.Contains("Currency", errors.Keys);
-    }
-
-    // El sentido inverso apunta al otro campo: quien mandó moneda sin precio tiene que corregir
-    // el precio, no la moneda. Una regla escrita en un solo sentido deja pasar el otro.
-    [Fact]
-    public async Task ACurrencyWithoutPriceNamesThePriceFieldInTheErrorMap()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            currency = "COP"
-        });
-
-        var errors = await ReadValidationErrorsAsync(response);
-        Assert.Contains("Price", errors.Keys);
-    }
-
-    /// <summary>
-    /// Hallazgo `F` — la regla del validador comprobaba sólo el largo, mientras el dominio además
-    /// exige letras. `"123"` atravesaba el validador y lo rechazaba el dominio, con la misma
-    /// forma del hallazgo `A`: 422 con código, sin mapa por campo.
-    /// </summary>
-    [Fact]
-    public async Task ACurrencyOfThreeNonLettersNamesTheCurrencyFieldInTheErrorMap()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            price = 1000m,
-            currency = "123"
-        });
-
-        var errors = await ReadValidationErrorsAsync(response);
-        Assert.Contains("Currency", errors.Keys);
-    }
-
-    /// <summary>
-    /// Hallazgo `D` — las reglas estaban duplicadas textualmente entre `CreateProductValidator` y
-    /// `UpdateProductValidator`, así que corregir una sola dejaba `POST` y `PUT` validando
-    /// distinto. Esta prueba ejerce el **mismo** caso por el otro verbo: es la que se pone roja
-    /// si alguien vuelve a duplicar y arregla una sola copia.
-    /// </summary>
-    [Fact]
-    public async Task ThePutEnforcesTheSameDetailRulesAsThePost()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var created = await ReadProductAsync(await CreateProductAsync(
-            client, TenantId, new { name = "Vela de soja", code = "VS-001" }));
-
-        var priceOnly = await client.PutAsJsonAsync(
-            "/api/v1/tenants/" + TenantId + "/catalog/products/" + created.Id,
-            new { name = "Vela de soja", code = "VS-001", price = 45000m },
-            TestContext.Current.CancellationToken);
-        Assert.Contains("Currency", (await ReadValidationErrorsAsync(priceOnly)).Keys);
-
-        var badCurrency = await client.PutAsJsonAsync(
-            "/api/v1/tenants/" + TenantId + "/catalog/products/" + created.Id,
-            new { name = "Vela de soja", code = "VS-001", price = 1000m, currency = "123" },
-            TestContext.Current.CancellationToken);
-        Assert.Contains("Currency", (await ReadValidationErrorsAsync(badCurrency)).Keys);
     }
 
     /// <summary>
@@ -588,6 +454,7 @@ public sealed class ProductDetailsApiTests
             "Vela de soja",
             "VS-001",
             ProductDetails.Empty with { TaxRateId = TaxRateId.New() },
+            new ProductPricing { BaseUsd = 10m, FinalUsd = 10m },
             DateTimeOffset.UtcNow));
 
         var error = await Assert.ThrowsAsync<CatalogDomainException>(
