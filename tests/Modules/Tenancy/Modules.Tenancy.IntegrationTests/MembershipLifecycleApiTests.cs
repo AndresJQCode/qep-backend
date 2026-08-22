@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -19,7 +19,7 @@ public sealed class MembershipLifecycleApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
-        var secondOwnerId = await InviteAsync(ownerClient, tenantId, NewEmail(), OwnerRoles);
+        var secondOwnerId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdminRoles);
         await ActivateMembershipAsync(factory.ConnectionString, secondOwnerId);
 
         var response = await SendActionAsync(ownerClient, tenantId, ownerMembershipId, "suspend");
@@ -142,7 +142,7 @@ public sealed class MembershipLifecycleApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
-        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), MemberRoles);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
         await ActivateMembershipAsync(factory.ConnectionString, memberId);
 
         var response = await SendActionAsync(ownerClient, tenantId, memberId, "remove");
@@ -156,14 +156,14 @@ public sealed class MembershipLifecycleApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
-        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), MemberRoles);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
-        var response = await SendRolesAsync(ownerClient, tenantId, memberId, OwnerRoles);
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, AdminRoles);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
             TestContext.Current.CancellationToken);
-        Assert.Equal(OwnerRoles, membership!.Roles);
+        Assert.Equal(AdminRoles, membership!.Roles);
         Assert.Equal(2, membership.Version);
     }
 
@@ -173,7 +173,7 @@ public sealed class MembershipLifecycleApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
-        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), MemberRoles);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
         var response = await SendRolesAsync(ownerClient, tenantId, memberId, ["tenancy.unknown"]);
 
@@ -189,7 +189,7 @@ public sealed class MembershipLifecycleApiTests
             await RegisterTenantWithOwnerAsync(factory);
 
         var response = await SendRolesAsync(
-            ownerClient, tenantId, ownerMembershipId, MemberRoles);
+            ownerClient, tenantId, ownerMembershipId, AdvisorRoles);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
@@ -200,10 +200,10 @@ public sealed class MembershipLifecycleApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
-        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), MemberRoles);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
         var response = await SendRolesAsync(
-            ownerClient, tenantId, memberId, OwnerRoles, expectedVersion: null);
+            ownerClient, tenantId, memberId, AdminRoles, expectedVersion: null);
 
         Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
     }
@@ -214,10 +214,10 @@ public sealed class MembershipLifecycleApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
-        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), MemberRoles);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
         var response = await SendRolesAsync(
-            ownerClient, tenantId, memberId, OwnerRoles, expectedVersion: 99);
+            ownerClient, tenantId, memberId, AdminRoles, expectedVersion: 99);
 
         Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
     }
@@ -248,8 +248,8 @@ public sealed class MembershipLifecycleApiTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
-    private static readonly string[] MemberRoles = ["tenancy.member"];
-    private static readonly string[] OwnerRoles = ["tenancy.owner"];
+    private static readonly string[] AdvisorRoles = ["advisor"];
+    private static readonly string[] AdminRoles = ["admin"];
 
     private static string NewEmail() => $"member-{Guid.NewGuid():N}@example.com";
 
@@ -315,7 +315,7 @@ public sealed class MembershipLifecycleApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = roles ?? MemberRoles })
+            Content = JsonContent.Create(new { email, roles = roles ?? AdvisorRoles })
         };
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);

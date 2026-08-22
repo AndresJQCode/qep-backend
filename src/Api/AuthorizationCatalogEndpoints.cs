@@ -1,9 +1,9 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
+using Bootstrapper.Authentication;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using BuildingBlocks.Application;
-using Bootstrapper.Authentication;
 using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -18,7 +18,7 @@ public static class AuthorizationCatalogEndpoints
         endpoints
             .MapGet("/api/v1/tenants/{tenantId:guid}/authorization/catalog", GetCatalogAsync)
             .WithTags("Authorization")
-            .RequireAuthorization(TenancyPermissions.MembershipRead)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipRead)
             .Produces<AuthorizationCatalogResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 

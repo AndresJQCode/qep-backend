@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Modules.Identity.Application;
 using Modules.Tenancy.Domain;
 
@@ -65,7 +65,7 @@ public sealed class ListMembershipsHandler(
     private void EnsureAuthorized(TenantId tenantId)
     {
         if (executionContext.TenantId != tenantId ||
-            !executionContext.HasPermission(TenancyPermissions.MembershipRead))
+            !executionContext.HasPermission(TenancyPermissions.AdvisorshipRead))
         {
             throw new RequestForbiddenException(
                 "authorization.denied",

@@ -1,5 +1,5 @@
-﻿using FluentValidation;
 using BuildingBlocks.Application;
+using FluentValidation;
 using Modules.Audit.Application;
 using Modules.Identity.Application;
 using Modules.Tenancy.Domain;
@@ -167,7 +167,7 @@ public sealed class InviteMemberHandler(
     private void EnsureAuthorized(TenantId tenantId)
     {
         if (executionContext.TenantId != tenantId ||
-            !executionContext.HasPermission(TenancyPermissions.MembershipInvite))
+            !executionContext.HasPermission(TenancyPermissions.AdvisorshipInvite))
         {
             throw new RequestForbiddenException(
                 "authorization.denied",

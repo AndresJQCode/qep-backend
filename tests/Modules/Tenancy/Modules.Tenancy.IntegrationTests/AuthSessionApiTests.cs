@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -11,7 +11,7 @@ public sealed class AuthSessionApiTests
 {
     private const string SeededTenantId = "01900000-0000-7000-8000-000000000001";
     private const string AdminSubjectId = "01900000-0000-7000-8000-000000000002";
-    private static readonly string[] DefaultRoles = ["tenancy.member"];
+    private static readonly string[] DefaultRoles = ["advisor"];
 
     [Fact]
     public async Task FirstLoginLinksActivatesAndAcceptsInvitedMembership()
