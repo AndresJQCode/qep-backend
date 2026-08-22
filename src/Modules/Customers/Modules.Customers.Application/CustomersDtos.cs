@@ -121,3 +121,29 @@ public sealed record ImportCustomersResponse(
     string FileName,
     DateTimeOffset ReceivedAt,
     string Status);
+
+// El catalogo de clasificaciones de cliente: nombre + prefijo, mismo shape que TaxRateDto en
+// Catalog. IsActive no viaja en los requests, mismo criterio que Customer: nace activa y solo
+// cambia por /deactivate y /activate.
+public sealed record ClientClassificationDto(
+    Guid Id,
+    string Name,
+    string Prefix,
+    bool IsActive,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record ClientClassificationResponse(
+    Guid Id,
+    string Name,
+    string Prefix,
+    bool IsActive,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record ClientClassificationsResponse(
+    IReadOnlyCollection<ClientClassificationResponse> Items);
+
+public sealed record CreateClientClassificationRequest(string Name, string Prefix);
+
+public sealed record UpdateClientClassificationRequest(string Name, string Prefix);

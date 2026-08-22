@@ -94,6 +94,7 @@ app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
+app.MapClientClassificationEndpoints();
 app.MapGeographyEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
