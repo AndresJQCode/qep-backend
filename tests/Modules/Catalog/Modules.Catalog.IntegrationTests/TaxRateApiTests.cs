@@ -294,13 +294,13 @@ public sealed class TaxRateApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        // El catálogo de autorización está protegido por tenancy.membership.read: tener los
+        // El catálogo de autorización está protegido por advisorship.read: tener los
         // permisos de catalog no alcanza para leer el catálogo que los publica.
         using var client = CreateClient(
             factory,
             SubjectId,
             TenantId,
-            [.. ManagePermissions, "tenancy.membership.read"]);
+            [.. ManagePermissions, "advisorship.read"]);
 
         var catalog = await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/authorization/catalog",

@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using Modules.Identity.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure;

@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Json;
@@ -25,8 +25,8 @@ public sealed class RealAuthenticationApiTests
     private static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(30);
     private static readonly byte[] SigningKeyBytes = RandomNumberGenerator.GetBytes(32);
     private static readonly string SigningKeyBase64 = Convert.ToBase64String(SigningKeyBytes);
-    private static readonly string[] MemberRoles = ["tenancy.member"];
-    private static readonly string[] OwnerRoles = ["tenancy.owner"];
+    private static readonly string[] AdvisorRoles = ["advisor"];
+    private static readonly string[] AdminRoles = ["admin"];
 
     [Fact]
     public async Task SessionCookieAuthenticatesOrdinaryEndpointsWithoutTheBearerToken()
@@ -156,7 +156,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = memberEmail, roles = MemberRoles }),
+            Content = JsonContent.Create(new { email = memberEmail, roles = AdvisorRoles }),
         };
         inviteRequest.Headers.Add("X-Tenant-Id", tenantId.ToString());
         inviteRequest.Headers.Add("X-Qep-Client", "web");
@@ -225,7 +225,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = secondOwnerEmail, roles = OwnerRoles }),
+            Content = JsonContent.Create(new { email = secondOwnerEmail, roles = AdminRoles }),
         };
         inviteRequest.Headers.Add("X-Tenant-Id", tenantId.ToString());
         inviteRequest.Headers.Add("X-Qep-Client", "web");
@@ -257,7 +257,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = NewEmail(), roles = MemberRoles }),
+            Content = JsonContent.Create(new { email = NewEmail(), roles = AdvisorRoles }),
         };
         beforeDowngrade.Headers.Add("X-Tenant-Id", tenantId.ToString());
         beforeDowngrade.Headers.Add("X-Qep-Client", "web");
@@ -271,7 +271,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Patch,
             $"/api/v1/tenants/{tenantId}/memberships/{invited.Id}/roles")
         {
-            Content = JsonContent.Create(new { roles = MemberRoles }),
+            Content = JsonContent.Create(new { roles = AdvisorRoles }),
         };
         downgradeRequest.Headers.Add("X-Tenant-Id", tenantId.ToString());
         downgradeRequest.Headers.Add("X-Qep-Client", "web");
@@ -287,7 +287,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = NewEmail(), roles = MemberRoles }),
+            Content = JsonContent.Create(new { email = NewEmail(), roles = AdvisorRoles }),
         };
         afterDowngrade.Headers.Add("X-Tenant-Id", tenantId.ToString());
         afterDowngrade.Headers.Add("X-Qep-Client", "web");

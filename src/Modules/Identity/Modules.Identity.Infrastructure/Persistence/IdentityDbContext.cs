@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
 using Modules.Identity.Domain;

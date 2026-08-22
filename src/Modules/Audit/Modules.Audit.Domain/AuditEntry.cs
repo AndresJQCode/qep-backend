@@ -1,4 +1,4 @@
-﻿namespace Modules.Audit.Domain;
+namespace Modules.Audit.Domain;
 
 /// <summary>
 /// Un registro append-only de una acción auditada: quién hizo qué, sobre qué recurso, en

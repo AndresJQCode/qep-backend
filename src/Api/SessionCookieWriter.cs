@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 

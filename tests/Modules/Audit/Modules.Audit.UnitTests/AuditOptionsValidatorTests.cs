@@ -1,4 +1,4 @@
-﻿using Modules.Audit.Infrastructure;
+using Modules.Audit.Infrastructure;
 
 namespace Modules.Audit.UnitTests;
 

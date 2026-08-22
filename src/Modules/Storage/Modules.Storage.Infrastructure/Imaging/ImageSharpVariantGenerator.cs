@@ -1,4 +1,4 @@
-﻿using Modules.Storage.Application;
+using Modules.Storage.Application;
 using Modules.Storage.Domain;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Webp;

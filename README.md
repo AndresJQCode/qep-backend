@@ -210,7 +210,7 @@ X-Tenant-Id: 01900000-0000-7000-8000-000000000001
 el stub concede los cinco permisos de Tenancy implementados:
 
 ```txt
-X-Permissions: tenancy.settings.read,tenancy.settings.update,tenancy.membership.invite,tenancy.membership.read,tenancy.membership.manage
+X-Permissions: tenancy.settings.read,tenancy.settings.update,advisorship.invite,advisorship.read,advisorship.manage
 ```
 
 Esto permite simular, por ejemplo, un usuario de solo lectura enviando
@@ -297,9 +297,9 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/auth/session`                             | `POST`                                                                                      | token del proveedor OIDC                                                                     |
 | `/api/v1/auth/me`, `/api/v1/auth/logout`           | `GET`, `POST`                                                                               | sólo autenticación                                                                           |
 | `/api/v1/tenants/{tenantId}/authorization/me`      | `GET`                                                                                       | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
-| `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `tenancy.membership.read`                                                                    |
+| `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `advisorship.read`                                                                    |
 | `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PATCH`                                                                              | `tenancy.settings.read` / `.update`                                                          |
-| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles` por membership                  | `tenancy.membership.invite` / `.read` / `.manage`                                            |
+| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles` por membership                  | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 
@@ -375,7 +375,7 @@ Formatos de fecha admitidos: `yyyy-MM-dd`, `dd/MM/yyyy` y `MM/dd/yyyy`.
 
 | Método | Ruta                                     | Permiso                     |
 | ------ | ---------------------------------------- | --------------------------- |
-| `POST` | `/api/v1/tenants/{tenantId}/memberships` | `tenancy.membership.invite` |
+| `POST` | `/api/v1/tenants/{tenantId}/memberships` | `advisorship.invite` |
 
 La operación obtiene o crea en Identity un usuario invitado, y después crea su
 Membership en Tenancy con estado `Invited`, auditoría y el evento Outbox
@@ -387,7 +387,7 @@ anterior:
 ```powershell
 $body = @{
   email = "new.member@example.com"
-  roles = @("tenancy.member")
+  roles = @("advisor")
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -406,7 +406,7 @@ Respuesta `201 Created`:
   "userId": "01900000-0000-7000-8000-000000000011",
   "tenantId": "01900000-0000-7000-8000-000000000001",
   "state": "Invited",
-  "roles": ["tenancy.member"],
+  "roles": ["advisor"],
   "invitedAt": "2026-07-05T21:00:00+00:00",
   "acceptedAt": null,
   "expiresAt": "2026-07-08T21:00:00+00:00"
@@ -603,7 +603,7 @@ El tenant se resuelve del claim JWT (no de header ni subdominio en runtime).
 `ClaimsPrincipal` actual. La autorización es por claims de permiso
 (`RequireClaim(QepClaimTypes.Permission, permiso)`), con policies armadas
 dinámicamente por módulo. Los roles no están hardcodeados: `RoleDefinition` /
-`RoleCatalog` mapean un rol (p. ej. `tenancy.owner`, `tenancy.member`) a un
+`RoleCatalog` mapean un rol (p. ej. `admin`, `advisor`) a un
 conjunto de permisos.
 
 ### Acceso cruzado entre módulos, controlado

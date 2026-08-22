@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Application;
+namespace Modules.Tenancy.Application;
 
 /// <summary>
 /// Consulta de sólo lectura de las membresías activas de un usuario, publicada para que el

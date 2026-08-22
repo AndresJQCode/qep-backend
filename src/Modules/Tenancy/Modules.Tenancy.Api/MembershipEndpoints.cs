@@ -1,7 +1,7 @@
-﻿using Microsoft.AspNetCore.Builder;
+using BuildingBlocks.Application;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using BuildingBlocks.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
@@ -17,26 +17,26 @@ public static class MembershipEndpoints
             .WithTags("Memberships");
 
         group.MapPost("/", InviteAsync)
-            .RequireAuthorization(TenancyPermissions.MembershipInvite)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipInvite)
             .Accepts<MembershipInviteRequest>("application/json")
             .Produces<MembershipResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/", ListAsync)
-            .RequireAuthorization(TenancyPermissions.MembershipRead)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipRead)
             .Produces<IReadOnlyList<MembershipListItemResponse>>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
         group.MapPost("/{membershipId:guid}/suspend", SuspendAsync)
-            .RequireAuthorization(TenancyPermissions.MembershipManage)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
             .Produces<MembershipListItemResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/{membershipId:guid}/remove", RemoveAsync)
-            .RequireAuthorization(TenancyPermissions.MembershipManage)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
             .Produces<MembershipListItemResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -45,14 +45,14 @@ public static class MembershipEndpoints
         // Sin If-Match, igual que suspend y remove: el backend no verifica precondición en
         // estas operaciones y agregarla acá inventaría una que nada comprueba. AUTH-11.
         group.MapPost("/{membershipId:guid}/reactivate", ReactivateAsync)
-            .RequireAuthorization(TenancyPermissions.MembershipManage)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
             .Produces<MembershipListItemResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPatch("/{membershipId:guid}/roles", UpdateRolesAsync)
-            .RequireAuthorization(TenancyPermissions.MembershipManage)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
             .Accepts<MembershipRolesUpdateRequest>("application/json")
             .Produces<MembershipListItemResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)

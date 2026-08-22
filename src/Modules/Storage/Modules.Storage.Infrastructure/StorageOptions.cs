@@ -1,4 +1,4 @@
-﻿namespace Modules.Storage.Infrastructure;
+namespace Modules.Storage.Infrastructure;
 
 // Binding fuertemente tipado de la sección "Storage" de appsettings. Cloudflare R2 es el
 // único proveedor de runtime (ADR 0020). Las credenciales son secretos por entorno.

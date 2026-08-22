@@ -1,9 +1,9 @@
-﻿using System.Text.Json;
+using System.Text.Json;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using BuildingBlocks.Application;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
 

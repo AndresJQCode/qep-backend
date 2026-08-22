@@ -1,4 +1,4 @@
-﻿namespace Modules.Identity.Application;
+namespace Modules.Identity.Application;
 
 public sealed class UserDirectory(IUserRepository userRepository) : IUserDirectory
 {

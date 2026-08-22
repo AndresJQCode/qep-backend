@@ -1,9 +1,9 @@
-﻿using Microsoft.EntityFrameworkCore;
+using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using BuildingBlocks.Application;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
 using Modules.Storage.Infrastructure.Persistence;

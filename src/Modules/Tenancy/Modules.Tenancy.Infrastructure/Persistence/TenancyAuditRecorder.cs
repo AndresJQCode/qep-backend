@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Modules.Audit.Application;
 using Modules.Audit.Domain;
 

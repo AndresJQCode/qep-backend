@@ -1,4 +1,4 @@
-﻿namespace Modules.Audit.Domain;
+namespace Modules.Audit.Domain;
 
 public readonly record struct AuditEntryId(Guid Value)
 {

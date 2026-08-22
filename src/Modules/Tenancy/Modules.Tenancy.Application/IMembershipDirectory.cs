@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Application;
+namespace Modules.Tenancy.Application;
 
 /// <summary>
 /// Consulta de sólo lectura que se usa en cada request para validar que un usuario tiene una

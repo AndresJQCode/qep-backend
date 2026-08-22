@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
@@ -13,7 +13,7 @@ public sealed class AuditRecordingTests
     private const string SeededTenantId = "01900000-0000-7000-8000-000000000001";
     private const string AdminSubjectId = "01900000-0000-7000-8000-000000000002";
     private const string AuditEventName = "platform.audit.recorded.v1";
-    private static readonly string[] DefaultRoles = ["tenancy.member"];
+    private static readonly string[] DefaultRoles = ["advisor"];
 
     // Camino atómico (ADR 0019): una acción de Tenancy escribe su entrada de auditoría en la
     // tabla audit.entries (de Audit) de forma síncrona, en la misma transacción que el cambio.

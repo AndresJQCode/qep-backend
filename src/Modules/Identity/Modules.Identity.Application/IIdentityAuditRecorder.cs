@@ -1,4 +1,4 @@
-﻿using Modules.Audit.Domain;
+using Modules.Audit.Domain;
 
 namespace Modules.Identity.Application;
 

@@ -1,4 +1,4 @@
-﻿namespace Modules.Notifications.Domain;
+namespace Modules.Notifications.Domain;
 
 public enum NotificationChannel
 {

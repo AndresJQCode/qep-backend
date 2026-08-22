@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Modules.Audit.Application;
 using Modules.Identity.Application;
 using Modules.Tenancy.Domain;
@@ -37,13 +37,13 @@ public sealed class SuspendMemberHandler(
                 "A member cannot suspend their own membership.");
         }
 
-        if (rolePermissionChecker.AnyGrants(membership.Roles, TenancyPermissions.MembershipManage))
+        if (rolePermissionChecker.AnyGrants(membership.Roles, TenancyPermissions.AdvisorshipManage))
         {
             var others = await membershipRepository.ListActiveExcludingAsync(
                 command.TenantId, command.MembershipId, cancellationToken);
             var hasOtherManager = others.Any(
                 other => rolePermissionChecker.AnyGrants(
-                    other.Roles, TenancyPermissions.MembershipManage));
+                    other.Roles, TenancyPermissions.AdvisorshipManage));
             if (!hasOtherManager)
             {
                 throw new TenantDomainException(
@@ -78,7 +78,7 @@ public sealed class SuspendMemberHandler(
     private void EnsureAuthorized(TenantId tenantId)
     {
         if (executionContext.TenantId != tenantId ||
-            !executionContext.HasPermission(TenancyPermissions.MembershipManage))
+            !executionContext.HasPermission(TenancyPermissions.AdvisorshipManage))
         {
             throw new RequestForbiddenException(
                 "authorization.denied",

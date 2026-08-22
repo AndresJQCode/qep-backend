@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using BuildingBlocks.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;

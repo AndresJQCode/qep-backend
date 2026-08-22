@@ -1,4 +1,4 @@
-﻿using Modules.Notifications.Infrastructure.Channels;
+using Modules.Notifications.Infrastructure.Channels;
 
 namespace Modules.Notifications.Infrastructure;
 

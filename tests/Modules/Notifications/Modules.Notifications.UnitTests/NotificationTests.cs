@@ -1,4 +1,4 @@
-﻿using Modules.Notifications.Application;
+using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
 
 namespace Modules.Notifications.UnitTests;

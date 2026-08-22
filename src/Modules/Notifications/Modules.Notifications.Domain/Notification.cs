@@ -1,4 +1,4 @@
-﻿namespace Modules.Notifications.Domain;
+namespace Modules.Notifications.Domain;
 
 /// <summary>
 /// El registro de una solicitud de comunicación saliente procesada por la capacidad

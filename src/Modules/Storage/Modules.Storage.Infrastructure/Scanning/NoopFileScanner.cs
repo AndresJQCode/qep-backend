@@ -1,4 +1,4 @@
-﻿using Modules.Storage.Application;
+using Modules.Storage.Application;
 
 namespace Modules.Storage.Infrastructure.Scanning;
 

@@ -1,4 +1,4 @@
-﻿namespace Modules.Audit.Domain;
+namespace Modules.Audit.Domain;
 
 // El tipo de sujeto que ejecutó una acción auditada (contrato de capacidad: Human,
 // System, Integration, AiAgent). Se persiste como string.

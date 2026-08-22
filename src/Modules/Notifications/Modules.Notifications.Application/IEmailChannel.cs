@@ -1,4 +1,4 @@
-﻿namespace Modules.Notifications.Application;
+namespace Modules.Notifications.Application;
 
 public sealed record EmailMessage(
     string ToAddress,

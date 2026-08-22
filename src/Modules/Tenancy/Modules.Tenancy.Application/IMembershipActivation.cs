@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Application;
+namespace Modules.Tenancy.Application;
 
 /// <summary>
 /// Contrato publicado entre módulos que acepta las invitaciones pendientes de un usuario al

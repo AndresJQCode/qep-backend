@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using Modules.Storage.Api;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;

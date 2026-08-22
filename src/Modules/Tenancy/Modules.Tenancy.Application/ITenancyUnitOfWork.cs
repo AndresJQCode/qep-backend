@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Application;
+namespace Modules.Tenancy.Application;
 
 public interface ITenancyUnitOfWork
 {

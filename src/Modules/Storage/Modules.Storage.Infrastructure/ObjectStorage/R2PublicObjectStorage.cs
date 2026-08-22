@@ -1,4 +1,4 @@
-﻿using Amazon.S3;
+using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Options;
 using Modules.Storage.Application;

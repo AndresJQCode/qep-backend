@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using BuildingBlocks.Domain;
 
 namespace Modules.Tenancy.Domain;

@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Infrastructure.Persistence;
+namespace Modules.Tenancy.Infrastructure.Persistence;
 
 // Registro de deduplicación para la entrega at-least-once de eventos de integración. La
 // unicidad por (Consumer, MessageId) garantiza que un consumidor dado aplique un evento

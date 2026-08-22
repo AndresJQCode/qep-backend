@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Domain;
+using BuildingBlocks.Domain;
 
 namespace Modules.Identity.Domain;
 

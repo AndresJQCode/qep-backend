@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Modules.Notifications.Domain;
 
 namespace Modules.Notifications.Infrastructure.Persistence;

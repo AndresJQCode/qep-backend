@@ -1,4 +1,4 @@
-﻿namespace Modules.Tenancy.Infrastructure.Persistence;
+namespace Modules.Tenancy.Infrastructure.Persistence;
 
 // Proyección append-only alimentada por el evento de integración de tenant-settings. Es
 // deliberadamente no idempotente por sí sola (cada aplicación inserta una fila) para que
