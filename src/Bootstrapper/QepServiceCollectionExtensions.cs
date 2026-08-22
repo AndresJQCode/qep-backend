@@ -20,6 +20,8 @@ using Modules.Companies.Infrastructure;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
 using Modules.Authorization.Application;
+using Modules.Geography.Application;
+using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Storage.Application;
@@ -188,6 +190,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>,
             ImportCustomersHandler>();
+        // Geography no tiene tenant ni caso de uso de escritura: sólo dos lecturas de datos de
+        // referencia DIVIPOLA. Van acá por la misma razón que el resto — el dispatcher resuelve
+        // por registro explícito, y un caso de uso que se olvide compila, mapea su endpoint y
+        // falla recién en runtime con 500 al no encontrar handler.
+        services.AddScoped<
+            IQueryHandler<ListDepartmentsQuery, IReadOnlyList<DepartmentDto>>,
+            ListDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
+            ListCitiesHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -200,6 +212,7 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
+        services.AddGeographyInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

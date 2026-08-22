@@ -677,6 +677,8 @@
           "Modules.Companies.Infrastructure": "[1.0.0, )",
           "Modules.Customers.Api": "[1.0.0, )",
           "Modules.Customers.Infrastructure": "[1.0.0, )",
+          "Modules.Geography.Api": "[1.0.0, )",
+          "Modules.Geography.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Api": "[1.0.0, )",
@@ -698,6 +700,8 @@
           "Modules.Companies.Infrastructure": "[1.0.0, )",
           "Modules.Customers.Application": "[1.0.0, )",
           "Modules.Customers.Infrastructure": "[1.0.0, )",
+          "Modules.Geography.Application": "[1.0.0, )",
+          "Modules.Geography.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
@@ -861,6 +865,37 @@
           "Microsoft.EntityFrameworkCore": "[10.0.9, )",
           "Modules.Customers.Application": "[1.0.0, )",
           "Modules.Customers.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
+        }
+      },
+      "modules.geography.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Geography.Application": "[1.0.0, )",
+          "Modules.Geography.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.geography.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Geography.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.geography.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.geography.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.9, )",
+          "Modules.Geography.Application": "[1.0.0, )",
+          "Modules.Geography.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
         }
       },
