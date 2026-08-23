@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Customers.Application;
@@ -44,6 +45,8 @@ public static class CustomerPaging
 
 public sealed class ListCustomersHandler(
     ICustomerRepository repository,
+    IClientClassificationRepository classificationRepository,
+    ICustomerGeographyLookup geographyLookup,
     IExecutionContext executionContext)
     : IQueryHandler<ListCustomersQuery, CustomerPage>
 {
@@ -60,10 +63,58 @@ public sealed class ListCustomersHandler(
         var (customers, total) = await repository.SearchAsync(
             query.TenantId, query.Search, page, pageSize, cancellationToken);
 
-        return new CustomerPage(
-            customers.Select(customer => customer.ToDto()).ToArray(),
-            total,
-            page,
-            pageSize);
+        var items = await ToDtosAsync(query.TenantId, customers, cancellationToken);
+
+        return new CustomerPage(items, total, page, pageSize);
+    }
+
+    // Resuelve las ciudades y las clasificaciones distintas de la pagina con una sola consulta en
+    // lote cada una, en vez de una por cliente: hasta 200 clientes por pagina
+    // (CustomerPaging.MaxPageSize) son hasta 200 consultas de mas si esto fuera un FindAsync por
+    // fila, y ese N+1 es exactamente lo que ICustomerGeographyLookup.FindCitiesAsync y
+    // IClientClassificationRepository.ListByIdsAsync existen para evitar.
+    private async Task<IReadOnlyList<CustomerDto>> ToDtosAsync(
+        Guid tenantId,
+        IReadOnlyList<Customer> customers,
+        CancellationToken cancellationToken)
+    {
+        if (customers.Count == 0)
+        {
+            return [];
+        }
+
+        var cityIds = customers.Select(customer => customer.CityId).Distinct().ToArray();
+        var classificationIds = customers
+            .Select(customer => customer.ClassificationId)
+            .Distinct()
+            .ToArray();
+
+        var citiesById = await geographyLookup.FindCitiesAsync(cityIds, cancellationToken);
+        var classifications = await classificationRepository.ListByIdsAsync(
+            tenantId, classificationIds, cancellationToken);
+        var classificationsById = classifications.ToDictionary(
+            classification => classification.Id);
+
+        var items = new List<CustomerDto>(customers.Count);
+        foreach (var customer in customers)
+        {
+            // La FK de base garantiza que las dos referencias existan: un miss aca es corrupcion
+            // de datos, no una entrada de usuario invalida. Ver CustomerMapping.ToDtoAsync.
+            var city = citiesById.TryGetValue(customer.CityId, out var cityRef)
+                ? cityRef
+                : throw new InvalidOperationException(
+                    $"City '{customer.CityId}' referenced by customer '{customer.Id}' " +
+                    "was not found.");
+            var classification = classificationsById.TryGetValue(
+                customer.ClassificationId, out var classificationValue)
+                ? classificationValue
+                : throw new InvalidOperationException(
+                    $"Classification '{customer.ClassificationId}' referenced by customer " +
+                    $"'{customer.Id}' was not found.");
+
+            items.Add(customer.ToDto(city, classification));
+        }
+
+        return items;
     }
 }

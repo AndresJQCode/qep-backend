@@ -11,21 +11,27 @@ public sealed record CreateProductCommand(
     string Code,
     string? Description,
     Guid? ImageFileId,
-    decimal? Price,
     string? Currency,
-    Guid? TaxRateId) : ICommand<ProductDto>, IProductWriteCommand;
+    Guid? TaxRateId,
+    ProductPricingRequest Pricing) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
-// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes.
+// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes. CAT-09: el precio y
+// las escalas siguen el mismo criterio, con su propio ProductPricingRules.
 public sealed class CreateProductValidator : AbstractValidator<CreateProductCommand>
 {
-    public CreateProductValidator() => Include(new ProductWriteRules());
+    public CreateProductValidator()
+    {
+        Include(new ProductWriteRules());
+        RuleFor(command => command.Pricing).SetValidator(new ProductPricingRules());
+    }
 }
 
 public sealed class CreateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
     IProductImageLookup imageLookup,
+    ICatalogPriceListLookup priceListLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -56,6 +62,15 @@ public sealed class CreateProductHandler(
         var image = await ProductImageResolver.ResolveAsync(
             imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
 
+        var pricing = command.Pricing.ToDomain();
+
+        // Mismo criterio, con el agravante de que priceListId es obligatorio en cada escala: sin
+        // esta resolución, un producto del tenant A podría apuntar a la lista del tenant B, o a
+        // una lista inactiva. El resultado se reutiliza para la respuesta, así que esta es la
+        // única consulta a `pricing` en toda la escritura.
+        var priceLists = await ProductPriceListResolver.ResolveAsync(
+            priceListLookup, command.TenantId, pricing.Scales, cancellationToken);
+
         var now = clock.UtcNow;
         var product = Product.Create(
             ProductId.New(),
@@ -66,10 +81,10 @@ public sealed class CreateProductHandler(
             {
                 Description = command.Description,
                 ImageFileId = image?.FileId,
-                Price = command.Price,
                 Currency = command.Currency,
                 TaxRateId = taxRateId
             },
+            pricing,
             now);
 
         repository.Add(product);
@@ -82,6 +97,6 @@ public sealed class CreateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto(image?.PublicUrl);
+        return product.ToDto(image?.PublicUrl, priceLists);
     }
 }

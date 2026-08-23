@@ -1,28 +1,24 @@
 namespace Modules.Customers.Domain;
 
 /// <summary>
-/// Los datos comerciales del cliente: como esta clasificado, con que lista de precios se le cotiza
-/// y si se le aplica retencion.
+/// Los datos comerciales del cliente: como esta clasificado y si se le aplica retencion.
 ///
 /// Van juntos por la misma razon que los de contacto, y ademas porque cambian por la misma razon:
-/// los tres los define el area comercial, no quien carga el alta.
+/// los dos los define el area comercial, no quien carga el alta.
+///
+/// Las listas de precio del cliente **no** viven aca: a diferencia de la clasificacion (1:1), un
+/// cliente puede tener varias listas a la vez, asi que es una relacion N:N propia
+/// (<c>CustomerPriceList</c>), no un campo de este value object. Ver CustomerPriceList.cs.
 /// </summary>
 public sealed record CustomerCommercialInfo
 {
-    public CustomerClassification? Classification { get; init; }
-
     /// <summary>
-    /// Referencia a la lista de precios del modulo <c>pricing</c>.
-    ///
-    /// **Sin clave foranea, y no por olvido:** `pricing` no existe todavia en `qep-backend`, asi
-    /// que no hay tabla a la que apuntar. Guardarlo igual conserva el dato que el formulario ya
-    /// manda; inventar una tabla de listas de precios para tener a donde apuntar seria construir
-    /// un modulo ajeno desde este slice.
-    ///
-    /// La consecuencia es que nadie garantiza que el id exista. El dia que `pricing` llegue, esta
-    /// columna gana su FK con una migracion que primero tiene que limpiar los ids huerfanos.
+    /// FK obligatoria a <see cref="ClientClassification"/>. Reemplaza al enum fijo
+    /// <c>CustomerClassification</c> (Pequeno/Mediano/Grande): ese catalogo no tenia ninguna
+    /// relacion con este agregado y ya no tiene consumidores. Un cliente sin clasificacion tampoco
+    /// tiene de donde salir el prefijo de su CUC, asi que dejo de ser opcional.
     /// </summary>
-    public Guid? PriceListId { get; init; }
+    public ClientClassificationId ClassificationId { get; init; }
 
     /// <summary>
     /// Si al cliente se le aplica retencion de impuestos.
@@ -33,5 +29,11 @@ public sealed record CustomerCommercialInfo
     /// </summary>
     public bool WithRetention { get; init; }
 
+    /// <summary>
+    /// **No usar para <c>Customer.Create</c>/<c>Update</c>.** Deja <c>ClassificationId</c> en su
+    /// default (<c>Guid.Empty</c>), que <c>Customer</c> rechaza — la clasificacion es obligatoria.
+    /// Sigue existiendo para pruebas que arman un <c>CustomerCommercialInfo</c> parcial y
+    /// sobreescriben el campo que les importa con un <c>with</c> o un inicializador propio.
+    /// </summary>
     public static CustomerCommercialInfo Empty { get; } = new();
 }

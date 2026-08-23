@@ -1,0 +1,184 @@
+using System.Text;
+using Modules.Geography.Infrastructure.Seed;
+
+namespace Modules.Geography.UnitTests;
+
+public sealed class DivipolaDataParserTests
+{
+    [Fact]
+    public void ParseDepartmentsReturnsOneRecordPerValidEntry()
+    {
+        var json = """
+            [
+              { "code": "05", "name": "ANTIOQUIA" },
+              { "code": "08", "name": "ATLÁNTICO" }
+            ]
+            """;
+
+        var records = DivipolaDataParser.ParseDepartments(ToStream(json));
+
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, record => record.Code == "05" && record.Name == "ANTIOQUIA");
+        Assert.Contains(records, record => record.Code == "08" && record.Name == "ATLÁNTICO");
+    }
+
+    [Fact]
+    public void ParseDepartmentsThrowsOnDuplicateCode()
+    {
+        var json = """
+            [
+              { "code": "05", "name": "ANTIOQUIA" },
+              { "code": "05", "name": "ANTIOQUIA OTRA VEZ" }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseDepartments(ToStream(json)));
+    }
+
+    [Fact]
+    public void ParseDepartmentsThrowsWhenCodeIsNotTwoDigits()
+    {
+        var json = """
+            [
+              { "code": "5", "name": "ANTIOQUIA" }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseDepartments(ToStream(json)));
+    }
+
+    [Fact]
+    public void ParseDepartmentsThrowsWhenNameIsEmpty()
+    {
+        var json = """
+            [
+              { "code": "05", "name": "" }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseDepartments(ToStream(json)));
+    }
+
+    [Fact]
+    public void ParseCitiesSkipsEightDigitPopulatedCenterEntries()
+    {
+        var json = """
+            [
+              {
+                "code": "05001",
+                "name": "MEDELLÍN",
+                "departmentCode": "05"
+              },
+              {
+                "code": "05001000",
+                "name": "MEDELLÍN, DISTRITO ESPECIAL",
+                "departmentCode": "05"
+              }
+            ]
+            """;
+
+        var records = DivipolaDataParser.ParseCities(ToStream(json));
+
+        Assert.Single(records);
+        Assert.Contains(records, record =>
+            record.DivipolaCode == "05001" &&
+            record.Name == "MEDELLÍN" &&
+            record.DepartmentCode == "05");
+    }
+
+    [Fact]
+    public void ParseCitiesSkipsEntriesWithCodeLengthOtherThanFive()
+    {
+        var json = """
+            [
+              {
+                "code": "0500100",
+                "name": "MEDELLÍN",
+                "departmentCode": "05"
+              }
+            ]
+            """;
+
+        var records = DivipolaDataParser.ParseCities(ToStream(json));
+
+        Assert.Empty(records);
+    }
+
+    [Fact]
+    public void ParseCitiesThrowsWhenFiveDigitCodeIsNotAllDigits()
+    {
+        var json = """
+            [
+              {
+                "code": "ABCDE",
+                "name": "MEDELLÍN",
+                "departmentCode": "05"
+              }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseCities(ToStream(json)));
+    }
+
+    [Fact]
+    public void ParseCitiesThrowsWhenCodeDoesNotStartWithDeclaredDepartmentCode()
+    {
+        var json = """
+            [
+              {
+                "code": "05001",
+                "name": "MEDELLÍN",
+                "departmentCode": "08"
+              }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseCities(ToStream(json)));
+    }
+
+    [Fact]
+    public void ParseCitiesThrowsOnDuplicateCode()
+    {
+        var json = """
+            [
+              {
+                "code": "05001",
+                "name": "MEDELLÍN",
+                "departmentCode": "05"
+              },
+              {
+                "code": "05001",
+                "name": "MEDELLÍN OTRA VEZ",
+                "departmentCode": "05"
+              }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseCities(ToStream(json)));
+    }
+
+    [Fact]
+    public void ParseCitiesThrowsWhenNameIsEmpty()
+    {
+        var json = """
+            [
+              {
+                "code": "05001",
+                "name": "",
+                "departmentCode": "05"
+              }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseCities(ToStream(json)));
+    }
+
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+}

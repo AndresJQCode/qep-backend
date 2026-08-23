@@ -8,9 +8,14 @@ public sealed record ProductDto(
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
-    decimal? Price,
     string? Currency,
     Guid? TaxRateId,
+    decimal? PriceBaseUsd,
+    decimal? PriceBaseCop,
+    decimal? PriceFinalUsd,
+    decimal? PriceFinalCop,
+    decimal? Discount,
+    IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -25,11 +30,67 @@ public sealed record ProductResponse(
     // catalog. Viene en null si la imagen no fue publicada. `ImageFileId` se mantiene porque es
     // lo que el cliente manda de vuelta en el PUT.
     string? ImageUrl,
-    decimal? Price,
     string? Currency,
     Guid? TaxRateId,
+    // CAT-09. El precio en dos monedas fijas — reemplazó por completo al viejo Price, retirado.
+    // Currency no es parte de esto: es un dato independiente del producto.
+    decimal? PriceBaseUsd,
+    decimal? PriceBaseCop,
+    decimal? PriceFinalUsd,
+    decimal? PriceFinalCop,
+    decimal? Discount,
+    IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
+
+/// <summary>
+/// Precio y escalas de un producto (CAT-09), tal como los manda el cliente. Al menos uno de
+/// <c>BaseUsd</c>/<c>BaseCop</c> es obligatorio — el dominio lo exige incondicionalmente, así
+/// que ningún producto se crea sin esto.
+/// </summary>
+public sealed record ProductPricingRequest(
+    decimal? BaseUsd,
+    decimal? BaseCop,
+    decimal? FinalUsd,
+    decimal? FinalCop,
+    decimal? Discount,
+    IReadOnlyCollection<PriceScaleRequest>? Scales);
+
+/// <summary>
+/// Restriction es texto ("multiple" | "packaging_unit") y no el enum del dominio: ningún DTO
+/// expone <c>PriceScaleRestriction</c> directamente, mismo criterio que
+/// <c>MembershipListItemResponse.State</c>.
+/// </summary>
+public sealed record PriceScaleRequest(
+    Guid PriceListId,
+    int FromUnit,
+    int ToUnit,
+    decimal Discount,
+    string? Restriction,
+    int? Multiple,
+    int? PackagingUnit,
+    decimal? FinalUsd,
+    decimal? FinalCop);
+
+/// <summary>
+/// <c>PriceListName</c> viaja resuelto para que el cliente no tenga que cruzarlo contra
+/// <c>GET /pricing/price-lists</c> sólo para pintar la escala — mismo criterio que
+/// <c>ProductResponse.ImageUrl</c> frente a <c>ImageFileId</c>. Puede ser <c>null</c> si la
+/// lista se borró después de crear la escala (no debería pasar: <c>DeletePriceList</c> lo
+/// impide, pero una fila cargada antes de esa regla podría quedar huérfana).
+/// </summary>
+public sealed record PriceScaleResponse(
+    Guid Id,
+    Guid PriceListId,
+    string? PriceListName,
+    int FromUnit,
+    int ToUnit,
+    decimal Discount,
+    string Restriction,
+    int? Multiple,
+    int? PackagingUnit,
+    decimal? FinalUsd,
+    decimal? FinalCop);
 
 public sealed record ProductsResponse(IReadOnlyCollection<ProductResponse> Items);
 
@@ -38,25 +99,27 @@ public sealed record ProductsResponse(IReadOnlyCollection<ProductResponse> Items
 // dejaría sin su propia entrada de auditoría, el mismo razonamiento que mantuvo suspender
 // aparte de editar roles en AUTH-06.
 //
-// Los cinco de CAT-04 sí viajan, y son opcionales: un producto sin ninguno sigue siendo válido.
-// En el PUT, mandarlos en null los **limpia** — el verbo reemplaza el recurso entero.
+// Description/ImageFileId/Currency/TaxRateId sí viajan, y son opcionales: un producto sin
+// ninguno sigue siendo válido. En el PUT, mandarlos en null los **limpia** — el verbo reemplaza
+// el recurso entero. Pricing es la excepción: no es opcional, porque el precio en al menos una
+// moneda es obligatorio incondicionalmente (CAT-09).
 public sealed record CreateProductRequest(
     string Name,
     string Code,
     string? Description,
     Guid? ImageFileId,
-    decimal? Price,
     string? Currency,
-    Guid? TaxRateId);
+    Guid? TaxRateId,
+    ProductPricingRequest Pricing);
 
 public sealed record UpdateProductRequest(
     string Name,
     string Code,
     string? Description,
     Guid? ImageFileId,
-    decimal? Price,
     string? Currency,
-    Guid? TaxRateId);
+    Guid? TaxRateId,
+    ProductPricingRequest Pricing);
 
 public sealed record TaxRateDto(
     Guid Id,

@@ -73,4 +73,19 @@ public sealed class NotificationsOptionsValidatorTests
 
         Assert.True(result.Failed);
     }
+
+    // En Linux, "/login" es una ruta de archivo absoluta valida y Uri.TryCreate(...,
+    // UriKind.Absolute, ...) la acepta como file:///login — NonAbsoluteLoginUrlFails pasaba
+    // en Windows por la razon equivocada y fallaba en CI. Esta prueba no depende del
+    // sistema operativo: ftp:// es una URI absoluta en cualquier plataforma, asi que expone
+    // la falta de chequeo de esquema sin importar donde corra.
+    [Fact]
+    public void NonHttpSchemeLoginUrlFails()
+    {
+        var options = new NotificationsOptions { LoginUrl = "ftp://example.com/login" };
+
+        var result = validator.Validate(null, options);
+
+        Assert.True(result.Failed);
+    }
 }

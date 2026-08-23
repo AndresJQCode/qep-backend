@@ -14,8 +14,12 @@ internal sealed class NotificationsOptionsValidator : IValidateOptions<Notificat
     {
         var failures = new List<string>();
 
+        // No alcanza con UriKind.Absolute: en Linux, "/login" es una ruta de archivo
+        // absoluta valida y Uri.TryCreate la acepta como file:///login. El esquema tiene
+        // que ser http o https, o una URL de sistema de archivos pasa la validacion.
         if (string.IsNullOrWhiteSpace(options.LoginUrl)
-            || !Uri.TryCreate(options.LoginUrl, UriKind.Absolute, out _))
+            || !Uri.TryCreate(options.LoginUrl, UriKind.Absolute, out var loginUrl)
+            || (loginUrl.Scheme != Uri.UriSchemeHttp && loginUrl.Scheme != Uri.UriSchemeHttps))
         {
             failures.Add("Notifications:LoginUrl must be an absolute URL.");
         }

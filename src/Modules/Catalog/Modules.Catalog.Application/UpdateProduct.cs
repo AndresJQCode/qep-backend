@@ -12,20 +12,25 @@ public sealed record UpdateProductCommand(
     string Code,
     string? Description,
     Guid? ImageFileId,
-    decimal? Price,
     string? Currency,
-    Guid? TaxRateId) : ICommand<ProductDto>, IProductWriteCommand;
+    Guid? TaxRateId,
+    ProductPricingRequest Pricing) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Mismas reglas que el POST, por inclusión y no por copia. Ver ProductWriteRules.
 public sealed class UpdateProductValidator : AbstractValidator<UpdateProductCommand>
 {
-    public UpdateProductValidator() => Include(new ProductWriteRules());
+    public UpdateProductValidator()
+    {
+        Include(new ProductWriteRules());
+        RuleFor(command => command.Pricing).SetValidator(new ProductPricingRules());
+    }
 }
 
 public sealed class UpdateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
     IProductImageLookup imageLookup,
+    ICatalogPriceListLookup priceListLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -54,9 +59,13 @@ public sealed class UpdateProductHandler(
         var image = await ProductImageResolver.ResolveAsync(
             imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
 
+        var pricing = command.Pricing.ToDomain();
+        var priceLists = await ProductPriceListResolver.ResolveAsync(
+            priceListLookup, command.TenantId, pricing.Scales, cancellationToken);
+
         var now = clock.UtcNow;
 
-        // Los cinco campos se mandan siempre, incluidos los null: el PUT reemplaza el recurso
+        // Los tres campos se mandan siempre, incluidos los null: el PUT reemplaza el recurso
         // entero, así que un campo ausente se limpia. Es lo que verifica CA-CAT-04-03.
         product.Update(
             command.Name,
@@ -65,10 +74,10 @@ public sealed class UpdateProductHandler(
             {
                 Description = command.Description,
                 ImageFileId = image?.FileId,
-                Price = command.Price,
                 Currency = command.Currency,
                 TaxRateId = taxRateId
             },
+            pricing,
             now);
 
         auditPublisher.Publish(
@@ -80,6 +89,6 @@ public sealed class UpdateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto(image?.PublicUrl);
+        return product.ToDto(image?.PublicUrl, priceLists);
     }
 }

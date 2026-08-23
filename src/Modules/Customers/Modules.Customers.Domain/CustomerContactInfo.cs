@@ -1,12 +1,16 @@
 namespace Modules.Customers.Domain;
 
 /// <summary>
-/// Los datos de contacto y ubicacion del cliente, todos opcionales, agrupados.
+/// Los datos de contacto del cliente, todos opcionales, agrupados.
 ///
-/// Van juntos y no como cinco parametros sueltos de <c>Create</c>/<c>Update</c> por la misma razon
-/// por la que existe <c>CompanyContactInfo</c>: los cinco son <c>string?</c>, y sueltos en la
-/// firma nada impide intercambiarlos. Una ciudad en el departamento compila sin una queja.
-/// Las propiedades son <c>init</c> y no posicionales, asi que solo se construye por nombre.
+/// Van juntos y no como tres parametros sueltos de <c>Create</c>/<c>Update</c> por la misma razon
+/// por la que existe <c>CompanyContactInfo</c>. Las propiedades son <c>init</c> y no posicionales,
+/// asi que solo se construye por nombre.
+///
+/// **Ya no lleva ciudad ni departamento.** Ese par vivio aca como texto libre hasta que la FK a
+/// <c>Modules.Geography</c> los reemplazo: dejaron de ser "info de contacto libre" —ahora son una
+/// relacion estructural del agregado, obligatoria— y se movieron a <see cref="Customer.CityId"/>,
+/// de primer nivel. Ver ahi el porque no es un id fuertemente tipado de Geography.
 /// </summary>
 public sealed record CustomerContactInfo
 {
@@ -16,23 +20,14 @@ public sealed record CustomerContactInfo
 
     public string? Address { get; init; }
 
-    /// <summary>Departamento. En el frontend viaja como <c>department</c>.</summary>
-    public string? Department { get; init; }
-
-    public string? City { get; init; }
-
-    // Espejan los anchos de columna. Los cuatro primeros salen del schema del formulario que ya
-    // existe (customer-form.schema.ts); el del correo no esta ahi: 254 es el maximo de una
-    // direccion por RFC 5321, el mismo que ya usa CompanyContactInfo.
+    // Espejan los anchos de columna. Salen del schema del formulario que ya existe
+    // (customer-form.schema.ts); el del correo no esta ahi: 254 es el maximo de una direccion por
+    // RFC 5321, el mismo que ya usa CompanyContactInfo.
     public const int PhoneMaxLength = 32;
 
     public const int EmailMaxLength = 254;
 
     public const int AddressMaxLength = 200;
-
-    public const int DepartmentMaxLength = 120;
-
-    public const int CityMaxLength = 120;
 
     public static CustomerContactInfo Empty { get; } = new();
 
@@ -48,25 +43,12 @@ public sealed record CustomerContactInfo
             Address,
             AddressMaxLength,
             "customers.customer.address_too_long",
-            $"The customer address cannot exceed {AddressMaxLength} characters."),
-        Department = NormalizeOptional(
-            Department,
-            DepartmentMaxLength,
-            "customers.customer.department_too_long",
-            $"The customer department cannot exceed {DepartmentMaxLength} characters."),
-        City = NormalizeOptional(
-            City,
-            CityMaxLength,
-            "customers.customer.city_too_long",
-            $"The customer city cannot exceed {CityMaxLength} characters.")
+            $"The customer address cannot exceed {AddressMaxLength} characters.")
     };
 
     // Vacio y ausente son lo mismo para un campo opcional. El formulario manda "" cuando el
     // usuario borra el input, y guardar esa cadena dejaria dos representaciones de "no hay dato"
     // que cada consumidor tendria que comparar.
-    //
-    // El departamento y la ciudad **no** se validan contra DANE/DIVIPOLA: `CLI-01` lo deja
-    // explicitamente fuera de alcance y esa capability no existe. Hoy son texto libre.
     private static string? NormalizeOptional(
         string? value,
         int maxLength,

@@ -205,7 +205,7 @@ public sealed class ProductWriteApiTests
 
         var update = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{missing}",
-            new { name = "Vela", code = "VS-001" },
+            new { name = "Vela", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NotFound, update.StatusCode);
 
@@ -229,7 +229,7 @@ public sealed class ProductWriteApiTests
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de cera", code = "VC-002" },
+            new { name = "Vela de cera", code = "VC-002", pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -406,7 +406,8 @@ public sealed class ProductWriteApiTests
 
         // Recién ahora escribe el primero, sobre una copia que ya no refleja la base.
         stale.Update(
-            "Vela de soja premium", "VS-002", ProductDetails.Empty, DateTimeOffset.UtcNow);
+            "Vela de soja premium", "VS-002", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, FinalUsd = 10m }, DateTimeOffset.UtcNow);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
             () => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));
@@ -428,7 +429,7 @@ public sealed class ProductWriteApiTests
         string code) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
-            new { name, code },
+            new { name, code, pricing = new { baseUsd = 10m, finalUsd = 10m } },
             TestContext.Current.CancellationToken);
 
     private static async Task<ProductResponse> ReadProductAsync(HttpResponseMessage response)
