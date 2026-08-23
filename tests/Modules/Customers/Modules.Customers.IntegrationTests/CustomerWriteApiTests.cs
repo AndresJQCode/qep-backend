@@ -452,11 +452,10 @@ public sealed class CustomerWriteApiTests
         Assert.False(updated.WithRetention);
     }
 
-    // El CUC no viaja en el request y el PUT no lo puede tocar. Es el identificador con el que una
-    // persona habla del cliente por telefono; volverlo mutable hace que la conversacion de ayer
-    // deje de referirse a nadie.
+    // El CUC no viaja en el request y el PUT no lo puede pisar con un valor propio ("cuc":
+    // "CUC-999999" aca no tiene efecto). Sin cambio de clasificacion, tampoco cambia por si solo.
     [Fact]
-    public async Task UpdateNeverChangesTheCuc()
+    public async Task UpdateKeepsTheCucWhenTheClassificationDoesNotChange()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -528,7 +527,9 @@ public sealed class CustomerWriteApiTests
     }
 
     // La ciudad y la clasificacion se pueden reemplazar en un PUT: un cliente se puede mudar de
-    // ciudad o cambiar de categoria.
+    // ciudad o cambiar de categoria. Regla de negocio confirmada: cambiar la clasificacion (el
+    // "tamano" del cliente) reescribe unicamente el prefijo del CUC — el departamento y el
+    // consecutivo, sus ultimos ocho caracteres, se conservan intactos.
     [Fact]
     public async Task UpdateCanChangeTheCityAndTheClassification()
     {
@@ -539,6 +540,7 @@ public sealed class CustomerWriteApiTests
         var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
         var newClassification = await CreateClassificationAsync(client, "Grande", "GRA");
         var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var originalSuffix = created.Cuc[3..];
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{created.Id}",
@@ -550,9 +552,7 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(updated);
         Assert.Equal(newClassification.Id, updated.Classification.Id);
-        // El CUC no se recalcula: sigue siendo el que emitio Create, aunque la clasificacion
-        // (y por lo tanto el prefijo "correcto" para un cliente nuevo) haya cambiado.
-        Assert.Equal(created.Cuc, updated.Cuc);
+        Assert.Equal($"GRA{originalSuffix}", updated.Cuc);
     }
 
     // El id de otro tenant no se alcanza ni con el permiso puesto: la autorizacion corta antes de
