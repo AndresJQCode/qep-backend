@@ -74,4 +74,13 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         dbContext.Products.AnyAsync(
             product => product.TenantId == tenantId && product.TaxRateId == taxRateId,
             cancellationToken);
+
+    public Task<bool> AnyWithPriceListAsync(
+        Guid tenantId,
+        Guid priceListId,
+        CancellationToken cancellationToken) =>
+        dbContext.Products.AnyAsync(
+            product => product.TenantId == tenantId &&
+                product.PriceScales.Any(scale => scale.PriceListId == priceListId),
+            cancellationToken);
 }

@@ -30,6 +30,7 @@ public sealed class UpdateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
     IProductImageLookup imageLookup,
+    ICatalogPriceListLookup priceListLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -58,6 +59,10 @@ public sealed class UpdateProductHandler(
         var image = await ProductImageResolver.ResolveAsync(
             imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
 
+        var pricing = command.Pricing.ToDomain();
+        var priceLists = await ProductPriceListResolver.ResolveAsync(
+            priceListLookup, command.TenantId, pricing.Scales, cancellationToken);
+
         var now = clock.UtcNow;
 
         // Los tres campos se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -72,7 +77,7 @@ public sealed class UpdateProductHandler(
                 Currency = command.Currency,
                 TaxRateId = taxRateId
             },
-            command.Pricing.ToDomain(),
+            pricing,
             now);
 
         auditPublisher.Publish(
@@ -84,6 +89,6 @@ public sealed class UpdateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto(image?.PublicUrl);
+        return product.ToDto(image?.PublicUrl, priceLists);
     }
 }

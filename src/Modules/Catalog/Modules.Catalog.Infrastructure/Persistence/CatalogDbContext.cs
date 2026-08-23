@@ -142,6 +142,9 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("product_id")
             .HasConversion(id => id.Value, value => new ProductId(value));
         scale.Property(value => value.TenantId).HasColumnName("tenant_id");
+        // Sin clave foranea: el modulo `pricing` es otro modulo de negocio, y ninguno referencia
+        // las tablas del otro. Ver el comentario de PriceScale.PriceListId.
+        scale.Property(value => value.PriceListId).HasColumnName("price_list_id");
         scale.Property(value => value.FromUnit).HasColumnName("from_unit");
         scale.Property(value => value.ToUnit).HasColumnName("to_unit");
         scale.Property(value => value.Discount).HasColumnName("discount").HasPrecision(5, 2);
@@ -156,6 +159,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         scale.Property(value => value.FinalUsd).HasColumnName("final_usd").HasPrecision(18, 2);
         scale.Property(value => value.FinalCop).HasColumnName("final_cop").HasPrecision(18, 2);
         scale.HasIndex(value => value.ProductId).HasDatabaseName("IX_product_price_scales_product");
+        scale.HasIndex(value => new { value.ProductId, value.PriceListId })
+            .HasDatabaseName("IX_product_price_scales_product_price_list");
 
         // CASCADE y no RESTRICT, a diferencia de la FK de TaxRate: una escala no tiene sentido
         // sin su producto — no es una referencia a un catálogo compartido, es parte del mismo

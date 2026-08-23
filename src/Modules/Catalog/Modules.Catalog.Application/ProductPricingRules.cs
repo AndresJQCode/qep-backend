@@ -34,6 +34,7 @@ internal sealed class PriceScaleRequestRules : AbstractValidator<PriceScaleReque
 {
     public PriceScaleRequestRules()
     {
+        RuleFor(scale => scale.PriceListId).NotEmpty();
         RuleFor(scale => scale.FromUnit).GreaterThanOrEqualTo(1);
         RuleFor(scale => scale.ToUnit)
             .GreaterThan(scale => scale.FromUnit)
