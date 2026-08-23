@@ -16,23 +16,11 @@ public sealed class CityTests
         Assert.Equal(departmentId, city.DepartmentId);
     }
 
-    [Fact]
-    public void CreateWithValidEightDigitPopulatedCenterCodeSucceeds()
-    {
-        var departmentId = DepartmentId.New();
-
-        var city = City.Create(
-            CityId.New(), "05001000", "MEDELLÍN, DISTRITO ESPECIAL", departmentId);
-
-        Assert.Equal("05001000", city.DivipolaCode);
-        Assert.Equal("MEDELLÍN, DISTRITO ESPECIAL", city.Name);
-        Assert.Equal(departmentId, city.DepartmentId);
-    }
-
     [Theory]
     [InlineData("5001")]
     [InlineData("050010")]
     [InlineData("0500100")]
+    [InlineData("05001000")]
     [InlineData("ABCDE")]
     [InlineData("ABCDEFGH")]
     [InlineData("")]

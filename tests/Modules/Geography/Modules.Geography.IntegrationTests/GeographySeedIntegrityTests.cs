@@ -32,7 +32,7 @@ public sealed class GeographySeedIntegrityTests
         var cityCount = await dbContext.Cities.CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(33, departmentCount);
-        Assert.Equal(9682, cityCount);
+        Assert.Equal(1122, cityCount);
     }
 
     [Fact]

@@ -47,7 +47,7 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
             .ValueGeneratedNever();
         city.Property(value => value.DivipolaCode)
             .HasColumnName("divipola_code")
-            .HasMaxLength(8)
+            .HasMaxLength(5)
             .IsRequired();
         city.Property(value => value.Name)
             .HasColumnName("name")

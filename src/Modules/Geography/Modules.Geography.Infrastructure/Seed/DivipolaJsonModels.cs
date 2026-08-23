@@ -1,12 +1,8 @@
 namespace Modules.Geography.Infrastructure.Seed;
 
-// Formas de deserialización del JSON crudo del DANE (claves en minúscula: "code", "name",
-// "department", y un "municipality" adicional en las entradas de centro poblado que no nos
-// interesa y que System.Text.Json ignora por no estar declarado acá).
+// Forma del JSON curado en Seed/Data (claves en minúscula: "code", "name", "departmentCode",
+// planas — no el JSON crudo del DANE, que trae "department" anidado).
 
 internal sealed record DivipolaJsonDepartment(string? Code, string? Name);
 
-internal sealed record DivipolaJsonDepartmentRef(string? Code, string? Name);
-
-internal sealed record DivipolaJsonCity(
-    string? Code, string? Name, DivipolaJsonDepartmentRef? Department);
+internal sealed record DivipolaJsonCity(string? Code, string? Name, string? DepartmentCode);

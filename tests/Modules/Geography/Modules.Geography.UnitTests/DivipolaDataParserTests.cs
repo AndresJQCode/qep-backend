@@ -63,46 +63,59 @@ public sealed class DivipolaDataParserTests
     }
 
     [Fact]
-    public void ParseCitiesKeepsBothFiveAndEightDigitEntries()
+    public void ParseCitiesSkipsEightDigitPopulatedCenterEntries()
     {
         var json = """
             [
               {
                 "code": "05001",
                 "name": "MEDELLÍN",
-                "department": { "code": "05", "name": "ANTIOQUIA" }
+                "departmentCode": "05"
               },
               {
                 "code": "05001000",
                 "name": "MEDELLÍN, DISTRITO ESPECIAL",
-                "department": { "code": "05", "name": "ANTIOQUIA" },
-                "municipality": { "code": "05001", "name": "MEDELLÍN" }
+                "departmentCode": "05"
               }
             ]
             """;
 
         var records = DivipolaDataParser.ParseCities(ToStream(json));
 
-        Assert.Equal(2, records.Count);
+        Assert.Single(records);
         Assert.Contains(records, record =>
             record.DivipolaCode == "05001" &&
             record.Name == "MEDELLÍN" &&
             record.DepartmentCode == "05");
-        Assert.Contains(records, record =>
-            record.DivipolaCode == "05001000" &&
-            record.Name == "MEDELLÍN, DISTRITO ESPECIAL" &&
-            record.DepartmentCode == "05");
     }
 
     [Fact]
-    public void ParseCitiesThrowsWhenCodeIsNotFiveOrEightDigits()
+    public void ParseCitiesSkipsEntriesWithCodeLengthOtherThanFive()
     {
         var json = """
             [
               {
                 "code": "0500100",
                 "name": "MEDELLÍN",
-                "department": { "code": "05", "name": "ANTIOQUIA" }
+                "departmentCode": "05"
+              }
+            ]
+            """;
+
+        var records = DivipolaDataParser.ParseCities(ToStream(json));
+
+        Assert.Empty(records);
+    }
+
+    [Fact]
+    public void ParseCitiesThrowsWhenFiveDigitCodeIsNotAllDigits()
+    {
+        var json = """
+            [
+              {
+                "code": "ABCDE",
+                "name": "MEDELLÍN",
+                "departmentCode": "05"
               }
             ]
             """;
@@ -119,7 +132,7 @@ public sealed class DivipolaDataParserTests
               {
                 "code": "05001",
                 "name": "MEDELLÍN",
-                "department": { "code": "08", "name": "ATLÁNTICO" }
+                "departmentCode": "08"
               }
             ]
             """;
@@ -136,12 +149,12 @@ public sealed class DivipolaDataParserTests
               {
                 "code": "05001",
                 "name": "MEDELLÍN",
-                "department": { "code": "05", "name": "ANTIOQUIA" }
+                "departmentCode": "05"
               },
               {
                 "code": "05001",
                 "name": "MEDELLÍN OTRA VEZ",
-                "department": { "code": "05", "name": "ANTIOQUIA" }
+                "departmentCode": "05"
               }
             ]
             """;
@@ -158,7 +171,7 @@ public sealed class DivipolaDataParserTests
               {
                 "code": "05001",
                 "name": "",
-                "department": { "code": "05", "name": "ANTIOQUIA" }
+                "departmentCode": "05"
               }
             ]
             """;

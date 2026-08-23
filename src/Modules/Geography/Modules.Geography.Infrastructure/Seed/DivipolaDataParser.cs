@@ -8,10 +8,12 @@ internal sealed record DivipolaCityRecord(string DivipolaCode, string Name, stri
 
 /// <summary>
 /// Parsea y valida el JSON fuente de DIVIPOLA antes de que <see cref="GeographySeeder"/> toque la
-/// base. El archivo de localidades trae dos niveles bajo el mismo array: municipios (código de 5
-/// dígitos) y centros poblados/corregimientos (código de 8 dígitos, anidados bajo un municipio vía
-/// el campo "municipality", que este parser ignora porque no lo necesita). Los dos niveles cuentan
-/// como "ciudad" para este módulo y se importan ambos.
+/// base. El archivo de localidades trae dos niveles bajo el mismo array, planos: municipios
+/// (código de 5 dígitos) y centros poblados/corregimientos (código de 8 dígitos). Sólo el nivel
+/// municipio se importa como "ciudad" — los centros poblados se descartan acá porque su nombre se
+/// repite masivamente en todo el país (nombres de vereda/corregimiento como "SAN ANTONIO" o
+/// "BUENAVISTA" aparecen decenas de veces), lo que dejaba un selector de ciudad con nombres
+/// duplicados dentro de un mismo departamento. El municipio, en cambio, es único por departamento.
 ///
 /// Las excepciones son <see cref="InvalidOperationException"/> y no
 /// <c>GeographyDomainException</c> a propósito: esto corre al arrancar la app, fuera de un
@@ -57,9 +59,17 @@ internal static class DivipolaDataParser
         var records = new List<DivipolaCityRecord>(raw.Count);
         foreach (var entry in raw)
         {
+            // Sólo el nivel municipio: los centros poblados (código de 8 dígitos) se descartan
+            // acá, no son un error de datos — el archivo fuente los trae a propósito, este módulo
+            // no los quiere.
+            if (entry.Code is not { Length: 5 })
+            {
+                continue;
+            }
+
             var code = RequireCityCode(entry.Code);
             var name = RequireName(entry.Name, "city");
-            var departmentCode = RequireCode(entry.Department?.Code, 2, "city.department");
+            var departmentCode = RequireCode(entry.DepartmentCode, 2, "city.departmentCode");
 
             if (!code.StartsWith(departmentCode, StringComparison.Ordinal))
             {
@@ -92,17 +102,14 @@ internal static class DivipolaDataParser
         return code;
     }
 
-    // La ciudad cubre dos niveles del archivo fuente bajo el mismo código: municipio (5 dígitos)
-    // y centro poblado/corregimiento (8 dígitos, con el municipio como sus primeros 5 dígitos).
-    // Ninguna otra longitud aparece en el archivo real.
     private static string RequireCityCode(string? code)
     {
         if (string.IsNullOrEmpty(code) ||
-            code.Length is not (5 or 8) ||
+            code.Length != 5 ||
             !code.All(char.IsAsciiDigit))
         {
             throw new InvalidOperationException(
-                "The city DIVIPOLA code must be exactly 5 or 8 digits, got " +
+                "The city DIVIPOLA code must be exactly 5 digits, got " +
                 $"'{code ?? "<null>"}'.");
         }
 

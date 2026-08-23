@@ -54,7 +54,7 @@ public sealed class GeographyApiTests
     }
 
     [Fact]
-    public async Task ListCitiesForAntioquiaReturnsAllEightHundredNinetySixCities()
+    public async Task ListCitiesForAntioquiaReturnsAllOneHundredTwentyFiveCities()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -68,9 +68,10 @@ public sealed class GeographyApiTests
         var cities = await response.Content.ReadFromJsonAsync<CityResponse[]>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(cities);
-        // 896 = 125 municipios (código de 5 dígitos) + 771 centros poblados/corregimientos
-        // (código de 8 dígitos) de Antioquia.
-        Assert.Equal(896, cities.Length);
+        // 125 municipios (código de 5 dígitos) de Antioquia. Los centros poblados/corregimientos
+        // (código de 8 dígitos) se excluyen del seed porque su nombre se repite dentro del
+        // departamento.
+        Assert.Equal(125, cities.Length);
         Assert.All(cities, city => Assert.Equal(antioquiaId, city.DepartmentId));
         Assert.Contains(
             cities, city => city.DivipolaCode == "05001" && city.Name == "MEDELLÍN");

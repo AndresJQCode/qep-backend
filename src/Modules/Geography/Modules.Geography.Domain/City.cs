@@ -2,9 +2,12 @@ namespace Modules.Geography.Domain;
 
 /// <summary>
 /// Una ciudad de la división político-administrativa de Colombia (DIVIPOLA), anidada bajo un
-/// departamento. Dato de referencia global, sin tenant. Cubre los dos niveles que trae el archivo
-/// fuente del DANE bajo el mismo código: municipios (código de 5 dígitos) y centros
-/// poblados/corregimientos (código de 8 dígitos, con el municipio como sus primeros 5 dígitos).
+/// departamento. Dato de referencia global, sin tenant. Sólo el nivel municipio (código de 5
+/// dígitos): el archivo fuente del DANE también trae centros poblados/corregimientos (código de
+/// 8 dígitos) anidados bajo cada municipio, pero comparten nombre con su municipio y con otros
+/// centros poblados de todo el país (p.ej. "SAN ANTONIO" repite más de 30 veces) — dentro de un
+/// mismo departamento el nombre de un municipio es único, el de un centro poblado no. Excluidos
+/// a propósito para que el selector de ciudad de un formulario no muestre nombres repetidos.
 /// </summary>
 public sealed class City
 {
@@ -44,11 +47,11 @@ public sealed class City
 
     private static void EnsureValidCode(string divipolaCode)
     {
-        if (divipolaCode is not { Length: 5 or 8 } || !divipolaCode.All(char.IsAsciiDigit))
+        if (divipolaCode is not { Length: 5 } || !divipolaCode.All(char.IsAsciiDigit))
         {
             throw new GeographyDomainException(
                 "geography.city.code_invalid",
-                "The city DIVIPOLA code must be exactly 5 or 8 digits.");
+                "The city DIVIPOLA code must be exactly 5 digits.");
         }
     }
 
