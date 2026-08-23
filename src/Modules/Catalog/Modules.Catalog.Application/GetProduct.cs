@@ -9,6 +9,7 @@ public sealed record GetProductQuery(Guid TenantId, Guid ProductId) : IQuery<Pro
 public sealed class GetProductHandler(
     IProductRepository repository,
     IProductImageLookup imageLookup,
+    ICatalogPriceListLookup priceListLookup,
     IExecutionContext executionContext)
     : IQueryHandler<GetProductQuery, ProductDto>
 {
@@ -28,8 +29,9 @@ public sealed class GetProductHandler(
         }
 
         // Un solo producto pasa igual por el mapeo de lote: la lista de ids tiene un elemento, o
-        // ninguno si no hay portada, y en ese caso no se le pregunta nada a Storage.
-        var dtos = await new[] { product }.ToDtosAsync(imageLookup, query.TenantId, cancellationToken);
+        // ninguno si no hay portada/escalas, y en ese caso no se le pregunta nada a Storage/Pricing.
+        var dtos = await new[] { product }.ToDtosAsync(
+            imageLookup, priceListLookup, query.TenantId, cancellationToken);
         return dtos[0];
     }
 }

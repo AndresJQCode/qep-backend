@@ -3,7 +3,7 @@ using Modules.Customers.Domain;
 namespace Modules.Customers.UnitTests;
 
 /// <summary>
-/// El agregado cliente (CLI-01).
+/// El agregado cliente (CLI-01, Fase 3/4).
 ///
 /// Los anchos y los conjuntos de valores salen del formulario que ya existe en el frontend
 /// (<c>features/customers/types/customer-form.schema.ts</c>) y del contrato del slice. El dominio
@@ -18,14 +18,30 @@ public sealed class CustomerTests
     private static readonly Guid TenantId =
         Guid.Parse("01900000-0000-7000-8000-000000000001");
 
+    private static readonly Guid CityId =
+        Guid.Parse("01900000-0000-7000-8000-000000000010");
+
+    private static readonly ClientClassificationId ClassificationId =
+        new(Guid.Parse("01900000-0000-7000-8000-000000000020"));
+
     private static CustomerIdentification Identification(
         IdentificationType type = IdentificationType.Nit,
         string number = "900.123.456-1") =>
         new() { Type = type, Number = number };
 
+    private static CustomerCommercialInfo Commercial(
+        ClientClassificationId? classificationId = null,
+        bool withRetention = false) =>
+        new()
+        {
+            ClassificationId = classificationId ?? ClassificationId,
+            WithRetention = withRetention
+        };
+
     private static Customer Create(
-        string cuc = "CUC-000142",
+        string cuc = "CLI08000142",
         string name = "Verde Esencial S.A.S.",
+        Guid? cityId = null,
         CustomerIdentification? identification = null,
         CustomerContactInfo? contact = null,
         CustomerCommercialInfo? commercial = null) =>
@@ -34,9 +50,10 @@ public sealed class CustomerTests
             TenantId,
             cuc,
             name,
+            cityId ?? CityId,
             identification ?? Identification(),
             contact ?? CustomerContactInfo.Empty,
-            commercial ?? CustomerCommercialInfo.Empty,
+            commercial ?? Commercial(),
             Now);
 
     [Fact]
@@ -56,11 +73,11 @@ public sealed class CustomerTests
     public void CreateTrimsTheIdentifyingFields()
     {
         var customer = Create(
-            cuc: "  CUC-000142  ",
+            cuc: "  CLI08000142  ",
             name: "  Verde Esencial  ",
             identification: Identification(number: "  900-1  "));
 
-        Assert.Equal("CUC-000142", customer.Cuc);
+        Assert.Equal("CLI08000142", customer.Cuc);
         Assert.Equal("Verde Esencial", customer.Name);
         Assert.Equal("900-1", customer.Identification.Number);
     }
@@ -105,9 +122,9 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.identification_number_too_long", exception.Code);
     }
 
-    // El CUC lo emite el backend y llega ya formado al agregado; el agregado solo comprueba que
-    // llegue. Un cliente sin CUC es un cliente que la grilla pinta con una celda vacia y que nadie
-    // puede buscar — la caja de busqueda del listado busca por CUC.
+    // El CUC lo emite el backend (ICucGenerator + CucFormatter) y llega ya formado al agregado;
+    // el agregado solo comprueba que llegue. Un cliente sin CUC es un cliente que la grilla pinta
+    // con una celda vacia y que nadie puede buscar — la caja de busqueda del listado busca por CUC.
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
@@ -118,6 +135,28 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.cuc_required", exception.Code);
     }
 
+    // La ciudad es una FK obligatoria de primer nivel (Fase 3): un Guid.Empty no es "sin ciudad",
+    // es un dato mal formado, y el dominio lo rechaza antes de que llegue a la FK de base.
+    [Fact]
+    public void CreateRejectsAnEmptyCityId()
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(cityId: Guid.Empty));
+
+        Assert.Equal("customers.customer.city_required", exception.Code);
+    }
+
+    // Misma razon que la ciudad: la clasificacion es una FK obligatoria (Fase 3), no el viejo enum
+    // opcional Pequeno/Mediano/Grande.
+    [Fact]
+    public void CreateRejectsAnEmptyClassificationId()
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(commercial: Commercial(classificationId: new ClientClassificationId(Guid.Empty))));
+
+        Assert.Equal("customers.customer.classification_required", exception.Code);
+    }
+
     [Fact]
     public void ContactInfoTrimsAndNormalizesBlankToNull()
     {
@@ -125,16 +164,12 @@ public sealed class CustomerTests
         {
             Phone = "  310 935 2187  ",
             Email = "   ",
-            Address = "",
-            Department = "  Antioquia  ",
-            City = "  Medellin  "
+            Address = ""
         });
 
         Assert.Equal("310 935 2187", customer.Phone);
         Assert.Null(customer.Email);
         Assert.Null(customer.Address);
-        Assert.Equal("Antioquia", customer.Department);
-        Assert.Equal("Medellin", customer.City);
     }
 
     // Mismo criterio que CompanyContactInfo: "Compras@Verde.CO" y "compras@verde.co" son la misma
@@ -163,43 +198,37 @@ public sealed class CustomerTests
     }
 
     [Fact]
-    public void ContactInfoRejectsADepartmentLongerThanTheColumn()
+    public void ContactInfoRejectsAnAddressLongerThanTheColumn()
     {
         var exception = Assert.Throws<CustomersDomainException>(
             () => Create(contact: new CustomerContactInfo
             {
-                Department = new string('d', CustomerContactInfo.DepartmentMaxLength + 1)
+                Address = new string('d', CustomerContactInfo.AddressMaxLength + 1)
             }));
 
-        Assert.Equal("customers.customer.department_too_long", exception.Code);
+        Assert.Equal("customers.customer.address_too_long", exception.Code);
     }
 
     // withRetention es obligatorio en el formulario y no tiene "sin definir": un cliente o retiene
     // o no. Por eso es bool y no bool?, y por eso Empty lo deja en false.
     [Fact]
-    public void CommercialInfoDefaultsToNoRetentionAndNoPriceList()
+    public void CommercialInfoDefaultsToNoRetention()
     {
         var customer = Create();
 
         Assert.False(customer.WithRetention);
-        Assert.Null(customer.PriceListId);
-        Assert.Null(customer.Classification);
     }
 
     [Fact]
     public void CommercialInfoKeepsWhatItIsGiven()
     {
-        var priceListId = Guid.CreateVersion7();
+        var classificationId = new ClientClassificationId(Guid.CreateVersion7());
 
-        var customer = Create(commercial: new CustomerCommercialInfo
-        {
-            Classification = CustomerClassification.Mediano,
-            PriceListId = priceListId,
-            WithRetention = true
-        });
+        var customer = Create(commercial: Commercial(
+            classificationId: classificationId,
+            withRetention: true));
 
-        Assert.Equal(CustomerClassification.Mediano, customer.Classification);
-        Assert.Equal(priceListId, customer.PriceListId);
+        Assert.Equal(classificationId, customer.ClassificationId);
         Assert.True(customer.WithRetention);
     }
 
@@ -212,23 +241,41 @@ public sealed class CustomerTests
         {
             Phone = "310 935 2187",
             Email = "compras@verde.co",
-            Address = "Calle 10 # 45-12",
-            Department = "Antioquia",
-            City = "Medellin"
+            Address = "Calle 10 # 45-12"
         });
 
         customer.Update(
             "Verde Esencial S.A.S.",
+            CityId,
             Identification(),
             CustomerContactInfo.Empty,
-            CustomerCommercialInfo.Empty,
+            Commercial(),
             Now.AddMinutes(5));
 
         Assert.Null(customer.Phone);
         Assert.Null(customer.Email);
         Assert.Null(customer.Address);
-        Assert.Null(customer.Department);
-        Assert.Null(customer.City);
+    }
+
+    // La ciudad y la clasificacion se pueden reemplazar en el Update: un cliente se puede mudar de
+    // ciudad o cambiar de categoria comercial.
+    [Fact]
+    public void UpdateReplacesTheCityAndTheClassification()
+    {
+        var customer = Create();
+        var newCityId = Guid.CreateVersion7();
+        var newClassificationId = new ClientClassificationId(Guid.CreateVersion7());
+
+        customer.Update(
+            customer.Name,
+            newCityId,
+            Identification(),
+            CustomerContactInfo.Empty,
+            Commercial(classificationId: newClassificationId),
+            Now.AddMinutes(5));
+
+        Assert.Equal(newCityId, customer.CityId);
+        Assert.Equal(newClassificationId, customer.ClassificationId);
     }
 
     // El CUC no viaja en el request y Update no lo toca: lo emite el backend una sola vez, al
@@ -237,16 +284,17 @@ public sealed class CustomerTests
     [Fact]
     public void UpdateNeverChangesTheCuc()
     {
-        var customer = Create(cuc: "CUC-000142");
+        var customer = Create(cuc: "CLI08000142");
 
         customer.Update(
             "Otro Nombre",
+            CityId,
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
-            CustomerCommercialInfo.Empty,
+            Commercial(),
             Now.AddMinutes(5));
 
-        Assert.Equal("CUC-000142", customer.Cuc);
+        Assert.Equal("CLI08000142", customer.Cuc);
     }
 
     [Fact]
@@ -257,9 +305,10 @@ public sealed class CustomerTests
 
         customer.Update(
             "Otro",
+            CityId,
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
-            CustomerCommercialInfo.Empty,
+            Commercial(),
             later);
 
         Assert.Equal(2, customer.Version);
@@ -278,9 +327,10 @@ public sealed class CustomerTests
 
         Assert.Throws<CustomersDomainException>(() => customer.Update(
             "Nombre nuevo",
+            CityId,
             Identification(number: "   "),
             CustomerContactInfo.Empty,
-            CustomerCommercialInfo.Empty,
+            Commercial(),
             Now.AddMinutes(5)));
 
         Assert.Equal("Verde Esencial", customer.Name);
@@ -295,9 +345,10 @@ public sealed class CustomerTests
 
         var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
             "Otro",
+            CityId,
             Identification(),
             CustomerContactInfo.Empty,
-            CustomerCommercialInfo.Empty,
+            Commercial(),
             Now));
 
         Assert.Equal("customers.customer.inactive", exception.Code);
@@ -341,9 +392,10 @@ public sealed class CustomerTests
         customer.Activate(Now.AddMinutes(1));
         customer.Update(
             "Otro",
+            CityId,
             Identification(),
             CustomerContactInfo.Empty,
-            CustomerCommercialInfo.Empty,
+            Commercial(),
             Now.AddMinutes(2));
 
         Assert.True(customer.IsActive);

@@ -16,8 +16,9 @@ public sealed class Customer
     // (features/customers/types/customer-form.schema.ts).
     public const int NameMaxLength = 160;
 
-    // El CUC que emite el backend es "CUC-000142": prefijo mas seis digitos. 32 deja lugar de
-    // sobra si SDD-OD-06 termina moviendolo a un modulo `identifiers` con otro formato.
+    // El CUC que emite el backend es "{prefijo}{depto}{consecutivo}" (ej. CLI08000001): el
+    // prefijo de la clasificacion (hasta 20), el codigo DIVIPOLA del departamento (2) y el
+    // consecutivo (6). 28 como maximo, y 32 deja margen sin tener que tocar esta constante.
     public const int CucMaxLength = 32;
 
     // EF Core materializa por aca. El codigo nunca construye el agregado asi: Create es el unico
@@ -34,6 +35,7 @@ public sealed class Customer
         Guid tenantId,
         string cuc,
         string name,
+        Guid cityId,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -43,6 +45,7 @@ public sealed class Customer
         TenantId = tenantId;
         Cuc = cuc;
         Name = name;
+        CityId = EnsureValidCityId(cityId);
         // Directo y no por Assign: el analisis de flujo del compilador no atraviesa metodos, asi
         // que asignar IdentificationNumber alla deja el constructor con un CS8618.
         IdentificationType = identification.Type;
@@ -73,6 +76,20 @@ public sealed class Customer
     public string Name { get; private set; }
 
     /// <summary>
+    /// La ciudad del cliente, FK al modulo <c>Geography</c>. Es estructural y obligatoria — no es
+    /// "info de contacto libre" como lo era el texto plano anterior, asi que vive de primer nivel
+    /// en el agregado y no dentro de <see cref="CustomerContactInfo"/>. Es tambien la mitad del
+    /// departamento que arma el CUC: <c>CreateCustomerHandler</c> resuelve el departamento de esta
+    /// ciudad antes de emitir el codigo.
+    ///
+    /// Tipada como <see cref="Guid"/> y no con un id fuertemente tipado de
+    /// <c>Modules.Geography.Domain</c>: ningun modulo de dominio de este repo referencia el
+    /// dominio de otro (ni siquiera Catalog hacia Storage), y esta es la primera FK real entre
+    /// modulos de negocio — cambiar ese precedente ahora acoplaria los dos ensamblados de dominio.
+    /// </summary>
+    public Guid CityId { get; private set; }
+
+    /// <summary>
     /// El tipo de documento. Junto con <see cref="IdentificationNumber"/> forma la clave unica del
     /// cliente dentro del tenant.
     /// </summary>
@@ -100,13 +117,13 @@ public sealed class Customer
 
     public string? Address { get; private set; }
 
-    public string? Department { get; private set; }
-
-    public string? City { get; private set; }
-
-    public CustomerClassification? Classification { get; private set; }
-
-    public Guid? PriceListId { get; private set; }
+    /// <summary>
+    /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
+    /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado.
+    /// Obligatoria: reemplaza al viejo enum fijo <c>CustomerClassification</c>, que no tenia
+    /// relacion con este catalogo y ya no tiene consumidores.
+    /// </summary>
+    public ClientClassificationId ClassificationId { get; private set; }
 
     public bool WithRetention { get; private set; }
 
@@ -131,6 +148,7 @@ public sealed class Customer
         Guid tenantId,
         string cuc,
         string name,
+        Guid cityId,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -140,6 +158,7 @@ public sealed class Customer
             tenantId,
             NormalizeCuc(cuc),
             NormalizeName(name),
+            cityId,
             identification.Normalized(),
             contact,
             commercial,
@@ -148,9 +167,14 @@ public sealed class Customer
     /// <summary>
     /// Reemplaza el recurso entero: lo que no viene en el cuerpo se **limpia**. El CUC es la unica
     /// excepcion, y no porque se conserve "por las dudas" — es que no viaja en el request.
+    ///
+    /// La ciudad y la clasificacion **si** se pueden reemplazar aca: un cliente se puede mudar de
+    /// ciudad o cambiar de categoria comercial, a diferencia del CUC, que es un identificador y no
+    /// un dato que describa al cliente hoy.
     /// </summary>
     public void Update(
         string name,
+        Guid cityId,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -164,10 +188,12 @@ public sealed class Customer
         // esa es la que EF persiste en el siguiente SaveChanges de la misma unidad de trabajo. Es
         // el defecto que EMP-08 tuvo que corregir en Company; aca nace cubierto.
         var normalizedName = NormalizeName(name);
+        var normalizedCityId = EnsureValidCityId(cityId);
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
 
         Name = normalizedName;
+        CityId = normalizedCityId;
         Assign(normalizedIdentification);
         Assign(normalizedContact);
         Assign(commercial);
@@ -183,7 +209,7 @@ public sealed class Customer
         IdentificationNumber = identification.Number;
     }
 
-    // Asigna los cinco siempre, incluidos los null. Se puede **limpiar** un campo, no solo
+    // Asigna los tres siempre, incluidos los null. Se puede **limpiar** un campo, no solo
     // setearlo: una implementacion que ignore los null "para no pisar" deja campos imborrables y
     // pasa todas las demas pruebas.
     private void Assign(CustomerContactInfo contact)
@@ -193,14 +219,11 @@ public sealed class Customer
         Phone = normalized.Phone;
         Email = normalized.Email;
         Address = normalized.Address;
-        Department = normalized.Department;
-        City = normalized.City;
     }
 
     private void Assign(CustomerCommercialInfo commercial)
     {
-        Classification = commercial.Classification;
-        PriceListId = commercial.PriceListId;
+        ClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         WithRetention = commercial.WithRetention;
     }
 
@@ -268,9 +291,9 @@ public sealed class Customer
             "customers.customer.name_too_long",
             $"The customer name cannot exceed {NameMaxLength} characters.");
 
-    // El CUC llega ya formado desde ICucGenerator; aca solo se comprueba que llegue y quepa. Un
-    // cliente sin CUC es una celda vacia en la grilla y un cliente que la caja de busqueda del
-    // listado —que busca por nombre, identificacion o CUC— no encuentra.
+    // El CUC llega ya formado desde ICucGenerator + CucFormatter; aca solo se comprueba que
+    // llegue y quepa. Un cliente sin CUC es una celda vacia en la grilla y un cliente que la caja
+    // de busqueda del listado —que busca por nombre, identificacion o CUC— no encuentra.
     private static string NormalizeCuc(string cuc) =>
         Normalize(
             cuc,
@@ -279,6 +302,26 @@ public sealed class Customer
             "The customer CUC is required.",
             "customers.customer.cuc_too_long",
             $"The customer CUC cannot exceed {CucMaxLength} characters.");
+
+    // La FK de base (customers.customers.city_id -> geography.cities.id) garantiza que la ciudad
+    // exista, pero no corre hasta el SaveChanges. Este chequeo estructural minimo —no vacia— es lo
+    // unico que el dominio puede afirmar por si mismo, mismo criterio que el resto de los
+    // required de este agregado: fallar rapido con un codigo de dominio en vez de dejar que un
+    // Guid.Empty viaje hasta Postgres y vuelva como una violacion de FK que no dice nada util.
+    private static Guid EnsureValidCityId(Guid cityId) =>
+        cityId == Guid.Empty
+            ? throw new CustomersDomainException(
+                "customers.customer.city_required",
+                "The customer city is required.")
+            : cityId;
+
+    private static ClientClassificationId EnsureValidClassificationId(
+        ClientClassificationId classificationId) =>
+        classificationId.Value == Guid.Empty
+            ? throw new CustomersDomainException(
+                "customers.customer.classification_required",
+                "The customer classification is required.")
+            : classificationId;
 
     private static string Normalize(
         string value,

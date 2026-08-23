@@ -13,6 +13,8 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
 
         var response = await client.PostAsJsonAsync(
             CustomersUrl(),
@@ -24,9 +26,8 @@ public sealed class CustomerWriteApiTests
                 phone = "310 935 2187",
                 email = "Compras@VerdeEsencial.CO",
                 address = "Calle 10 # 45-12",
-                department = "Antioquia",
-                city = "Medellin",
-                classification = "MEDIANO",
+                cityId = city.CityId,
+                classificationId = classification.Id,
                 withRetention = true
             },
             TestContext.Current.CancellationToken);
@@ -37,7 +38,9 @@ public sealed class CustomerWriteApiTests
         Assert.NotNull(customer);
         Assert.True(customer.IsActive);
         Assert.True(customer.WithRetention);
-        Assert.Equal("MEDIANO", customer.Classification);
+        Assert.Equal(classification.Id, customer.Classification.Id);
+        Assert.Equal(city.CityId, customer.City.Id);
+        Assert.Equal(city.DepartmentDivipolaCode, customer.Department.DivipolaCode);
         // Normalizado por el dominio: el correo baja a minusculas.
         Assert.Equal("compras@verdeesencial.co", customer.Email);
         Assert.Equal(
@@ -48,8 +51,10 @@ public sealed class CustomerWriteApiTests
     /// <summary>
     /// El CUC lo emite el backend, no viaja en el request, y el consecutivo avanza por tenant.
     ///
-    /// El formato es el que el consumidor ya espera y pinta en su propia columna:
-    /// <c>CUC-000001</c> (<c>generateCuc</c> en <c>customers.fixtures.ts</c>).
+    /// El formato es <c>{prefijo}{depto}{consecutivo}</c> (Fase 4): el prefijo de la clasificacion
+    /// del cliente, el codigo DIVIPOLA del departamento de su ciudad y un consecutivo de seis
+    /// digitos. Ciudad y clasificacion se mantienen fijas entre las dos altas para que el
+    /// prefijo/departamento no varien y la asercion se concentre en el consecutivo.
     /// </summary>
     [Fact]
     public async Task CreateEmitsASequentialCucPerTenant()
@@ -57,12 +62,39 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
 
-        var first = await CreateCustomerAsync(client, "Verde Esencial", "900.111.111-1");
-        var second = await CreateCustomerAsync(client, "Naturaleza Viva", "830.222.222-2");
+        var first = await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial", "900.111.111-1");
+        var second = await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva", "830.222.222-2");
 
-        Assert.Equal("CUC-000001", first.Cuc);
-        Assert.Equal("CUC-000002", second.Cuc);
+        var expectedPrefix = $"CLI{city.DepartmentDivipolaCode}";
+        Assert.Equal($"{expectedPrefix}000001", first.Cuc);
+        Assert.Equal($"{expectedPrefix}000002", second.Cuc);
+    }
+
+    // El consecutivo es un unico contador por tenant, no uno por clasificacion: dos clientes del
+    // mismo tenant con clasificaciones (y por lo tanto prefijos) distintas siguen compartiendo el
+    // mismo numero de secuencia, aunque el CUC final se vea distinto por el prefijo.
+    [Fact]
+    public async Task TheCucSequenceIsSharedAcrossDifferentClassificationsOfTheSameTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var retail = await CreateClassificationAsync(client, "Minorista", "MIN");
+        var wholesale = await CreateClassificationAsync(client, "Mayorista", "MAY");
+
+        var first = await CreateCustomerAsync(
+            client, city.CityId, retail.Id, "Verde Esencial", "900.111.111-1");
+        var second = await CreateCustomerAsync(
+            client, city.CityId, wholesale.Id, "Naturaleza Viva", "830.222.222-2");
+
+        Assert.Equal($"MIN{city.DepartmentDivipolaCode}000001", first.Cuc);
+        Assert.Equal($"MAY{city.DepartmentDivipolaCode}000002", second.Cuc);
     }
 
     // Cada tenant tiene su propio consecutivo. Uno compartido le dejaria ver a un tenant cuantos
@@ -79,13 +111,93 @@ public sealed class CustomerWriteApiTests
             OtherSubjectId,
             OtherTenantId,
             CustomersPermissions.CustomerRead,
-            CustomersPermissions.CustomerManage);
+            CustomersPermissions.CustomerManage,
+            CustomersPermissions.ClassificationRead,
+            CustomersPermissions.ClassificationManage);
+        var myCity = await EnsureCityAsync(mine);
+        var myClassification = await CreateClassificationAsync(mine, "Mediano", "CLI");
+        var theirCity = await EnsureCityAsync(theirs);
+        var theirClassification = await CreateClassificationAsync(
+            theirs, "Mediano", "CLI", OtherTenantId);
 
-        await CreateCustomerAsync(mine, "Verde Esencial", "900.111.111-1");
+        await CreateCustomerAsync(
+            mine, myCity.CityId, myClassification.Id, "Verde Esencial", "900.111.111-1");
         var theirFirst = await CreateCustomerAsync(
-            theirs, "Otro Cliente", "830.222.222-2", OtherTenantId);
+            theirs,
+            theirCity.CityId,
+            theirClassification.Id,
+            "Otro Cliente",
+            "830.222.222-2",
+            OtherTenantId);
 
-        Assert.Equal("CUC-000001", theirFirst.Cuc);
+        Assert.Equal($"CLI{theirCity.DepartmentDivipolaCode}000001", theirFirst.Cuc);
+    }
+
+    // Referenciar una ciudad o una clasificacion que no existe (o que existe pero en otro tenant)
+    // sale como 422 con su propio codigo de dominio, no como un 500: es exactamente el mismo
+    // criterio que Catalog ya usa para Product.TaxRateId.
+    [Fact]
+    public async Task CreateWithAnUnknownCityIsRejectedWithItsDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(Guid.CreateVersion7(), classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.customer.city_not_found", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateWithAnUnknownClassificationIsRejectedWithItsDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, Guid.CreateVersion7()),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains(
+            "customers.customer.classification_not_found", body, StringComparison.Ordinal);
+    }
+
+    // Una clasificacion de otro tenant no es "no encontrada por casualidad": el repositorio filtra
+    // por tenant, asi que referenciarla desde este tenant tiene que fallar igual que si no
+    // existiera en absoluto — nunca prestada entre tenants.
+    [Fact]
+    public async Task CreateWithAnotherTenantsClassificationIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var mine = CreateManager(factory);
+        using var theirs = CreateClient(
+            factory,
+            OtherSubjectId,
+            OtherTenantId,
+            CustomersPermissions.ClassificationRead,
+            CustomersPermissions.ClassificationManage);
+        var city = await EnsureCityAsync(mine);
+        var theirClassification = await CreateClassificationAsync(
+            theirs, "Ajena", "AJE", OtherTenantId);
+
+        var response = await mine.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, theirClassification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
     // La violacion de IX_customers_tenant_identification tiene que salir como 422 con su codigo, no
@@ -96,11 +208,18 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        await CreateCustomerAsync(client, "Verde Esencial", "900.123.456-1");
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial", "900.123.456-1");
 
         var response = await client.PostAsJsonAsync(
             CustomersUrl(),
-            NewCustomerBody(name: "Otro Cliente", identificationNumber: "900.123.456-1"),
+            NewCustomerBody(
+                city.CityId,
+                classification.Id,
+                name: "Otro Cliente",
+                identificationNumber: "900.123.456-1"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -118,12 +237,18 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        await CreateCustomerAsync(client, "Verde Esencial", "900.123.456-1");
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial", "900.123.456-1");
 
         var response = await client.PostAsJsonAsync(
             CustomersUrl(),
             NewCustomerBody(
-                name: "Otro Cliente", identificationNumber: "  900.123.456-1  "),
+                city.CityId,
+                classification.Id,
+                name: "Otro Cliente",
+                identificationNumber: "  900.123.456-1  "),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -137,7 +262,10 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        await CreateCustomerAsync(client, "Verde Esencial", "900.123.456-1");
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial", "900.123.456-1");
 
         var response = await client.PostAsJsonAsync(
             CustomersUrl(),
@@ -146,6 +274,8 @@ public sealed class CustomerWriteApiTests
                 name = "Persona Natural",
                 identificationType = "CC",
                 identificationNumber = "900.123.456-1",
+                cityId = city.CityId,
+                classificationId = classification.Id,
                 withRetention = false
             },
             TestContext.Current.CancellationToken);
@@ -173,7 +303,8 @@ public sealed class CustomerWriteApiTests
                 identificationType = "DNI",
                 identificationNumber = "",
                 email = "no-es-un-correo",
-                classification = "ENORME",
+                cityId = Guid.Empty,
+                classificationId = Guid.Empty,
                 withRetention = false
             },
             TestContext.Current.CancellationToken);
@@ -184,7 +315,8 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("IdentificationType", fields);
         Assert.Contains("IdentificationNumber", fields);
         Assert.Contains("Email", fields);
-        Assert.Contains("Classification", fields);
+        Assert.Contains("CityId", fields);
+        Assert.Contains("ClassificationId", fields);
     }
 
     // Vacio es ausente para un campo opcional: el formulario manda "" cuando el usuario borra el
@@ -195,6 +327,8 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
 
         var response = await client.PostAsJsonAsync(
             CustomersUrl(),
@@ -206,9 +340,8 @@ public sealed class CustomerWriteApiTests
                 phone = "",
                 email = "",
                 address = "",
-                department = "",
-                city = "",
-                classification = "",
+                cityId = city.CityId,
+                classificationId = classification.Id,
                 withRetention = false
             },
             TestContext.Current.CancellationToken);
@@ -220,9 +353,6 @@ public sealed class CustomerWriteApiTests
         Assert.Null(customer.Phone);
         Assert.Null(customer.Email);
         Assert.Null(customer.Address);
-        Assert.Null(customer.Department);
-        Assert.Null(customer.City);
-        Assert.Null(customer.Classification);
     }
 
     [Fact]
@@ -230,12 +360,15 @@ public sealed class CustomerWriteApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        var city = await EnsureCityAsync(manager);
+        var classification = await CreateClassificationAsync(manager);
         using var client = CreateClient(
             factory, SubjectId, TenantId, CustomersPermissions.CustomerRead);
 
         var response = await client.PostAsJsonAsync(
             CustomersUrl(),
-            NewCustomerBody(),
+            NewCustomerBody(city.CityId, classification.Id),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -262,6 +395,8 @@ public sealed class CustomerWriteApiTests
                 name = "",
                 identificationType = "",
                 identificationNumber = "",
+                cityId = Guid.Empty,
+                classificationId = Guid.Empty,
                 withRetention = false
             },
             TestContext.Current.CancellationToken);
@@ -280,6 +415,8 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
         var created = await client.PostAsJsonAsync(
             CustomersUrl(),
             new
@@ -290,9 +427,8 @@ public sealed class CustomerWriteApiTests
                 phone = "310 935 2187",
                 email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
-                department = "Antioquia",
-                city = "Medellin",
-                classification = "GRANDE",
+                cityId = city.CityId,
+                classificationId = classification.Id,
                 withRetention = true
             },
             TestContext.Current.CancellationToken);
@@ -303,7 +439,7 @@ public sealed class CustomerWriteApiTests
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{customer.Id}",
-            NewCustomerBody(),
+            NewCustomerBody(city.CityId, classification.Id),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -313,9 +449,6 @@ public sealed class CustomerWriteApiTests
         Assert.Null(updated.Phone);
         Assert.Null(updated.Email);
         Assert.Null(updated.Address);
-        Assert.Null(updated.Department);
-        Assert.Null(updated.City);
-        Assert.Null(updated.Classification);
         Assert.False(updated.WithRetention);
     }
 
@@ -328,7 +461,9 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        var created = await CreateCustomerAsync(client);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{created.Id}",
@@ -338,6 +473,8 @@ public sealed class CustomerWriteApiTests
                 identificationType = "NIT",
                 identificationNumber = "900.123.456-1",
                 cuc = "CUC-999999",
+                cityId = city.CityId,
+                classificationId = classification.Id,
                 withRetention = false
             },
             TestContext.Current.CancellationToken);
@@ -355,10 +492,12 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{Guid.CreateVersion7()}",
-            NewCustomerBody(),
+            NewCustomerBody(city.CityId, classification.Id),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -372,11 +511,13 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        var created = await CreateCustomerAsync(client);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{created.Id}",
-            NewCustomerBody(name: "Verde Esencial S.A."),
+            NewCustomerBody(city.CityId, classification.Id, name: "Verde Esencial S.A."),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -384,6 +525,34 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(customer);
         Assert.Equal("Verde Esencial S.A.", customer.Name);
+    }
+
+    // La ciudad y la clasificacion se pueden reemplazar en un PUT: un cliente se puede mudar de
+    // ciudad o cambiar de categoria.
+    [Fact]
+    public async Task UpdateCanChangeTheCityAndTheClassification()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
+        var newClassification = await CreateClassificationAsync(client, "Grande", "GRA");
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewCustomerBody(city.CityId, newClassification.Id, name: created.Name),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(updated);
+        Assert.Equal(newClassification.Id, updated.Classification.Id);
+        // El CUC no se recalcula: sigue siendo el que emitio Create, aunque la clasificacion
+        // (y por lo tanto el prefijo "correcto" para un cliente nuevo) haya cambiado.
+        Assert.Equal(created.Cuc, updated.Cuc);
     }
 
     // El id de otro tenant no se alcanza ni con el permiso puesto: la autorizacion corta antes de
@@ -396,11 +565,13 @@ public sealed class CustomerWriteApiTests
         using var mine = CreateManager(factory);
         using var theirs = CreateClient(
             factory, OtherSubjectId, OtherTenantId, CustomersPermissions.CustomerManage);
-        var created = await CreateCustomerAsync(mine);
+        var city = await EnsureCityAsync(mine);
+        var classification = await CreateClassificationAsync(mine);
+        var created = await CreateCustomerAsync(mine, city.CityId, classification.Id);
 
         var response = await theirs.PutAsJsonAsync(
             $"{CustomersUrl()}/{created.Id}",
-            NewCustomerBody(name: "Robado"),
+            NewCustomerBody(city.CityId, classification.Id, name: "Robado"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);

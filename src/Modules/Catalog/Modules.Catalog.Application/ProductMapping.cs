@@ -10,7 +10,10 @@ internal static class ProductMapping
     /// llama ya la tiene —el que escribe, del resolver; el que lee, del lote— y pasarla acá evita
     /// que este mapeo necesite un puerto.
     /// </summary>
-    public static ProductDto ToDto(this Product product, string? imageUrl = null) => new(
+    public static ProductDto ToDto(
+        this Product product,
+        string? imageUrl = null,
+        IReadOnlyDictionary<Guid, CatalogPriceListRef>? priceLists = null) => new(
         product.Id.Value,
         product.Name,
         product.Code,
@@ -18,11 +21,32 @@ internal static class ProductMapping
         product.Description,
         product.ImageFileId,
         imageUrl,
-        product.Price,
         product.Currency,
         product.TaxRateId?.Value,
+        product.PriceBaseUsd,
+        product.PriceBaseCop,
+        product.PriceFinalUsd,
+        product.PriceFinalCop,
+        product.Discount,
+        product.PriceScales.Select(scale => ToResponse(scale, priceLists)).ToArray(),
         product.CreatedAt,
         product.UpdatedAt);
+
+    private static PriceScaleResponse ToResponse(
+        PriceScale scale, IReadOnlyDictionary<Guid, CatalogPriceListRef>? priceLists) => new(
+        scale.Id.Value,
+        scale.PriceListId,
+        priceLists is not null && priceLists.TryGetValue(scale.PriceListId, out var priceList)
+            ? priceList.Name
+            : null,
+        scale.FromUnit,
+        scale.ToUnit,
+        scale.Discount,
+        scale.Restriction.ToWireValue(),
+        scale.Multiple,
+        scale.PackagingUnit,
+        scale.FinalUsd,
+        scale.FinalCop);
 
     /// <summary>
     /// Mapea una colección resolviendo las URLs en **una sola** consulta al puerto.
@@ -41,6 +65,7 @@ internal static class ProductMapping
     public static async Task<IReadOnlyList<ProductDto>> ToDtosAsync(
         this IEnumerable<Product> products,
         IProductImageLookup imageLookup,
+        ICatalogPriceListLookup priceListLookup,
         Guid tenantId,
         CancellationToken cancellationToken)
     {
@@ -51,16 +76,24 @@ internal static class ProductMapping
             .OfType<Guid>()
             .Distinct()
             .ToArray();
+        var images = imageIds.Length == 0
+            ? new Dictionary<Guid, ProductImageRef>()
+            : await imageLookup.FindManyAsync(imageIds, cancellationToken);
 
-        if (imageIds.Length == 0)
-        {
-            return materialized.Select(product => product.ToDto()).ToArray();
-        }
-
-        var images = await imageLookup.FindManyAsync(imageIds, cancellationToken);
+        // Las listas de precio del lote entero se resuelven de una sola consulta, mismo criterio
+        // que las URLs de imagen: sin esto, un catálogo de 20 productos con 3 escalas cada uno
+        // costaría 60 consultas a `pricing` para pintar el nombre de cada lista.
+        var priceListIds = materialized
+            .SelectMany(product => product.PriceScales)
+            .Select(scale => scale.PriceListId)
+            .Distinct()
+            .ToArray();
+        var priceLists = priceListIds.Length == 0
+            ? new Dictionary<Guid, CatalogPriceListRef>()
+            : await priceListLookup.ListByIdsAsync(priceListIds, cancellationToken);
 
         return materialized
-            .Select(product => product.ToDto(UrlOf(product, images, tenantId)))
+            .Select(product => product.ToDto(UrlOf(product, images, tenantId), priceLists))
             .ToArray();
     }
 

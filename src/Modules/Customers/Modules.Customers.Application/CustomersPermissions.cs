@@ -13,4 +13,11 @@ public static class CustomersPermissions
     public const string CustomerManage = "customers.customer.manage";
 
     public const string CustomerImport = "customers.customer.import";
+
+    // El catalogo de clasificaciones de cliente (nombre + prefijo) vive en el mismo modulo que
+    // Customer, pero es un recurso distinto con sus propios permisos, mismo criterio que
+    // CatalogPermissions.TaxRateRead/TaxRateManage frente a ProductRead/ProductManage.
+    public const string ClassificationRead = "customers.classification.read";
+
+    public const string ClassificationManage = "customers.classification.manage";
 }

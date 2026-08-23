@@ -24,8 +24,6 @@ public interface IProductWriteCommand
 
     string? Description { get; }
 
-    decimal? Price { get; }
-
     string? Currency { get; }
 }
 
@@ -47,31 +45,14 @@ internal sealed class ProductWriteRules : AbstractValidator<IProductWriteCommand
             .MaximumLength(Product.CodeMaxLength);
         RuleFor(command => command.Description)
             .MaximumLength(ProductDetails.DescriptionMaxLength);
-        RuleFor(command => command.Price)
-            .GreaterThanOrEqualTo(0m)
-            .When(command => command.Price.HasValue);
 
         // Hallazgo `F`: la regla comprobaba sólo el largo, mientras el dominio además exige
         // letras. Con Length() solo, "123" atravesaba el validador y lo rechazaba el dominio —
-        // 422 con código y sin mapa por campo, la misma forma del hallazgo `A`.
+        // 422 con código y sin mapa por campo.
         RuleFor(command => command.Currency)
             .Length(ProductDetails.CurrencyLength)
             .Matches("^[A-Za-z]{3}$")
             .WithMessage("The currency must be a three-letter ISO 4217 code.")
             .When(command => !string.IsNullOrWhiteSpace(command.Currency));
-
-        // Hallazgo `A`: el invariante «precio y moneda van juntos» cruza dos campos y sólo lo
-        // hacía cumplir el dominio, que no produce mapa por campo. Escrito en los dos sentidos y
-        // apuntando cada uno al campo que hay que corregir: quien mandó precio sin moneda tiene
-        // que completar la moneda, y al revés. Una guarda escrita en un solo sentido deja pasar
-        // el otro — la misma razón por la que ProductDetails.Normalized() compara los dos.
-        RuleFor(command => command.Currency)
-            .NotEmpty()
-            .When(command => command.Price.HasValue)
-            .WithMessage("A price requires its currency.");
-        RuleFor(command => command.Price)
-            .NotNull()
-            .When(command => !string.IsNullOrWhiteSpace(command.Currency))
-            .WithMessage("A currency requires its price.");
     }
 }

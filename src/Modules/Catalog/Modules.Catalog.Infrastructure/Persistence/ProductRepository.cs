@@ -22,6 +22,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
     {
         var query = dbContext.Products
             .AsNoTracking()
+            // CAT-09: sin este Include, PriceScales llega vacío en cada listado — EF no
+            // trae colecciones hijas por su cuenta.
+            .Include(product => product.PriceScales)
             .Where(product => product.TenantId == tenantId);
 
         var term = search?.Trim();
@@ -46,13 +49,19 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
 
     // Con tracking a propósito, a diferencia de SearchAsync: los llamadores de éste mutan el
     // agregado y dependen de la unidad de trabajo para persistirlo.
+    //
+    // El Include acá no es sólo para que la lectura no vuelva vacía: sin las escalas viejas
+    // en el change tracker, ApplyPricing().Clear() no las ve, y un Update no las reemplaza —
+    // las deja huérfanas en la base y sólo inserta las nuevas encima.
     public Task<Product?> FindAsync(
         Guid tenantId,
         ProductId productId,
         CancellationToken cancellationToken) =>
-        dbContext.Products.SingleOrDefaultAsync(
-            product => product.TenantId == tenantId && product.Id == productId,
-            cancellationToken);
+        dbContext.Products
+            .Include(product => product.PriceScales)
+            .SingleOrDefaultAsync(
+                product => product.TenantId == tenantId && product.Id == productId,
+                cancellationToken);
 
     public void Add(Product product) => dbContext.Products.Add(product);
 
@@ -64,5 +73,14 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         CancellationToken cancellationToken) =>
         dbContext.Products.AnyAsync(
             product => product.TenantId == tenantId && product.TaxRateId == taxRateId,
+            cancellationToken);
+
+    public Task<bool> AnyWithPriceListAsync(
+        Guid tenantId,
+        Guid priceListId,
+        CancellationToken cancellationToken) =>
+        dbContext.Products.AnyAsync(
+            product => product.TenantId == tenantId &&
+                product.PriceScales.Any(scale => scale.PriceListId == priceListId),
             cancellationToken);
 }

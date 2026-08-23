@@ -70,5 +70,51 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             customer => customer.TenantId == tenantId && customer.Id == customerId,
             cancellationToken);
 
+    public Task<bool> AnyWithClassificationAsync(
+        Guid tenantId,
+        ClientClassificationId classificationId,
+        CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .AsNoTracking()
+            .AnyAsync(
+                customer =>
+                    customer.TenantId == tenantId &&
+                    customer.ClassificationId == classificationId,
+                cancellationToken);
+
+    public async Task<IReadOnlySet<(IdentificationType Type, string Number)>> FindExistingIdentificationsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<(IdentificationType Type, string Number)> identifications,
+        CancellationToken cancellationToken)
+    {
+        if (identifications.Count == 0)
+        {
+            return new HashSet<(IdentificationType, string)>();
+        }
+
+        // Postgres/EF no traduce un `Contains` sobre una lista de tuplas (tipo, numero) a una sola
+        // condicion SQL razonable, asi que el filtro se hace en dos pasos: un WHERE amplio en la
+        // base (tipo IN (...) Y numero IN (...), que usa el indice) y la comparacion exacta del
+        // par en memoria sobre ese conjunto ya chico. Sigue siendo **una** consulta, no una por
+        // identificacion.
+        var types = identifications.Select(identification => identification.Type).Distinct().ToArray();
+        var numbers = identifications.Select(identification => identification.Number).Distinct().ToArray();
+
+        var candidates = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer =>
+                customer.TenantId == tenantId &&
+                types.Contains(customer.IdentificationType) &&
+                numbers.Contains(customer.IdentificationNumber))
+            .Select(customer => new { customer.IdentificationType, customer.IdentificationNumber })
+            .ToListAsync(cancellationToken);
+
+        var candidateSet = candidates
+            .Select(candidate => (candidate.IdentificationType, candidate.IdentificationNumber))
+            .ToHashSet();
+
+        return identifications.Where(candidateSet.Contains).ToHashSet();
+    }
+
     public void Add(Customer customer) => dbContext.Customers.Add(customer);
 }

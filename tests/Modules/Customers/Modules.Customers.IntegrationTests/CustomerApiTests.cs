@@ -13,14 +13,64 @@ public sealed class CustomerApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        await CreateCustomerAsync(client, "Verde Esencial S.A.S.", "900.111.111-1");
-        await CreateCustomerAsync(client, "Naturaleza Viva Ltda.", "830.222.222-2");
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2");
 
         var page = await ListAsync(client, string.Empty);
 
         Assert.Equal(2, page.Total);
         Assert.Equal(2, page.Items.Count);
         Assert.Equal(1, page.Page);
+    }
+
+    // La ciudad y la clasificacion viajan resueltas en cada fila del listado (Fase 3), no solo en
+    // el detalle: la grilla las pinta sin pedir un GET por cliente.
+    [Fact]
+    public async Task ListResolvesTheCityAndTheClassificationOfEachItem()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
+        await CreateCustomerAsync(client, city.CityId, classification.Id);
+
+        var page = await ListAsync(client, string.Empty);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(city.CityId, item.City.Id);
+        Assert.Equal(classification.Id, item.Classification.Id);
+        Assert.Equal(classification.Prefix, item.Classification.Prefix);
+    }
+
+    // Con clientes en ciudades y clasificaciones distintas, el listado tiene que resolver cada uno
+    // sin un N+1: esta prueba no lo mide directamente (esa es la responsabilidad de
+    // ListCustomersHandler.ToDtosAsync, en lote), pero si confirma que cada fila trae los datos
+    // correctos de SU cliente y no los del ultimo resuelto.
+    [Fact]
+    public async Task ListResolvesDifferentCitiesAndClassificationsCorrectlyPerItem()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var retail = await CreateClassificationAsync(client, "Minorista", "MIN");
+        var wholesale = await CreateClassificationAsync(client, "Mayorista", "MAY");
+        await CreateCustomerAsync(
+            client, city.CityId, retail.Id, "Verde Esencial", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, city.CityId, wholesale.Id, "Naturaleza Viva", "830.222.222-2");
+
+        var page = await ListAsync(client, string.Empty);
+
+        var verde = Assert.Single(page.Items, item => item.Name == "Verde Esencial");
+        var naturaleza = Assert.Single(page.Items, item => item.Name == "Naturaleza Viva");
+        Assert.Equal(retail.Id, verde.Classification.Id);
+        Assert.Equal(wholesale.Id, naturaleza.Classification.Id);
     }
 
     // La caja del listado busca por nombre, identificacion y CUC — literalmente lo que dice su
@@ -31,8 +81,12 @@ public sealed class CustomerApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        var first = await CreateCustomerAsync(client, "Verde Esencial S.A.S.", "900.111.111-1");
-        await CreateCustomerAsync(client, "Naturaleza Viva Ltda.", "830.222.222-2");
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var first = await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2");
 
         var byName = await ListAsync(client, "?search=esencial");
         var byIdentification = await ListAsync(client, "?search=830.222");
@@ -52,7 +106,10 @@ public sealed class CustomerApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        await CreateCustomerAsync(client, "Verde Esencial S.A.S.", "900.111.111-1");
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1");
 
         var underscore = await ListAsync(client, "?search=_");
         var percent = await ListAsync(client, "?search=%25");
@@ -74,9 +131,12 @@ public sealed class CustomerApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
         for (var index = 1; index <= 5; index++)
         {
-            await CreateCustomerAsync(client, $"Cliente {index:D2}", $"900.000.00{index}-1");
+            await CreateCustomerAsync(
+                client, city.CityId, classification.Id, $"Cliente {index:D2}", $"900.000.00{index}-1");
         }
 
         var first = await ListAsync(client, "?page=1&pageSize=2");
@@ -98,26 +158,13 @@ public sealed class CustomerApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        await CreateCustomerAsync(client);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(client, city.CityId, classification.Id);
 
         var page = await ListAsync(client, "?pageSize=1000000");
 
         Assert.Equal(CustomerPaging.MaxPageSize, page.PageSize);
-    }
-
-    // PriceListName viaja en null hasta que exista el modulo `pricing`. Esta prueba deja el hueco
-    // escrito: el dia que se pueble, se pone roja y hay que venir a decidir que dice.
-    [Fact]
-    public async Task ListLeavesThePriceListNameEmptyUntilPricingExists()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateManager(factory);
-        await CreateCustomerAsync(client);
-
-        var page = await ListAsync(client, string.Empty);
-
-        Assert.Null(Assert.Single(page.Items).PriceListName);
     }
 
     [Fact]
@@ -154,7 +201,9 @@ public sealed class CustomerApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        var created = await CreateCustomerAsync(client);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
 
         var customer = await client.GetFromJsonAsync<CustomerResponse>(
             $"{CustomersUrl()}/{created.Id}",
@@ -164,6 +213,29 @@ public sealed class CustomerApiTests
         Assert.Equal(created.Id, customer.Id);
         Assert.Equal("NIT", customer.IdentificationType);
         Assert.Equal("900.123.456-1", customer.IdentificationNumber);
+    }
+
+    // El detalle trae la ciudad, el departamento y la clasificacion resueltos — no solo sus ids.
+    [Fact]
+    public async Task GetResolvesTheCityDepartmentAndClassification()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+
+        var customer = await client.GetFromJsonAsync<CustomerResponse>(
+            $"{CustomersUrl()}/{created.Id}",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(customer);
+        Assert.Equal(city.CityId, customer.City.Id);
+        Assert.Equal(city.DepartmentDivipolaCode, customer.Department.DivipolaCode);
+        Assert.Equal(classification.Id, customer.Classification.Id);
+        Assert.Equal(classification.Name, customer.Classification.Name);
+        Assert.Equal(classification.Prefix, customer.Classification.Prefix);
     }
 
     // El 404 lleva su codigo de dominio. Sin el, el consumidor tiene que adivinar por el status y

@@ -14,6 +14,8 @@ public sealed record ActivateCustomerCommand(Guid TenantId, Guid CustomerId)
 // agregado, que es donde va esa regla.
 public sealed class DeactivateCustomerHandler(
     ICustomerRepository repository,
+    IClientClassificationRepository classificationRepository,
+    ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -44,7 +46,7 @@ public sealed class DeactivateCustomerHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return customer.ToDto();
+        return await customer.ToDtoAsync(geographyLookup, classificationRepository, cancellationToken);
     }
 }
 
@@ -60,6 +62,8 @@ public sealed class DeactivateCustomerHandler(
 /// </summary>
 public sealed class ActivateCustomerHandler(
     ICustomerRepository repository,
+    IClientClassificationRepository classificationRepository,
+    ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -88,6 +92,6 @@ public sealed class ActivateCustomerHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return customer.ToDto();
+        return await customer.ToDtoAsync(geographyLookup, classificationRepository, cancellationToken);
     }
 }

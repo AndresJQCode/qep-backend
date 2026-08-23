@@ -23,5 +23,26 @@ public interface ICustomerRepository
         CustomerId customerId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Si algun cliente del tenant referencia esta clasificacion. La usa
+    /// <c>DeleteClientClassificationHandler</c> para responder un 422 legible antes de intentar el
+    /// DELETE — mismo patron que <c>IProductRepository.AnyWithTaxRateAsync</c> en Catalog.
+    /// </summary>
+    Task<bool> AnyWithClassificationAsync(
+        Guid tenantId,
+        ClientClassificationId classificationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Cuales de estas identificaciones ya existen en el tenant, en una sola consulta. La usa la
+    /// importacion masiva (Fase 5) para el chequeo de duplicados **contra la base** de todas las
+    /// filas que pasaron la validacion de campo y la deduplicacion dentro del archivo: una consulta
+    /// batch en vez de una por fila, para que una carga de mil clientes no haga mil round-trips.
+    /// </summary>
+    Task<IReadOnlySet<(IdentificationType Type, string Number)>> FindExistingIdentificationsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<(IdentificationType Type, string Number)> identifications,
+        CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }
