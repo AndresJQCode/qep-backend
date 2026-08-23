@@ -24,9 +24,14 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Si algun cliente del tenant referencia esta clasificacion. La usa
-    /// <c>DeleteClientClassificationHandler</c> para responder un 422 legible antes de intentar el
-    /// DELETE — mismo patron que <c>IProductRepository.AnyWithTaxRateAsync</c> en Catalog.
+    /// Si algun cliente del tenant referencia esta clasificacion. La usan
+    /// <c>DeleteClientClassificationHandler</c>, <c>UpdateClientClassificationHandler</c> y
+    /// <c>DeactivateClientClassificationHandler</c> para responder un 422 legible antes de mutar —
+    /// mismo patron que <c>IProductRepository.AnyWithTaxRateAsync</c> en Catalog. Editar o
+    /// inactivar una clasificacion en uso queda tan bloqueado como borrarla: el prefijo del CUC de
+    /// un cliente se congela al asignarse (ver <c>Customer.Update</c>), asi que una clasificacion
+    /// en uso que cambiara de prefijo, o que un cliente ya no pudiera reasignar por estar inactiva,
+    /// dejaria esa asignacion en un estado que nadie pidio.
     /// </summary>
     Task<bool> AnyWithClassificationAsync(
         Guid tenantId,
