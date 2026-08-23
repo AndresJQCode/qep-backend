@@ -10,6 +10,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 
     public DbSet<ClientClassification> ClientClassifications => Set<ClientClassification>();
 
+    public DbSet<CustomerPriceList> CustomerPriceLists => Set<CustomerPriceList>();
+
     internal DbSet<CustomerCucCounter> CucCounters => Set<CustomerCucCounter>();
 
     internal DbSet<CustomersOutboxMessage> Outbox => Set<CustomersOutboxMessage>();
@@ -18,6 +20,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     {
         ConfigureCustomer(modelBuilder);
         ConfigureClientClassification(modelBuilder);
+        ConfigureCustomerPriceList(modelBuilder);
         ConfigureCucCounter(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -64,24 +67,34 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.Address)
             .HasColumnName("address")
             .HasMaxLength(CustomerContactInfo.AddressMaxLength);
-        customer.Property(value => value.Department)
-            .HasColumnName("department")
-            .HasMaxLength(CustomerContactInfo.DepartmentMaxLength);
-        customer.Property(value => value.City)
-            .HasColumnName("city")
-            .HasMaxLength(CustomerContactInfo.CityMaxLength);
 
-        // Como cadena y no como int: el valor sobrevive a que alguien reordene el enum, cosa que
-        // un ordinal no hace. Un reordenamiento silencioso convertiria a todos los clientes
-        // "GRANDE" en "MEDIANO" sin una sola linea de migracion.
-        customer.Property(value => value.Classification)
-            .HasColumnName("classification")
-            .HasConversion<string>()
-            .HasMaxLength(32);
+        // La ciudad, FK al modulo Geography. Sin navegacion EF (HasOne<City>()) a proposito:
+        // City vive en GeographyDbContext, un modelo distinto, y EF Core no modela relaciones
+        // hacia una entidad que no esta en el mismo ModelBuilder. La restriccion real
+        // (FK a geography.cities(id), ON DELETE RESTRICT) la agrega a mano la migracion que
+        // introduce esta columna, con migrationBuilder.AddForeignKey — Postgres la impone igual,
+        // EF simplemente no la "ve" en su modelo ni en el snapshot. Ver esa migracion para el
+        // detalle.
+        customer.Property(value => value.CityId).HasColumnName("city_id");
+        customer.HasIndex(value => value.CityId).HasDatabaseName("IX_customers_city");
 
-        // Sin clave foranea: el modulo `pricing` no existe todavia, asi que no hay tabla a la que
-        // apuntar. Ver CustomerCommercialInfo.PriceListId.
-        customer.Property(value => value.PriceListId).HasColumnName("price_list_id");
+        // La clasificacion, FK compuesta (tenant_id, classification_id) a
+        // customers.client_classifications(tenant_id, id) — compuesta y no simple sobre id, para
+        // que un cliente no pueda referenciar la clasificacion de otro tenant. A diferencia de la
+        // ciudad, ClientClassification SI vive en este mismo DbContext, asi que la relacion se
+        // modela con HasOne/HasForeignKey normal y EF genera la migracion completa.
+        customer.Property(value => value.ClassificationId)
+            .HasColumnName("classification_id")
+            .HasConversion(id => id.Value, value => new ClientClassificationId(value));
+        customer.HasIndex(value => value.ClassificationId)
+            .HasDatabaseName("IX_customers_classification");
+        customer.HasOne<ClientClassification>()
+            .WithMany()
+            .HasForeignKey(value => new { value.TenantId, value.ClassificationId })
+            .HasPrincipalKey(value => new { value.TenantId, value.Id })
+            .HasConstraintName("FK_customers_client_classifications_classification_id")
+            .OnDelete(DeleteBehavior.Restrict);
+
         customer.Property(value => value.WithRetention).HasColumnName("with_retention");
         customer.Property(value => value.Version)
             .HasColumnName("version")
@@ -142,6 +155,13 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         classification.HasIndex(value => value.TenantId)
             .HasDatabaseName("IX_client_classifications_tenant");
 
+        // Clave alterna sobre (tenant_id, id): id solo ya es unico como clave primaria, pero la
+        // FK compuesta de Customer.ClassificationId necesita un target unico que incluya
+        // tenant_id, para que la base misma impida que un cliente referencie la clasificacion de
+        // otro tenant.
+        classification.HasAlternateKey(value => new { value.TenantId, value.Id })
+            .HasName("AK_client_classifications_tenant_id_id");
+
         // La unicidad que promete el nombre. Nombrado a proposito: la capa de infraestructura
         // discrimina la violacion de unicidad por nombre de indice y no solo por SqlState, mismo
         // criterio que TaxRate y Customer — la leccion de SDD-CT-06.
@@ -155,6 +175,43 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         classification.HasIndex(value => new { value.TenantId, value.Prefix })
             .IsUnique()
             .HasDatabaseName("IX_client_classifications_tenant_prefix");
+    }
+
+    private static void ConfigureCustomerPriceList(ModelBuilder modelBuilder)
+    {
+        var assignment = modelBuilder.Entity<CustomerPriceList>();
+        assignment.ToTable("customer_price_lists", "customers");
+        assignment.HasKey(value => value.Id);
+        assignment.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new CustomerPriceListId(value))
+            .ValueGeneratedNever();
+        assignment.Property(value => value.TenantId).HasColumnName("tenant_id");
+        assignment.Property(value => value.CustomerId)
+            .HasColumnName("customer_id")
+            .HasConversion(id => id.Value, value => new CustomerId(value));
+        // Sin clave foranea: el modulo `pricing` es otro modulo de negocio, y ninguno referencia
+        // las tablas del otro. Ver el comentario de CustomerPriceList.PriceListId.
+        assignment.Property(value => value.PriceListId).HasColumnName("price_list_id");
+        assignment.Property(value => value.CreatedAt).HasColumnName("created_at");
+
+        assignment.HasIndex(value => value.TenantId)
+            .HasDatabaseName("IX_customer_price_lists_tenant");
+        assignment.HasIndex(value => value.PriceListId)
+            .HasDatabaseName("IX_customer_price_lists_price_list");
+
+        // Evita duplicados por construccion: la misma lista no puede asignarse dos veces al mismo
+        // cliente. Mismo criterio que IX_membership_user_tenant en Tenancy.
+        assignment.HasIndex(value => new { value.CustomerId, value.PriceListId })
+            .IsUnique()
+            .HasDatabaseName("IX_customer_price_lists_customer_price_list");
+
+        // CASCADE: una asignacion no tiene sentido sin su cliente — mismo criterio que
+        // product_price_scales hacia products en Catalog.
+        assignment.HasOne<Customer>()
+            .WithMany()
+            .HasForeignKey(value => value.CustomerId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     /// <summary>

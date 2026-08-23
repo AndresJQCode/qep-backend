@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Infrastructure.Excel;
 using Modules.Customers.Infrastructure.Persistence;
 
 namespace Modules.Customers.Infrastructure;
@@ -25,9 +26,15 @@ public static class CustomersInfrastructureExtensions
 
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<IClientClassificationRepository, ClientClassificationRepository>();
+        services.AddScoped<ICustomerPriceListRepository, CustomerPriceListRepository>();
         services.AddScoped<ICustomersUnitOfWork, CustomersUnitOfWork>();
         services.AddScoped<ICustomersAuditPublisher, CustomersAuditPublisher>();
         services.AddScoped<ICucGenerator, CucGenerator>();
+
+        // Fase 5/6: la libreria concreta (ClosedXML) es un detalle de infraestructura, mismo
+        // criterio que el resto de este metodo. Application solo conoce los puertos.
+        services.AddScoped<IExcelCustomerImporter, ClosedXmlCustomerImporter>();
+        services.AddScoped<ICustomerImportTemplateBuilder, ClosedXmlCustomerImportTemplateBuilder>();
 
         return services;
     }

@@ -13,10 +13,8 @@ public sealed record CreateCustomerCommand(
     string? Phone,
     string? Email,
     string? Address,
-    string? Department,
-    string? City,
-    string? Classification,
-    Guid? PriceListId,
+    Guid CityId,
+    Guid ClassificationId,
     bool WithRetention) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
@@ -27,6 +25,8 @@ public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCo
 
 public sealed class CreateCustomerHandler(
     ICustomerRepository repository,
+    IClientClassificationRepository classificationRepository,
+    ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     ICucGenerator cucGenerator,
@@ -48,11 +48,26 @@ public sealed class CreateCustomerHandler(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        // El CUC se pide **despues** de validar: cada llamada consume un numero del consecutivo
-        // del tenant, y pedirlo antes quemaria uno por cada cuerpo mal escrito. Un consecutivo con
-        // huecos no rompe nada, pero nadie tiene una buena respuesta para el cliente que pregunta
-        // por que su primer codigo es el 47.
-        var cuc = await cucGenerator.NextAsync(command.TenantId, cancellationToken);
+        // La clasificacion y la ciudad se resuelven **antes** de pedir el CUC: hacen falta su
+        // prefijo y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
+        // redundante con la FK de base. Resolverlas antes tambien evita quemar un numero del
+        // consecutivo cuando la referencia del cuerpo es invalida.
+        var classification = await classificationRepository.FindAsync(
+            command.TenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
+            ?? throw new CustomersDomainException(
+                "customers.customer.classification_not_found",
+                "The client classification was not found in this tenant.");
+        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
+            ?? throw new CustomersDomainException(
+                "customers.customer.city_not_found",
+                "The city was not found.");
+
+        // El CUC se pide **despues** de resolver clasificacion y ciudad: cada llamada consume un
+        // numero del consecutivo del tenant, y pedirlo antes quemaria uno por cada referencia mal
+        // escrita. Un consecutivo con huecos no rompe nada, pero nadie tiene una buena respuesta
+        // para el cliente que pregunta por que su primer codigo salto un numero.
+        var sequence = await cucGenerator.NextAsync(command.TenantId, cancellationToken);
+        var cuc = CucFormatter.Build(classification.Prefix, city.DepartmentDivipolaCode, sequence);
         var now = clock.UtcNow;
 
         var customer = Customer.Create(
@@ -60,18 +75,16 @@ public sealed class CreateCustomerHandler(
             command.TenantId,
             cuc,
             command.Name,
+            command.CityId,
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
             new CustomerContactInfo
             {
                 Phone = command.Phone,
                 Email = command.Email,
-                Address = command.Address,
-                Department = command.Department,
-                City = command.City
+                Address = command.Address
             },
-            CustomerMapping.ToCommercialInfo(
-                command.Classification, command.PriceListId, command.WithRetention),
+            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.WithRetention),
             now);
 
         repository.Add(customer);
@@ -83,11 +96,12 @@ public sealed class CreateCustomerHandler(
             "success",
             now);
 
-        // La unicidad de la identificacion NO se comprueba con un SELECT previo: entre la consulta
-        // y el commit cabe otra transaccion, y el unico arbitro real es
-        // IX_customers_tenant_identification. La violacion la traduce CustomersUnitOfWork.
+        // La unicidad de la identificacion y del CUC, y la existencia de la ciudad y la
+        // clasificacion en la carrera entre esta lectura y el commit, NO se comprueban con un
+        // segundo SELECT: el unico arbitro real son los indices y las FK de base, y
+        // CustomersUnitOfWork traduce sus violaciones.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return customer.ToDto();
+        return customer.ToDto(city, classification);
     }
 }

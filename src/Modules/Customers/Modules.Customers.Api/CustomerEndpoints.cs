@@ -8,6 +8,11 @@ namespace Modules.Customers.Api;
 
 public static class CustomerEndpoints
 {
+    // El MIME oficial de .xlsx (OOXML SpreadsheetML). ClosedXML solo escribe este formato, nunca
+    // el .xls binario viejo, asi que un solo tipo de contenido alcanza.
+    private const string ExcelContentType =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
     public static IEndpointRouteBuilder MapCustomerEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como catalog, storage, tenancy y companies.
@@ -72,13 +77,22 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // 202 y no 201: acepta el archivo, **no crea clientes**. Ver ImportCustomersResponse.
+        // 202: el archivo se procesa de verdad (Fase 5) y el cuerpo lleva el detalle fila por
+        // fila. 422 solo cuando el archivo es estructuralmente invalido (extension, tamano,
+        // columnas faltantes, sin filas de datos) — ver ImportCustomersResponse.
         group.MapPost("/import", ImportCustomersAsync)
             .RequireAuthorization(CustomersPermissions.CustomerImport)
             .Produces<ImportCustomersResponse>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .DisableAntiforgery();
+
+        // Fase 6. Mismo permiso que /import: descargar la plantilla es parte del mismo flujo de
+        // carga masiva, no un recurso de lectura general del modulo.
+        group.MapGet("/import/template", GetCustomerImportTemplateAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerImport)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
 
         return endpoints;
     }
@@ -130,10 +144,8 @@ public static class CustomerEndpoints
                 request.Phone,
                 request.Email,
                 request.Address,
-                request.Department,
-                request.City,
-                request.Classification,
-                request.PriceListId,
+                request.CityId,
+                request.ClassificationId,
                 request.WithRetention),
             cancellationToken);
 
@@ -159,10 +171,8 @@ public static class CustomerEndpoints
                 request.Phone,
                 request.Email,
                 request.Address,
-                request.Department,
-                request.City,
-                request.Classification,
-                request.PriceListId,
+                request.CityId,
+                request.ClassificationId,
                 request.WithRetention),
             cancellationToken);
 
@@ -201,14 +211,26 @@ public static class CustomerEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        // Solo el nombre y el tamano llegan al handler: el contenido no se lee, porque `CLI-01`
-        // deja el procesamiento del Excel fuera de alcance. Pasar el stream daria la impresion de
-        // que alguien lo consume.
+        // A diferencia del slice original (`CLI-01`), el contenido si se lee: el handler lo
+        // consume por completo antes de que este metodo devuelva el resultado, asi que el stream
+        // sigue vivo durante toda la llamada.
+        await using var content = file.OpenReadStream();
         var result = await dispatcher.SendAsync(
-            new ImportCustomersCommand(tenantId, file.FileName, file.Length),
+            new ImportCustomersCommand(tenantId, file.FileName, file.Length, content),
             cancellationToken);
 
         return Results.Accepted(value: result);
+    }
+
+    private static async Task<IResult> GetCustomerImportTemplateAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var template = await dispatcher.QueryAsync(
+            new GetCustomerImportTemplateQuery(tenantId), cancellationToken);
+
+        return Results.File(template.Content, ExcelContentType, template.FileName);
     }
 
     private static CustomerResponse ToResponse(CustomerDto customer) => new(
@@ -220,17 +242,14 @@ public static class CustomerEndpoints
         customer.Phone,
         customer.Email,
         customer.Address,
-        customer.Department,
         customer.City,
+        customer.Department,
         customer.Classification,
-        customer.PriceListId,
         customer.WithRetention,
         customer.IsActive,
         customer.CreatedAt,
         customer.UpdatedAt);
 
-    // PriceListName va siempre en null: el modulo `pricing` no existe, asi que no hay de donde
-    // resolver el nombre. Ver CustomerListItemResponse.
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
         customer.Cuc,
@@ -239,6 +258,5 @@ public static class CustomerEndpoints
         customer.Phone,
         customer.City,
         customer.Classification,
-        null,
         customer.IsActive);
 }

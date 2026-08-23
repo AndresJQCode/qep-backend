@@ -26,11 +26,9 @@ public interface ICustomerWriteCommand
 
     string? Address { get; }
 
-    string? Department { get; }
+    Guid CityId { get; }
 
-    string? City { get; }
-
-    string? Classification { get; }
+    Guid ClassificationId { get; }
 }
 
 /// <summary>
@@ -45,7 +43,12 @@ public interface ICustomerWriteCommand
 ///
 /// Los nombres de propiedad viajan en PascalCase y asi los espera el consumidor
 /// (<c>FIELD_BY_BACKEND_NAME</c>): Name, IdentificationType, IdentificationNumber, Phone, Email,
-/// Address, Department, City, Classification, PriceListId, WithRetention.
+/// Address, CityId, ClassificationId, WithRetention.
+///
+/// <c>CityId</c> y <c>ClassificationId</c> solo se comprueban **no vacios** aca: que la fila
+/// exista y sea del tenant lo resuelve el handler (para armar el CUC) y, en la carrera, la FK de
+/// base — mismo criterio que el resto de las FKs de este repo, sin pre-chequeo de existencia en
+/// el validador.
 /// </summary>
 internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteCommand>
 {
@@ -61,10 +64,6 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .MaximumLength(CustomerContactInfo.PhoneMaxLength);
         RuleFor(command => command.Address)
             .MaximumLength(CustomerContactInfo.AddressMaxLength);
-        RuleFor(command => command.Department)
-            .MaximumLength(CustomerContactInfo.DepartmentMaxLength);
-        RuleFor(command => command.City)
-            .MaximumLength(CustomerContactInfo.CityMaxLength);
 
         // El tipo de documento es obligatorio y cerrado. Se comprueba contra la misma tabla que el
         // dominio (IdentificationTypeParser) y no contra una lista repetida aca: dos listas de
@@ -77,13 +76,10 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
 
-        // La clasificacion es opcional: vacio es ausente, igual que en los demas campos opcionales.
-        // Un valor presente pero desconocido si falla — es un dato mal escrito, no uno ausente.
-        RuleFor(command => command.Classification)
-            .Must(IsSupportedClassification)
-            .WithMessage(command =>
-                $"The classification must be one of {Join(CustomerClassificationParser.SupportedWireValues)}.")
-            .When(command => !string.IsNullOrWhiteSpace(command.Classification));
+        // La ciudad y la clasificacion son obligatorias: la Fase 3 las convirtio en FKs de primer
+        // nivel, ya no texto libre opcional.
+        RuleFor(command => command.CityId).NotEmpty();
+        RuleFor(command => command.ClassificationId).NotEmpty();
 
         // Vacio es ausente para un campo opcional: el formulario manda "" cuando el usuario borra
         // el input, y sin el When() esa cadena vacia fallaria EmailAddress() y bloquearia el
@@ -99,19 +95,6 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         try
         {
             IdentificationTypeParser.Parse(value);
-            return true;
-        }
-        catch (CustomersDomainException)
-        {
-            return false;
-        }
-    }
-
-    private static bool IsSupportedClassification(string? value)
-    {
-        try
-        {
-            CustomerClassificationParser.Parse(value);
             return true;
         }
         catch (CustomersDomainException)

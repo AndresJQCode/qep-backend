@@ -14,10 +14,8 @@ public sealed record UpdateCustomerCommand(
     string? Phone,
     string? Email,
     string? Address,
-    string? Department,
-    string? City,
-    string? Classification,
-    Guid? PriceListId,
+    Guid CityId,
+    Guid ClassificationId,
     bool WithRetention) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
@@ -28,6 +26,8 @@ public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCo
 
 public sealed class UpdateCustomerHandler(
     ICustomerRepository repository,
+    IClientClassificationRepository classificationRepository,
+    ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -50,6 +50,19 @@ public sealed class UpdateCustomerHandler(
             cancellationToken)
             ?? throw CustomerNotFound.For(command.CustomerId);
 
+        // Se resuelven aca, no solo por la FK de base: la respuesta del PUT lleva la ciudad, el
+        // departamento y la clasificacion resueltos, igual que el detalle. No es el CUC —ese no
+        // cambia nunca— asi que este chequeo es exclusivamente para poder devolver el DTO.
+        var classification = await classificationRepository.FindAsync(
+            command.TenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
+            ?? throw new CustomersDomainException(
+                "customers.customer.classification_not_found",
+                "The client classification was not found in this tenant.");
+        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
+            ?? throw new CustomersDomainException(
+                "customers.customer.city_not_found",
+                "The city was not found.");
+
         var now = clock.UtcNow;
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -57,18 +70,16 @@ public sealed class UpdateCustomerHandler(
         // en el request — lo emite el backend al crear y no se edita nunca.
         customer.Update(
             command.Name,
+            command.CityId,
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
             new CustomerContactInfo
             {
                 Phone = command.Phone,
                 Email = command.Email,
-                Address = command.Address,
-                Department = command.Department,
-                City = command.City
+                Address = command.Address
             },
-            CustomerMapping.ToCommercialInfo(
-                command.Classification, command.PriceListId, command.WithRetention),
+            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.WithRetention),
             now);
 
         auditPublisher.Publish(
@@ -80,6 +91,6 @@ public sealed class UpdateCustomerHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return customer.ToDto();
+        return customer.ToDto(city, classification);
     }
 }

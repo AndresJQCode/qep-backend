@@ -63,6 +63,9 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_client_classifications_tenant_id_id");
+
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_client_classifications_tenant");
 
@@ -88,15 +91,13 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("address");
 
-                    b.Property<string>("City")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
-                        .HasColumnName("city");
+                    b.Property<Guid>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
 
-                    b.Property<string>("Classification")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("classification");
+                    b.Property<Guid>("ClassificationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("classification_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -107,11 +108,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("cuc");
-
-                    b.Property<string>("Department")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
-                        .HasColumnName("department");
 
                     b.Property<string>("Email")
                         .HasMaxLength(254)
@@ -145,10 +141,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
 
-                    b.Property<Guid?>("PriceListId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("price_list_id");
-
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -168,8 +160,16 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CityId")
+                        .HasDatabaseName("IX_customers_city");
+
+                    b.HasIndex("ClassificationId")
+                        .HasDatabaseName("IX_customers_classification");
+
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_customers_tenant");
+
+                    b.HasIndex("TenantId", "ClassificationId");
 
                     b.HasIndex("TenantId", "Cuc")
                         .IsUnique()
@@ -180,6 +180,43 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_customers_tenant_identification");
 
                     b.ToTable("customers", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerPriceList", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<Guid>("PriceListId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("price_list_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PriceListId")
+                        .HasDatabaseName("IX_customer_price_lists_price_list");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_customer_price_lists_tenant");
+
+                    b.HasIndex("CustomerId", "PriceListId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_customer_price_lists_customer_price_list");
+
+                    b.ToTable("customer_price_lists", "customers");
                 });
 
             modelBuilder.Entity("Modules.Customers.Infrastructure.Persistence.CustomerCucCounter", b =>
@@ -244,6 +281,26 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         {
                             t.ExcludeFromMigrations();
                         });
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.Customer", b =>
+                {
+                    b.HasOne("Modules.Customers.Domain.ClientClassification", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ClassificationId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_customers_client_classifications_classification_id");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerPriceList", b =>
+                {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

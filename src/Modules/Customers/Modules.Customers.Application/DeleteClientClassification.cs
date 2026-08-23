@@ -12,20 +12,21 @@ public sealed record DeleteClientClassificationCommand(Guid TenantId, Guid Class
 public sealed record ClientClassificationDeletedResult(bool Deleted);
 
 /// <summary>
-/// Borra una clasificacion de cliente.
+/// Borra una clasificacion de cliente **si nadie la usa**.
 ///
-/// A diferencia de <c>DeleteTaxRateHandler</c> en Catalog, este handler **no** chequea si algo
-/// la usa antes de borrar: hoy nada referencia <see cref="ClientClassification"/> por FK — ni
-/// siquiera <c>Customer</c>, que tiene su propio enum <c>CustomerClassification</c> sin relacion
-/// con este catalogo. El dia que algo referencie esta tabla, este handler necesita el mismo
-/// guard que <c>DeleteTaxRateHandler</c> (una consulta al repositorio del que referencia, y un
-/// 422 <c>customers.classification.in_use</c> antes de intentar el borrado).
+/// La condicion no la inventa este handler: <c>customers.customers.classification_id</c>
+/// referencia <c>customers.client_classifications(tenant_id, id)</c> con <c>ON DELETE RESTRICT</c>
+/// desde la Fase 3, asi que PostgreSQL ya la impone. Lo que agrega el handler es que el llamador
+/// reciba un 422 que se entiende en vez de una violacion de foreign key convertida en 500 — mismo
+/// patron que <c>DeleteTaxRateHandler</c> en Catalog.
 ///
 /// Sin validador: el comando no lleva texto libre. Y sin regla de dominio: "estar en uso" no es
-/// un invariante de <see cref="ClientClassification"/> hoy, no existe nada que preguntarle.
+/// un invariante de <see cref="ClientClassification"/> —el agregado no sabe nada de clientes—
+/// sino una pregunta sobre el catalogo, que se responde con una consulta.
 /// </summary>
 public sealed class DeleteClientClassificationHandler(
     IClientClassificationRepository repository,
+    ICustomerRepository customerRepository,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -48,6 +49,15 @@ public sealed class DeleteClientClassificationHandler(
         var classification = await repository.FindAsync(
             command.TenantId, classificationId, cancellationToken)
             ?? throw ClientClassificationNotFound.For(command.ClassificationId);
+
+        if (await customerRepository.AnyWithClassificationAsync(
+                command.TenantId, classificationId, cancellationToken))
+        {
+            throw new CustomersDomainException(
+                "customers.classification.in_use",
+                "The client classification cannot be deleted because at least one customer " +
+                "uses it.");
+        }
 
         var now = clock.UtcNow;
         repository.Remove(classification);
