@@ -24,6 +24,8 @@ public sealed class CustomerTests
     private static readonly ClientClassificationId ClassificationId =
         new(Guid.Parse("01900000-0000-7000-8000-000000000020"));
 
+    private const string ClassificationPrefix = "MED";
+
     private static CustomerIdentification Identification(
         IdentificationType type = IdentificationType.Nit,
         string number = "900.123.456-1") =>
@@ -250,6 +252,7 @@ public sealed class CustomerTests
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
+            ClassificationPrefix,
             Now.AddMinutes(5));
 
         Assert.Null(customer.Phone);
@@ -272,17 +275,18 @@ public sealed class CustomerTests
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(classificationId: newClassificationId),
+            "MAY",
             Now.AddMinutes(5));
 
         Assert.Equal(newCityId, customer.CityId);
         Assert.Equal(newClassificationId, customer.ClassificationId);
     }
 
-    // El CUC no viaja en el request y Update no lo toca: lo emite el backend una sola vez, al
-    // crear. Un CUC editable convierte en mutable el identificador con el que el usuario habla del
-    // cliente por telefono.
+    // El CUC no viaja en el request y Update no lo toca por si solo — pero regla de negocio
+    // confirmada, si la clasificacion cambia, si reescribe el prefijo. Sin clasificacion nueva
+    // (mismo Commercial() de siempre) el CUC entero se conserva.
     [Fact]
-    public void UpdateNeverChangesTheCuc()
+    public void UpdateKeepsTheCucWhenTheClassificationDoesNotChange()
     {
         var customer = Create(cuc: "CLI08000142");
 
@@ -292,9 +296,74 @@ public sealed class CustomerTests
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
             Commercial(),
+            ClassificationPrefix,
             Now.AddMinutes(5));
 
         Assert.Equal("CLI08000142", customer.Cuc);
+    }
+
+    // La regla de negocio explicita: "cuando cambie el tamano del cliente, cambiara unicamente el
+    // prefijo; el departamento y el consecutivo se conservaran". El CUC original tiene depto "08"
+    // y consecutivo "000142" — esos ocho caracteres finales deben sobrevivir intactos, solo
+    // cambia lo que viene antes.
+    [Fact]
+    public void UpdateRewritesOnlyThePrefixWhenTheClassificationChanges()
+    {
+        var customer = Create(cuc: "CLI08000142");
+        var newClassificationId = new ClientClassificationId(Guid.CreateVersion7());
+
+        customer.Update(
+            customer.Name,
+            CityId,
+            Identification(),
+            CustomerContactInfo.Empty,
+            Commercial(classificationId: newClassificationId),
+            "MAY",
+            Now.AddMinutes(5));
+
+        Assert.Equal("MAY08000142", customer.Cuc);
+    }
+
+    // Elegir de nuevo la misma clasificacion (mismo Id) no reescribe nada, aunque el prefijo que
+    // llegue sea, por lo que fuera, distinto al que tiene guardado: sin cambio de clasificacion no
+    // hay motivo de negocio para tocar el CUC.
+    [Fact]
+    public void UpdateKeepsTheCucWhenTheClassificationIdDoesNotChangeEvenIfAnotherPrefixArrives()
+    {
+        var customer = Create(cuc: "CLI08000142");
+
+        customer.Update(
+            customer.Name,
+            CityId,
+            Identification(),
+            CustomerContactInfo.Empty,
+            Commercial(),
+            "OTRO",
+            Now.AddMinutes(5));
+
+        Assert.Equal("CLI08000142", customer.Cuc);
+    }
+
+    // Defensivo: el prefijo llega ya validado desde ClientClassification.Prefix (no vacio, hasta
+    // 20 caracteres), pero Update lo revalida siempre, cambie o no la clasificacion — un llamador
+    // que rompa ese contrato tiene que enterarse con un codigo de dominio, no con un CUC corrupto.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateRejectsABlankClassificationPrefix(string prefix)
+    {
+        var customer = Create();
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            customer.Name,
+            CityId,
+            Identification(),
+            CustomerContactInfo.Empty,
+            Commercial(),
+            prefix,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("customers.customer.classification_prefix_required", exception.Code);
     }
 
     [Fact]
@@ -309,6 +378,7 @@ public sealed class CustomerTests
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
             Commercial(),
+            ClassificationPrefix,
             later);
 
         Assert.Equal(2, customer.Version);
@@ -331,6 +401,7 @@ public sealed class CustomerTests
             Identification(number: "   "),
             CustomerContactInfo.Empty,
             Commercial(),
+            ClassificationPrefix,
             Now.AddMinutes(5)));
 
         Assert.Equal("Verde Esencial", customer.Name);
@@ -349,6 +420,7 @@ public sealed class CustomerTests
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
+            ClassificationPrefix,
             Now));
 
         Assert.Equal("customers.customer.inactive", exception.Code);
@@ -396,6 +468,7 @@ public sealed class CustomerTests
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
+            ClassificationPrefix,
             Now.AddMinutes(2));
 
         Assert.True(customer.IsActive);
