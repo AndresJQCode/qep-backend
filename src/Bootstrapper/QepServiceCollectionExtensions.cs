@@ -24,6 +24,8 @@ using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Pricing.Application;
+using Modules.Pricing.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Application;
@@ -190,6 +192,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>,
             ImportCustomersHandler>();
+        // Fase 6: la plantilla es una lectura (IQuery), no un comando — no muta nada.
+        services.AddScoped<
+            IQueryHandler<GetCustomerImportTemplateQuery, CustomerImportTemplateFile>,
+            GetCustomerImportTemplateHandler>();
         // El catalogo de clasificaciones de cliente vive en el mismo modulo que Customer pero es
         // un recurso distinto, con sus propios siete handlers — mismo criterio que los cinco de
         // TaxRate frente a Product en Catalog. Registrados a mano, uno por uno: un caso de uso
@@ -226,10 +232,43 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
+        // El catalogo de listas de precio (modulo pricing) tiene los mismos siete handlers que
+        // ClientClassification y TaxRate — mismo criterio: registrados a mano, uno por uno, o el
+        // sintoma de olvidar uno es 500 en runtime y no un error de compilacion.
+        services.AddScoped<
+            IQueryHandler<ListPriceListsQuery, IReadOnlyList<PriceListDto>>,
+            ListPriceListsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetPriceListQuery, PriceListDto>,
+            GetPriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<CreatePriceListCommand, PriceListDto>,
+            CreatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdatePriceListCommand, PriceListDto>,
+            UpdatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivatePriceListCommand, PriceListDto>,
+            DeactivatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivatePriceListCommand, PriceListDto>,
+            ActivatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<DeletePriceListCommand, PriceListDeletedResult>,
+            DeletePriceListHandler>();
+        // Las asignaciones de lista de precio a cliente (Customer N:N PriceList) son un recurso
+        // propio con dos handlers, mismo criterio que el resto.
+        services.AddScoped<
+            IQueryHandler<ListCustomerPriceListsQuery, IReadOnlyList<CustomerPriceListDto>>,
+            ListCustomerPriceListsHandler>();
+        services.AddScoped<
+            ICommandHandler<SetCustomerPriceListsCommand, IReadOnlyList<CustomerPriceListDto>>,
+            SetCustomerPriceListsHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreatePriceListValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -239,11 +278,26 @@ public static class QepServiceCollectionExtensions
         services.AddCompaniesInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
+        services.AddPricingInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
         services.AddScoped<IProductImageLookup, ProductImageLookup>();
+
+        // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
+        // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
+        // impide a propósito — y el composition root cablea el puerto que declara `customers`
+        // contra los repositorios que ya registró AddGeographyInfrastructure.
+        services.AddScoped<ICustomerGeographyLookup, CustomerGeographyLookup>();
+
+        // Mismo patrón entre `catalog`/`customers` y `pricing`, el módulo nuevo: ninguno de los
+        // tres referencia a los otros dos, y el composition root cablea los tres puertos contra
+        // los repositorios que ya registraron los AddXInfrastructure de arriba. Van después de
+        // ellos por la misma razón que ProductImageLookup y CustomerGeographyLookup.
+        services.AddScoped<ICatalogPriceListLookup, CatalogPriceListLookup>();
+        services.AddScoped<ICustomerPriceListLookup, CustomerPriceListLookup>();
+        services.AddScoped<IPriceListUsageLookup, PriceListUsageLookup>();
 
         AddAuthorizationCapability(services);
         services.AddQepObservability(configuration, environment);
@@ -289,7 +343,9 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerManage,
                 CustomersPermissions.CustomerImport,
                 CustomersPermissions.ClassificationRead,
-                CustomersPermissions.ClassificationManage
+                CustomersPermissions.ClassificationManage,
+                PricingPermissions.PriceListRead,
+                PricingPermissions.PriceListManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "tenancy.member",
@@ -317,7 +373,12 @@ public static class QepServiceCollectionExtensions
                 // gestionar clasificaciones es trabajo diario de un asesor, no una operacion
                 // privilegiada.
                 CustomersPermissions.ClassificationRead,
-                CustomersPermissions.ClassificationManage
+                CustomersPermissions.ClassificationManage,
+                // Sólo lectura, mismo criterio que CatalogPermissions.TaxRateRead: una lista de
+                // precios se usa a diario para cotizar (verla en el selector de escalas de
+                // producto y en el multi-select de cliente), pero crearla o desactivarla mueve el
+                // descuento de todo lo que la usa — es de owner.
+                PricingPermissions.PriceListRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -442,6 +503,21 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar, inactivar, reactivar y eliminar clasificaciones de clientes.",
             "Customers",
             "medium"));
+        services.AddSingleton(new PermissionDefinition(
+            PricingPermissions.PriceListRead,
+            "Leer listas de precio",
+            "Permite consultar el catálogo de listas de precio del tenant.",
+            "Pricing",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            PricingPermissions.PriceListManage,
+            "Gestionar listas de precio",
+            "Permite crear, editar, inactivar, reactivar y eliminar listas de precio.",
+            "Pricing",
+            // High y no medium, mismo criterio que CatalogPermissions.TaxRateManage: una lista de
+            // precios afecta el descuento de todas las escalas de producto y todos los clientes
+            // que la tienen asignada.
+            "high"));
     }
 
     private static void AddAuthentication(
@@ -618,7 +694,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.ClassificationManage,
                 policy => AddPermissionRequirement(
-                    policy, CustomersPermissions.ClassificationManage));
+                    policy, CustomersPermissions.ClassificationManage))
+            .AddPolicy(
+                PricingPermissions.PriceListRead,
+                policy => AddPermissionRequirement(policy, PricingPermissions.PriceListRead))
+            .AddPolicy(
+                PricingPermissions.PriceListManage,
+                policy => AddPermissionRequirement(policy, PricingPermissions.PriceListManage));
     }
 
     private static void AddPermissionRequirement(

@@ -15,6 +15,8 @@ using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Pricing.Api;
+using Modules.Pricing.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Api;
@@ -95,10 +97,19 @@ app.MapCatalogTaxRateEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();
+app.MapCustomerPriceListEndpoints();
 app.MapGeographyEndpoints();
+app.MapPriceListEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
+    app.Lifetime.ApplicationStopping);
+// Después de Tenancy y antes que cualquier otro módulo: el seed de listas de precio por
+// defecto (DefaultPriceListsSeeder) necesita la lista de tenants existentes para sembrar las
+// cinco de cada uno, y ni Catalog ni Customers tienen una FK real hacia price_lists —así que
+// no hay una dependencia de esquema, sólo de datos, y sembrar temprano evita que un producto o
+// cliente cargado justo después de arrancar no encuentre listas para elegir.
+await app.Services.InitializePricingDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 // Después de Tenancy: Tenancy suelta la tabla de auditoría (DropAuditOwnership) antes de
 // que la migración del módulo Audit pase a ser su única dueña (ADR 0019).
@@ -112,11 +123,14 @@ await app.Services.InitializeStorageDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCatalogDatabaseAsync(
     app.Lifetime.ApplicationStopping);
+// Antes de Customers: la migracion de Customers agrega una FK real
+// (customers.customers.city_id -> geography.cities.id), asi que geography.cities tiene que
+// existir cuando esa migracion corre. Ver el comentario en CustomersDbContext.ConfigureCustomer.
+await app.Services.InitializeGeographyDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCustomersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCompaniesDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-await app.Services.InitializeGeographyDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.RunAsync();
 
