@@ -51,8 +51,9 @@ public sealed class UpdateCustomerHandler(
             ?? throw CustomerNotFound.For(command.CustomerId);
 
         // Se resuelven aca, no solo por la FK de base: la respuesta del PUT lleva la ciudad, el
-        // departamento y la clasificacion resueltos, igual que el detalle. No es el CUC —ese no
-        // cambia nunca— asi que este chequeo es exclusivamente para poder devolver el DTO.
+        // departamento y la clasificacion resueltos, igual que el detalle. Ademas, si la
+        // clasificacion cambia, su prefijo es lo que Customer.Update usa para reescribir el CUC —
+        // ver la regla de negocio documentada alla.
         var classification = await classificationRepository.FindAsync(
             command.TenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
             ?? throw new CustomersDomainException(
@@ -67,7 +68,8 @@ public sealed class UpdateCustomerHandler(
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
         // entero, asi que un campo ausente se limpia. El CUC no esta en la firma porque no viaja
-        // en el request — lo emite el backend al crear y no se edita nunca.
+        // en el request — lo emite el backend al crear. Update si recibe el prefijo de la
+        // clasificacion resuelta: lo usa para reescribir el CUC solo si la clasificacion cambio.
         customer.Update(
             command.Name,
             command.CityId,
@@ -80,6 +82,7 @@ public sealed class UpdateCustomerHandler(
                 Address = command.Address
             },
             CustomerMapping.ToCommercialInfo(command.ClassificationId, command.WithRetention),
+            classification.Prefix,
             now);
 
         auditPublisher.Publish(

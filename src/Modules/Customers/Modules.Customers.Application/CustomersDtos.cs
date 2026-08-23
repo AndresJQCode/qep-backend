@@ -87,8 +87,9 @@ public sealed record CustomersResponse(
 // propia entrada de auditoria, el mismo razonamiento que fijo el contrato de producto en CAT-02b y
 // el de empresa en EMP-08.
 //
-// El CUC tampoco viaja: lo emite el backend al crear y no se edita nunca. El formulario tiene el
-// campo, pero de solo lectura — `CLI-01` lo dice explicito.
+// El CUC tampoco viaja: lo emite el backend al crear. El formulario tiene el campo, pero de solo
+// lectura — `CLI-01` lo dice explicito; su prefijo puede cambiar en un Update, pero por el lado
+// del servidor, al resolver la clasificacion, nunca porque el cliente lo haya mandado.
 //
 // CityId y ClassificationId son obligatorios: la Fase 3 hizo la ciudad y la clasificacion FKs de
 // primer nivel, ya no texto libre opcional.

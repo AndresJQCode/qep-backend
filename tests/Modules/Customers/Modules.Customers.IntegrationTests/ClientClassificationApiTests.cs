@@ -367,6 +367,74 @@ public sealed class ClientClassificationApiTests
         Assert.Equal(HttpStatusCode.NotFound, get.StatusCode);
     }
 
+    // Regla de negocio confirmada: una clasificacion en uso por al menos un cliente no se puede
+    // editar, inactivar ni borrar. Las tres pruebas comparten el mismo arreglo.
+    [Fact]
+    public async Task UpdateIsBlockedWhileACustomerUsesTheClassification()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await ReadClassificationAsync(
+            await CreateClassificationAsync(client, TenantId, "Mayorista", "MAY"));
+        var city = await EnsureCityAsync(client);
+        await CreateCustomerAsync(client, city.CityId, created.Id);
+
+        var response = await client.PutAsJsonAsync(
+            $"{ClassificationsUrl()}/{created.Id}",
+            new { name = "Minorista", prefix = "MIN" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.classification.in_use", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DeactivateIsBlockedWhileACustomerUsesTheClassification()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await ReadClassificationAsync(
+            await CreateClassificationAsync(client, TenantId, "Mayorista", "MAY"));
+        var city = await EnsureCityAsync(client);
+        await CreateCustomerAsync(client, city.CityId, created.Id);
+
+        var response = await client.PostAsync(
+            $"{ClassificationsUrl()}/{created.Id}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.classification.in_use", body, StringComparison.Ordinal);
+        Assert.True((await ReadClassificationAsync(
+            await client.GetAsync(
+                $"{ClassificationsUrl()}/{created.Id}", TestContext.Current.CancellationToken)))
+            .IsActive);
+    }
+
+    [Fact]
+    public async Task DeleteIsBlockedWhileACustomerUsesTheClassification()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await ReadClassificationAsync(
+            await CreateClassificationAsync(client, TenantId, "Mayorista", "MAY"));
+        var city = await EnsureCityAsync(client);
+        await CreateCustomerAsync(client, city.CityId, created.Id);
+
+        var response = await client.DeleteAsync(
+            $"{ClassificationsUrl()}/{created.Id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.classification.in_use", body, StringComparison.Ordinal);
+        Assert.NotEmpty(await ListAsync(client, TenantId));
+    }
+
     // FindAsync filtra por tenant, asi que una clasificacion ajena sale como 404 y nunca llega
     // al DELETE: la fila del otro tenant sigue existiendo despues.
     [Fact]

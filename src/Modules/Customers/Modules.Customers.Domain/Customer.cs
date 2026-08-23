@@ -6,7 +6,8 @@ namespace Modules.Customers.Domain;
 ///
 /// La identificacion (tipo + numero) es **unica por tenant**; esa unicidad la arbitra
 /// <c>IX_customers_tenant_identification</c> y la traduce <c>CustomersUnitOfWork</c>. El CUC lo
-/// emite el backend al crear y no cambia nunca mas.
+/// emite el backend al crear; su prefijo se reescribe cuando cambia la clasificacion del cliente
+/// (ver <see cref="Cuc"/> y <see cref="Update"/>), pero el departamento y el consecutivo no.
 /// </summary>
 public sealed class Customer
 {
@@ -63,10 +64,12 @@ public sealed class Customer
     public Guid TenantId { get; private set; }
 
     /// <summary>
-    /// Codigo Unico de Cliente. Lo emite el backend al crear y **no se edita nunca**: es el
-    /// identificador con el que una persona habla de este cliente por telefono, y volverlo mutable
-    /// hace que la conversacion de ayer deje de referirse a nadie. Por eso no viaja en el request
-    /// y <see cref="Update"/> no lo toca.
+    /// Codigo Unico de Cliente. Lo emite el backend al crear y no viaja en el request de
+    /// <see cref="Update"/> — pero no es del todo inmutable: regla de negocio confirmada, cuando
+    /// cambia la clasificacion (el "tamano") del cliente, <see cref="Update"/> reescribe
+    /// unicamente el prefijo del CUC; el codigo de departamento y el consecutivo (los ultimos
+    /// ocho caracteres) se conservan siempre. Es el identificador con el que una persona habla de
+    /// este cliente por telefono, y esos ocho caracteres son los que no cambian nunca.
     ///
     /// Donde vive su emision es `SDD-OD-06`, que sigue abierta: hoy la resuelve este modulo porque
     /// no existe un modulo `identifiers` al que delegarla.
@@ -165,12 +168,15 @@ public sealed class Customer
             occurredAt);
 
     /// <summary>
-    /// Reemplaza el recurso entero: lo que no viene en el cuerpo se **limpia**. El CUC es la unica
-    /// excepcion, y no porque se conserve "por las dudas" — es que no viaja en el request.
+    /// Reemplaza el recurso entero: lo que no viene en el cuerpo se **limpia**. El CUC no viaja en
+    /// el request, pero no queda intocado: si <paramref name="commercial"/> trae una clasificacion
+    /// distinta a la actual, su prefijo se reescribe con <paramref name="classificationPrefix"/> —
+    /// regla de negocio confirmada, "cuando cambie el tamano del cliente, cambiara unicamente el
+    /// prefijo; el departamento y el consecutivo se conservaran".
     ///
     /// La ciudad y la clasificacion **si** se pueden reemplazar aca: un cliente se puede mudar de
-    /// ciudad o cambiar de categoria comercial, a diferencia del CUC, que es un identificador y no
-    /// un dato que describa al cliente hoy.
+    /// ciudad o cambiar de categoria comercial. La ciudad no reconstruye el CUC (el departamento
+    /// del codigo es el de alta, no el vigente) — el pedido de negocio solo menciona el prefijo.
     /// </summary>
     public void Update(
         string name,
@@ -178,6 +184,7 @@ public sealed class Customer
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
+        string classificationPrefix,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
@@ -186,16 +193,26 @@ public sealed class Customer
         // se valida deja el agregado a medio escribir cuando el segundo falla: el 422 le dice al
         // llamador que no se guardo nada, pero la instancia en memoria ya tiene el nombre nuevo, y
         // esa es la que EF persiste en el siguiente SaveChanges de la misma unidad de trabajo. Es
-        // el defecto que EMP-08 tuvo que corregir en Company; aca nace cubierto.
+        // el defecto que EMP-08 tuvo que corregir en Company; aca nace cubierto. La clasificacion
+        // se valida aca tambien (no solo dentro de Assign) porque hace falta **antes** de tocar el
+        // CUC, y ese cambio tiene que quedar cubierto por la misma garantia de todo-o-nada.
         var normalizedName = NormalizeName(name);
         var normalizedCityId = EnsureValidCityId(cityId);
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
+        var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
+        var normalizedClassificationPrefix = NormalizeClassificationPrefix(classificationPrefix);
 
         Name = normalizedName;
         CityId = normalizedCityId;
         Assign(normalizedIdentification);
         Assign(normalizedContact);
+
+        if (normalizedClassificationId != ClassificationId)
+        {
+            Cuc = ReplaceClassificationPrefix(Cuc, normalizedClassificationPrefix);
+        }
+
         Assign(commercial);
         Version++;
         UpdatedAt = occurredAt;
@@ -302,6 +319,27 @@ public sealed class Customer
             "The customer CUC is required.",
             "customers.customer.cuc_too_long",
             $"The customer CUC cannot exceed {CucMaxLength} characters.");
+
+    // El CUC es "{prefijo}{depto}{consecutivo}" (CucFormatter, en Application): el codigo de
+    // departamento DIVIPOLA son siempre 2 digitos y el consecutivo siempre 6
+    // (CucFormatter.SequenceDigits) — los ultimos ocho caracteres de cualquier CUC valido. Cambiar
+    // de clasificacion solo reescribe lo que viene antes de eso.
+    private const int CucSuffixLength = 8;
+
+    private static string ReplaceClassificationPrefix(string cuc, string newPrefix) =>
+        newPrefix + cuc[^CucSuffixLength..];
+
+    // Mismo criterio que NormalizeName/NormalizeCuc: el prefijo llega resuelto desde
+    // ClientClassification, pero Update lo vuelve a validar aca porque hace falta **antes** de
+    // tocar el CUC, dentro de la misma garantia de todo-o-nada que el resto del metodo.
+    private static string NormalizeClassificationPrefix(string prefix) =>
+        Normalize(
+            prefix,
+            ClientClassification.PrefixMaxLength,
+            "customers.customer.classification_prefix_required",
+            "The classification prefix is required.",
+            "customers.customer.classification_prefix_too_long",
+            $"The classification prefix cannot exceed {ClientClassification.PrefixMaxLength} characters.");
 
     // La FK de base (customers.customers.city_id -> geography.cities.id) garantiza que la ciudad
     // exista, pero no corre hasta el SaveChanges. Este chequeo estructural minimo —no vacia— es lo

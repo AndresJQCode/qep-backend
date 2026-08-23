@@ -11,6 +11,7 @@ public sealed record DeactivateClientClassificationCommand(Guid TenantId, Guid C
 // que es donde va esa regla.
 public sealed class DeactivateClientClassificationHandler(
     IClientClassificationRepository repository,
+    ICustomerRepository customerRepository,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -24,9 +25,21 @@ public sealed class DeactivateClientClassificationHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.ClassificationManage);
 
+        var classificationId = new ClientClassificationId(command.ClassificationId);
         var classification = await repository.FindAsync(
-            command.TenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
+            command.TenantId, classificationId, cancellationToken)
             ?? throw ClientClassificationNotFound.For(command.ClassificationId);
+
+        // Regla de negocio confirmada: misma restriccion que Delete. Una clasificacion en uso no
+        // se inactiva hasta que se le reasignen sus clientes a otra.
+        if (await customerRepository.AnyWithClassificationAsync(
+                command.TenantId, classificationId, cancellationToken))
+        {
+            throw new CustomersDomainException(
+                "customers.classification.in_use",
+                "The client classification cannot be deactivated because at least one customer " +
+                "uses it.");
+        }
 
         var now = clock.UtcNow;
         classification.Deactivate(now);
