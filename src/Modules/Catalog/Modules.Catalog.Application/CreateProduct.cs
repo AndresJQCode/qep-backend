@@ -11,7 +11,6 @@ public sealed record CreateProductCommand(
     string Code,
     string? Description,
     Guid? ImageFileId,
-    string? Currency,
     Guid? TaxRateId,
     ProductPricingRequest Pricing) : ICommand<ProductDto>, IProductWriteCommand;
 
@@ -73,7 +72,6 @@ public sealed class CreateProductHandler(
             {
                 Description = command.Description,
                 ImageFileId = image?.FileId,
-                Currency = command.Currency,
                 TaxRateId = taxRateId
             },
             pricing,

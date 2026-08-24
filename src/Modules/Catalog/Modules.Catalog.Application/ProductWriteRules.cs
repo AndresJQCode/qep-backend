@@ -23,8 +23,6 @@ public interface IProductWriteCommand
     string Code { get; }
 
     string? Description { get; }
-
-    string? Currency { get; }
 }
 
 /// <summary>
@@ -45,14 +43,5 @@ internal sealed class ProductWriteRules : AbstractValidator<IProductWriteCommand
             .MaximumLength(Product.CodeMaxLength);
         RuleFor(command => command.Description)
             .MaximumLength(ProductDetails.DescriptionMaxLength);
-
-        // Hallazgo `F`: la regla comprobaba sólo el largo, mientras el dominio además exige
-        // letras. Con Length() solo, "123" atravesaba el validador y lo rechazaba el dominio —
-        // 422 con código y sin mapa por campo.
-        RuleFor(command => command.Currency)
-            .Length(ProductDetails.CurrencyLength)
-            .Matches("^[A-Za-z]{3}$")
-            .WithMessage("The currency must be a three-letter ISO 4217 code.")
-            .When(command => !string.IsNullOrWhiteSpace(command.Currency));
     }
 }

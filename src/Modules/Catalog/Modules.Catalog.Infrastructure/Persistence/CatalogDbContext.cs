@@ -47,10 +47,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // Sin FK: apunta a storage.file_resources, y catalog no referencia las tablas de otro
         // módulo. Es un Guid suelto, como cualquier referencia entre módulos de este monolito.
         product.Property(value => value.ImageFileId).HasColumnName("image_file_id");
-        product.Property(value => value.Currency)
-            .HasColumnName("currency")
-            .HasMaxLength(ProductDetails.CurrencyLength)
-            .IsFixedLength();
         product.Property(value => value.TaxRateId)
             .HasColumnName("tax_rate_id")
             .HasConversion(
@@ -66,7 +62,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.TaxRateId)
             .OnDelete(DeleteBehavior.Restrict);
-        // CAT-09. Independientes de Price/Currency: no los reemplazan.
+        // CAT-09. Independientes del viejo Price: no lo reemplazan.
         product.Property(value => value.PriceBaseUsd)
             .HasColumnName("price_base_usd")
             .HasPrecision(18, 2);

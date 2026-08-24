@@ -146,9 +146,9 @@ public sealed class ProductTests
 
     // ---- CAT-04: propiedades nuevas ----
     //
-    // Van agrupadas en ProductDetails y no como parametros sueltos de Create/Update. Price y
-    // Currency vivieron acá hasta CAT-09, que los retiró por completo — el precio del producto
-    // es ahora sólo el de ProductPricing, en USD/COP.
+    // Van agrupadas en ProductDetails y no como parametros sueltos de Create/Update. Price
+    // vivió acá hasta CAT-09, que lo retiró por completo — el precio del producto es ahora
+    // sólo el de ProductPricing, en USD/COP.
 
     // CA-CAT-04-02: son opcionales. Un producto que no los manda sigue siendo valido.
     [Fact]
@@ -159,7 +159,6 @@ public sealed class ProductTests
 
         Assert.Null(product.Description);
         Assert.Null(product.ImageFileId);
-        Assert.Null(product.Currency);
         Assert.Null(product.TaxRateId);
     }
 
@@ -178,7 +177,6 @@ public sealed class ProductTests
             {
                 Description = "Cera de soja, 200 g",
                 ImageFileId = image,
-                Currency = "COP",
                 TaxRateId = taxRate
             },
             ValidPricing,
@@ -186,45 +184,7 @@ public sealed class ProductTests
 
         Assert.Equal("Cera de soja, 200 g", product.Description);
         Assert.Equal(image, product.ImageFileId);
-        Assert.Equal("COP", product.Currency);
         Assert.Equal(taxRate, product.TaxRateId);
-    }
-
-    // CA-CAT-04-05
-    [Theory]
-    [InlineData("CO")]
-    [InlineData("COPX")]
-    [InlineData("C0P")]
-    public void CreateRejectsACurrencyThatIsNotThreeLetters(string currency)
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(),
-                TenantId,
-                "Vela de soja",
-                "VS-001",
-                ProductDetails.Empty with { Currency = currency },
-                ValidPricing,
-                Now));
-
-        Assert.Equal("catalog.product.currency_invalid", error.Code);
-    }
-
-    // CA-CAT-04-05, segunda mitad: normalizar es parte del invariante. "cop" y "COP" son la misma
-    // moneda, y dejar las dos formas en base obliga a cada consumidor a normalizar de nuevo.
-    [Fact]
-    public void CreateNormalizesTheCurrencyToUppercase()
-    {
-        var product = Product.Create(
-            ProductId.New(),
-            TenantId,
-            "Vela de soja",
-            "VS-001",
-            ProductDetails.Empty with { Currency = " cop " },
-            ValidPricing,
-            Now);
-
-        Assert.Equal("COP", product.Currency);
     }
 
     [Fact]
@@ -257,7 +217,6 @@ public sealed class ProductTests
             {
                 Description = "Cera de soja",
                 ImageFileId = Guid.CreateVersion7(),
-                Currency = "COP",
                 TaxRateId = TaxRateId.New()
             },
             ValidPricing,
@@ -267,7 +226,6 @@ public sealed class ProductTests
 
         Assert.Null(product.Description);
         Assert.Null(product.ImageFileId);
-        Assert.Null(product.Currency);
         Assert.Null(product.TaxRateId);
     }
 

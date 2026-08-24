@@ -20,7 +20,6 @@ internal static class ProductMapping
         product.Description,
         product.ImageFileId,
         imageUrl,
-        product.Currency,
         product.TaxRateId?.Value,
         product.PriceBaseUsd,
         product.PriceBaseCop,

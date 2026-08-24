@@ -12,7 +12,6 @@ public sealed record UpdateProductCommand(
     string Code,
     string? Description,
     Guid? ImageFileId,
-    string? Currency,
     Guid? TaxRateId,
     ProductPricingRequest Pricing) : ICommand<ProductDto>, IProductWriteCommand;
 
@@ -71,7 +70,6 @@ public sealed class UpdateProductHandler(
             {
                 Description = command.Description,
                 ImageFileId = image?.FileId,
-                Currency = command.Currency,
                 TaxRateId = taxRateId
             },
             pricing,
