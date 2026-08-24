@@ -62,7 +62,6 @@ public sealed record ProductPricingRequest(
 /// <c>MembershipListItemResponse.State</c>.
 /// </summary>
 public sealed record PriceScaleRequest(
-    Guid PriceListId,
     int FromUnit,
     int ToUnit,
     decimal Discount,
@@ -72,17 +71,8 @@ public sealed record PriceScaleRequest(
     decimal? FinalUsd,
     decimal? FinalCop);
 
-/// <summary>
-/// <c>PriceListName</c> viaja resuelto para que el cliente no tenga que cruzarlo contra
-/// <c>GET /pricing/price-lists</c> sólo para pintar la escala — mismo criterio que
-/// <c>ProductResponse.ImageUrl</c> frente a <c>ImageFileId</c>. Puede ser <c>null</c> si la
-/// lista se borró después de crear la escala (no debería pasar: <c>DeletePriceList</c> lo
-/// impide, pero una fila cargada antes de esa regla podría quedar huérfana).
-/// </summary>
 public sealed record PriceScaleResponse(
     Guid Id,
-    Guid PriceListId,
-    string? PriceListName,
     int FromUnit,
     int ToUnit,
     decimal Discount,

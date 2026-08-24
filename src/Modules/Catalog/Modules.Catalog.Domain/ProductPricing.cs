@@ -28,7 +28,6 @@ public sealed record ProductPricing
 /// opcionales.
 /// </summary>
 public sealed record PriceScaleInput(
-    Guid PriceListId,
     int FromUnit,
     int ToUnit,
     decimal Discount,

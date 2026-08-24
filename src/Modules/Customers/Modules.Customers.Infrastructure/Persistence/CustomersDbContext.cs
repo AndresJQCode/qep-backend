@@ -10,8 +10,6 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 
     public DbSet<ClientClassification> ClientClassifications => Set<ClientClassification>();
 
-    public DbSet<CustomerPriceList> CustomerPriceLists => Set<CustomerPriceList>();
-
     internal DbSet<CustomerCucCounter> CucCounters => Set<CustomerCucCounter>();
 
     internal DbSet<CustomersOutboxMessage> Outbox => Set<CustomersOutboxMessage>();
@@ -20,7 +18,6 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     {
         ConfigureCustomer(modelBuilder);
         ConfigureClientClassification(modelBuilder);
-        ConfigureCustomerPriceList(modelBuilder);
         ConfigureCucCounter(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -175,43 +172,6 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         classification.HasIndex(value => new { value.TenantId, value.Prefix })
             .IsUnique()
             .HasDatabaseName("IX_client_classifications_tenant_prefix");
-    }
-
-    private static void ConfigureCustomerPriceList(ModelBuilder modelBuilder)
-    {
-        var assignment = modelBuilder.Entity<CustomerPriceList>();
-        assignment.ToTable("customer_price_lists", "customers");
-        assignment.HasKey(value => value.Id);
-        assignment.Property(value => value.Id)
-            .HasColumnName("id")
-            .HasConversion(id => id.Value, value => new CustomerPriceListId(value))
-            .ValueGeneratedNever();
-        assignment.Property(value => value.TenantId).HasColumnName("tenant_id");
-        assignment.Property(value => value.CustomerId)
-            .HasColumnName("customer_id")
-            .HasConversion(id => id.Value, value => new CustomerId(value));
-        // Sin clave foranea: el modulo `pricing` es otro modulo de negocio, y ninguno referencia
-        // las tablas del otro. Ver el comentario de CustomerPriceList.PriceListId.
-        assignment.Property(value => value.PriceListId).HasColumnName("price_list_id");
-        assignment.Property(value => value.CreatedAt).HasColumnName("created_at");
-
-        assignment.HasIndex(value => value.TenantId)
-            .HasDatabaseName("IX_customer_price_lists_tenant");
-        assignment.HasIndex(value => value.PriceListId)
-            .HasDatabaseName("IX_customer_price_lists_price_list");
-
-        // Evita duplicados por construccion: la misma lista no puede asignarse dos veces al mismo
-        // cliente. Mismo criterio que IX_membership_user_tenant en Tenancy.
-        assignment.HasIndex(value => new { value.CustomerId, value.PriceListId })
-            .IsUnique()
-            .HasDatabaseName("IX_customer_price_lists_customer_price_list");
-
-        // CASCADE: una asignacion no tiene sentido sin su cliente — mismo criterio que
-        // product_price_scales hacia products en Catalog.
-        assignment.HasOne<Customer>()
-            .WithMany()
-            .HasForeignKey(value => value.CustomerId)
-            .OnDelete(DeleteBehavior.Cascade);
     }
 
     /// <summary>

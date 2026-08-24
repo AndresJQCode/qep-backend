@@ -21,7 +21,6 @@ internal static class ProductPricingMapping
     };
 
     private static PriceScaleInput ToDomain(PriceScaleRequest request) => new(
-        request.PriceListId,
         request.FromUnit,
         request.ToUnit,
         request.Discount,

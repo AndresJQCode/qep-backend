@@ -31,7 +31,6 @@ public sealed class CreateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
     IProductImageLookup imageLookup,
-    ICatalogPriceListLookup priceListLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -64,13 +63,6 @@ public sealed class CreateProductHandler(
 
         var pricing = command.Pricing.ToDomain();
 
-        // Mismo criterio, con el agravante de que priceListId es obligatorio en cada escala: sin
-        // esta resolución, un producto del tenant A podría apuntar a la lista del tenant B, o a
-        // una lista inactiva. El resultado se reutiliza para la respuesta, así que esta es la
-        // única consulta a `pricing` en toda la escritura.
-        var priceLists = await ProductPriceListResolver.ResolveAsync(
-            priceListLookup, command.TenantId, pricing.Scales, cancellationToken);
-
         var now = clock.UtcNow;
         var product = Product.Create(
             ProductId.New(),
@@ -97,6 +89,6 @@ public sealed class CreateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto(image?.PublicUrl, priceLists);
+        return product.ToDto(image?.PublicUrl);
     }
 }

@@ -9,7 +9,6 @@ public sealed record ListProductsQuery(Guid TenantId, string? Search)
 public sealed class ListProductsHandler(
     IProductRepository repository,
     IProductImageLookup imageLookup,
-    ICatalogPriceListLookup priceListLookup,
     IExecutionContext executionContext)
     : IQueryHandler<ListProductsQuery, IReadOnlyList<ProductDto>>
 {
@@ -23,9 +22,8 @@ public sealed class ListProductsHandler(
         var products = await repository.SearchAsync(
             query.TenantId, query.Search, cancellationToken);
 
-        // Las URLs y los nombres de lista se resuelven en una sola consulta para todo el
-        // listado. Ver ToDtosAsync.
+        // Las URLs se resuelven en una sola consulta para todo el listado. Ver ToDtosAsync.
         return await products.ToDtosAsync(
-            imageLookup, priceListLookup, query.TenantId, cancellationToken);
+            imageLookup, query.TenantId, cancellationToken);
     }
 }

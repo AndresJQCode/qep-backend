@@ -1,8 +1,8 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Un producto del catálogo de un tenant (RF-020). Guarda sólo los datos maestros vivos: las
-/// listas de precio y su vigencia son de `pricing`, y un documento congela su copia de lo vendido.
+/// Un producto del catálogo de un tenant (RF-020). Guarda sólo los datos maestros vivos: un
+/// documento congela su propia copia de lo vendido.
 /// </summary>
 public sealed class Product
 {
@@ -215,8 +215,6 @@ public sealed class Product
             "catalog.product.price_final_mismatch_cop",
             "COP");
 
-        EnsureScalesDoNotOverlapWithinTheSamePriceList(pricing.Scales);
-
         PriceBaseUsd = pricing.BaseUsd;
         PriceBaseCop = pricing.BaseCop;
         PriceFinalUsd = pricing.FinalUsd;
@@ -227,35 +225,6 @@ public sealed class Product
         foreach (var scale in pricing.Scales)
         {
             _priceScales.Add(PriceScale.Create(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
-        }
-    }
-
-    /// <summary>
-    /// Dos escalas de la **misma** lista de precios no pueden cubrir la misma cantidad — si no,
-    /// qué descuento aplica para esa cantidad queda indefinido. Escalas de listas distintas nunca
-    /// se comparan entre sí: la Mayorista y la VIP de un producto son ladders independientes, y
-    /// que ambas cubran "1-9 unidades" es exactamente el caso de uso (CAT-09 + módulo pricing).
-    ///
-    /// Vive en el dominio y no en <c>ProductPricingRules</c> (FluentValidation) porque es una
-    /// regla que cruza escalas entre sí, no un límite atribuible a un campo de una escala sola —
-    /// mismo criterio documentado en el propio <c>ProductPricingRules</c>.
-    /// </summary>
-    private static void EnsureScalesDoNotOverlapWithinTheSamePriceList(
-        IReadOnlyCollection<PriceScaleInput> scales)
-    {
-        foreach (var group in scales.GroupBy(scale => scale.PriceListId))
-        {
-            var ordered = group.OrderBy(scale => scale.FromUnit).ToArray();
-            for (var index = 1; index < ordered.Length; index++)
-            {
-                if (ordered[index].FromUnit <= ordered[index - 1].ToUnit)
-                {
-                    throw new CatalogDomainException(
-                        "catalog.product.price_scale.range_overlap",
-                        "Two price scales for the same price list cannot cover overlapping " +
-                        "quantities.");
-                }
-            }
         }
     }
 

@@ -735,8 +735,6 @@
           "Modules.Geography.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
-          "Modules.Pricing.Api": "[1.0.0, )",
-          "Modules.Pricing.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Api": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
           "Scalar.AspNetCore": "[2.16.16, )"
@@ -761,8 +759,6 @@
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
-          "Modules.Pricing.Application": "[1.0.0, )",
-          "Modules.Pricing.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Application": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
           "Modules.Tenancy.Api": "[1.0.0, )",
@@ -1009,39 +1005,6 @@
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Notifications.Application": "[1.0.0, )",
           "Modules.Notifications.Domain": "[1.0.0, )",
-          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
-        }
-      },
-      "modules.pricing.api": {
-        "type": "Project",
-        "dependencies": {
-          "BuildingBlocks.Application": "[1.0.0, )",
-          "Modules.Pricing.Application": "[1.0.0, )",
-          "Modules.Pricing.Domain": "[1.0.0, )"
-        }
-      },
-      "modules.pricing.application": {
-        "type": "Project",
-        "dependencies": {
-          "BuildingBlocks.Application": "[1.0.0, )",
-          "FluentValidation": "[12.1.1, )",
-          "Modules.Pricing.Domain": "[1.0.0, )",
-          "Modules.Tenancy.Application": "[1.0.0, )"
-        }
-      },
-      "modules.pricing.domain": {
-        "type": "Project",
-        "dependencies": {
-          "BuildingBlocks.Domain": "[1.0.0, )"
-        }
-      },
-      "modules.pricing.infrastructure": {
-        "type": "Project",
-        "dependencies": {
-          "BuildingBlocks.Application": "[1.0.0, )",
-          "Microsoft.EntityFrameworkCore": "[10.0.9, )",
-          "Modules.Pricing.Application": "[1.0.0, )",
-          "Modules.Pricing.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
         }
       },
