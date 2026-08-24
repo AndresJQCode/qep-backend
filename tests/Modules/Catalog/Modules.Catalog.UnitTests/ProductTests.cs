@@ -146,9 +146,9 @@ public sealed class ProductTests
 
     // ---- CAT-04: propiedades nuevas ----
     //
-    // Van agrupadas en ProductDetails y no como parametros sueltos de Create/Update. Price y
-    // Currency vivieron acá hasta CAT-09, que los retiró por completo — el precio del producto
-    // es ahora sólo el de ProductPricing, en USD/COP.
+    // Van agrupadas en ProductDetails y no como parametros sueltos de Create/Update. Price
+    // vivió acá hasta CAT-09, que lo retiró por completo — el precio del producto es ahora
+    // sólo el de ProductPricing, en USD/COP.
 
     // CA-CAT-04-02: son opcionales. Un producto que no los manda sigue siendo valido.
     [Fact]
@@ -159,7 +159,6 @@ public sealed class ProductTests
 
         Assert.Null(product.Description);
         Assert.Null(product.ImageFileId);
-        Assert.Null(product.Currency);
         Assert.Null(product.TaxRateId);
     }
 
@@ -178,7 +177,6 @@ public sealed class ProductTests
             {
                 Description = "Cera de soja, 200 g",
                 ImageFileId = image,
-                Currency = "COP",
                 TaxRateId = taxRate
             },
             ValidPricing,
@@ -186,45 +184,7 @@ public sealed class ProductTests
 
         Assert.Equal("Cera de soja, 200 g", product.Description);
         Assert.Equal(image, product.ImageFileId);
-        Assert.Equal("COP", product.Currency);
         Assert.Equal(taxRate, product.TaxRateId);
-    }
-
-    // CA-CAT-04-05
-    [Theory]
-    [InlineData("CO")]
-    [InlineData("COPX")]
-    [InlineData("C0P")]
-    public void CreateRejectsACurrencyThatIsNotThreeLetters(string currency)
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(),
-                TenantId,
-                "Vela de soja",
-                "VS-001",
-                ProductDetails.Empty with { Currency = currency },
-                ValidPricing,
-                Now));
-
-        Assert.Equal("catalog.product.currency_invalid", error.Code);
-    }
-
-    // CA-CAT-04-05, segunda mitad: normalizar es parte del invariante. "cop" y "COP" son la misma
-    // moneda, y dejar las dos formas en base obliga a cada consumidor a normalizar de nuevo.
-    [Fact]
-    public void CreateNormalizesTheCurrencyToUppercase()
-    {
-        var product = Product.Create(
-            ProductId.New(),
-            TenantId,
-            "Vela de soja",
-            "VS-001",
-            ProductDetails.Empty with { Currency = " cop " },
-            ValidPricing,
-            Now);
-
-        Assert.Equal("COP", product.Currency);
     }
 
     [Fact]
@@ -257,7 +217,6 @@ public sealed class ProductTests
             {
                 Description = "Cera de soja",
                 ImageFileId = Guid.CreateVersion7(),
-                Currency = "COP",
                 TaxRateId = TaxRateId.New()
             },
             ValidPricing,
@@ -267,7 +226,6 @@ public sealed class ProductTests
 
         Assert.Null(product.Description);
         Assert.Null(product.ImageFileId);
-        Assert.Null(product.Currency);
         Assert.Null(product.TaxRateId);
     }
 
@@ -504,13 +462,11 @@ public sealed class ProductTests
 
     // ---- Escalas de precio ----
 
-    private static readonly Guid SamplePriceListId = Guid.NewGuid();
-
     private static PriceScaleInput MultipleScale(
         int fromUnit = 1, int toUnit = 9, decimal discount = 0m,
-        int multiple = 3, decimal? finalUsd = 10m, decimal? finalCop = null, Guid? priceListId = null) =>
+        int multiple = 3, decimal? finalUsd = 10m, decimal? finalCop = null) =>
         new(
-            priceListId ?? SamplePriceListId, fromUnit, toUnit, discount,
+            fromUnit, toUnit, discount,
             PriceScaleRestriction.Multiple, multiple, null, finalUsd, finalCop);
 
     [Fact]
@@ -543,7 +499,7 @@ public sealed class ProductTests
             {
                 BaseUsd = 10m,
                 FinalUsd = 10m,
-                Scales = [new PriceScaleInput(SamplePriceListId, 1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 12, 10m, null)]
+                Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 12, 10m, null)]
             },
             Now);
 
@@ -598,7 +554,7 @@ public sealed class ProductTests
                 {
                     BaseUsd = 10m,
                     FinalUsd = 10m,
-                    Scales = [new PriceScaleInput(SamplePriceListId, 1, 9, 0m, null, null, null, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, null, 10m, null)]
                 },
                 Now));
 
@@ -615,7 +571,7 @@ public sealed class ProductTests
                 {
                     BaseUsd = 10m,
                     FinalUsd = 10m,
-                    Scales = [new PriceScaleInput(SamplePriceListId, 1, 9, 0m, PriceScaleRestriction.Multiple, null, null, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, null, null, 10m, null)]
                 },
                 Now));
 
@@ -632,7 +588,7 @@ public sealed class ProductTests
                 {
                     BaseUsd = 10m,
                     FinalUsd = 10m,
-                    Scales = [new PriceScaleInput(SamplePriceListId, 1, 9, 0m, PriceScaleRestriction.Multiple, 3, 12, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, 3, 12, 10m, null)]
                 },
                 Now));
 
@@ -649,7 +605,7 @@ public sealed class ProductTests
                 {
                     BaseUsd = 10m,
                     FinalUsd = 10m,
-                    Scales = [new PriceScaleInput(SamplePriceListId, 1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, null, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, null, 10m, null)]
                 },
                 Now));
 
@@ -666,7 +622,7 @@ public sealed class ProductTests
                 {
                     BaseUsd = 10m,
                     FinalUsd = 10m,
-                    Scales = [new PriceScaleInput(SamplePriceListId, 1, 9, 0m, PriceScaleRestriction.PackagingUnit, 3, 12, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, 3, 12, 10m, null)]
                 },
                 Now));
 
@@ -776,94 +732,5 @@ public sealed class ProductTests
             new ProductPricing { BaseUsd = 10m, FinalUsd = 10m }, Now.AddMinutes(5));
 
         Assert.Empty(product.PriceScales);
-    }
-
-    // ---- Listas de precio (modulo pricing) ----
-
-    [Fact]
-    public void CreateRejectsAScaleWithoutAPriceList()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing
-                {
-                    BaseUsd = 10m,
-                    FinalUsd = 10m,
-                    Scales = [MultipleScale(priceListId: Guid.Empty)]
-                },
-                Now));
-
-        Assert.Equal("catalog.product.price_scale.price_list_required", error.Code);
-    }
-
-    [Fact]
-    public void CreateAcceptsScalesForDifferentPriceListsWithTheSameRange()
-    {
-        var wholesale = Guid.NewGuid();
-        var vip = Guid.NewGuid();
-
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Camiseta", "CAM-001", ProductDetails.Empty,
-            new ProductPricing
-            {
-                BaseUsd = 10m,
-                FinalUsd = 10m,
-                Scales =
-                [
-                    MultipleScale(fromUnit: 1, toUnit: 9, priceListId: wholesale),
-                    MultipleScale(fromUnit: 1, toUnit: 9, priceListId: vip)
-                ]
-            },
-            Now);
-
-        Assert.Equal(2, product.PriceScales.Count);
-    }
-
-    [Fact]
-    public void CreateRejectsOverlappingScalesWithinTheSamePriceList()
-    {
-        var priceListId = Guid.NewGuid();
-
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Camiseta", "CAM-001", ProductDetails.Empty,
-                new ProductPricing
-                {
-                    BaseUsd = 10m,
-                    FinalUsd = 10m,
-                    Scales =
-                    [
-                        MultipleScale(fromUnit: 1, toUnit: 9, priceListId: priceListId),
-                        MultipleScale(fromUnit: 5, toUnit: 20, priceListId: priceListId)
-                    ]
-                },
-                Now));
-
-        Assert.Equal("catalog.product.price_scale.range_overlap", error.Code);
-    }
-
-    // Rangos contiguos (1-9 y 10-20) no se solapan: ToUnit de uno es estrictamente menor que
-    // FromUnit del siguiente.
-    [Fact]
-    public void CreateAcceptsAdjacentNonOverlappingScalesInTheSamePriceList()
-    {
-        var priceListId = Guid.NewGuid();
-
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Camiseta", "CAM-001", ProductDetails.Empty,
-            new ProductPricing
-            {
-                BaseUsd = 10m,
-                FinalUsd = 10m,
-                Scales =
-                [
-                    MultipleScale(fromUnit: 1, toUnit: 9, priceListId: priceListId),
-                    MultipleScale(fromUnit: 10, toUnit: 20, priceListId: priceListId)
-                ]
-            },
-            Now);
-
-        Assert.Equal(2, product.PriceScales.Count);
     }
 }

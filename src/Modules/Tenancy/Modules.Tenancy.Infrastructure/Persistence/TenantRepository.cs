@@ -11,11 +11,5 @@ internal sealed class TenantRepository(TenancyDbContext dbContext) : ITenantRepo
             tenant => tenant.Id == tenantId,
             cancellationToken);
 
-    public async Task<IReadOnlyList<TenantId>> ListAllIdsAsync(CancellationToken cancellationToken) =>
-        await dbContext.Tenants
-            .AsNoTracking()
-            .Select(tenant => tenant.Id)
-            .ToListAsync(cancellationToken);
-
     public void Add(Tenant tenant) => dbContext.Tenants.Add(tenant);
 }

@@ -30,15 +30,4 @@ public interface IProductRepository
         Guid tenantId,
         TaxRateId taxRateId,
         CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Si alguna escala de precio de algún producto del tenant referencia esa lista de precios.
-    /// La usa <c>IPriceListUsageLookup</c> (adaptado en Bootstrapper) para que
-    /// <c>DeletePriceList</c> responda un 422 legible antes de dejar escalas huérfanas — mismo
-    /// patrón que <see cref="AnyWithTaxRateAsync"/>.
-    /// </summary>
-    Task<bool> AnyWithPriceListAsync(
-        Guid tenantId,
-        Guid priceListId,
-        CancellationToken cancellationToken);
 }

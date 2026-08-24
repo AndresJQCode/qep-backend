@@ -14,10 +14,9 @@ using Testcontainers.PostgreSql;
 namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>
-/// CAT-04 — las propiedades opcionales de `Product` (descripción, portada, moneda, tasa de
-/// impuesto). `Price` vivió acá hasta CAT-09, que lo retiró del todo junto con sus pruebas —
-/// el precio del producto es ahora sólo el de CAT-09, en USD/COP. `Currency` se quedó: no es
-/// sólo la moneda de `Price`, es un dato independiente del producto.
+/// CAT-04 — las propiedades opcionales de `Product` (descripción, portada, tasa de impuesto).
+/// `Price` vivió acá hasta CAT-09, que lo retiró del todo junto con sus pruebas — el precio del
+/// producto es ahora sólo el de CAT-09, en USD/COP.
 /// </summary>
 public sealed class ProductDetailsApiTests
 {
@@ -100,7 +99,6 @@ public sealed class ProductDetailsApiTests
             code = "VS-001",
             description = "Cera de soja, 200 g",
             imageFileId = image,
-            currency = "COP",
             taxRateId,
             pricing = new { baseUsd = 10m, finalUsd = 10m }
         });
@@ -109,7 +107,6 @@ public sealed class ProductDetailsApiTests
         var created = await ReadProductAsync(response);
         Assert.Equal("Cera de soja, 200 g", created.Description);
         Assert.Equal(image, created.ImageFileId);
-        Assert.Equal("COP", created.Currency);
         Assert.Equal(taxRateId, created.TaxRateId);
 
         // Releído desde la base, no desde la respuesta de la escritura: eso probaría el mapeo de
@@ -117,7 +114,6 @@ public sealed class ProductDetailsApiTests
         var fetched = await ReadProductAsync(await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
             TestContext.Current.CancellationToken));
-        Assert.Equal("COP", fetched.Currency);
         Assert.Equal(taxRateId, fetched.TaxRateId);
     }
 
@@ -137,7 +133,6 @@ public sealed class ProductDetailsApiTests
         var created = await ReadProductAsync(response);
         Assert.Null(created.Description);
         Assert.Null(created.ImageFileId);
-        Assert.Null(created.Currency);
         Assert.Null(created.TaxRateId);
     }
 
@@ -157,7 +152,6 @@ public sealed class ProductDetailsApiTests
             code = "VS-001",
             description = "Cera de soja",
             imageFileId = await UploadImageAsync(client, TenantId, database),
-            currency = "COP",
             taxRateId,
             pricing = new { baseUsd = 10m, finalUsd = 10m }
         }));
@@ -171,72 +165,7 @@ public sealed class ProductDetailsApiTests
         var updated = await ReadProductAsync(response);
         Assert.Null(updated.Description);
         Assert.Null(updated.ImageFileId);
-        Assert.Null(updated.Currency);
         Assert.Null(updated.TaxRateId);
-    }
-
-    // CA-CAT-04-05
-    [Theory]
-    [InlineData("CO")]
-    [InlineData("COPX")]
-    public async Task CreateWithACurrencyThatIsNotThreeCharactersIsUnprocessable(string currency)
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            currency,
-            pricing = new { baseUsd = 10m, finalUsd = 10m }
-        });
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-    }
-
-    // CA-CAT-04-05, segunda mitad: "cop" entra y sale "COP".
-    [Fact]
-    public async Task CreateNormalizesTheCurrencyToUppercase()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            currency = "cop",
-            pricing = new { baseUsd = 10m, finalUsd = 10m }
-        }));
-
-        Assert.Equal("COP", created.Currency);
-    }
-
-    /// <summary>
-    /// Hallazgo `F` — la regla del validador comprobaba sólo el largo, mientras el dominio además
-    /// exige letras. `"123"` atravesaba el validador y lo rechazaba el dominio, con la misma
-    /// forma del hallazgo `A`: 422 con código, sin mapa por campo.
-    /// </summary>
-    [Fact]
-    public async Task ACurrencyOfThreeNonLettersNamesTheCurrencyFieldInTheErrorMap()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            currency = "123",
-            pricing = new { baseUsd = 10m, finalUsd = 10m }
-        });
-
-        var errors = await ReadValidationErrorsAsync(response);
-        Assert.Contains("Currency", errors.Keys);
     }
 
     /// <summary>
@@ -398,29 +327,7 @@ public sealed class ProductDetailsApiTests
         Assert.Equal("Producto viejo", fetched.Name);
         Assert.Null(fetched.Description);
         Assert.Null(fetched.ImageFileId);
-        Assert.Null(fetched.Currency);
         Assert.Null(fetched.TaxRateId);
-    }
-
-    /// <summary>
-    /// Un 422 de validación tiene dos mitades y las pruebas viejas miraban una sola: el status y
-    /// el código salían bien mientras el mapa por campo faltaba. Este helper exige las dos.
-    /// </summary>
-    private static async Task<IReadOnlyDictionary<string, string[]>> ReadValidationErrorsAsync(
-        HttpResponseMessage response)
-    {
-        var body = await response.Content.ReadAsStringAsync(
-            TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-
-        var problem = JsonDocument.Parse(body).RootElement;
-        Assert.Equal("validation.failed", problem.GetProperty("code").GetString());
-
-        var errors = problem.TryGetProperty("errors", out var map)
-            ? map.Deserialize<Dictionary<string, string[]>>()
-            : null;
-        Assert.NotNull(errors);
-        return errors;
     }
 
     /// <summary>

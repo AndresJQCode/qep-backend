@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Customers.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(CustomersDbContext))]
-    [Migration("20260822225827_ReplaceCustomerPriceListWithAssignments")]
-    partial class ReplaceCustomerPriceListWithAssignments
+    [Migration("20260823200904_DropObsoletePriceListColumn")]
+    partial class DropObsoletePriceListColumn
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -185,43 +185,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     b.ToTable("customers", "customers");
                 });
 
-            modelBuilder.Entity("Modules.Customers.Domain.CustomerPriceList", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<Guid>("CustomerId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("customer_id");
-
-                    b.Property<Guid>("PriceListId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("price_list_id");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PriceListId")
-                        .HasDatabaseName("IX_customer_price_lists_price_list");
-
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("IX_customer_price_lists_tenant");
-
-                    b.HasIndex("CustomerId", "PriceListId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_customer_price_lists_customer_price_list");
-
-                    b.ToTable("customer_price_lists", "customers");
-                });
-
             modelBuilder.Entity("Modules.Customers.Infrastructure.Persistence.CustomerCucCounter", b =>
                 {
                     b.Property<Guid>("TenantId")
@@ -295,15 +258,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_customers_client_classifications_classification_id");
-                });
-
-            modelBuilder.Entity("Modules.Customers.Domain.CustomerPriceList", b =>
-                {
-                    b.HasOne("Modules.Customers.Domain.Customer", null)
-                        .WithMany()
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }
