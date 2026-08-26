@@ -353,10 +353,10 @@ public sealed class RealAuthenticationApiTests
         request.Headers.Add("X-Tenant-Id", tenantId.ToString());
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var memberships = await response.Content.ReadFromJsonAsync<MembershipPayload[]>(
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(memberships);
-        return Assert.Single(memberships!, membership => membership.Id == membershipId);
+        Assert.NotNull(list);
+        return Assert.Single(list!.Items, membership => membership.Id == membershipId);
     }
 
     private static object NewSettingsBody() => new
@@ -421,6 +421,10 @@ public sealed class RealAuthenticationApiTests
     private sealed record RegisterTenantPayload(Guid TenantId, Guid OwnerUserId);
 
     private sealed record MembershipPayload(Guid Id, Guid UserId, long Version);
+
+    /// <summary>El listado viaja envuelto, con los conteos por estado al lado.</summary>
+    private sealed record MembershipListPayload(
+        IReadOnlyList<MembershipPayload> Items);
 
     /// <summary>
     /// Cliente sobre **https**, y no es cosmético: es lo que hace que la cookie de sesión viaje.

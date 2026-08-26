@@ -55,7 +55,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<InviteMemberCommand, MembershipDto>,
             InviteMemberHandler>();
         services.AddScoped<
-            IQueryHandler<ListMembershipsQuery, IReadOnlyList<MembershipListItemDto>>,
+            IQueryHandler<ListMembershipsQuery, MembershipListDto>,
             ListMembershipsHandler>();
         services.AddScoped<
             ICommandHandler<SuspendMemberCommand, MembershipListItemDto>,

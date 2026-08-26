@@ -144,14 +144,103 @@ public sealed class MembershipApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var memberships = await response.Content.ReadFromJsonAsync<MembershipListItemPayload[]>(
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(memberships);
+        Assert.NotNull(list);
         var listed = Assert.Single(
-            memberships!,
+            list!.Items,
             membership => membership.Id == invitedMembership!.Id);
         Assert.Equal(email, listed.Email);
-        Assert.All(memberships!, membership => Assert.Equal(TenantId, membership.TenantId.ToString()));
+        Assert.All(list.Items, membership => Assert.Equal(TenantId, membership.TenantId.ToString()));
+    }
+
+    /// <summary>
+    /// El filtro se aplica sobre el estado que se muestra, no sobre el guardado.
+    /// </summary>
+    /// <remarks>
+    /// El vencimiento es perezoso: sólo <c>Accept</c> mueve una invitación a
+    /// <c>Expired</c>, así que quien nunca intenta entrar queda en <c>Invited</c> con un
+    /// ExpiresAt en el pasado para siempre. Filtrar por la columna cruda devolvería esa
+    /// fila como pendiente y quien filtra esperaría a alguien que ya no puede llegar.
+    /// </remarks>
+    [Fact]
+    public async Task ListFiltersByDerivedStateAndCountsEachOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var live = await InviteAsync(client, TenantId, NewEmail());
+        var lapsed = await InviteAsync(client, TenantId, NewEmail());
+        var lapsedMembership = await lapsed.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        var liveMembership = await live.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await LapseInvitationAsync(database, lapsedMembership!.Id);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships?state=expired",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(list);
+        var only = Assert.Single(list!.Items);
+        Assert.Equal(lapsedMembership.Id, only.Id);
+        Assert.DoesNotContain(list.Items, item => item.Id == liveMembership!.Id);
+
+        // Los conteos describen el roster entero, no la página filtrada: son lo que
+        // decide a cuál de los otros estados vale la pena ir.
+        Assert.Equal(1, list.Counts.Expired);
+        Assert.Equal(1, list.Counts.Pending);
+        Assert.Equal(2, list.Counts.Total);
+    }
+
+    [Fact]
+    public async Task ListFiltersBySearchOnEmail()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var wanted = NewEmail();
+        var invited = await InviteAsync(client, TenantId, wanted);
+        var wantedMembership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await InviteAsync(client, TenantId, NewEmail());
+        var fragment = wanted[..12];
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships?search={fragment}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(list);
+        var only = Assert.Single(list!.Items);
+        Assert.Equal(wantedMembership!.Id, only.Id);
+        // La búsqueda acota también los conteos: los chips de estado cuentan dentro de lo
+        // buscado, que es lo que la pantalla muestra al lado de cada uno.
+        Assert.Equal(1, list.Counts.Total);
+    }
+
+    /// <summary>
+    /// Un estado desconocido falla en vez de ignorarse, igual que en Companies: tratarlo
+    /// como "sin filtro" devuelve el listado entero con un 200 y quien pidió
+    /// <c>?state=vencidas</c> concluye que no hay ninguna.
+    /// </summary>
+    [Fact]
+    public async Task ListRejectsAnUnknownStateFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships?state=vencidas",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
     [Fact]
@@ -682,6 +771,18 @@ public sealed class MembershipApiTests
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
         long Version);
+
+    private sealed record MembershipListPayload(
+        IReadOnlyList<MembershipListItemPayload> Items,
+        MembershipCountsPayload Counts);
+
+    private sealed record MembershipCountsPayload(
+        int Active,
+        int Pending,
+        int Expired,
+        int Suspended,
+        int Removed,
+        int Total);
 
     private sealed record AuthorizationCatalogPayload(
         string CatalogVersion,

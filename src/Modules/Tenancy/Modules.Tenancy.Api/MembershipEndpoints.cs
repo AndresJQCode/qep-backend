@@ -23,10 +23,14 @@ public static class MembershipEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // `state` acepta el estado que se muestra —pending, expired, active, suspended,
+        // removed—, no el que guarda la tabla: "vencida" se deriva del ExpiresAt contra el
+        // reloj del servidor. Uno desconocido responde 422 en vez de ignorarse.
         group.MapGet("/", ListAsync)
             .RequireAuthorization(TenancyPermissions.AdvisorshipRead)
-            .Produces<IReadOnlyList<MembershipListItemResponse>>()
-            .ProducesProblem(StatusCodes.Status403Forbidden);
+            .Produces<MembershipListResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/{membershipId:guid}/suspend", SuspendAsync)
             .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
@@ -142,12 +146,26 @@ public static class MembershipEndpoints
     private static async Task<IResult> ListAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? state = null,
+        string? search = null)
     {
-        var memberships = await dispatcher.QueryAsync(
-            new ListMembershipsQuery(new TenantId(tenantId)),
+        var list = await dispatcher.QueryAsync(
+            new ListMembershipsQuery(
+                new TenantId(tenantId),
+                MembershipViewStates.Parse(state),
+                search),
             cancellationToken);
-        return Results.Ok(memberships.Select(ToListItemResponse).ToList());
+
+        return Results.Ok(new MembershipListResponse(
+            list.Items.Select(ToListItemResponse).ToList(),
+            new MembershipCountsResponse(
+                list.Counts.Active,
+                list.Counts.Pending,
+                list.Counts.Expired,
+                list.Counts.Suspended,
+                list.Counts.Removed,
+                list.Counts.Total)));
     }
 
     private static async Task<IResult> InviteAsync(
@@ -243,3 +261,24 @@ public sealed record MembershipListItemResponse(
     DateTimeOffset? AcceptedAt,
     DateTimeOffset ExpiresAt,
     long Version);
+
+/// <summary>
+/// El listado y, al lado, cuántos hay de cada estado.
+/// </summary>
+/// <remarks>
+/// Los conteos viajan con la lista porque quien filtra necesita saber qué hay del otro
+/// lado del filtro: sin ellos, ver "0 vencidas" exige pedir cada estado por separado. Se
+/// cuentan dentro de lo buscado y antes de aplicar el estado, así que suman el total del
+/// roster —o el de la búsqueda— y no el de lo que se está mostrando.
+/// </remarks>
+public sealed record MembershipListResponse(
+    IReadOnlyList<MembershipListItemResponse> Items,
+    MembershipCountsResponse Counts);
+
+public sealed record MembershipCountsResponse(
+    int Active,
+    int Pending,
+    int Expired,
+    int Suspended,
+    int Removed,
+    int Total);
