@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- QuotationsAuthorization y el resolver de descuento son internal: no son API pública del
+         módulo, y las reglas que hacen cumplir se prueban unitariamente. Mismo patrón que
+         Catalog, Customers, Companies. -->
+    <InternalsVisibleTo Include="Modules.Quotations.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Quotations.Domain\Modules.Quotations.Domain.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+</Project>

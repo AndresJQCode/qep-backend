@@ -15,6 +15,8 @@ using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Quotations.Api;
+using Modules.Quotations.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Api;
@@ -96,6 +98,8 @@ app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();
 app.MapGeographyEndpoints();
+app.MapQuotationEndpoints();
+app.MapSaleEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
@@ -120,6 +124,11 @@ await app.Services.InitializeGeographyDatabaseAsync(
 await app.Services.InitializeCustomersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCompaniesDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+// Despues de Catalog y Customers: quotations referencia sus datos (producto, cliente) por id
+// suelto, sin FK real -- no hay dependencia de orden estricta, pero se inicializa al final del
+// grupo de modulos de negocio por consistencia con el resto de este archivo.
+await app.Services.InitializeQuotationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.RunAsync();
 

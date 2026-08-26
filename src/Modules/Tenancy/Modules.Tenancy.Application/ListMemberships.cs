@@ -32,7 +32,11 @@ public static class MembershipListItemMappings
             membership.Version);
 }
 
-public sealed record ListMembershipsQuery(TenantId TenantId) : IQuery<IReadOnlyList<MembershipListItemDto>>;
+/// <summary>Filtro opcional por rol (ej. "advisor") — la lista de asesores para el
+/// selector de cotizaciones se resuelve acá, en el servidor, no descartando filas del
+/// lado del cliente. Sin filtro, se listan todos los roles, como antes.</summary>
+public sealed record ListMembershipsQuery(TenantId TenantId, string? Role = null)
+    : IQuery<IReadOnlyList<MembershipListItemDto>>;
 
 public sealed class ListMembershipsHandler(
     IMembershipRepository membershipRepository,
@@ -50,10 +54,17 @@ public sealed class ListMembershipsHandler(
             query.TenantId,
             cancellationToken);
 
-        var items = new List<MembershipListItemDto>(memberships.Count);
+        // Filtrado en memoria, no en el repositorio: mismo criterio que ya documenta este
+        // handler para la resolución de email — la cantidad de miembros de un tenant es
+        // chica hoy, no justifica un método de repositorio nuevo.
+        var filtered = query.Role is null
+            ? memberships
+            : memberships.Where(membership => membership.Roles.Contains(query.Role)).ToList();
+
+        var items = new List<MembershipListItemDto>(filtered.Count);
         // Una búsqueda por membresía: IUserDirectory sólo expone resolución por id único
         // (v1). Aceptable para la poca cantidad de miembros que tiene un tenant hoy.
-        foreach (var membership in memberships)
+        foreach (var membership in filtered)
         {
             var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
             items.Add(membership.ToListItemDto(email));

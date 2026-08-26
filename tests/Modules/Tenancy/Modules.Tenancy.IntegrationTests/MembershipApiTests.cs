@@ -16,6 +16,8 @@ public sealed class MembershipApiTests
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
     private static readonly string[] DefaultRoles = ["advisor"];
     private static readonly string[] UnknownRoles = ["tenancy.unknown"];
+    private static readonly string[] AdminRoles = ["admin"];
+    private static readonly string[] BillingRoles = ["billing"];
 
     [Fact]
     public async Task InviteProvisionsUserMembershipAuditAndOutboxEvent()
@@ -154,6 +156,35 @@ public sealed class MembershipApiTests
         Assert.All(memberships!, membership => Assert.Equal(TenantId, membership.TenantId.ToString()));
     }
 
+    /// <summary>
+    /// El selector de asesores de cotizaciones filtra por rol en el servidor
+    /// (`ListMembershipsQuery.Role`), no descartando filas del lado del cliente — facturación
+    /// nunca puede ser "el asesor" de una cotización.
+    /// </summary>
+    [Fact]
+    public async Task ListFiltersByRoleWhenRequested()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var advisorEmail = NewEmail();
+        var billingEmail = NewEmail();
+        await InviteAsync(client, TenantId, advisorEmail, DefaultRoles);
+        await InviteAsync(client, TenantId, billingEmail, BillingRoles);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships?role=advisor",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var memberships = await response.Content.ReadFromJsonAsync<MembershipListItemPayload[]>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(memberships);
+        Assert.Contains(memberships!, membership => membership.Email == advisorEmail);
+        Assert.DoesNotContain(memberships!, membership => membership.Email == billingEmail);
+        Assert.All(memberships!, membership => Assert.Contains("advisor", membership.Roles));
+    }
+
     [Fact]
     public async Task ListForAnotherTenantIsForbidden()
     {
@@ -218,6 +249,38 @@ public sealed class MembershipApiTests
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    /// <summary>
+    /// El admin no se asigna por invitación por correo — sólo al crear el tenant o por
+    /// traspaso explícito (`UpdateMemberRoles`). Allowlist en `InviteMember.EnsureInvitableRoles`,
+    /// no un blocklist de `admin`: cualquier rol que no sea `advisor`/`billing` cae acá.
+    /// </summary>
+    [Fact]
+    public async Task InviteWithAdminRoleIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(client, TenantId, NewEmail(), AdminRoles);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.role_not_invitable", problem?.Code);
+    }
+
+    [Fact]
+    public async Task InviteWithBillingRoleSucceeds()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(client, TenantId, NewEmail(), BillingRoles);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     /// <summary>
@@ -584,13 +647,14 @@ public sealed class MembershipApiTests
     private static async Task<HttpResponseMessage> InviteAsync(
         HttpClient client,
         string tenantId,
-        string email)
+        string email,
+        string[]? roles = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = DefaultRoles })
+            Content = JsonContent.Create(new { email, roles = roles ?? DefaultRoles })
         };
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
@@ -658,6 +722,8 @@ public sealed class MembershipApiTests
         client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId);
         return client;
     }
+
+    private sealed record ProblemPayload(string Code);
 
     private sealed record MembershipPayload(
         Guid Id,

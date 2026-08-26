@@ -18,4 +18,18 @@ public sealed class MembershipDirectory(IMembershipRepository membershipReposito
             ? membership.Roles
             : null;
     }
+
+    public async Task<Guid?> FindActiveMembershipIdAsync(
+        Guid userId,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var membership = await membershipRepository.FindByUserAndTenantAsync(
+            userId,
+            new TenantId(tenantId),
+            cancellationToken);
+        return membership is { State: MembershipState.Active }
+            ? membership.Id.Value
+            : null;
+    }
 }

@@ -142,10 +142,11 @@ public static class MembershipEndpoints
     private static async Task<IResult> ListAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? role = null)
     {
         var memberships = await dispatcher.QueryAsync(
-            new ListMembershipsQuery(new TenantId(tenantId)),
+            new ListMembershipsQuery(new TenantId(tenantId), role),
             cancellationToken);
         return Results.Ok(memberships.Select(ToListItemResponse).ToList());
     }

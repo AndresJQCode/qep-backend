@@ -14,4 +14,14 @@ public interface IMembershipDirectory
         Guid userId,
         Guid tenantId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El id de la membresía activa del usuario en el tenant, o <c>null</c> si no tiene una. Lo
+    /// usan módulos de negocio (p. ej. Quotations, ADR de "las referencias de usuario van a
+    /// members") que necesitan grabar *cuál* membresía hizo algo, no sólo sus permisos.
+    /// </summary>
+    Task<Guid?> FindActiveMembershipIdAsync(
+        Guid userId,
+        Guid tenantId,
+        CancellationToken cancellationToken);
 }

@@ -58,6 +58,12 @@
     <Project Path="src/Modules/Storage/Modules.Storage.Domain/Modules.Storage.Domain.csproj" />
     <Project Path="src/Modules/Storage/Modules.Storage.Infrastructure/Modules.Storage.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Quotations/">
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Api/Modules.Quotations.Api.csproj" />
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Application/Modules.Quotations.Application.csproj" />
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Domain/Modules.Quotations.Domain.csproj" />
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Infrastructure/Modules.Quotations.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Tenancy/">
     <Project Path="src/Modules/Tenancy/Modules.Tenancy.Api/Modules.Tenancy.Api.csproj" />
     <Project Path="src/Modules/Tenancy/Modules.Tenancy.Application/Modules.Tenancy.Application.csproj" />
@@ -103,6 +109,10 @@
   <Folder Name="/tests/Modules/Notifications/">
     <Project Path="tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj" />
     <Project Path="tests/Modules/Notifications/Modules.Notifications.IntegrationTests/Modules.Notifications.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Quotations/">
+    <Project Path="tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj" />
+    <Project Path="tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Tenancy/">
     <Project Path="tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/Modules.Tenancy.IntegrationTests.csproj" />
