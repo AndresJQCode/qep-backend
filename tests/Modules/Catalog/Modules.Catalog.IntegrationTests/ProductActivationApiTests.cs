@@ -89,7 +89,7 @@ public sealed class ProductActivationApiTests
         // Antes de activar, editar está cerrado: es el callejón sin salida que el slice abre.
         var blocked = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de coco", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } },
+            new { name = "Vela de coco", code = "VS-001", pricing = new { baseUsd = 10m } },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
 
@@ -97,7 +97,7 @@ public sealed class ProductActivationApiTests
 
         var edited = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de coco", code = "VS-001", pricing = new { baseUsd = 10m, finalUsd = 10m } },
+            new { name = "Vela de coco", code = "VS-001", pricing = new { baseUsd = 10m } },
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
@@ -238,7 +238,7 @@ public sealed class ProductActivationApiTests
         string code) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
-            new { name, code, pricing = new { baseUsd = 10m, finalUsd = 10m } },
+            new { name, code, pricing = new { baseUsd = 10m } },
             TestContext.Current.CancellationToken);
 
     private static Task<HttpResponseMessage> DeactivateAsync(

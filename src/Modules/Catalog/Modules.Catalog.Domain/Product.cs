@@ -86,21 +86,6 @@ public sealed class Product
     /// <summary>Precio base en pesos colombianos. Ver <see cref="PriceBaseUsd"/>.</summary>
     public decimal? PriceBaseCop { get; private set; }
 
-    /// <summary>
-    /// Precio final en dólares. Lo calcula y manda el cliente — el backend no lo deriva — pero
-    /// lo valida contra <c>PriceBaseUsd × (1 − Discount%)</c> con una tolerancia de un centavo.
-    /// Sólo puede existir si <see cref="PriceBaseUsd"/> existe, y si éste existe aquél es
-    /// obligatorio.
-    /// </summary>
-    public decimal? PriceFinalUsd { get; private set; }
-
-    /// <summary>Precio final en pesos colombianos. Ver <see cref="PriceFinalUsd"/>.</summary>
-    public decimal? PriceFinalCop { get; private set; }
-
-    /// <summary>Porcentaje de descuento, 0 a 100, el mismo para ambas monedas. Null se trata
-    /// como 0% al validar el precio final.</summary>
-    public decimal? Discount { get; private set; }
-
     private readonly List<PriceScale> _priceScales = [];
 
     /// <summary>
@@ -167,23 +152,11 @@ public sealed class Product
         TaxRateId = normalized.TaxRateId;
     }
 
-    // CAT-09. El descuento validado primero porque el resto de las reglas lo usan para
-    // comparar el precio final; validar montos negativos antes que "al menos una moneda" para
-    // que un valor negativo se reporte como tal y no como si faltara.
+    // CAT-09.
     private void ApplyPricing(ProductPricing pricing)
     {
-        var discount = pricing.Discount ?? 0m;
-        if (discount < PriceScale.MinDiscount || discount > PriceScale.MaxDiscount)
-        {
-            throw new CatalogDomainException(
-                "catalog.product.discount_out_of_range",
-                $"The product discount must be between {PriceScale.MinDiscount} and {PriceScale.MaxDiscount}.");
-        }
-
         EnsurePriceNotNegative(pricing.BaseUsd);
         EnsurePriceNotNegative(pricing.BaseCop);
-        EnsurePriceNotNegative(pricing.FinalUsd);
-        EnsurePriceNotNegative(pricing.FinalCop);
 
         // Incondicional: todo producto necesita precio en al menos una moneda, sin excepción.
         if (pricing.BaseUsd is null && pricing.BaseCop is null)
@@ -193,75 +166,13 @@ public sealed class Product
                 "The product requires a base price in at least one currency.");
         }
 
-        ValidateFinalAgainstBase(
-            pricing.FinalUsd,
-            pricing.BaseUsd,
-            discount,
-            "catalog.product.price_final_without_base_usd",
-            "catalog.product.price_final_required_usd",
-            "catalog.product.price_final_mismatch_usd",
-            "USD");
-        ValidateFinalAgainstBase(
-            pricing.FinalCop,
-            pricing.BaseCop,
-            discount,
-            "catalog.product.price_final_without_base_cop",
-            "catalog.product.price_final_required_cop",
-            "catalog.product.price_final_mismatch_cop",
-            "COP");
-
         PriceBaseUsd = pricing.BaseUsd;
         PriceBaseCop = pricing.BaseCop;
-        PriceFinalUsd = pricing.FinalUsd;
-        PriceFinalCop = pricing.FinalCop;
-        Discount = discount;
 
         _priceScales.Clear();
         foreach (var scale in pricing.Scales)
         {
             _priceScales.Add(PriceScale.Create(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
-        }
-    }
-
-    // Pareja obligatoria en los dos sentidos: un
-    // precio final sin base no dice contra qué se calculó, y una base sin su final es un
-    // request a medio llenar que el front nunca debería mandar completo. Además, cuando los dos
-    // existen, el final tiene que ser consistente con base × (1 − descuento%).
-    private static void ValidateFinalAgainstBase(
-        decimal? final,
-        decimal? baseAmount,
-        decimal discount,
-        string withoutBaseCode,
-        string requiredCode,
-        string mismatchCode,
-        string currencyLabel)
-    {
-        if (baseAmount is null)
-        {
-            if (final is not null)
-            {
-                throw new CatalogDomainException(
-                    withoutBaseCode,
-                    $"A final price in {currencyLabel} requires a base price in {currencyLabel}.");
-            }
-
-            return;
-        }
-
-        if (final is null)
-        {
-            throw new CatalogDomainException(
-                requiredCode,
-                $"A base price in {currencyLabel} requires its final price in {currencyLabel}.");
-        }
-
-        var expected = Math.Round(
-            baseAmount.Value * (1 - discount / 100m), 2, MidpointRounding.AwayFromZero);
-        if (Math.Abs(final.Value - expected) > 0.01m)
-        {
-            throw new CatalogDomainException(
-                mismatchCode,
-                $"The final price in {currencyLabel} does not match the base price and the discount.");
         }
     }
 

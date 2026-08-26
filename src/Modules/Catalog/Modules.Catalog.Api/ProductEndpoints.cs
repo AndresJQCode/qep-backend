@@ -168,9 +168,6 @@ public static class ProductEndpoints
         product.TaxRateId,
         product.PriceBaseUsd,
         product.PriceBaseCop,
-        product.PriceFinalUsd,
-        product.PriceFinalCop,
-        product.Discount,
         product.PriceScales,
         product.CreatedAt,
         product.UpdatedAt);

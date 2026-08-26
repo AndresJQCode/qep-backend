@@ -11,13 +11,6 @@ public sealed record ProductPricing
 
     public decimal? BaseCop { get; init; }
 
-    public decimal? FinalUsd { get; init; }
-
-    public decimal? FinalCop { get; init; }
-
-    /// <summary>Porcentaje, 0 a 100. Null se trata como 0 al validar el precio final.</summary>
-    public decimal? Discount { get; init; }
-
     public IReadOnlyCollection<PriceScaleInput> Scales { get; init; } = [];
 }
 

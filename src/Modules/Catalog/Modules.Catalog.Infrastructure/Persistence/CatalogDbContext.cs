@@ -69,15 +69,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.Property(value => value.PriceBaseCop)
             .HasColumnName("price_base_cop")
             .HasPrecision(18, 2);
-        product.Property(value => value.PriceFinalUsd)
-            .HasColumnName("price_final_usd")
-            .HasPrecision(18, 2);
-        product.Property(value => value.PriceFinalCop)
-            .HasColumnName("price_final_cop")
-            .HasPrecision(18, 2);
-        product.Property(value => value.Discount)
-            .HasColumnName("discount")
-            .HasPrecision(5, 2);
         product.Navigation(value => value.PriceScales)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
         product.Property(value => value.Version)

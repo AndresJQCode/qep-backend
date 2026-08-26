@@ -20,11 +20,6 @@ internal sealed class ProductPricingRules : AbstractValidator<ProductPricingRequ
     {
         RuleFor(pricing => pricing.BaseUsd).GreaterThanOrEqualTo(0m).When(p => p.BaseUsd.HasValue);
         RuleFor(pricing => pricing.BaseCop).GreaterThanOrEqualTo(0m).When(p => p.BaseCop.HasValue);
-        RuleFor(pricing => pricing.FinalUsd).GreaterThanOrEqualTo(0m).When(p => p.FinalUsd.HasValue);
-        RuleFor(pricing => pricing.FinalCop).GreaterThanOrEqualTo(0m).When(p => p.FinalCop.HasValue);
-        RuleFor(pricing => pricing.Discount)
-            .InclusiveBetween((decimal)PriceScale.MinDiscount, (decimal)PriceScale.MaxDiscount)
-            .When(p => p.Discount.HasValue);
 
         RuleForEach(pricing => pricing.Scales).SetValidator(new PriceScaleRequestRules());
     }
