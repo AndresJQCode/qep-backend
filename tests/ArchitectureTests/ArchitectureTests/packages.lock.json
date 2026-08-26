@@ -445,8 +445,8 @@
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
-          "Modules.Pricing.Application": "[1.0.0, )",
-          "Modules.Pricing.Infrastructure": "[1.0.0, )",
+          "Modules.Quotations.Application": "[1.0.0, )",
+          "Modules.Quotations.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Application": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
           "Modules.Tenancy.Api": "[1.0.0, )",
@@ -696,36 +696,38 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
         }
       },
-      "modules.pricing.api": {
+      "modules.quotations.api": {
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
-          "Modules.Pricing.Application": "[1.0.0, )",
-          "Modules.Pricing.Domain": "[1.0.0, )"
+          "Modules.Quotations.Application": "[1.0.0, )",
+          "Modules.Quotations.Domain": "[1.0.0, )"
         }
       },
-      "modules.pricing.application": {
+      "modules.quotations.application": {
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "FluentValidation": "[12.1.1, )",
-          "Modules.Pricing.Domain": "[1.0.0, )",
+          "Modules.Quotations.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )"
         }
       },
-      "modules.pricing.domain": {
+      "modules.quotations.domain": {
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
-      "modules.pricing.infrastructure": {
+      "modules.quotations.infrastructure": {
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.9, )",
-          "Modules.Pricing.Application": "[1.0.0, )",
-          "Modules.Pricing.Domain": "[1.0.0, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.9, )",
+          "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.9, )",
+          "Modules.Quotations.Application": "[1.0.0, )",
+          "Modules.Quotations.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
         }
       },

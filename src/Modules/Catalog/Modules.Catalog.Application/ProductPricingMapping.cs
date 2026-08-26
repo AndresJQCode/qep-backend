@@ -14,14 +14,10 @@ internal static class ProductPricingMapping
     {
         BaseUsd = request.BaseUsd,
         BaseCop = request.BaseCop,
-        FinalUsd = request.FinalUsd,
-        FinalCop = request.FinalCop,
-        Discount = request.Discount,
         Scales = (request.Scales ?? []).Select(ToDomain).ToArray()
     };
 
     private static PriceScaleInput ToDomain(PriceScaleRequest request) => new(
-        request.PriceListId,
         request.FromUnit,
         request.ToUnit,
         request.Discount,

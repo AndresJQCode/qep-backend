@@ -15,8 +15,8 @@ using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
-using Modules.Pricing.Api;
-using Modules.Pricing.Infrastructure;
+using Modules.Quotations.Api;
+using Modules.Quotations.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Api;
@@ -97,19 +97,12 @@ app.MapCatalogTaxRateEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();
-app.MapCustomerPriceListEndpoints();
 app.MapGeographyEndpoints();
-app.MapPriceListEndpoints();
+app.MapQuotationEndpoints();
+app.MapSaleEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
-    app.Lifetime.ApplicationStopping);
-// Después de Tenancy y antes que cualquier otro módulo: el seed de listas de precio por
-// defecto (DefaultPriceListsSeeder) necesita la lista de tenants existentes para sembrar las
-// cinco de cada uno, y ni Catalog ni Customers tienen una FK real hacia price_lists —así que
-// no hay una dependencia de esquema, sólo de datos, y sembrar temprano evita que un producto o
-// cliente cargado justo después de arrancar no encuentre listas para elegir.
-await app.Services.InitializePricingDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 // Después de Tenancy: Tenancy suelta la tabla de auditoría (DropAuditOwnership) antes de
 // que la migración del módulo Audit pase a ser su única dueña (ADR 0019).
@@ -131,6 +124,11 @@ await app.Services.InitializeGeographyDatabaseAsync(
 await app.Services.InitializeCustomersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCompaniesDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+// Despues de Catalog y Customers: quotations referencia sus datos (producto, cliente) por id
+// suelto, sin FK real -- no hay dependencia de orden estricta, pero se inicializa al final del
+// grupo de modulos de negocio por consistencia con el resto de este archivo.
+await app.Services.InitializeQuotationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.RunAsync();
 

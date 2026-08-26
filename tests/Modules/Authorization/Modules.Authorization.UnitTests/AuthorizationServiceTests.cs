@@ -105,5 +105,11 @@ public sealed class AuthorizationServiceTests
             Guid tenantId,
             CancellationToken cancellationToken) =>
             Task.FromResult(roles);
+
+        public Task<Guid?> FindActiveMembershipIdAsync(
+            Guid userId,
+            Guid tenantId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<Guid?>(null);
     }
 }

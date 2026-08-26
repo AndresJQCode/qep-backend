@@ -12,7 +12,6 @@ public sealed record UpdateProductCommand(
     string Code,
     string? Description,
     Guid? ImageFileId,
-    string? Currency,
     Guid? TaxRateId,
     ProductPricingRequest Pricing) : ICommand<ProductDto>, IProductWriteCommand;
 
@@ -30,7 +29,6 @@ public sealed class UpdateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
     IProductImageLookup imageLookup,
-    ICatalogPriceListLookup priceListLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -60,8 +58,6 @@ public sealed class UpdateProductHandler(
             imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
 
         var pricing = command.Pricing.ToDomain();
-        var priceLists = await ProductPriceListResolver.ResolveAsync(
-            priceListLookup, command.TenantId, pricing.Scales, cancellationToken);
 
         var now = clock.UtcNow;
 
@@ -74,7 +70,6 @@ public sealed class UpdateProductHandler(
             {
                 Description = command.Description,
                 ImageFileId = image?.FileId,
-                Currency = command.Currency,
                 TaxRateId = taxRateId
             },
             pricing,
@@ -89,6 +84,6 @@ public sealed class UpdateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto(image?.PublicUrl, priceLists);
+        return product.ToDto(image?.PublicUrl);
     }
 }

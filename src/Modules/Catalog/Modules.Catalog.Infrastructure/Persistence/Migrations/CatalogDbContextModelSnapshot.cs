@@ -55,10 +55,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("packaging_unit");
 
-                    b.Property<Guid>("PriceListId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("price_list_id");
-
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid")
                         .HasColumnName("product_id");
@@ -82,9 +78,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("ProductId")
                         .HasDatabaseName("IX_product_price_scales_product");
 
-                    b.HasIndex("ProductId", "PriceListId")
-                        .HasDatabaseName("IX_product_price_scales_product_price_list");
-
                     b.ToTable("product_price_scales", "catalog");
                 });
 
@@ -104,21 +97,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<string>("Currency")
-                        .HasMaxLength(3)
-                        .HasColumnType("character(3)")
-                        .HasColumnName("currency")
-                        .IsFixedLength();
-
                     b.Property<string>("Description")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("description");
-
-                    b.Property<decimal?>("Discount")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("numeric(5,2)")
-                        .HasColumnName("discount");
 
                     b.Property<Guid?>("ImageFileId")
                         .HasColumnType("uuid")
@@ -143,16 +125,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("price_base_usd");
-
-                    b.Property<decimal?>("PriceFinalCop")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_final_cop");
-
-                    b.Property<decimal?>("PriceFinalUsd")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_final_usd");
 
                     b.Property<Guid?>("TaxRateId")
                         .HasColumnType("uuid")

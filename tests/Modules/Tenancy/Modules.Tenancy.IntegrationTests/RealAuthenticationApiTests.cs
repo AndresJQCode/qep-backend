@@ -225,7 +225,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = secondOwnerEmail, roles = AdminRoles }),
+            Content = JsonContent.Create(new { email = secondOwnerEmail, roles = AdvisorRoles }),
         };
         inviteRequest.Headers.Add("X-Tenant-Id", tenantId.ToString());
         inviteRequest.Headers.Add("X-Qep-Client", "web");
@@ -236,6 +236,22 @@ public sealed class RealAuthenticationApiTests
         var invited = await inviteResponse.Content.ReadFromJsonAsync<MembershipPayload>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(invited);
+
+        // El admin no se asigna por invitación (InviteMember.EnsureInvitableRoles) — se
+        // invita con un rol invitable y se promueve después, por traspaso explícito.
+        using var promoteRequest = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"/api/v1/tenants/{tenantId}/memberships/{invited!.Id}/roles")
+        {
+            Content = JsonContent.Create(new { roles = AdminRoles }),
+        };
+        promoteRequest.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        promoteRequest.Headers.Add("X-Qep-Client", "web");
+        promoteRequest.Headers.TryAddWithoutValidation("If-Match", $"\"{invited.Version}\"");
+        var promoteResponse = await owner.SendAsync(
+            promoteRequest,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, promoteResponse.StatusCode);
 
         using var secondOwner = CreateClient(factory);
         var token = IssueGoogleIdToken(
@@ -353,10 +369,10 @@ public sealed class RealAuthenticationApiTests
         request.Headers.Add("X-Tenant-Id", tenantId.ToString());
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var memberships = await response.Content.ReadFromJsonAsync<MembershipPayload[]>(
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(memberships);
-        return Assert.Single(memberships!, membership => membership.Id == membershipId);
+        Assert.NotNull(list);
+        return Assert.Single(list!.Items, membership => membership.Id == membershipId);
     }
 
     private static object NewSettingsBody() => new
@@ -421,6 +437,10 @@ public sealed class RealAuthenticationApiTests
     private sealed record RegisterTenantPayload(Guid TenantId, Guid OwnerUserId);
 
     private sealed record MembershipPayload(Guid Id, Guid UserId, long Version);
+
+    /// <summary>El listado viaja envuelto, con los conteos por estado al lado.</summary>
+    private sealed record MembershipListPayload(
+        IReadOnlyList<MembershipPayload> Items);
 
     /// <summary>
     /// Cliente sobre **https**, y no es cosmético: es lo que hace que la cookie de sesión viaje.

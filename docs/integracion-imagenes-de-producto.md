@@ -66,7 +66,8 @@ POST /api/v1/tenants/{tenantId}/catalog/products
 X-Qep-Client: web
 
 { "name": "Termo 1L", "code": "TER-001", "description": null,
-  "imageFileId": null, "price": 48000, "currency": "COP", "taxRateId": null }
+  "imageFileId": null, "taxRateId": null,
+  "pricing": { "baseCop": 48000, "finalCop": 48000 } }
 
 → 201 { "id": "…", "imageFileId": null, "imageUrl": null, … }
 ```
@@ -187,7 +188,8 @@ PUT /api/v1/tenants/{tenantId}/catalog/products/{productId}
 X-Qep-Client: web
 
 { "name": "Termo 1L", "code": "TER-001", "description": null,
-  "imageFileId": "<fileResourceId>", "price": 48000, "currency": "COP", "taxRateId": null }
+  "imageFileId": "<fileResourceId>", "taxRateId": null,
+  "pricing": { "baseCop": 48000, "finalCop": 48000 } }
 
 → 200 { …, "imageFileId": "…", "imageUrl": "https://…" }
 ```

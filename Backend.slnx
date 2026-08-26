@@ -42,12 +42,6 @@
     <Project Path="src/Modules/Geography/Modules.Geography.Domain/Modules.Geography.Domain.csproj" />
     <Project Path="src/Modules/Geography/Modules.Geography.Infrastructure/Modules.Geography.Infrastructure.csproj" />
   </Folder>
-  <Folder Name="/src/Modules/Pricing/">
-    <Project Path="src/Modules/Pricing/Modules.Pricing.Api/Modules.Pricing.Api.csproj" />
-    <Project Path="src/Modules/Pricing/Modules.Pricing.Application/Modules.Pricing.Application.csproj" />
-    <Project Path="src/Modules/Pricing/Modules.Pricing.Domain/Modules.Pricing.Domain.csproj" />
-    <Project Path="src/Modules/Pricing/Modules.Pricing.Infrastructure/Modules.Pricing.Infrastructure.csproj" />
-  </Folder>
   <Folder Name="/src/Modules/Identity/">
     <Project Path="src/Modules/Identity/Modules.Identity.Application/Modules.Identity.Application.csproj" />
     <Project Path="src/Modules/Identity/Modules.Identity.Domain/Modules.Identity.Domain.csproj" />
@@ -63,6 +57,12 @@
     <Project Path="src/Modules/Storage/Modules.Storage.Application/Modules.Storage.Application.csproj" />
     <Project Path="src/Modules/Storage/Modules.Storage.Domain/Modules.Storage.Domain.csproj" />
     <Project Path="src/Modules/Storage/Modules.Storage.Infrastructure/Modules.Storage.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Quotations/">
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Api/Modules.Quotations.Api.csproj" />
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Application/Modules.Quotations.Application.csproj" />
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Domain/Modules.Quotations.Domain.csproj" />
+    <Project Path="src/Modules/Quotations/Modules.Quotations.Infrastructure/Modules.Quotations.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Tenancy/">
     <Project Path="src/Modules/Tenancy/Modules.Tenancy.Api/Modules.Tenancy.Api.csproj" />
@@ -102,10 +102,6 @@
     <Project Path="tests/Modules/Geography/Modules.Geography.UnitTests/Modules.Geography.UnitTests.csproj" />
     <Project Path="tests/Modules/Geography/Modules.Geography.IntegrationTests/Modules.Geography.IntegrationTests.csproj" />
   </Folder>
-  <Folder Name="/tests/Modules/Pricing/">
-    <Project Path="tests/Modules/Pricing/Modules.Pricing.UnitTests/Modules.Pricing.UnitTests.csproj" />
-    <Project Path="tests/Modules/Pricing/Modules.Pricing.IntegrationTests/Modules.Pricing.IntegrationTests.csproj" />
-  </Folder>
   <Folder Name="/tests/Modules/Identity/">
     <Project Path="tests/Modules/Identity/Modules.Identity.IntegrationTests/Modules.Identity.IntegrationTests.csproj" />
     <Project Path="tests/Modules/Identity/Modules.Identity.UnitTests/Modules.Identity.UnitTests.csproj" />
@@ -113,6 +109,10 @@
   <Folder Name="/tests/Modules/Notifications/">
     <Project Path="tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj" />
     <Project Path="tests/Modules/Notifications/Modules.Notifications.IntegrationTests/Modules.Notifications.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Quotations/">
+    <Project Path="tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj" />
+    <Project Path="tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Tenancy/">
     <Project Path="tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/Modules.Tenancy.IntegrationTests.csproj" />

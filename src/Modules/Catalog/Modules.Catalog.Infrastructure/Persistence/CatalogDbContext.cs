@@ -47,10 +47,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // Sin FK: apunta a storage.file_resources, y catalog no referencia las tablas de otro
         // módulo. Es un Guid suelto, como cualquier referencia entre módulos de este monolito.
         product.Property(value => value.ImageFileId).HasColumnName("image_file_id");
-        product.Property(value => value.Currency)
-            .HasColumnName("currency")
-            .HasMaxLength(ProductDetails.CurrencyLength)
-            .IsFixedLength();
         product.Property(value => value.TaxRateId)
             .HasColumnName("tax_rate_id")
             .HasConversion(
@@ -66,22 +62,13 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.TaxRateId)
             .OnDelete(DeleteBehavior.Restrict);
-        // CAT-09. Independientes de Price/Currency: no los reemplazan.
+        // CAT-09. Independientes del viejo Price: no lo reemplazan.
         product.Property(value => value.PriceBaseUsd)
             .HasColumnName("price_base_usd")
             .HasPrecision(18, 2);
         product.Property(value => value.PriceBaseCop)
             .HasColumnName("price_base_cop")
             .HasPrecision(18, 2);
-        product.Property(value => value.PriceFinalUsd)
-            .HasColumnName("price_final_usd")
-            .HasPrecision(18, 2);
-        product.Property(value => value.PriceFinalCop)
-            .HasColumnName("price_final_cop")
-            .HasPrecision(18, 2);
-        product.Property(value => value.Discount)
-            .HasColumnName("discount")
-            .HasPrecision(5, 2);
         product.Navigation(value => value.PriceScales)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
         product.Property(value => value.Version)
@@ -142,9 +129,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("product_id")
             .HasConversion(id => id.Value, value => new ProductId(value));
         scale.Property(value => value.TenantId).HasColumnName("tenant_id");
-        // Sin clave foranea: el modulo `pricing` es otro modulo de negocio, y ninguno referencia
-        // las tablas del otro. Ver el comentario de PriceScale.PriceListId.
-        scale.Property(value => value.PriceListId).HasColumnName("price_list_id");
         scale.Property(value => value.FromUnit).HasColumnName("from_unit");
         scale.Property(value => value.ToUnit).HasColumnName("to_unit");
         scale.Property(value => value.Discount).HasColumnName("discount").HasPrecision(5, 2);
@@ -159,8 +143,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         scale.Property(value => value.FinalUsd).HasColumnName("final_usd").HasPrecision(18, 2);
         scale.Property(value => value.FinalCop).HasColumnName("final_cop").HasPrecision(18, 2);
         scale.HasIndex(value => value.ProductId).HasDatabaseName("IX_product_price_scales_product");
-        scale.HasIndex(value => new { value.ProductId, value.PriceListId })
-            .HasDatabaseName("IX_product_price_scales_product_price_list");
 
         // CASCADE y no RESTRICT, a diferencia de la FK de TaxRate: una escala no tiene sentido
         // sin su producto — no es una referencia a un catálogo compartido, es parte del mismo

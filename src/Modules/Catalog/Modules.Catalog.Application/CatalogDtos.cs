@@ -8,13 +8,9 @@ public sealed record ProductDto(
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
-    string? Currency,
     Guid? TaxRateId,
     decimal? PriceBaseUsd,
     decimal? PriceBaseCop,
-    decimal? PriceFinalUsd,
-    decimal? PriceFinalCop,
-    decimal? Discount,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -30,15 +26,10 @@ public sealed record ProductResponse(
     // catalog. Viene en null si la imagen no fue publicada. `ImageFileId` se mantiene porque es
     // lo que el cliente manda de vuelta en el PUT.
     string? ImageUrl,
-    string? Currency,
     Guid? TaxRateId,
     // CAT-09. El precio en dos monedas fijas — reemplazó por completo al viejo Price, retirado.
-    // Currency no es parte de esto: es un dato independiente del producto.
     decimal? PriceBaseUsd,
     decimal? PriceBaseCop,
-    decimal? PriceFinalUsd,
-    decimal? PriceFinalCop,
-    decimal? Discount,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -51,9 +42,6 @@ public sealed record ProductResponse(
 public sealed record ProductPricingRequest(
     decimal? BaseUsd,
     decimal? BaseCop,
-    decimal? FinalUsd,
-    decimal? FinalCop,
-    decimal? Discount,
     IReadOnlyCollection<PriceScaleRequest>? Scales);
 
 /// <summary>
@@ -62,7 +50,6 @@ public sealed record ProductPricingRequest(
 /// <c>MembershipListItemResponse.State</c>.
 /// </summary>
 public sealed record PriceScaleRequest(
-    Guid PriceListId,
     int FromUnit,
     int ToUnit,
     decimal Discount,
@@ -72,17 +59,8 @@ public sealed record PriceScaleRequest(
     decimal? FinalUsd,
     decimal? FinalCop);
 
-/// <summary>
-/// <c>PriceListName</c> viaja resuelto para que el cliente no tenga que cruzarlo contra
-/// <c>GET /pricing/price-lists</c> sólo para pintar la escala — mismo criterio que
-/// <c>ProductResponse.ImageUrl</c> frente a <c>ImageFileId</c>. Puede ser <c>null</c> si la
-/// lista se borró después de crear la escala (no debería pasar: <c>DeletePriceList</c> lo
-/// impide, pero una fila cargada antes de esa regla podría quedar huérfana).
-/// </summary>
 public sealed record PriceScaleResponse(
     Guid Id,
-    Guid PriceListId,
-    string? PriceListName,
     int FromUnit,
     int ToUnit,
     decimal Discount,
@@ -99,16 +77,15 @@ public sealed record ProductsResponse(IReadOnlyCollection<ProductResponse> Items
 // dejaría sin su propia entrada de auditoría, el mismo razonamiento que mantuvo suspender
 // aparte de editar roles en AUTH-06.
 //
-// Description/ImageFileId/Currency/TaxRateId sí viajan, y son opcionales: un producto sin
-// ninguno sigue siendo válido. En el PUT, mandarlos en null los **limpia** — el verbo reemplaza
-// el recurso entero. Pricing es la excepción: no es opcional, porque el precio en al menos una
+// Description/ImageFileId/TaxRateId sí viajan, y son opcionales: un producto sin ninguno
+// sigue siendo válido. En el PUT, mandarlos en null los **limpia** — el verbo reemplaza el
+// recurso entero. Pricing es la excepción: no es opcional, porque el precio en al menos una
 // moneda es obligatorio incondicionalmente (CAT-09).
 public sealed record CreateProductRequest(
     string Name,
     string Code,
     string? Description,
     Guid? ImageFileId,
-    string? Currency,
     Guid? TaxRateId,
     ProductPricingRequest Pricing);
 
@@ -117,7 +94,6 @@ public sealed record UpdateProductRequest(
     string Code,
     string? Description,
     Guid? ImageFileId,
-    string? Currency,
     Guid? TaxRateId,
     ProductPricingRequest Pricing);
 

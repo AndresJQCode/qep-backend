@@ -42,6 +42,7 @@ public sealed class InviteMemberHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         EnsureAuthorized(command.TenantId);
         EnsureKnownRoles(command.Roles);
+        EnsureInvitableRoles(command.Roles);
 
         // Aprovisiona (o resuelve) el usuario invitado por el contrato de Identity. Es
         // idempotente por email, así que re-invitar reutiliza el mismo id de usuario.
@@ -161,6 +162,25 @@ public sealed class InviteMemberHandler(
             throw new TenantDomainException(
                 "tenancy.membership.role_unknown",
                 $"The role '{unknownRole}' is not part of the authorization catalog.");
+        }
+    }
+
+    /// <summary>
+    /// Sección de negocio: el admin sólo se asigna al crear el tenant o por traspaso explícito
+    /// (<see cref="UpdateMemberRoles"/>), nunca por invitación por email. Allowlist, no
+    /// blocklist de <c>admin</c>: cualquier rol futuro que no se sume acá a propósito queda
+    /// no invitable por defecto.
+    /// </summary>
+    private static readonly string[] InvitableRoles = ["advisor", "billing"];
+
+    private static void EnsureInvitableRoles(IReadOnlyCollection<string> roles)
+    {
+        var notInvitable = roles.FirstOrDefault(role => !InvitableRoles.Contains(role));
+        if (notInvitable is not null)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.role_not_invitable",
+                $"The role '{notInvitable}' cannot be assigned through an invitation.");
         }
     }
 

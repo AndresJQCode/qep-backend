@@ -55,12 +55,12 @@ public sealed class CustomersLayerTests
     /// La unica dependencia legitima hacia afuera es `Modules.Tenancy.Application`, que aporta
     /// <c>IExecutionContext</c> — el mismo permiso que ya tienen Catalog, Storage y Companies.
     ///
-    /// Esta asercion importa mas aca que en los otros modulos: `customers` tiene **dos**
-    /// dependencias declaradas en su ficha hacia modulos que todavia no existen —`pricing` para la
-    /// lista de precios e `identifiers` para el CUC—, y el atajo tentador el dia que lleguen es un
-    /// ProjectReference. Sin esta prueba ese atajo compila y nada se pone rojo. El camino es un
-    /// puerto declarado en Application y su adaptador en `Bootstrapper`, que es el composition root
-    /// y cuyo trabajo es exactamente cablear dos modulos — <c>ICucGenerator</c> ya esta escrito asi.
+    /// Esta asercion importa mas aca que en los otros modulos: `customers` tiene una dependencia
+    /// declarada en su ficha hacia un modulo que todavia no existe —`identifiers` para el CUC—, y
+    /// el atajo tentador el dia que llegue es un ProjectReference. Sin esta prueba ese atajo
+    /// compila y nada se pone rojo. El camino es un puerto declarado en Application y su adaptador
+    /// en `Bootstrapper`, que es el composition root y cuyo trabajo es exactamente cablear dos
+    /// modulos — <c>ICucGenerator</c> ya esta escrito asi.
     /// </summary>
     [Fact]
     public void ApplicationOnlyReferencesTenancyAmongTheBusinessModules()

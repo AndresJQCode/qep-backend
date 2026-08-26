@@ -24,8 +24,8 @@ using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
-using Modules.Pricing.Application;
-using Modules.Pricing.Infrastructure;
+using Modules.Quotations.Application;
+using Modules.Quotations.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Application;
@@ -55,7 +55,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<InviteMemberCommand, MembershipDto>,
             InviteMemberHandler>();
         services.AddScoped<
-            IQueryHandler<ListMembershipsQuery, IReadOnlyList<MembershipListItemDto>>,
+            IQueryHandler<ListMembershipsQuery, MembershipListDto>,
             ListMembershipsHandler>();
         services.AddScoped<
             ICommandHandler<SuspendMemberCommand, MembershipListItemDto>,
@@ -232,43 +232,48 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
-        // El catalogo de listas de precio (modulo pricing) tiene los mismos siete handlers que
-        // ClientClassification y TaxRate — mismo criterio: registrados a mano, uno por uno, o el
-        // sintoma de olvidar uno es 500 en runtime y no un error de compilacion.
+        // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
+        // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
+        // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
+        // runtime con 500 al no encontrar handler.
         services.AddScoped<
-            IQueryHandler<ListPriceListsQuery, IReadOnlyList<PriceListDto>>,
-            ListPriceListsHandler>();
+            ICommandHandler<CreateQuotationCommand, QuotationDto>,
+            CreateQuotationHandler>();
         services.AddScoped<
-            IQueryHandler<GetPriceListQuery, PriceListDto>,
-            GetPriceListHandler>();
+            IQueryHandler<GetQuotationQuery, QuotationDto>,
+            GetQuotationHandler>();
         services.AddScoped<
-            ICommandHandler<CreatePriceListCommand, PriceListDto>,
-            CreatePriceListHandler>();
+            IQueryHandler<ListQuotationsQuery, QuotationPage>,
+            ListQuotationsHandler>();
         services.AddScoped<
-            ICommandHandler<UpdatePriceListCommand, PriceListDto>,
-            UpdatePriceListHandler>();
+            ICommandHandler<UpdateQuotationCommand, QuotationDto>,
+            UpdateQuotationHandler>();
         services.AddScoped<
-            ICommandHandler<DeactivatePriceListCommand, PriceListDto>,
-            DeactivatePriceListHandler>();
+            ICommandHandler<AddQuotationItemCommand, QuotationDto>,
+            AddQuotationItemHandler>();
         services.AddScoped<
-            ICommandHandler<ActivatePriceListCommand, PriceListDto>,
-            ActivatePriceListHandler>();
+            ICommandHandler<UpdateQuotationItemCommand, QuotationDto>,
+            UpdateQuotationItemHandler>();
         services.AddScoped<
-            ICommandHandler<DeletePriceListCommand, PriceListDeletedResult>,
-            DeletePriceListHandler>();
-        // Las asignaciones de lista de precio a cliente (Customer N:N PriceList) son un recurso
-        // propio con dos handlers, mismo criterio que el resto.
+            ICommandHandler<RemoveQuotationItemCommand, QuotationDto>,
+            RemoveQuotationItemHandler>();
         services.AddScoped<
-            IQueryHandler<ListCustomerPriceListsQuery, IReadOnlyList<CustomerPriceListDto>>,
-            ListCustomerPriceListsHandler>();
+            ICommandHandler<SendQuotationCommand, QuotationDto>,
+            SendQuotationHandler>();
         services.AddScoped<
-            ICommandHandler<SetCustomerPriceListsCommand, IReadOnlyList<CustomerPriceListDto>>,
-            SetCustomerPriceListsHandler>();
+            ICommandHandler<VoidQuotationCommand, QuotationDto>,
+            VoidQuotationHandler>();
+        services.AddScoped<
+            IQueryHandler<GetSaleQuery, SaleDto>,
+            GetSaleHandler>();
+        services.AddScoped<
+            ICommandHandler<ConvertQuotationToSaleCommand, SaleDto>,
+            ConvertQuotationToSaleHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
-        services.AddValidatorsFromAssemblyContaining<CreatePriceListValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -278,7 +283,7 @@ public static class QepServiceCollectionExtensions
         services.AddCompaniesInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
-        services.AddPricingInfrastructure(configuration);
+        services.AddQuotationsInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -291,13 +296,14 @@ public static class QepServiceCollectionExtensions
         // contra los repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICustomerGeographyLookup, CustomerGeographyLookup>();
 
-        // Mismo patrón entre `catalog`/`customers` y `pricing`, el módulo nuevo: ninguno de los
-        // tres referencia a los otros dos, y el composition root cablea los tres puertos contra
-        // los repositorios que ya registraron los AddXInfrastructure de arriba. Van después de
-        // ellos por la misma razón que ProductImageLookup y CustomerGeographyLookup.
-        services.AddScoped<ICatalogPriceListLookup, CatalogPriceListLookup>();
-        services.AddScoped<ICustomerPriceListLookup, CustomerPriceListLookup>();
-        services.AddScoped<IPriceListUsageLookup, PriceListUsageLookup>();
+        // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
+        // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
+        // lo impide a proposito — y el composition root cablea los puertos que declara
+        // `quotations` contra los repositorios que ya registraron AddCustomersInfrastructure y
+        // AddCatalogInfrastructure.
+        services.AddScoped<IQuotationCustomerLookup, QuotationCustomerLookup>();
+        services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
+        services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
 
         AddAuthorizationCapability(services);
         services.AddQepObservability(configuration, environment);
@@ -349,8 +355,10 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
-                PricingPermissions.PriceListRead,
-                PricingPermissions.PriceListManage
+                QuotationsPermissions.QuotationRead,
+                QuotationsPermissions.QuotationManage,
+                SalesPermissions.SaleRead,
+                SalesPermissions.SaleManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -379,11 +387,20 @@ public static class QepServiceCollectionExtensions
                 // privilegiada.
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
-                // Sólo lectura, mismo criterio que CatalogPermissions.TaxRateRead: una lista de
-                // precios se usa a diario para cotizar (verla en el selector de escalas de
-                // producto y en el multi-select de cliente), pero crearla o desactivarla mueve el
-                // descuento de todo lo que la usa — es de owner.
-                PricingPermissions.PriceListRead
+                // Lectura y gestion: cotizar (crear, agregar lineas, editar el borrador, enviar,
+                // anular) es el trabajo diario de la asesora, a diferencia de producto/empresa,
+                // que son catalogos maestros que administra otro rol.
+                QuotationsPermissions.QuotationRead,
+                QuotationsPermissions.QuotationManage,
+                // US-12/US-14: enviar una cotizacion sube su PDF a Storage, y convertir en venta
+                // sube los comprobantes de pago -- las dos acciones de la asesora que tocan
+                // archivos.
+                StoragePermissions.FileUpload,
+                StoragePermissions.FileRead,
+                // Convertir una cotizacion aprobada en venta (US-13 a US-16) es la continuacion
+                // natural de cotizar, no una operacion separada que administre otro rol.
+                SalesPermissions.SaleRead,
+                SalesPermissions.SaleManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -393,12 +410,13 @@ public static class QepServiceCollectionExtensions
             "medium",
             [
                 TenancyPermissions.SettingsRead,
-                CustomersPermissions.CustomerRead
-                // DECISIÓN PENDIENTE: el alcance pedido para este rol es "ver clientes,
-                // cotizaciones y ventas". Sólo el primero existe hoy — no hay módulo Quotes ni
-                // Sales, así que tampoco hay permiso que otorgar. Cuando esos módulos declaren
-                // sus permisos de lectura, se agregan acá y el rol queda completo. Hasta
-                // entonces `billing` es deliberadamente más chico que su definición de negocio.
+                CustomersPermissions.CustomerRead,
+                // Los tres tercios del alcance de negocio pedido para este rol ("ver clientes,
+                // cotizaciones y ventas") ya existen. Sólo lectura en los tres: facturar necesita
+                // ver el estado del pago y los comprobantes, no aprobar conversiones ni editar
+                // cotizaciones -- eso sigue siendo trabajo de la asesora.
+                QuotationsPermissions.QuotationRead,
+                SalesPermissions.SaleRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -524,20 +542,29 @@ public static class QepServiceCollectionExtensions
             "Customers",
             "medium"));
         services.AddSingleton(new PermissionDefinition(
-            PricingPermissions.PriceListRead,
-            "Leer listas de precio",
-            "Permite consultar el catálogo de listas de precio del tenant.",
-            "Pricing",
+            QuotationsPermissions.QuotationRead,
+            "Leer cotizaciones",
+            "Permite consultar el listado y el detalle de las cotizaciones del tenant.",
+            "Quotations",
             "low"));
         services.AddSingleton(new PermissionDefinition(
-            PricingPermissions.PriceListManage,
-            "Gestionar listas de precio",
-            "Permite crear, editar, inactivar, reactivar y eliminar listas de precio.",
-            "Pricing",
-            // High y no medium, mismo criterio que CatalogPermissions.TaxRateManage: una lista de
-            // precios afecta el descuento de todas las escalas de producto y todos los clientes
-            // que la tienen asignada.
-            "high"));
+            QuotationsPermissions.QuotationManage,
+            "Gestionar cotizaciones",
+            "Permite crear y editar cotizaciones en borrador, incluidas sus lineas de producto.",
+            "Quotations",
+            "medium"));
+        services.AddSingleton(new PermissionDefinition(
+            SalesPermissions.SaleRead,
+            "Leer ventas",
+            "Permite consultar la venta convertida de una cotizacion.",
+            "Quotations",
+            "low"));
+        services.AddSingleton(new PermissionDefinition(
+            SalesPermissions.SaleManage,
+            "Gestionar ventas",
+            "Permite convertir una cotizacion enviada en venta, con sus comprobantes de pago.",
+            "Quotations",
+            "medium"));
     }
 
     private static void AddAuthentication(
@@ -715,12 +742,22 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.ClassificationManage,
                 policy => AddPermissionRequirement(
                     policy, CustomersPermissions.ClassificationManage))
+            // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
+            // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que
+            // TaxRateRead/TaxRateManage y ClassificationRead/ClassificationManage.
             .AddPolicy(
-                PricingPermissions.PriceListRead,
-                policy => AddPermissionRequirement(policy, PricingPermissions.PriceListRead))
+                QuotationsPermissions.QuotationRead,
+                policy => AddPermissionRequirement(policy, QuotationsPermissions.QuotationRead))
             .AddPolicy(
-                PricingPermissions.PriceListManage,
-                policy => AddPermissionRequirement(policy, PricingPermissions.PriceListManage));
+                QuotationsPermissions.QuotationManage,
+                policy => AddPermissionRequirement(policy, QuotationsPermissions.QuotationManage))
+            // La otra mitad del permiso, para los dos de Sales -- mismo gotcha.
+            .AddPolicy(
+                SalesPermissions.SaleRead,
+                policy => AddPermissionRequirement(policy, SalesPermissions.SaleRead))
+            .AddPolicy(
+                SalesPermissions.SaleManage,
+                policy => AddPermissionRequirement(policy, SalesPermissions.SaleManage));
     }
 
     private static void AddPermissionRequirement(
