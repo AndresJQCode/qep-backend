@@ -54,11 +54,6 @@ public sealed record CustomerResponse(
 /// <c>City</c> y <c>Classification</c> si viajan, resueltos, con el mismo criterio liviano:
 /// <c>Department</c> se omite aca aunque el detalle lo lleve, porque la grilla ya pinta la ciudad
 /// y el departamento es redundante para esa vista.
-///
-/// Sin lista de precios: a diferencia de la clasificacion (1:1), un cliente puede tener varias a
-/// la vez, asi que no hay un solo nombre que mostrar en esta fila liviana. Quien necesite ver las
-/// listas asignadas las pide por separado
-/// (<c>GET /customers/{customerId}/price-lists</c>).
 /// </summary>
 public sealed record CustomerListItemResponse(
     Guid Id,

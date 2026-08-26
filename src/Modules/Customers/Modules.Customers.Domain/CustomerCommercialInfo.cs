@@ -5,10 +5,6 @@ namespace Modules.Customers.Domain;
 ///
 /// Van juntos por la misma razon que los de contacto, y ademas porque cambian por la misma razon:
 /// los dos los define el area comercial, no quien carga el alta.
-///
-/// Las listas de precio del cliente **no** viven aca: a diferencia de la clasificacion (1:1), un
-/// cliente puede tener varias listas a la vez, asi que es una relacion N:N propia
-/// (<c>CustomerPriceList</c>), no un campo de este value object. Ver CustomerPriceList.cs.
 /// </summary>
 public sealed record CustomerCommercialInfo
 {

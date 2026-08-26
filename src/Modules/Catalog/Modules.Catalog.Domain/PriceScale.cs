@@ -17,7 +17,6 @@ public sealed class PriceScale
         PriceScaleId id,
         ProductId productId,
         Guid tenantId,
-        Guid priceListId,
         int fromUnit,
         int toUnit,
         decimal discount,
@@ -30,7 +29,6 @@ public sealed class PriceScale
         Id = id;
         ProductId = productId;
         TenantId = tenantId;
-        PriceListId = priceListId;
         FromUnit = fromUnit;
         ToUnit = toUnit;
         Discount = discount;
@@ -46,16 +44,6 @@ public sealed class PriceScale
     public ProductId ProductId { get; private set; }
 
     public Guid TenantId { get; private set; }
-
-    /// <summary>
-    /// La lista de precios (módulo <c>pricing</c>) a la que pertenece este tramo. **Sin clave
-    /// foránea**: `pricing` es otro módulo de negocio, y ninguno referencia las tablas del otro
-    /// — mismo criterio que <c>Product.ImageFileId</c> hacia `Storage`. La existencia y el
-    /// estado activo se validan en el handler antes de construir el agregado, vía
-    /// <c>ICatalogPriceListLookup</c> (ver <c>ProductPriceListResolver</c>); acá sólo se exige
-    /// que no venga vacío.
-    /// </summary>
-    public Guid PriceListId { get; private set; }
 
     public int FromUnit { get; private set; }
 
@@ -89,13 +77,6 @@ public sealed class PriceScale
         decimal? productBaseUsd,
         decimal? productBaseCop)
     {
-        if (input.PriceListId == Guid.Empty)
-        {
-            throw new CatalogDomainException(
-                "catalog.product.price_scale.price_list_required",
-                "The price scale requires a price list.");
-        }
-
         if (input.FromUnit < 1)
         {
             throw new CatalogDomainException(
@@ -193,7 +174,6 @@ public sealed class PriceScale
             PriceScaleId.New(),
             productId,
             tenantId,
-            input.PriceListId,
             input.FromUnit,
             input.ToUnit,
             input.Discount,

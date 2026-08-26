@@ -1,8 +1,8 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Un producto del catálogo de un tenant (RF-020). Guarda sólo los datos maestros vivos: las
-/// listas de precio y su vigencia son de `pricing`, y un documento congela su copia de lo vendido.
+/// Un producto del catálogo de un tenant (RF-020). Guarda sólo los datos maestros vivos: un
+/// documento congela su propia copia de lo vendido.
 /// </summary>
 public sealed class Product
 {
@@ -54,13 +54,9 @@ public sealed class Product
 
     // --- CAT-04: propiedades opcionales. Nacen nullable porque hay productos ya cargados: una
     // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por el
-    // precio en USD/COP de más abajo. Currency se mantiene — no es sólo la moneda de Price:
-    // es un dato independiente del producto.
+    // precio en USD/COP de más abajo.
 
     public string? Description { get; private set; }
-
-    /// <summary>Código ISO-4217 de tres letras, en mayúsculas.</summary>
-    public string? Currency { get; private set; }
 
     /// <summary>
     /// Cuál de los archivos del producto es su imagen principal. **Referencia blanda, sin FK.**
@@ -81,7 +77,7 @@ public sealed class Product
     public TaxRateId? TaxRateId { get; private set; }
 
     // --- CAT-09: precio base y final en dos monedas fijas, más las escalas por cantidad.
-    // Único precio del producto — reemplazó por completo al viejo Price/Currency, retirado.
+    // Único precio del producto — reemplazó por completo al viejo Price, retirado.
 
     /// <summary>Precio base en dólares. Junto con <see cref="PriceBaseCop"/>, al menos uno de
     /// los dos es obligatorio: un producto sin precio en ninguna moneda no es válido.</summary>
@@ -168,7 +164,6 @@ public sealed class Product
 
         Description = normalized.Description;
         ImageFileId = normalized.ImageFileId;
-        Currency = normalized.Currency;
         TaxRateId = normalized.TaxRateId;
     }
 
@@ -215,8 +210,6 @@ public sealed class Product
             "catalog.product.price_final_mismatch_cop",
             "COP");
 
-        EnsureScalesDoNotOverlapWithinTheSamePriceList(pricing.Scales);
-
         PriceBaseUsd = pricing.BaseUsd;
         PriceBaseCop = pricing.BaseCop;
         PriceFinalUsd = pricing.FinalUsd;
@@ -227,35 +220,6 @@ public sealed class Product
         foreach (var scale in pricing.Scales)
         {
             _priceScales.Add(PriceScale.Create(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
-        }
-    }
-
-    /// <summary>
-    /// Dos escalas de la **misma** lista de precios no pueden cubrir la misma cantidad — si no,
-    /// qué descuento aplica para esa cantidad queda indefinido. Escalas de listas distintas nunca
-    /// se comparan entre sí: la Mayorista y la VIP de un producto son ladders independientes, y
-    /// que ambas cubran "1-9 unidades" es exactamente el caso de uso (CAT-09 + módulo pricing).
-    ///
-    /// Vive en el dominio y no en <c>ProductPricingRules</c> (FluentValidation) porque es una
-    /// regla que cruza escalas entre sí, no un límite atribuible a un campo de una escala sola —
-    /// mismo criterio documentado en el propio <c>ProductPricingRules</c>.
-    /// </summary>
-    private static void EnsureScalesDoNotOverlapWithinTheSamePriceList(
-        IReadOnlyCollection<PriceScaleInput> scales)
-    {
-        foreach (var group in scales.GroupBy(scale => scale.PriceListId))
-        {
-            var ordered = group.OrderBy(scale => scale.FromUnit).ToArray();
-            for (var index = 1; index < ordered.Length; index++)
-            {
-                if (ordered[index].FromUnit <= ordered[index - 1].ToUnit)
-                {
-                    throw new CatalogDomainException(
-                        "catalog.product.price_scale.range_overlap",
-                        "Two price scales for the same price list cannot cover overlapping " +
-                        "quantities.");
-                }
-            }
         }
     }
 
