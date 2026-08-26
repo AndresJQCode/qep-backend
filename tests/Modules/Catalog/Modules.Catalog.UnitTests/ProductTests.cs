@@ -11,7 +11,7 @@ public sealed class ProductTests
     // CAT-09 hizo el precio obligatorio: todo producto necesita al menos una moneda. Este
     // helper es lo que usan las pruebas de arriba de CAT-09, a las que no les importa el
     // precio — sólo necesitan una entrada válida para no chocar con esa regla nueva.
-    private static readonly ProductPricing ValidPricing = new() { BaseUsd = 1000m, FinalUsd = 1000m };
+    private static readonly ProductPricing ValidPricing = new() { BaseUsd = 1000m };
 
     [Fact]
     public void CreateStartsActive()
@@ -303,7 +303,7 @@ public sealed class ProductTests
         Assert.Equal("VS-002", product.Code);
     }
 
-    // ---- CAT-09: precio base/final en USD y COP, y escalas por cantidad ----
+    // ---- CAT-09: precio base en USD y COP, y escalas por cantidad ----
 
     [Fact]
     public void CreateRejectsAProductWithNoPriceInAnyCurrency()
@@ -321,7 +321,7 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, FinalUsd = 10m }, Now);
+            new ProductPricing { BaseUsd = 10m }, Now);
 
         Assert.Equal(10m, product.PriceBaseUsd);
         Assert.Null(product.PriceBaseCop);
@@ -332,7 +332,7 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseCop = 45000m, FinalCop = 45000m }, Now);
+            new ProductPricing { BaseCop = 45000m }, Now);
 
         Assert.Equal(45000m, product.PriceBaseCop);
         Assert.Null(product.PriceBaseUsd);
@@ -361,100 +361,15 @@ public sealed class ProductTests
     }
 
     [Fact]
-    public void CreateRejectsANegativeFinalUsdPrice()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m, FinalUsd = -1m }, Now));
-
-        Assert.Equal("catalog.product.price_negative", error.Code);
-    }
-
-    [Fact]
-    public void CreateRejectsANegativeFinalCopPrice()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseCop = 45000m, FinalCop = -1m }, Now));
-
-        Assert.Equal("catalog.product.price_negative", error.Code);
-    }
-
-    [Theory]
-    [InlineData(-1)]
-    [InlineData(101)]
-    public void CreateRejectsADiscountOutOfRange(decimal discount)
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m, FinalUsd = 10m, Discount = discount },
-                Now));
-
-        Assert.Equal("catalog.product.discount_out_of_range", error.Code);
-    }
-
-    [Fact]
-    public void CreateRejectsAFinalUsdPriceWithoutABaseUsdPrice()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseCop = 45000m, FinalCop = 45000m, FinalUsd = 10m },
-                Now));
-
-        Assert.Equal("catalog.product.price_final_without_base_usd", error.Code);
-    }
-
-    [Fact]
-    public void CreateRejectsABaseUsdPriceWithoutItsFinalPrice()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m },
-                Now));
-
-        Assert.Equal("catalog.product.price_final_required_usd", error.Code);
-    }
-
-    // El descuento es el mismo para ambas monedas (confirmado por el owner): 10% sobre 10 USD
-    // es 9 USD, no cualquier otro valor.
-    [Fact]
-    public void CreateRejectsAFinalPriceThatDoesNotMatchBaseAndDiscount()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m, FinalUsd = 8m, Discount = 10m },
-                Now));
-
-        Assert.Equal("catalog.product.price_final_mismatch_usd", error.Code);
-    }
-
-    [Fact]
-    public void CreateAcceptsAFinalPriceThatMatchesBaseAndDiscount()
-    {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, FinalUsd = 9m, Discount = 10m }, Now);
-
-        Assert.Equal(9m, product.PriceFinalUsd);
-        Assert.Equal(10m, product.Discount);
-    }
-
-    [Fact]
     public void UpdateReplacesThePricingEntirely()
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, FinalUsd = 10m }, Now);
+            new ProductPricing { BaseUsd = 10m }, Now);
 
         product.Update(
             "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseCop = 45000m, FinalCop = 45000m }, Now.AddMinutes(5));
+            new ProductPricing { BaseCop = 45000m }, Now.AddMinutes(5));
 
         Assert.Null(product.PriceBaseUsd);
         Assert.Equal(45000m, product.PriceBaseCop);
@@ -477,7 +392,6 @@ public sealed class ProductTests
             new ProductPricing
             {
                 BaseUsd = 10m,
-                FinalUsd = 10m,
                 Scales = [MultipleScale()]
             },
             Now);
@@ -498,7 +412,6 @@ public sealed class ProductTests
             new ProductPricing
             {
                 BaseUsd = 10m,
-                FinalUsd = 10m,
                 Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 12, 10m, null)]
             },
             Now);
@@ -517,7 +430,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [MultipleScale(fromUnit: 9, toUnit: 9)]
                 },
                 Now));
@@ -536,7 +448,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [MultipleScale(discount: discount, finalUsd: null)]
                 },
                 Now));
@@ -553,7 +464,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [new PriceScaleInput(1, 9, 0m, null, null, null, 10m, null)]
                 },
                 Now));
@@ -570,7 +480,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, null, null, 10m, null)]
                 },
                 Now));
@@ -587,7 +496,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, 3, 12, 10m, null)]
                 },
                 Now));
@@ -604,7 +512,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, null, 10m, null)]
                 },
                 Now));
@@ -621,7 +528,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, 3, 12, 10m, null)]
                 },
                 Now));
@@ -638,7 +544,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [MultipleScale(finalUsd: null)]
                 },
                 Now));
@@ -655,7 +560,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [MultipleScale(finalUsd: null, finalCop: 45000m)]
                 },
                 Now));
@@ -672,7 +576,6 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    FinalUsd = 10m,
                     Scales = [MultipleScale(discount: 10m, finalUsd: 10m)]
                 },
                 Now));
@@ -688,7 +591,6 @@ public sealed class ProductTests
             new ProductPricing
             {
                 BaseUsd = 10m,
-                FinalUsd = 10m,
                 Scales = [MultipleScale(discount: 10m, finalUsd: 9m)]
             },
             Now);
@@ -701,7 +603,7 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, FinalUsd = 10m, Scales = [MultipleScale()] }, Now);
+            new ProductPricing { BaseUsd = 10m, Scales = [MultipleScale()] }, Now);
         var originalScaleId = Assert.Single(product.PriceScales).Id;
 
         product.Update(
@@ -709,7 +611,6 @@ public sealed class ProductTests
             new ProductPricing
             {
                 BaseUsd = 10m,
-                FinalUsd = 10m,
                 Scales = [MultipleScale(fromUnit: 10, toUnit: 20, multiple: 5)]
             },
             Now.AddMinutes(5));
@@ -725,11 +626,11 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, FinalUsd = 10m, Scales = [MultipleScale()] }, Now);
+            new ProductPricing { BaseUsd = 10m, Scales = [MultipleScale()] }, Now);
 
         product.Update(
             "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, FinalUsd = 10m }, Now.AddMinutes(5));
+            new ProductPricing { BaseUsd = 10m }, Now.AddMinutes(5));
 
         Assert.Empty(product.PriceScales);
     }

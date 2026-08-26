@@ -11,9 +11,6 @@ public sealed record ProductDto(
     Guid? TaxRateId,
     decimal? PriceBaseUsd,
     decimal? PriceBaseCop,
-    decimal? PriceFinalUsd,
-    decimal? PriceFinalCop,
-    decimal? Discount,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -33,9 +30,6 @@ public sealed record ProductResponse(
     // CAT-09. El precio en dos monedas fijas — reemplazó por completo al viejo Price, retirado.
     decimal? PriceBaseUsd,
     decimal? PriceBaseCop,
-    decimal? PriceFinalUsd,
-    decimal? PriceFinalCop,
-    decimal? Discount,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -48,9 +42,6 @@ public sealed record ProductResponse(
 public sealed record ProductPricingRequest(
     decimal? BaseUsd,
     decimal? BaseCop,
-    decimal? FinalUsd,
-    decimal? FinalCop,
-    decimal? Discount,
     IReadOnlyCollection<PriceScaleRequest>? Scales);
 
 /// <summary>

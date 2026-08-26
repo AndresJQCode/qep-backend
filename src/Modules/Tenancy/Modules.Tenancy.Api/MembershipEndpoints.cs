@@ -26,6 +26,10 @@ public static class MembershipEndpoints
         // `state` acepta el estado que se muestra —pending, expired, active, suspended,
         // removed—, no el que guarda la tabla: "vencida" se deriva del ExpiresAt contra el
         // reloj del servidor. Uno desconocido responde 422 en vez de ignorarse.
+        //
+        // `role` y `search` acotan el universo antes de contar; `state` elige la pestaña
+        // dentro de él. Por eso los conteos que viajan en la respuesta no cambian al mover
+        // el estado, pero sí al buscar o al pedir un rol.
         group.MapGet("/", ListAsync)
             .RequireAuthorization(TenancyPermissions.AdvisorshipRead)
             .Produces<MembershipListResponse>()
@@ -148,13 +152,15 @@ public static class MembershipEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         string? state = null,
-        string? search = null)
+        string? search = null,
+        string? role = null)
     {
         var list = await dispatcher.QueryAsync(
             new ListMembershipsQuery(
                 new TenantId(tenantId),
                 MembershipViewStates.Parse(state),
-                search),
+                search,
+                role),
             cancellationToken);
 
         return Results.Ok(new MembershipListResponse(

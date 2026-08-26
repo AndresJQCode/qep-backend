@@ -45,10 +45,23 @@ public sealed record MembershipListDto(
     IReadOnlyList<MembershipListItemDto> Items,
     MembershipCountsDto Counts);
 
+/// <summary>
+/// Los tres filtros no son intercambiables, y por eso se aplican en este orden.
+/// </summary>
+/// <remarks>
+/// <para><see cref="Role"/> y <see cref="Search"/> acotan el universo: quién entra siquiera
+/// en la conversación. El de rol (ej. "advisor") resuelve el selector de asesores de
+/// cotizaciones en el servidor, no descartando filas del lado del cliente — facturación
+/// nunca puede ser "el asesor" de una cotización.</para>
+/// <para><see cref="State"/> es distinto: es la pestaña que se está mirando dentro de ese
+/// universo. Por eso los conteos se calculan después de rol y búsqueda pero antes del
+/// estado — describen el universo, no la pestaña.</para>
+/// </remarks>
 public sealed record ListMembershipsQuery(
     TenantId TenantId,
     MembershipViewState? State = null,
-    string? Search = null) : IQuery<MembershipListDto>;
+    string? Search = null,
+    string? Role = null) : IQuery<MembershipListDto>;
 
 public sealed class ListMembershipsHandler(
     IMembershipRepository membershipRepository,
@@ -67,16 +80,27 @@ public sealed class ListMembershipsHandler(
             query.TenantId,
             cancellationToken);
 
-        var items = new List<MembershipListItemDto>(memberships.Count);
+        // Filtrado en memoria, no en el repositorio: mismo criterio que ya documenta este
+        // handler para la resolución de email — la cantidad de miembros de un tenant es
+        // chica hoy, no justifica un método de repositorio nuevo.
+        //
+        // El rol se aplica antes de resolver los correos y no después: cada membresía que
+        // sobrevive cuesta una consulta a IUserDirectory, así que descartar acá es lo que
+        // evita ese trabajo.
+        var scoped = query.Role is null
+            ? memberships
+            : memberships.Where(membership => membership.Roles.Contains(query.Role)).ToList();
+
+        var items = new List<MembershipListItemDto>(scoped.Count);
         // Una búsqueda por membresía: IUserDirectory sólo expone resolución por id único
         // (v1). Aceptable para la poca cantidad de miembros que tiene un tenant hoy.
-        foreach (var membership in memberships)
+        foreach (var membership in scoped)
         {
             var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
             items.Add(membership.ToListItemDto(email));
         }
 
-        // Los dos filtros se aplican acá y no en SQL, por razones distintas.
+        // Ninguno de los filtros se aplica en SQL, y cada uno por su razón.
         //
         // El correo vive en Identity y llega por IUserDirectory: filtrarlo en la consulta
         // exigiría un join entre módulos, que es lo que ArchitectureTests prohíbe. El

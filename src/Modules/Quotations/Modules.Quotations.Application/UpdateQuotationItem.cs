@@ -1,0 +1,80 @@
+using BuildingBlocks.Application;
+using FluentValidation;
+using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
+
+namespace Modules.Quotations.Application;
+
+public sealed record UpdateQuotationItemCommand(
+    Guid TenantId, Guid QuotationId, Guid ItemId, decimal Quantity) : ICommand<QuotationDto>;
+
+public sealed class UpdateQuotationItemValidator : AbstractValidator<UpdateQuotationItemCommand>
+{
+    public UpdateQuotationItemValidator()
+    {
+        RuleFor(command => command.Quantity).GreaterThan(0m);
+    }
+}
+
+public sealed class UpdateQuotationItemHandler(
+    IQuotationRepository repository,
+    IQuotationsUnitOfWork unitOfWork,
+    IQuotationAuditPublisher auditPublisher,
+    IQuotationProductPricingLookup pricingLookup,
+    IMembershipDirectory membershipDirectory,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<UpdateQuotationItemCommand> validator)
+    : ICommandHandler<UpdateQuotationItemCommand, QuotationDto>
+{
+    public async Task<QuotationDto> HandleAsync(
+        UpdateQuotationItemCommand command,
+        CancellationToken cancellationToken)
+    {
+        QuotationsAuthorization.EnsureAuthorized(
+            executionContext, command.TenantId, QuotationsPermissions.QuotationManage);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+
+        var quotation = await repository.FindAsync(
+            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
+            ?? throw QuotationNotFound.For(command.QuotationId);
+
+        // Mismo código que Quotation.UpdateItemQuantity usaría si se le pasara un id
+        // desconocido: se busca acá primero porque hace falta el ProductId de la línea antes de
+        // poder resolver su descuento.
+        var item = quotation.Items.FirstOrDefault(item => item.Id.Value == command.ItemId)
+            ?? throw new QuotationsDomainException(
+                "quotation.item.not_found", "The quotation item was not found.");
+
+        // US-4: la cantidad nueva puede caer en otra escala del mismo producto, así que el
+        // descuento se vuelve a resolver — nunca se conserva el anterior. El impuesto también:
+        // la tasa del producto pudo cambiar desde que se agregó la línea.
+        var (_, discountPercentage, taxPercentage) = await QuotationProductPricingResolver.ResolveAsync(
+            pricingLookup, command.TenantId, item.ProductId, command.Quantity, cancellationToken);
+
+        var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
+            membershipDirectory, executionContext, command.TenantId, cancellationToken);
+
+        var now = clock.UtcNow;
+        quotation.UpdateItemQuantity(
+            item.Id, command.Quantity, discountPercentage, taxPercentage, updatedBy, now);
+
+        repository.AddHistoryEntry(QuotationHistoryEntry.Create(
+            QuotationHistoryEntryId.New(),
+            quotation.Id,
+            QuotationHistoryEventType.Edited,
+            updatedBy,
+            details: null,
+            now));
+        auditPublisher.Publish(
+            command.TenantId,
+            executionContext.SubjectId,
+            "quotation.quotation.item_updated",
+            quotation.Id.ToString(),
+            "success",
+            now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return quotation.ToDto();
+    }
+}

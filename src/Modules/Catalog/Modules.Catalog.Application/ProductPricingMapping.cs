@@ -14,9 +14,6 @@ internal static class ProductPricingMapping
     {
         BaseUsd = request.BaseUsd,
         BaseCop = request.BaseCop,
-        FinalUsd = request.FinalUsd,
-        FinalCop = request.FinalCop,
-        Discount = request.Discount,
         Scales = (request.Scales ?? []).Select(ToDomain).ToArray()
     };
 

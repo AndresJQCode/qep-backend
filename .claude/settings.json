@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dotnet build *)"
+      "Bash(dotnet build *)",
+      "Bash(export DOTNET_ROOT=\"/c/Users/DANILO/AppData/Local/dotnet-sdks/10.0.301\")",
+      "Bash(/c/Users/DANILO/AppData/Local/dotnet-sdks/10.0.301/dotnet.exe build *)",
+      "Bash(ls \"c:/Users/DANILO/Documents/proyectos/qcode/qep-frontend/src/routes/_authenticated/quotes/\\\\$quoteId/\")",
+      "Read(//c/Users/DANILO/Documents/proyectos/qcode/qep-frontend/src/routes/_authenticated/quotes/\\\\$quoteId//**)",
+      "Bash(bun run *)",
+      "Bash(DEBUG_PRINT_LIMIT=100000 bun run test src/features/quotes/pages/quote-editor-page.test.tsx -t \"confirms voiding\")",
+      "Bash(curl.exe -s -o /dev/null -w \"frontend:%{http_code}\\\\n\" http://localhost:3002/)",
+      "Bash(curl.exe -s -o /dev/null -w \"backend:%{http_code}\\\\n\" http://localhost:5000/health)",
+      "Bash(curl.exe -s -o /dev/null -w \"backend-auth-me:%{http_code}\\\\n\" http://localhost:5000/api/v1/auth/me)"
     ]
   }
 }

@@ -102,11 +102,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("description");
 
-                    b.Property<decimal?>("Discount")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("numeric(5,2)")
-                        .HasColumnName("discount");
-
                     b.Property<Guid?>("ImageFileId")
                         .HasColumnType("uuid")
                         .HasColumnName("image_file_id");
@@ -130,16 +125,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("price_base_usd");
-
-                    b.Property<decimal?>("PriceFinalCop")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_final_cop");
-
-                    b.Property<decimal?>("PriceFinalUsd")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_final_usd");
 
                     b.Property<Guid?>("TaxRateId")
                         .HasColumnType("uuid")

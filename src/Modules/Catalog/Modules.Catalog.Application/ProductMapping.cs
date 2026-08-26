@@ -23,9 +23,6 @@ internal static class ProductMapping
         product.TaxRateId?.Value,
         product.PriceBaseUsd,
         product.PriceBaseCop,
-        product.PriceFinalUsd,
-        product.PriceFinalCop,
-        product.Discount,
         product.PriceScales.Select(ToResponse).ToArray(),
         product.CreatedAt,
         product.UpdatedAt);

@@ -43,9 +43,6 @@ public sealed class ProductPricingApiTests
             {
                 baseUsd = 100m,
                 baseCop = 400000m,
-                finalUsd = 90m,
-                finalCop = 360000m,
-                discount = 10m,
                 scales = new object[]
                 {
                     new
@@ -121,7 +118,6 @@ public sealed class ProductPricingApiTests
             pricing = new
             {
                 baseUsd = 100m,
-                finalUsd = 100m,
                 scales = new object[]
                 {
                     new
