@@ -1,5 +1,6 @@
 using System.Reflection;
 using Bootstrapper;
+using Modules.Authorization.Application;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,6 +59,48 @@ public sealed class CompositionRootTests
     private static Type HandlerTypeFor(MessageType message) =>
         (message.IsCommand ? typeof(ICommandHandler<,>) : typeof(IQueryHandler<,>))
             .MakeGenericType(message.Message, message.Response);
+
+    /// <summary>
+    /// El contenedor puede construir de verdad lo que decide permisos.
+    /// </summary>
+    /// <remarks>
+    /// Los demas casos de este archivo miran **que quedo registrado**; este **construye**. Hace
+    /// falta porque <c>ITenantRoleCatalog</c> es la unica pieza scoped que depende de un
+    /// DbContext propio y de un singleton a la vez: un registro mal armado ahi no rompe el
+    /// build ni aparece en la lista de descriptores, aparece como 500 en el primer request
+    /// autenticado — que es cada request.
+    ///
+    /// Y las pruebas de integracion, que lo cubririan levantando la app, necesitan Docker.
+    /// </remarks>
+    [Fact]
+    public void TheContainerCanBuildTheTenantRoleCatalog()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var catalog = scope.ServiceProvider.GetRequiredService<ITenantRoleCatalog>();
+
+        Assert.IsType<TenantRoleCatalog>(catalog);
+    }
+
+    /// <summary>
+    /// La vista por tenant NO puede ser singleton: fusiona los roles que el tenant definio, y
+    /// esos cambian con un PATCH, no con un deploy. Registrada como singleton, el primer
+    /// tenant en preguntar dejaria su catalogo cacheado para todo el proceso — y para todos
+    /// los demas tenants.
+    /// </summary>
+    [Fact]
+    public void TheTenantRoleCatalogIsScopedAndTheSystemOneIsNot()
+    {
+        var services = BuildPlatformServices();
+
+        Assert.Equal(
+            ServiceLifetime.Scoped,
+            services.Single(d => d.ServiceType == typeof(ITenantRoleCatalog)).Lifetime);
+        Assert.Equal(
+            ServiceLifetime.Singleton,
+            services.Single(d => d.ServiceType == typeof(IRoleCatalog)).Lifetime);
+    }
 
     private static ServiceCollection BuildPlatformServices()
     {

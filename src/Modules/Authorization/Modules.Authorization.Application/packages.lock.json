@@ -23,6 +23,12 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "modules.authorization.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "modules.identity.application": {
         "type": "Project",
         "dependencies": {

@@ -1,11 +1,21 @@
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Authorization.Application;
 
-public sealed class RolePermissionChecker(IRoleCatalog roleCatalog) : IRolePermissionChecker
+public sealed class RolePermissionChecker(ITenantRoleCatalog roleCatalog)
+    : IRolePermissionChecker
 {
-    public bool AnyGrants(IReadOnlyCollection<string> roles, string permission) =>
-        roles
-            .SelectMany(roleCatalog.PermissionsFor)
-            .Contains(permission, StringComparer.Ordinal);
+    public async Task<bool> AnyGrantsAsync(
+        TenantId tenantId,
+        IReadOnlyCollection<string> roles,
+        string permission,
+        CancellationToken cancellationToken)
+    {
+        var permissions = await roleCatalog.PermissionsForAsync(
+            tenantId.Value,
+            roles,
+            cancellationToken);
+        return permissions.Contains(permission, StringComparer.Ordinal);
+    }
 }

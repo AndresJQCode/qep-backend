@@ -314,11 +314,25 @@ public sealed class MembershipApiTests
         Assert.Contains(catalog.Roles, role => role.Role == "billing");
         Assert.DoesNotContain(catalog.Roles, role => role.Role == "tenancy.owner");
         Assert.DoesNotContain(catalog.Roles, role => role.Role == "tenancy.member");
+        // Ya no dice "y roles": definir roles se separo en su propio permiso. Que `manage`
+        // siguiera prometiendolo era la parte del copy que mentia sobre lo que concede.
         Assert.Contains(
             catalog.Permissions,
             permission =>
                 permission.Permission == "advisorship.manage" &&
-                permission.DisplayName == "Gestionar miembros y roles");
+                permission.DisplayName == "Gestionar miembros");
+        // El permiso que si define roles, separado a proposito: `manage` cambia QUIEN tiene un
+        // rol, este cambia QUE PUEDE ese rol. Juntos serian una escalada trivial — quien
+        // administra miembros podria concederse cualquier permiso reescribiendo un rol.
+        Assert.Contains(
+            catalog.Permissions,
+            permission =>
+                permission.Permission == "advisorship.roles.manage" &&
+                permission.RiskLevel == "high");
+        Assert.Contains(
+            catalog.Roles,
+            role => role.Role == "admin" &&
+                role.Permissions.Contains("advisorship.roles.manage"));
     }
 
     [Fact]

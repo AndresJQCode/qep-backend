@@ -14,6 +14,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
+using Modules.Authorization.Infrastructure;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
@@ -54,6 +55,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<InviteMemberCommand, MembershipDto>,
             InviteMemberHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateRoleCommand, Modules.Authorization.Domain.Role>,
+            CreateRoleHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateRoleCommand, Modules.Authorization.Domain.Role>,
+            UpdateRoleHandler>();
+        services.AddScoped<ICommandHandler<DeleteRoleCommand, bool>, DeleteRoleHandler>();
+        services.AddScoped<
+            IQueryHandler<ListTenantRolesQuery, IReadOnlyCollection<TenantRoleDefinition>>,
+            ListTenantRolesHandler>();
         services.AddScoped<
             IQueryHandler<ListMembershipsQuery, MembershipListDto>,
             ListMembershipsHandler>();
@@ -310,7 +321,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
 
-        AddAuthorizationCapability(services);
+        AddAuthorizationCapability(services, configuration);
         services.AddQepObservability(configuration, environment);
         AddAuthentication(services, configuration, environment);
         AddAuthorization(services);
@@ -320,9 +331,17 @@ public static class QepServiceCollectionExtensions
     // Registra la capacidad Authorization y el catálogo de roles de sistema de tenancy.
     // Las definiciones de rol se versionan en código; las referencias de rol de la membresía
     // (ADR 0016) mapean a estos permisos. Los roles custom/de base y los globales van después.
-    private static void AddAuthorizationCapability(IServiceCollection services)
+    private static void AddAuthorizationCapability(
+        IServiceCollection services,
+        IConfiguration configuration)
     {
+        // El catalogo del codigo sigue siendo singleton: son constantes del build.
         services.AddSingleton<IRoleCatalog, RoleCatalog>();
+        // La vista por tenant NO puede serlo: fusiona los roles que el tenant definio, y esos
+        // cambian con un PATCH y no con un deploy. Scoped, ademas, es lo que hace que memoizar
+        // por request sea correcto — el scope dura lo que el request.
+        services.AddScoped<ITenantRoleCatalog, TenantRoleCatalog>();
+        services.AddAuthorizationInfrastructure(configuration);
         services.AddScoped<
             Modules.Authorization.Application.IAuthorizationService,
             AuthorizationService>();
@@ -345,6 +364,7 @@ public static class QepServiceCollectionExtensions
                 TenancyPermissions.AdvisorshipInvite,
                 TenancyPermissions.AdvisorshipRead,
                 TenancyPermissions.AdvisorshipManage,
+                TenancyPermissions.AdvisorshipRolesManage,
                 StoragePermissions.FileUpload,
                 StoragePermissions.FileRead,
                 StoragePermissions.FileDelete,
@@ -449,8 +469,14 @@ public static class QepServiceCollectionExtensions
             "low"));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipManage,
-            "Gestionar miembros y roles",
-            "Permite suspender, remover y cambiar roles de miembros.",
+            "Gestionar miembros",
+            "Permite suspender, remover y cambiar los roles que tiene un miembro.",
+            "Tenancy",
+            "high"));
+        services.AddSingleton(new PermissionDefinition(
+            TenancyPermissions.AdvisorshipRolesManage,
+            "Definir roles",
+            "Permite crear roles propios y elegir que permisos concede cada uno.",
             "Tenancy",
             "high"));
         services.AddSingleton(new PermissionDefinition(
@@ -695,6 +721,11 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(
                     policy,
                     TenancyPermissions.AdvisorshipManage))
+            .AddPolicy(
+                TenancyPermissions.AdvisorshipRolesManage,
+                policy => AddPermissionRequirement(
+                    policy,
+                    TenancyPermissions.AdvisorshipRolesManage))
             .AddPolicy(
                 StoragePermissions.FileUpload,
                 policy => AddPermissionRequirement(policy, StoragePermissions.FileUpload))

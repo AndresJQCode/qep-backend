@@ -20,6 +20,7 @@ using Modules.Quotations.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Api;
+using Modules.Authorization.Infrastructure;
 using Modules.Tenancy.Infrastructure;
 using Scalar.AspNetCore;
 
@@ -89,6 +90,7 @@ app.MapAuthSessionEndpoints();
 app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
 app.MapAuthorizationCatalogEndpoints();
+app.MapRoleEndpoints();
 app.MapTenantSettingsEndpoints();
 app.MapMembershipEndpoints();
 app.MapStorageEndpoints();
@@ -103,6 +105,11 @@ app.MapSaleEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
+    app.Lifetime.ApplicationStopping);
+// Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
+// resolver permisos, TODO request autenticado sale 500 — no sólo los de roles. Fue
+// exactamente lo que rompió los tests de integración de Tenancy al agregar el módulo.
+await app.Services.InitializeAuthorizationDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 // Después de Tenancy: Tenancy suelta la tabla de auditoría (DropAuditOwnership) antes de
 // que la migración del módulo Audit pase a ser su única dueña (ADR 0019).

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Modules.Customers.Application;
+using Modules.Tenancy.Application;
 using Npgsql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
@@ -483,7 +484,10 @@ public sealed class ClientClassificationApiTests
             TenantId,
             CustomersPermissions.ClassificationRead,
             CustomersPermissions.ClassificationManage,
-            "tenancy.membership.read");
+            // La constante y no el string: escrito a mano quedo desactualizado cuando
+            // `bcc9dfa` renombro el permiso a `advisorship.read`, y este test daba 403 desde
+            // entonces sin que nadie lo viera — las pruebas de integracion necesitan Docker.
+            TenancyPermissions.AdvisorshipRead);
 
         var catalog = await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/authorization/catalog",
