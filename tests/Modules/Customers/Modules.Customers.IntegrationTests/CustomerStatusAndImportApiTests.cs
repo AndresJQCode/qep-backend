@@ -343,6 +343,24 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Contains(result.Errors, error =>
             error.RowNumber == 8 && error.Code == "customers.import.row.identification_taken");
 
+        // `RowData` viaja para todas las filas con error, no solo `city_not_found`: es lo que
+        // deja al modal de errores del frontend mostrar que habia puesto la persona y ofrecer
+        // corregirlo ahi mismo, sin volver al Excel.
+        var nameRequiredError = Assert.Single(
+            result.Errors, error => error.RowNumber == 3);
+        Assert.NotNull(nameRequiredError.RowData);
+        Assert.Equal("900.222.222-2", nameRequiredError.RowData!.IdentificationNumber);
+
+        var duplicateError = Assert.Single(
+            result.Errors, error => error.RowNumber == 7);
+        Assert.NotNull(duplicateError.RowData);
+        Assert.Equal("Cliente Duplicado En Archivo", duplicateError.RowData!.Name);
+
+        var identificationTakenError = Assert.Single(
+            result.Errors, error => error.RowNumber == 8);
+        Assert.NotNull(identificationTakenError.RowData);
+        Assert.Equal("Cliente Ya Existe", identificationTakenError.RowData!.Name);
+
         // Nada se pierde: la unica fila valida se creo, y las seis invalidas no dejaron rastro.
         var page = await ListAsync(client, string.Empty);
         Assert.Equal(2, page.Items.Count); // el "existing" creado antes del import + la fila 2.
@@ -468,6 +486,83 @@ public sealed class CustomerStatusAndImportApiTests
 
         var response = await client.GetAsync(
             $"{CustomersUrl()}/import/template", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>
+    /// El modal de errores del frontend reenvia acá las filas que fallaron (tal cual las recibió
+    /// de <c>/import</c>) para bajarlas en un Excel nuevo, ya cargado — mismo criterio de prueba
+    /// que <see cref="DownloadTemplateReturnsAnExcelWithTheExpectedColumns"/>: se vuelve a parsear
+    /// con ClosedXML, no alcanza con el content-type.
+    /// </summary>
+    [Fact]
+    public async Task ExportFailedRowsReturnsAnExcelWithTheGivenRowsLoaded()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var rowData = new CustomerImportRowData(
+            "Cliente A Corregir",
+            "NIT",
+            "900.999.999-9",
+            null,
+            null,
+            null,
+            "Antioquia",
+            "Ciudad Que No Existe",
+            "Clasificacion Que No Existe",
+            null);
+
+        var response = await client.PostAsJsonAsync(
+            $"{CustomersUrl()}/import/failed-rows",
+            new ExportFailedCustomerRowsRequest([rowData]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            response.Content.Headers.ContentType?.MediaType);
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken);
+        using var workbook = new XLWorkbook(new MemoryStream(bytes));
+        var sheet = workbook.Worksheets.First();
+        Assert.Equal("Cliente A Corregir", sheet.Cell(2, 1).GetString());
+        Assert.Equal("900.999.999-9", sheet.Cell(2, 3).GetString());
+        Assert.Equal("Ciudad Que No Existe", sheet.Cell(2, 8).GetString());
+    }
+
+    [Fact]
+    public async Task ExportFailedRowsWithNoRowsIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+
+        var response = await client.PostAsJsonAsync(
+            $"{CustomersUrl()}/import/failed-rows",
+            new ExportFailedCustomerRowsRequest([]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.import.export_empty", body, StringComparison.Ordinal);
+    }
+
+    // Mismo permiso que /import y que la plantilla vacia.
+    [Fact]
+    public async Task ExportFailedRowsWithOnlyTheManagePermissionIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var rowData = new CustomerImportRowData(
+            "Cliente", "NIT", "900.000.000-0", null, null, null, "Antioquia", "Medellin", "X", null);
+
+        var response = await client.PostAsJsonAsync(
+            $"{CustomersUrl()}/import/failed-rows",
+            new ExportFailedCustomerRowsRequest([rowData]),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }

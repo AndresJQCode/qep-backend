@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Customers.Application;
@@ -39,7 +40,11 @@ public sealed class GetCustomerImportTemplateHandler(
             .ToArray();
         var departmentNames = departments.Select(department => department.Name).ToArray();
 
-        var content = templateBuilder.Build(departmentNames, activeClassificationNames, cancellationToken);
+        var content = templateBuilder.Build(
+            departmentNames,
+            activeClassificationNames,
+            IdentificationTypeParser.SupportedWireValues,
+            cancellationToken);
         return new CustomerImportTemplateFile(content, FileName);
     }
 }

@@ -10,9 +10,9 @@ public static class CustomerImportColumns
 {
     public const string Name = "Nombre";
 
-    public const string IdentificationType = "TipoIdentificacion";
+    public const string IdentificationType = "Tipo Identificacion";
 
-    public const string IdentificationNumber = "NumeroIdentificacion";
+    public const string IdentificationNumber = "Numero Identificacion";
 
     public const string Phone = "Telefono";
 
@@ -26,7 +26,7 @@ public static class CustomerImportColumns
 
     public const string Classification = "Clasificacion";
 
-    public const string WithRetention = "ConRetencion";
+    public const string WithRetention = "Con Retencion";
 
     public static readonly IReadOnlyList<string> Ordered =
     [

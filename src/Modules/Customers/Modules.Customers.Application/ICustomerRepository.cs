@@ -10,10 +10,18 @@ public interface ICustomerRepository
     /// Una pagina del listado y el total que la acompana. El total viaja aparte porque la UI
     /// pagina: sin el no puede dibujar cuantas paginas hay, y contarlo en el cliente exigiria
     /// traerse todo — que es lo contrario de paginar.
+    ///
+    /// <c>name</c>/<c>identificationNumber</c>/<c>cuc</c> son tres filtros independientes
+    /// (CLI-FILTROS-01): cada uno filtra su propia columna con ILIKE, y se combinan con AND
+    /// cuando el llamador manda mas de uno. <c>search</c> es el criterio OR original —sobre los
+    /// mismos tres campos— que el combobox de clientes de <c>quotes</c> todavia necesita.
     /// </summary>
     Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
         Guid tenantId,
         string? search,
+        string? name,
+        string? identificationNumber,
+        string? cuc,
         int page,
         int pageSize,
         CancellationToken cancellationToken);

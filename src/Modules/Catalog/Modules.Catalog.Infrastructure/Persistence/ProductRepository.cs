@@ -15,9 +15,22 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         .Replace("%", "\\%", StringComparison.Ordinal)
         .Replace("_", "\\_", StringComparison.Ordinal);
 
-    public async Task<IReadOnlyList<Product>> SearchAsync(
+    // `null` para un filtro vacío/ausente, para que el llamador sepa si tiene que agregar el
+    // `Where` o no — un patrón `"%%"` matchearía todo, que no es lo mismo que "no filtrar".
+    private static string? LikePattern(string? term)
+    {
+        var trimmed = term?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : $"%{EscapeLikeWildcards(trimmed)}%";
+    }
+
+    public async Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
         Guid tenantId,
         string? search,
+        string? name,
+        string? code,
+        bool? isActive,
+        int page,
+        int pageSize,
         CancellationToken cancellationToken)
     {
         var query = dbContext.Products
@@ -27,24 +40,74 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .Include(product => product.PriceScales)
             .Where(product => product.TenantId == tenantId);
 
-        var term = search?.Trim();
-        if (!string.IsNullOrEmpty(term))
+        if (isActive is not null)
         {
-            // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
-            // sólo los dos que pone esta línea: `%` y `_` son comodines de LIKE, así que un
-            // término sin escapar los convierte en parte de la sintaxis. `?search=_` devolvía el
-            // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
-            // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
-            // afirmaba justo lo que no pasaba.
-            var pattern = $"%{EscapeLikeWildcards(term)}%";
-            query = query.Where(product =>
-                EF.Functions.ILike(product.Name, pattern, LikeEscapeCharacter) ||
-                EF.Functions.ILike(product.Code, pattern, LikeEscapeCharacter));
+            query = query.Where(product => product.IsActive == isActive);
         }
 
-        return await query
-            .OrderBy(product => product.Name)
+        // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
+        // sólo los dos que pone LikePattern: `%` y `_` son comodines de LIKE, así que un
+        // término sin escapar los convierte en parte de la sintaxis. `?search=_` devolvía el
+        // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
+        // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
+        // afirmaba justo lo que no pasaba.
+        var searchPattern = LikePattern(search);
+        if (searchPattern is not null)
+        {
+            query = query.Where(product =>
+                EF.Functions.ILike(product.Name, searchPattern, LikeEscapeCharacter) ||
+                EF.Functions.ILike(product.Code, searchPattern, LikeEscapeCharacter));
+        }
+
+        // Las dos cajas separadas del listado (CAT-FILTROS-01), cada una filtra su propia
+        // columna y se combinan con AND cuando el llamador manda las dos.
+        var namePattern = LikePattern(name);
+        if (namePattern is not null)
+        {
+            query = query.Where(product =>
+                EF.Functions.ILike(product.Name, namePattern, LikeEscapeCharacter));
+        }
+
+        var codePattern = LikePattern(code);
+        if (codePattern is not null)
+        {
+            query = query.Where(product =>
+                EF.Functions.ILike(product.Code, codePattern, LikeEscapeCharacter));
+        }
+
+        // El total se cuenta sobre la consulta ya filtrada y antes de paginar — mismo criterio
+        // que CustomerRepository.SearchAsync.
+        var total = await query.CountAsync(cancellationToken);
+
+        // Con algún filtro de texto activo, el resultado se ordena por relevancia (la fila que
+        // más se parece al término buscado va primero) en vez de alfabéticamente — mismo
+        // criterio que CustomerRepository.SearchAsync. `search` (el combobox de quotes) usa un
+        // solo término contra los dos campos; name/code (el listado) usan un término
+        // independiente por campo.
+        // Los `?.`/`??` tienen que resolverse ANTES del lambda — CS8072, mismo motivo que
+        // CustomerRepository.SearchAsync.
+        var searchTerm = search?.Trim() ?? string.Empty;
+        var nameTerm = name?.Trim() ?? string.Empty;
+        var codeTerm = code?.Trim() ?? string.Empty;
+
+        var orderedQuery = searchPattern is not null
+            ? query.OrderByDescending(product =>
+                EF.Functions.TrigramsSimilarity(product.Name, searchTerm) +
+                EF.Functions.TrigramsSimilarity(product.Code, searchTerm))
+            : namePattern is not null || codePattern is not null
+                ? query.OrderByDescending(product =>
+                    EF.Functions.TrigramsSimilarity(product.Name, nameTerm) +
+                    EF.Functions.TrigramsSimilarity(product.Code, codeTerm))
+                : query.OrderBy(product => product.Name);
+
+        var items = await orderedQuery
+            .ThenBy(product => product.Name)
+            .ThenBy(product => product.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync(cancellationToken);
+
+        return (items, total);
     }
 
     // Con tracking a propósito, a diferencia de SearchAsync: los llamadores de éste mutan el
@@ -62,6 +125,25 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .SingleOrDefaultAsync(
                 product => product.TenantId == tenantId && product.Id == productId,
                 cancellationToken);
+
+    public async Task<IReadOnlySet<string>> FindExistingCodesAsync(
+        Guid tenantId,
+        IReadOnlyCollection<string> codes,
+        CancellationToken cancellationToken)
+    {
+        if (codes.Count == 0)
+        {
+            return new HashSet<string>();
+        }
+
+        var existing = await dbContext.Products
+            .AsNoTracking()
+            .Where(product => product.TenantId == tenantId && codes.Contains(product.Code))
+            .Select(product => product.Code)
+            .ToListAsync(cancellationToken);
+
+        return existing.ToHashSet();
+    }
 
     public void Add(Product product) => dbContext.Products.Add(product);
 

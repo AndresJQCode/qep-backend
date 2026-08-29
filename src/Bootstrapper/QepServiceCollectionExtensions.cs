@@ -97,7 +97,7 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListFilesQuery, PagedFilesDto>,
             ListFilesHandler>();
         services.AddScoped<
-            IQueryHandler<ListProductsQuery, IReadOnlyList<ProductDto>>,
+            IQueryHandler<ListProductsQuery, ProductPage>,
             ListProductsHandler>();
         services.AddScoped<
             IQueryHandler<GetProductQuery, ProductDto>,
@@ -196,6 +196,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerImportTemplateQuery, CustomerImportTemplateFile>,
             GetCustomerImportTemplateHandler>();
+        // El Excel de "filas a corregir" del modal de errores — misma naturaleza de lectura que
+        // la plantilla de arriba, sólo que con datos ya cargados.
+        services.AddScoped<
+            IQueryHandler<ExportFailedCustomerRowsQuery, CustomerImportTemplateFile>,
+            ExportFailedCustomerRowsHandler>();
         // El catalogo de clasificaciones de cliente vive en el mismo modulo que Customer pero es
         // un recurso distinto, con sus propios siete handlers — mismo criterio que los cinco de
         // TaxRate frente a Product en Catalog. Registrados a mano, uno por uno: un caso de uso

@@ -841,6 +841,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.9, )",
           "Modules.Catalog.Application": "[1.0.0, )",
           "Modules.Catalog.Domain": "[1.0.0, )",
