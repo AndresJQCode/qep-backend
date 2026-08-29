@@ -1,3 +1,5 @@
+using Modules.Tenancy.Domain;
+
 namespace Modules.Tenancy.Application;
 
 /// <summary>
@@ -5,7 +7,14 @@ namespace Modules.Tenancy.Application;
 /// capacidad Authorization. Tenancy es dueño de la relación; Authorization es dueño del
 /// catálogo de roles.
 /// </summary>
+/// <remarks>
+/// Por tenant y asíncrono desde los roles custom: «conocido» dejó de ser una propiedad del
+/// build y pasó a ser una del tenant. Ver <see cref="IRolePermissionChecker"/>.
+/// </remarks>
 public interface IRoleReferenceValidator
 {
-    bool IsKnownRole(string role);
+    Task<bool> IsKnownRoleAsync(
+        TenantId tenantId,
+        string role,
+        CancellationToken cancellationToken);
 }

@@ -37,13 +37,27 @@ public sealed class SuspendMemberHandler(
                 "A member cannot suspend their own membership.");
         }
 
-        if (rolePermissionChecker.AnyGrants(membership.Roles, TenancyPermissions.AdvisorshipManage))
+        if (await rolePermissionChecker.AnyGrantsAsync(
+            command.TenantId, membership.Roles, TenancyPermissions.AdvisorshipManage,
+            cancellationToken))
         {
             var others = await membershipRepository.ListActiveExcludingAsync(
                 command.TenantId, command.MembershipId, cancellationToken);
-            var hasOtherManager = others.Any(
-                other => rolePermissionChecker.AnyGrants(
-                    other.Roles, TenancyPermissions.AdvisorshipManage));
+            // Recorrido secuencial y no `Any` sincronico: resolver permisos ahora consulta
+            // el catalogo del tenant. Corta en el primero que administra, asi que el caso
+            // normal —hay otro admin— sigue costando una sola resolucion.
+            var hasOtherManager = false;
+            foreach (var other in others)
+            {
+                if (await rolePermissionChecker.AnyGrantsAsync(
+                    command.TenantId, other.Roles, TenancyPermissions.AdvisorshipManage,
+                    cancellationToken))
+                {
+                    hasOtherManager = true;
+                    break;
+                }
+            }
+
             if (!hasOtherManager)
             {
                 throw new TenantDomainException(

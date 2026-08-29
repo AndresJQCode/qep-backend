@@ -30,6 +30,7 @@ public static class TenancyInfrastructureExtensions
         services.AddScoped<IMembershipActivation, MembershipActivationService>();
         services.AddScoped<ITenantRegistration, TenantRegistrationService>();
         services.AddScoped<IMembershipDirectory, MembershipDirectory>();
+        services.AddScoped<IMembershipRoleUsage, MembershipRoleUsage>();
         services.AddScoped<IActiveTenantsQuery, ActiveTenantsQuery>();
         services.AddScoped<ITenancyUnitOfWork, TenancyUnitOfWork>();
         services.AddScoped<IAuditRecorder, TenancyAuditRecorder>();

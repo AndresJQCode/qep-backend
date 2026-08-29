@@ -41,7 +41,7 @@ public sealed class InviteMemberHandler(
     {
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         EnsureAuthorized(command.TenantId);
-        EnsureKnownRoles(command.Roles);
+        await EnsureKnownRolesAsync(command.TenantId, command.Roles, cancellationToken);
         EnsureInvitableRoles(command.Roles);
 
         // Aprovisiona (o resuelve) el usuario invitado por el contrato de Identity. Es
@@ -141,7 +141,10 @@ public sealed class InviteMemberHandler(
         return existing.ToDto();
     }
 
-    private void EnsureKnownRoles(IReadOnlyCollection<string> roles)
+    private async Task EnsureKnownRolesAsync(
+        TenantId tenantId,
+        IReadOnlyCollection<string> roles,
+        CancellationToken cancellationToken)
     {
         var normalizedRoles = roles
             .Select(role => role.Trim())
@@ -155,13 +158,14 @@ public sealed class InviteMemberHandler(
                 "A membership requires at least one role.");
         }
 
-        var unknownRole = normalizedRoles.FirstOrDefault(
-            role => !roleReferenceValidator.IsKnownRole(role));
-        if (unknownRole is not null)
+        foreach (var role in normalizedRoles)
         {
-            throw new TenantDomainException(
-                "tenancy.membership.role_unknown",
-                $"The role '{unknownRole}' is not part of the authorization catalog.");
+            if (!await roleReferenceValidator.IsKnownRoleAsync(tenantId, role, cancellationToken))
+            {
+                throw new TenantDomainException(
+                    "tenancy.membership.role_unknown",
+                    $"The role '{role}' is not part of the authorization catalog.");
+            }
         }
     }
 

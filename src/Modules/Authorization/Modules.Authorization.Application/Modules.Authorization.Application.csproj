@@ -2,5 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\Modules.Authorization.Domain\Modules.Authorization.Domain.csproj" />
   </ItemGroup>
 </Project>

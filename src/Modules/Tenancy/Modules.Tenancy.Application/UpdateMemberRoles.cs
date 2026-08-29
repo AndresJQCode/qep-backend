@@ -57,13 +57,15 @@ public sealed class UpdateMemberRolesHandler(
                 "A membership requires at least one role.");
         }
 
-        var unknownRole = requestedRoles.FirstOrDefault(
-            role => !roleReferenceValidator.IsKnownRole(role));
-        if (unknownRole is not null)
+        foreach (var role in requestedRoles)
         {
-            throw new TenantDomainException(
-                "tenancy.membership.role_unknown",
-                $"The role '{unknownRole}' is not part of the authorization catalog.");
+            if (!await roleReferenceValidator.IsKnownRoleAsync(
+                command.TenantId, role, cancellationToken))
+            {
+                throw new TenantDomainException(
+                    "tenancy.membership.role_unknown",
+                    $"The role '{role}' is not part of the authorization catalog.");
+            }
         }
 
         var membership = await MembershipLoader.LoadAsync(
@@ -84,16 +86,31 @@ public sealed class UpdateMemberRolesHandler(
         }
 
         var currentlyCanManage = membership.State == MembershipState.Active &&
-            rolePermissionChecker.AnyGrants(membership.Roles, TenancyPermissions.AdvisorshipManage);
-        var willManage = rolePermissionChecker.AnyGrants(
-            requestedRoles, TenancyPermissions.AdvisorshipManage);
+            await rolePermissionChecker.AnyGrantsAsync(
+                command.TenantId, membership.Roles, TenancyPermissions.AdvisorshipManage,
+                cancellationToken);
+        var willManage = await rolePermissionChecker.AnyGrantsAsync(
+            command.TenantId, requestedRoles, TenancyPermissions.AdvisorshipManage,
+            cancellationToken);
         if (currentlyCanManage && !willManage)
         {
             var others = await membershipRepository.ListActiveExcludingAsync(
                 command.TenantId, command.MembershipId, cancellationToken);
-            var hasOtherManager = others.Any(
-                other => rolePermissionChecker.AnyGrants(
-                    other.Roles, TenancyPermissions.AdvisorshipManage));
+            // Recorrido secuencial y no `Any` sincronico: resolver permisos ahora consulta
+            // el catalogo del tenant. Corta en el primero que administra, asi que el caso
+            // normal —hay otro admin— sigue costando una sola resolucion.
+            var hasOtherManager = false;
+            foreach (var other in others)
+            {
+                if (await rolePermissionChecker.AnyGrantsAsync(
+                    command.TenantId, other.Roles, TenancyPermissions.AdvisorshipManage,
+                    cancellationToken))
+                {
+                    hasOtherManager = true;
+                    break;
+                }
+            }
+
             if (!hasOtherManager)
             {
                 throw new TenantDomainException(
