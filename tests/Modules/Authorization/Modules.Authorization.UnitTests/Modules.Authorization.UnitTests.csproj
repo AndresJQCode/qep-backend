@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Authorization\Modules.Authorization.Application\Modules.Authorization.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Authorization\Modules.Authorization.Domain\Modules.Authorization.Domain.csproj" />
   </ItemGroup>
 </Project>

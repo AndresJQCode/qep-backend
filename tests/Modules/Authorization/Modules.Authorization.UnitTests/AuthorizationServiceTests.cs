@@ -25,10 +25,26 @@ public sealed class AuthorizationServiceTests
     ],
     []);
 
+    /// <summary>
+    /// El servicio pasó a resolver contra el catálogo del tenant. Se envuelve el de sistema
+    /// sin roles custom: lo que estos casos ejercen es la decisión de autorización, no la
+    /// fusión — de eso se ocupa `TenantRoleCatalogTests`.
+    /// </summary>
+    private static TenantRoleCatalog TenantCatalog() =>
+        new TenantRoleCatalog(Catalog, new NoCustomRoles());
+
+    private sealed class NoCustomRoles : ICustomRoleReader
+    {
+        public Task<IReadOnlyCollection<Modules.Authorization.Domain.Role>> ListAsync(
+            Guid tenantId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<Modules.Authorization.Domain.Role>>([]);
+    }
+
     [Fact]
     public async Task DeniesWhenNoActiveMembership()
     {
-        var service = new AuthorizationService(new FakeDirectory(null), Catalog);
+        var service = new AuthorizationService(new FakeDirectory(null), TenantCatalog());
 
         var decision = await service.AuthorizeAsync(
             Subject, Tenant, "tenancy.settings.read", TestContext.Current.CancellationToken);
@@ -41,7 +57,7 @@ public sealed class AuthorizationServiceTests
     public async Task OwnerIsAllowedPrivilegedActions()
     {
         var service = new AuthorizationService(
-            new FakeDirectory(["admin"]), Catalog);
+            new FakeDirectory(["admin"]), TenantCatalog());
 
         Assert.True((await service.AuthorizeAsync(
             Subject, Tenant, "tenancy.settings.update",
@@ -55,7 +71,7 @@ public sealed class AuthorizationServiceTests
     public async Task MemberIsDeniedPrivilegedActionsButAllowedRead()
     {
         var service = new AuthorizationService(
-            new FakeDirectory(["advisor"]), Catalog);
+            new FakeDirectory(["advisor"]), TenantCatalog());
 
         Assert.True((await service.AuthorizeAsync(
             Subject, Tenant, "tenancy.settings.read",
@@ -72,7 +88,7 @@ public sealed class AuthorizationServiceTests
     public async Task ResolvePermissionsDedupesAcrossRoles()
     {
         var service = new AuthorizationService(
-            new FakeDirectory(["admin", "advisor"]), Catalog);
+            new FakeDirectory(["admin", "advisor"]), TenantCatalog());
 
         var permissions = await service.ResolvePermissionsAsync(
             Subject, Tenant, TestContext.Current.CancellationToken);

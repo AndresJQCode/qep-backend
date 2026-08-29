@@ -4,7 +4,7 @@ namespace Modules.Authorization.Application;
 
 public sealed class AuthorizationService(
     IMembershipDirectory membershipDirectory,
-    IRoleCatalog roleCatalog)
+    ITenantRoleCatalog roleCatalog)
     : IAuthorizationService
 {
     public async Task<AuthorizationDecision> AuthorizeAsync(
@@ -39,11 +39,8 @@ public sealed class AuthorizationService(
             return null;
         }
 
-        // Paso 2: resolver los permisos de rol acotados al tenant. DirectGrant y la Policy
-        // contextual quedan diferidos (ver docs/decisions/0002).
-        return roles
-            .SelectMany(roleCatalog.PermissionsFor)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        // Paso 2: resolver los permisos acotados al tenant — de sistema y custom. DirectGrant
+        // y la Policy contextual quedan diferidos (ver docs/decisions/0002).
+        return await roleCatalog.PermissionsForAsync(tenantId, roles, cancellationToken);
     }
 }

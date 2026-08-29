@@ -19,4 +19,10 @@ public static class TenancyPermissions
     public const string AdvisorshipInvite = "advisorship.invite";
     public const string AdvisorshipRead = "advisorship.read";
     public const string AdvisorshipManage = "advisorship.manage";
+
+    // Separado de AdvisorshipManage a proposito: `manage` cambia QUIEN tiene un rol, esto
+    // cambia QUE PUEDE ese rol. Quien administra miembros puede nombrar asesoras sin poder
+    // reescribir lo que una asesora puede hacer — que es el permiso que se concede a si mismo
+    // si las dos capacidades comparten clave.
+    public const string AdvisorshipRolesManage = "advisorship.roles.manage";
 }

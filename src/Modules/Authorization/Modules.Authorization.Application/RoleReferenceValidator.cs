@@ -1,8 +1,14 @@
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Authorization.Application;
 
-public sealed class RoleReferenceValidator(IRoleCatalog roleCatalog) : IRoleReferenceValidator
+public sealed class RoleReferenceValidator(ITenantRoleCatalog roleCatalog)
+    : IRoleReferenceValidator
 {
-    public bool IsKnownRole(string role) => roleCatalog.ContainsRole(role);
+    public Task<bool> IsKnownRoleAsync(
+        TenantId tenantId,
+        string role,
+        CancellationToken cancellationToken) =>
+        roleCatalog.ContainsRoleAsync(tenantId.Value, role, cancellationToken);
 }
