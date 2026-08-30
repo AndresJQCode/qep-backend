@@ -4,9 +4,22 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Customers.Application;
 
+/// <summary>
+/// <c>Name</c>/<c>IdentificationNumber</c>/<c>Cuc</c> son las tres cajas separadas del listado
+/// (CLI-FILTROS-01), cada una filtrando su propio campo con ILIKE — se combinan con AND cuando
+/// se llena mas de una. <c>Search</c> es el criterio combinado original (OR entre los tres
+/// campos): sigue existiendo porque el combobox de clientes de <c>quotes</c>
+/// (<c>useQuoteCustomerOptions</c>) necesita un unico cuadro de texto libre, no tres — no tiene
+/// sentido pedirle tres cajas a un combobox angosto. Los dos criterios son independientes y se
+/// pueden combinar (Search Y ademas Name/IdentificationNumber/Cuc), aunque en la practica cada
+/// consumidor usa solo uno de los dos.
+/// </summary>
 public sealed record ListCustomersQuery(
     Guid TenantId,
     string? Search,
+    string? Name,
+    string? IdentificationNumber,
+    string? Cuc,
     int Page,
     int PageSize) : IQuery<CustomerPage>;
 
@@ -61,7 +74,14 @@ public sealed class ListCustomersHandler(
         var pageSize = CustomerPaging.NormalizePageSize(query.PageSize);
 
         var (customers, total) = await repository.SearchAsync(
-            query.TenantId, query.Search, page, pageSize, cancellationToken);
+            query.TenantId,
+            query.Search,
+            query.Name,
+            query.IdentificationNumber,
+            query.Cuc,
+            page,
+            pageSize,
+            cancellationToken);
 
         var items = await ToDtosAsync(query.TenantId, customers, cancellationToken);
 

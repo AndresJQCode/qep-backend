@@ -94,6 +94,16 @@ public static class CustomerEndpoints
             .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // El modal de errores del frontend reenvia acá las filas que fallaron (tal cual las
+        // recibió de /import) para bajarlas en un Excel nuevo, más chico, listo para corregir y
+        // reimportar. Mismo permiso: es el mismo flujo de carga masiva.
+        group.MapPost("/import/failed-rows", ExportFailedCustomerRowsAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerImport)
+            .Accepts<ExportFailedCustomerRowsRequest>("application/json")
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -102,11 +112,15 @@ public static class CustomerEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         string? search = null,
+        string? name = null,
+        string? identificationNumber = null,
+        string? cuc = null,
         int page = 1,
         int pageSize = CustomerPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
-            new ListCustomersQuery(tenantId, search, page, pageSize),
+            new ListCustomersQuery(
+                tenantId, search, name, identificationNumber, cuc, page, pageSize),
             cancellationToken);
 
         return Results.Ok(new CustomersResponse(
@@ -233,6 +247,18 @@ public static class CustomerEndpoints
         return Results.File(template.Content, ExcelContentType, template.FileName);
     }
 
+    private static async Task<IResult> ExportFailedCustomerRowsAsync(
+        Guid tenantId,
+        ExportFailedCustomerRowsRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var file = await dispatcher.QueryAsync(
+            new ExportFailedCustomerRowsQuery(tenantId, request.Rows), cancellationToken);
+
+        return Results.File(file.Content, ExcelContentType, file.FileName);
+    }
+
     private static CustomerResponse ToResponse(CustomerDto customer) => new(
         customer.Id,
         customer.Cuc,
@@ -256,6 +282,7 @@ public static class CustomerEndpoints
         customer.Name,
         customer.IdentificationNumber,
         customer.Phone,
+        customer.Email,
         customer.City,
         customer.Classification,
         customer.IsActive);

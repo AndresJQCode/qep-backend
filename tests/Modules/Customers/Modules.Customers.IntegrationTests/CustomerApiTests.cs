@@ -73,8 +73,8 @@ public sealed class CustomerApiTests
         Assert.Equal(wholesale.Id, naturaleza.Classification.Id);
     }
 
-    // La caja del listado busca por nombre, identificacion y CUC — literalmente lo que dice su
-    // placeholder: "Buscar por nombre, identificación o CUC".
+    // El listado tiene tres cajas separadas (CLI-FILTROS-01): nombre, numero de identificacion y
+    // CUC, cada una filtrando su propia columna.
     [Fact]
     public async Task ListMatchesByNameIdentificationAndCuc()
     {
@@ -88,16 +88,61 @@ public sealed class CustomerApiTests
         await CreateCustomerAsync(
             client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2");
 
-        var byName = await ListAsync(client, "?search=esencial");
-        var byIdentification = await ListAsync(client, "?search=830.222");
-        var byCuc = await ListAsync(client, $"?search={first.Cuc}");
+        var byName = await ListAsync(client, "?name=esencial");
+        var byIdentification = await ListAsync(client, "?identificationNumber=830.222");
+        var byCuc = await ListAsync(client, $"?cuc={first.Cuc}");
 
         Assert.Equal("Verde Esencial S.A.S.", Assert.Single(byName.Items).Name);
         Assert.Equal("Naturaleza Viva Ltda.", Assert.Single(byIdentification.Items).Name);
         Assert.Equal(first.Cuc, Assert.Single(byCuc.Items).Cuc);
     }
 
-    // `%` y `_` son comodines de LIKE: sin escaparlos, `?search=_` devuelve el listado entero
+    // El criterio combinado original (`search`) sigue vivo para el combobox de clientes de
+    // quotes, que necesita un unico cuadro de texto en vez de tres cajas separadas — sigue
+    // siendo OR entre nombre, identificacion y CUC.
+    [Fact]
+    public async Task ListStillSupportsTheCombinedSearchParameter()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2");
+
+        var byName = await ListAsync(client, "?search=esencial");
+        var byIdentification = await ListAsync(client, "?search=830.222");
+
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(byName.Items).Name);
+        Assert.Equal("Naturaleza Viva Ltda.", Assert.Single(byIdentification.Items).Name);
+    }
+
+    // Las tres cajas se combinan con AND cuando se llenan mas de una: filtrar por nombre Y
+    // documento a la vez es mas preciso que el viejo campo unico, que las unia con OR.
+    [Fact]
+    public async Task ListCombinesTheThreeFiltersWithAnd()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Natural Ltda.", "830.222.222-2");
+
+        var both = await ListAsync(client, "?name=verde&identificationNumber=900.111");
+        var neither = await ListAsync(client, "?name=verde&identificationNumber=830.222.222-2&cuc=nope");
+
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(both.Items).Name);
+        Assert.Empty(neither.Items);
+    }
+
+    // `%` y `_` son comodines de LIKE: sin escaparlos, `?name=_` devuelve el listado entero
     // —coincide con cualquier caracter—, que es lo contrario de filtrar. Es el defecto que la
     // revision de fiabilidad de CAT-02 encontro en este mismo codigo.
     [Fact]
@@ -111,8 +156,8 @@ public sealed class CustomerApiTests
         await CreateCustomerAsync(
             client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1");
 
-        var underscore = await ListAsync(client, "?search=_");
-        var percent = await ListAsync(client, "?search=%25");
+        var underscore = await ListAsync(client, "?name=_");
+        var percent = await ListAsync(client, "?name=%25");
 
         Assert.Empty(underscore.Items);
         Assert.Empty(percent.Items);

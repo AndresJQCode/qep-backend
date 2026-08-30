@@ -65,13 +65,22 @@ public static class ProductEndpoints
         Guid tenantId,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
-        string? search = null)
+        string? search = null,
+        string? name = null,
+        string? code = null,
+        bool? isActive = null,
+        int page = 1,
+        int pageSize = ProductPaging.DefaultPageSize)
     {
-        var products = await dispatcher.QueryAsync(
-            new ListProductsQuery(tenantId, search),
+        var result = await dispatcher.QueryAsync(
+            new ListProductsQuery(tenantId, search, name, code, isActive, page, pageSize),
             cancellationToken);
 
-        return Results.Ok(new ProductsResponse(products.Select(ToResponse).ToArray()));
+        return Results.Ok(new ProductsResponse(
+            result.Items.Select(ToResponse).ToArray(),
+            result.Total,
+            result.Page,
+            result.PageSize));
     }
 
     private static async Task<IResult> GetProductAsync(

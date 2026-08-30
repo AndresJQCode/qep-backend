@@ -84,6 +84,19 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.HasIndex(value => new { value.TenantId, value.Code })
             .IsUnique()
             .HasDatabaseName("IX_products_tenant_code");
+
+        // GIN trigram: ProductRepository.SearchAsync filtra `Name`/`Code` con
+        // `ILIKE '%termino%'` (comodin a ambos lados) — mismo razonamiento que
+        // `IX_customers_name_trgm`. El indice unico de arriba ya cubre la igualdad exacta de
+        // Code, pero no el "contains" que hace el buscador del listado.
+        product.HasIndex(value => value.Name)
+            .HasDatabaseName("IX_products_name_trgm")
+            .HasMethod("gin")
+            .HasOperators("gin_trgm_ops");
+        product.HasIndex(value => value.Code)
+            .HasDatabaseName("IX_products_code_trgm")
+            .HasMethod("gin")
+            .HasOperators("gin_trgm_ops");
     }
 
     private static void ConfigureTaxRate(ModelBuilder modelBuilder)

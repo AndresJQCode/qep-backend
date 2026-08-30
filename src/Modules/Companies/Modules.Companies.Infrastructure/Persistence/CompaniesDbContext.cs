@@ -49,6 +49,14 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
         company.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         company.HasIndex(value => value.TenantId).HasDatabaseName("IX_companies_tenant");
 
+        // GIN trigram, no btree: CompanyRepository.SearchAsync filtra `Name` con
+        // `ILIKE '%termino%'` (comodin a ambos lados), y un btree normal solo acelera un
+        // prefijo, no un "contains". Mismo razonamiento que `IX_customers_name_trgm`.
+        company.HasIndex(value => value.Name)
+            .HasDatabaseName("IX_companies_name_trgm")
+            .HasMethod("gin")
+            .HasOperators("gin_trgm_ops");
+
         // La columna account_number y su IX_companies_tenant_account_number se fueron en EMP-08.
         // El indice hacia cumplir que dos empresas del mismo tenant no compartieran numero de
         // cuenta, y esa regla no salia de ningun requisito: RF-091 pide "registrar los datos de la
@@ -93,11 +101,15 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
                 // garantiza que siempre son tres letras exactas.
                 .HasMaxLength(CompanyBankAccount.CurrencyLength);
 
-            // Buscar por numero de cuenta es lo que hace el listado (CompanyRepository.SearchAsync),
-            // y sin indice esa busqueda es un scan de la tabla hija completa por cada consulta.
-            // No es unico: la unicidad vive en el agregado, no aca.
+            // Buscar por numero de cuenta es lo que hace el listado (CompanyRepository.SearchAsync)
+            // con `ILIKE '%termino%'` (comodin a ambos lados) — GIN trigram, no el btree que tenia
+            // antes: un btree solo acelera un prefijo, no un "contains", y un trigram cubre igual
+            // de bien la igualdad exacta, asi que no hace falta mantener los dos. No es unico: la
+            // unicidad vive en el agregado, no aca.
             account.HasIndex(value => value.AccountNumber)
-                .HasDatabaseName("IX_company_bank_accounts_account_number");
+                .HasDatabaseName("IX_company_bank_accounts_account_number_trgm")
+                .HasMethod("gin")
+                .HasOperators("gin_trgm_ops");
         });
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

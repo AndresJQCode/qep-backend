@@ -70,7 +70,13 @@ public sealed record PriceScaleResponse(
     decimal? FinalUsd,
     decimal? FinalCop);
 
-public sealed record ProductsResponse(IReadOnlyCollection<ProductResponse> Items);
+/// <summary>El sobre del listado, con el total que la paginación necesita — mismo criterio que
+/// `CustomersResponse`.</summary>
+public sealed record ProductsResponse(
+    IReadOnlyCollection<ProductResponse> Items,
+    int Total,
+    int Page,
+    int PageSize);
 
 // IsActive no viaja en los requests: un producto nace activo y sólo cambia por
 // /deactivate. Un booleano editable convertiría la desactivación en un PUT común y la

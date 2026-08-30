@@ -45,11 +45,13 @@ public sealed record CustomerResponse(
     DateTimeOffset UpdatedAt);
 
 /// <summary>
-/// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>email</c>,
-/// <c>address</c> y <c>department</c> no se pintan en la grilla, y mandarlos multiplica el cuerpo
-/// de la respuesta por cada cliente del tenant sin que nadie los mire. Ademas son PII, y el gate
-/// del modulo tiene abierta la politica de retencion: cuanto menos PII viaje por una pantalla que
-/// no la muestra, menos hay que justificar despues.
+/// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> y
+/// <c>department</c> no se pintan en la grilla, y mandarlos multiplica el cuerpo de la respuesta
+/// por cada cliente del tenant sin que nadie los mire.
+///
+/// <c>Email</c> si viaja (CLI-FILTROS-01, columna "Contacto" junto a <c>Phone</c>) — decision de
+/// producto explicita de mostrar PII de contacto en la grilla, a cambio de que el usuario no
+/// tenga que abrir el detalle para ver como comunicarse con el cliente.
 ///
 /// <c>City</c> y <c>Classification</c> si viajan, resueltos, con el mismo criterio liviano:
 /// <c>Department</c> se omite aca aunque el detalle lo lleve, porque la grilla ya pinta la ciudad
@@ -61,6 +63,7 @@ public sealed record CustomerListItemResponse(
     string Name,
     string IdentificationNumber,
     string? Phone,
+    string? Email,
     CustomerCityDto City,
     ClientClassificationDto Classification,
     bool IsActive);
@@ -118,13 +121,37 @@ public sealed record UpdateCustomerRequest(
 public sealed record ImportedCustomerRow(int RowNumber, string Cuc, string Name);
 
 /// <summary>
+/// Los campos crudos de una fila del Excel, texto tal cual la persona lo tipeo (recortado,
+/// vacio-a-null) — sin importar si esa fila termino siendo valida. Viaja en cada
+/// <see cref="ImportRowError"/> para que el modal de errores del frontend pueda ofrecer
+/// descargar un Excel ya cargado sólo con las filas que fallaron (<c>ExportFailedCustomerRows</c>)
+/// — la persona corrige las celdas marcadas y reimporta ese archivo más chico, en vez del
+/// original completo. El modal no edita estos datos in situ: sólo los reenvía tal cual al pedir
+/// la descarga.
+/// </summary>
+public sealed record CustomerImportRowData(
+    string Name,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string? Address,
+    string Department,
+    string City,
+    string Classification,
+    string? WithRetention);
+
+/// <summary>
 /// Una fila que NO se importo, con lo que la persona que subio el archivo necesita para
 /// corregirla: en que fila esta, un codigo de error estable (<c>customers.import.row.*</c>) y el
 /// mensaje. <c>Field</c> viaja solo cuando el error es de un campo puntual (una celda vacia, un
 /// formato invalido); para errores del par Departamento+Ciudad o de duplicado va <c>null</c>,
 /// porque no son culpa de una sola columna.
+///
+/// <c>RowData</c> viaja siempre — ver <see cref="CustomerImportRowData"/>.
 /// </summary>
-public sealed record ImportRowError(int RowNumber, string Code, string Message, string? Field);
+public sealed record ImportRowError(
+    int RowNumber, string Code, string Message, string? Field, CustomerImportRowData? RowData = null);
 
 /// <summary>
 /// El resultado de una importacion. A diferencia del acuse original (`CLI-01` dejaba el
@@ -154,6 +181,13 @@ public sealed record ImportCustomersResponse(
 /// devolver como el cuerpo de la respuesta HTTP.
 /// </summary>
 public sealed record CustomerImportTemplateFile(byte[] Content, string FileName);
+
+/// <summary>
+/// El cuerpo de <c>POST .../customers/import/failed-rows</c>: las filas que el frontend ya
+/// recibió como <see cref="ImportRowError.RowData"/> de una importación anterior, tal cual, para
+/// devolverlas armadas en un Excel nuevo. El frontend nunca las edita — sólo las reenvía.
+/// </summary>
+public sealed record ExportFailedCustomerRowsRequest(IReadOnlyList<CustomerImportRowData> Rows);
 
 // El catalogo de clasificaciones de cliente: nombre + prefijo, mismo shape que TaxRateDto en
 // Catalog. IsActive no viaja en los requests, mismo criterio que Customer: nace activa y solo

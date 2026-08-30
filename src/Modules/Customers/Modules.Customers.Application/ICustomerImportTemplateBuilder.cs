@@ -16,5 +16,19 @@ public interface ICustomerImportTemplateBuilder
     byte[] Build(
         IReadOnlyCollection<string> departmentNames,
         IReadOnlyCollection<string> classificationNames,
+        IReadOnlyCollection<string> identificationTypeValues,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// La misma plantilla, con filas ya cargadas — para "descargá un Excel con las filas que
+    /// fallaron" del modal de errores de importación: la persona corrige ahí las celdas
+    /// marcadas y reimporta ese archivo más chico, en vez del original completo (que volvería a
+    /// duplicar las filas que ya se guardaron bien).
+    /// </summary>
+    byte[] BuildWithRows(
+        IReadOnlyCollection<string> departmentNames,
+        IReadOnlyCollection<string> classificationNames,
+        IReadOnlyCollection<string> identificationTypeValues,
+        IReadOnlyList<CustomerImportRowData> rows,
         CancellationToken cancellationToken);
 }
