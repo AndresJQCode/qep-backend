@@ -19,6 +19,16 @@ public interface ITaxRateRepository
         TaxRateId taxRateId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Resuelve una tasa por nombre, case-insensitive — la usa la importación masiva de
+    /// productos (mismo criterio que <c>IClientClassificationRepository.FindByNameAsync</c>): la
+    /// fila de Excel trae el nombre de la tasa como texto, no su id.
+    /// </summary>
+    Task<TaxRate?> FindByNameAsync(
+        Guid tenantId,
+        string name,
+        CancellationToken cancellationToken);
+
     void Add(TaxRate taxRate);
 
     // Borrado real, no lógico: desactivar ya existe y es la operación que conserva historia.

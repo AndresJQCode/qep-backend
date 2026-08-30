@@ -119,7 +119,7 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
         RuleFor(row => row.WithRetention)
             .Must(BeSiOrNoOrEmpty)
                 .WithErrorCode("customers.import.row.with_retention_invalid")
-                .WithMessage("The 'ConRetencion' column must be 'Si', 'No' or empty.");
+                .WithMessage("The 'Con Retencion' column must be 'Si', 'No' or empty.");
     }
 
     private static bool IsSupportedIdentificationType(string? value)
@@ -265,7 +265,11 @@ public sealed class ImportCustomersHandler(
             {
                 errors.AddRange(validation.Errors.Select(failure =>
                     new ImportRowError(
-                        row.RowNumber, failure.ErrorCode, failure.ErrorMessage, failure.PropertyName)));
+                        row.RowNumber,
+                        failure.ErrorCode,
+                        failure.ErrorMessage,
+                        failure.PropertyName,
+                        ToRowData(row))));
             }
         }
 
@@ -277,7 +281,8 @@ public sealed class ImportCustomersHandler(
             row.RowNumber,
             "customers.import.row.duplicate_in_file",
             "Another row earlier in this file already uses this identification.",
-            nameof(ExcelCustomerRow.IdentificationNumber))));
+            nameof(ExcelCustomerRow.IdentificationNumber),
+            ToRowData(row))));
 
         // Segunda pasada, solo sobre las filas que ya pasaron campo y deduplicacion: resolver
         // Departamento+Ciudad y Clasificacion contra la base. Esta si necesita infraestructura, y
@@ -295,7 +300,8 @@ public sealed class ImportCustomersHandler(
                     row.RowNumber,
                     "customers.import.row.city_not_found",
                     "The city was not found in the given department.",
-                    null));
+                    null,
+                    ToRowData(row)));
                 continue;
             }
 
@@ -307,7 +313,8 @@ public sealed class ImportCustomersHandler(
                     row.RowNumber,
                     "customers.import.row.classification_not_found",
                     "The client classification was not found in this tenant.",
-                    nameof(ExcelCustomerRow.Classification)));
+                    nameof(ExcelCustomerRow.Classification),
+                    ToRowData(row)));
                 continue;
             }
 
@@ -321,7 +328,8 @@ public sealed class ImportCustomersHandler(
                 row.Address,
                 city,
                 classification,
-                ParseWithRetention(row.WithRetention)));
+                ParseWithRetention(row.WithRetention),
+                row));
         }
 
         return (candidates, errors);
@@ -361,7 +369,8 @@ public sealed class ImportCustomersHandler(
                     candidate.RowNumber,
                     "customers.import.row.identification_taken",
                     "Another customer in this tenant already uses that identification.",
-                    nameof(ExcelCustomerRow.IdentificationNumber)));
+                    nameof(ExcelCustomerRow.IdentificationNumber),
+                    ToRowData(candidate.SourceRow)));
             }
             else
             {
@@ -429,6 +438,24 @@ public sealed class ImportCustomersHandler(
     private static bool ParseWithRetention(string? raw) =>
         !string.IsNullOrWhiteSpace(raw) && string.Equals(raw.Trim(), "Si", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Los campos crudos de la fila, texto tal cual vino del Excel — nulo se vuelve cadena vacia
+    /// solo en las columnas que <see cref="CustomerImportRowData"/> declara no-nulas, para poder
+    /// adjuntarla a un error de campo obligatorio (donde esa misma columna es justamente la que
+    /// esta vacia). El resto de las columnas viaja tal cual, nulo incluido.
+    /// </summary>
+    private static CustomerImportRowData ToRowData(ExcelCustomerRow row) => new(
+        row.Name ?? string.Empty,
+        row.IdentificationType ?? string.Empty,
+        row.IdentificationNumber ?? string.Empty,
+        row.Phone,
+        row.Email,
+        row.Address,
+        row.Department ?? string.Empty,
+        row.City ?? string.Empty,
+        row.Classification ?? string.Empty,
+        row.WithRetention);
+
     private static string EnsureAcceptableFile(string fileName, long sizeInBytes)
     {
         var trimmed = fileName?.Trim();
@@ -467,6 +494,9 @@ public sealed class ImportCustomersHandler(
     /// dentro del archivo. Todavia le falta el chequeo de duplicado contra la base y el CUC — por
     /// eso no es todavia un <see cref="Customer"/>.
     /// </summary>
+    // `SourceRow`: la fila cruda de origen, guardada solo para poder adjuntar
+    // `CustomerImportRowData` a un `identification_taken` — el unico error que se detecta
+    // despues de que la fila ya paso a candidata.
     private sealed record CandidateRow(
         int RowNumber,
         string Name,
@@ -477,7 +507,8 @@ public sealed class ImportCustomersHandler(
         string? Address,
         CustomerCityRef City,
         ClientClassification Classification,
-        bool WithRetention);
+        bool WithRetention,
+        ExcelCustomerRow SourceRow);
 }
 
 /// <summary>

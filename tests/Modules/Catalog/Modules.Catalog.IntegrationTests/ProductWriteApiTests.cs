@@ -354,6 +354,27 @@ public sealed class ProductWriteApiTests
         Assert.Empty(percent);
     }
 
+    // Las dos cajas separadas del listado (CAT-FILTROS-01), combinadas con AND cuando se
+    // llenan las dos — mismo criterio que ListCombinesTheThreeFiltersWithAnd en Customers.
+    [Fact]
+    public async Task ListCombinesNameAndCodeWithAnd()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
+        await CreateProductAsync(client, TenantId, "Vela de coco", "VC-002");
+
+        var byNameOnly = await ListPageAsync(client, TenantId, "?name=vela");
+        var matchingBoth = await ListPageAsync(client, TenantId, "?name=vela&code=VS-001");
+        var mismatched = await ListPageAsync(client, TenantId, "?name=vela&code=zzz");
+
+        Assert.Equal(2, byNameOnly.Items.Count);
+        Assert.Equal("Vela de soja", Assert.Single(matchingBoth.Items).Name);
+        Assert.Empty(mismatched.Items);
+    }
+
     // TaxRatePermissionsAreNotPublishedBeforeTheirSliceExists vivía acá y se borró en CAT-03,
     // tal como su propio comentario anticipaba: afirmaba que catalog.tax_rate NO aparece en
     // /authorization/catalog, y CAT-03 trajo los dos permisos junto con sus endpoints. Su
@@ -420,6 +441,68 @@ public sealed class ProductWriteApiTests
         Assert.False(current.IsActive);
         Assert.Equal("Vela de soja", current.Name);
         Assert.Equal("VS-001", current.Code);
+    }
+
+    // El total cuenta las coincidencias, no la página — mismo criterio que
+    // CustomerApiTests.ListPaginatesAndCountsEveryMatch.
+    [Fact]
+    public async Task ListPaginatesAndCountsEveryMatch()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        for (var index = 1; index <= 5; index++)
+        {
+            await CreateProductAsync(client, TenantId, $"Producto {index:D2}", $"PRD-{index:D3}");
+        }
+
+        var first = await ListPageAsync(client, TenantId, "?page=1&pageSize=2");
+        var third = await ListPageAsync(client, TenantId, "?page=3&pageSize=2");
+
+        Assert.Equal(5, first.Total);
+        Assert.Equal(2, first.Items.Count);
+        Assert.Equal("Producto 01", first.Items.First().Name);
+        Assert.Equal(5, third.Total);
+        Assert.Equal("Producto 05", Assert.Single(third.Items).Name);
+    }
+
+    // El filtro de estado deja de ser un post-filtro en memoria: antes traía el catálogo entero
+    // y descartaba filas en el cliente, algo que dejó de alcanzar en cuanto el listado paginó.
+    [Fact]
+    public async Task ListFiltersByIsActiveOnTheServer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var toDeactivate = await ReadProductAsync(
+            await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001"));
+        await CreateProductAsync(client, TenantId, "Difusor de bambú", "DB-002");
+        await client.PostAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{toDeactivate.Id}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        var activeOnly = await ListPageAsync(client, TenantId, "?isActive=true");
+        var inactiveOnly = await ListPageAsync(client, TenantId, "?isActive=false");
+
+        Assert.Equal("Difusor de bambú", Assert.Single(activeOnly.Items).Name);
+        Assert.Equal("Vela de soja", Assert.Single(inactiveOnly.Items).Name);
+    }
+
+    private static async Task<ProductsResponse> ListPageAsync(
+        HttpClient client,
+        string tenantId,
+        string query)
+    {
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products{query}",
+            TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadFromJsonAsync<ProductsResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body;
     }
 
     private static Task<HttpResponseMessage> CreateProductAsync(

@@ -124,6 +124,18 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.HasIndex(value => new { value.TenantId, value.Cuc })
             .IsUnique()
             .HasDatabaseName("IX_customers_tenant_cuc");
+
+        // GIN trigram, no btree: CustomerRepository.SearchAsync filtra con
+        // `ILIKE '%termino%'` (comodin a ambos lados), y un btree normal no acelera un
+        // "contains" — solo sirve para prefijos. `pg_trgm` es la extension que hace posible este
+        // tipo de indice; la migracion que lo crea la habilita con `CREATE EXTENSION IF NOT
+        // EXISTS`. Solo en `Name`: `IdentificationNumber` y `Cuc` ya tienen su propio indice
+        // unico por tenant, y las busquedas por esos dos campos suelen ser por el valor casi
+        // completo, no por un fragmento en cualquier posicion.
+        customer.HasIndex(value => value.Name)
+            .HasDatabaseName("IX_customers_name_trgm")
+            .HasMethod("gin")
+            .HasOperators("gin_trgm_ops");
     }
 
     private static void ConfigureClientClassification(ModelBuilder modelBuilder)
