@@ -14,6 +14,10 @@ public sealed record CompanyBankAccountPayload(
     string AccountNumber,
     string Currency);
 
+public sealed record CompanyCityDto(Guid Id, string DivipolaCode, string Name);
+
+public sealed record CompanyDepartmentDto(Guid Id, string DivipolaCode, string Name);
+
 public sealed record CompanyDto(
     Guid Id,
     string Name,
@@ -23,6 +27,8 @@ public sealed record CompanyDto(
     string? Phone,
     string? Email,
     string? Address,
+    CompanyCityDto City,
+    CompanyDepartmentDto Department,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -35,13 +41,17 @@ public sealed record CompanyResponse(
     string? Phone,
     string? Email,
     string? Address,
+    CompanyCityDto City,
+    CompanyDepartmentDto Department,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito: <c>email</c> y <c>address</c> no se pintan
 /// en la grilla, y mandarlos multiplica el cuerpo de la respuesta por cada empresa del tenant sin
-/// que nadie los mire.
+/// que nadie los mire. <c>City</c> es la excepcion — nombre solo, sin el par completo con su
+/// departamento, porque la grilla sí muestra una columna "Ciudad" y evitarla obligaría a otra
+/// consulta desde el detalle sólo para llenarla.
 ///
 /// De las cuentas viajan **solo los numeros**, y no la terna completa, por esa misma razon: la
 /// columna de la grilla pinta el numero —es lo unico que pintaba cuando era un campo plano— y
@@ -55,6 +65,7 @@ public sealed record CompanyListItemResponse(
     IReadOnlyList<string> AccountNumbers,
     string TaxId,
     string? Phone,
+    string City,
     bool IsActive);
 
 public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemResponse> Items);
@@ -67,10 +78,14 @@ public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemRespon
 // Los tres opcionales si viajan. En el PUT, mandarlos en null los **limpia** — el verbo reemplaza
 // el recurso entero. BankAccounts sigue la misma regla y de forma mas visible: la lista que llega
 // es la lista que queda, asi que quitar una cuenta es mandar el PUT sin ella.
+//
+// CityId, en cambio, no se puede limpiar — es obligatorio, mismo criterio que en Customer:
+// una empresa siempre tiene una ciudad.
 public sealed record CreateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    Guid CityId,
     string? Phone,
     string? Email,
     string? Address);
@@ -79,6 +94,7 @@ public sealed record UpdateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    Guid CityId,
     string? Phone,
     string? Email,
     string? Address);

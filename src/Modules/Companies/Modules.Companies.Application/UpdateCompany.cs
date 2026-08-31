@@ -11,6 +11,7 @@ public sealed record UpdateCompanyCommand(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    Guid CityId,
     string? Phone,
     string? Email,
     string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
@@ -25,6 +26,7 @@ public sealed class UpdateCompanyHandler(
     ICompanyRepository repository,
     ICompaniesUnitOfWork unitOfWork,
     ICompaniesAuditPublisher auditPublisher,
+    ICompanyGeographyLookup geographyLookup,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateCompanyCommand> validator)
@@ -45,6 +47,11 @@ public sealed class UpdateCompanyHandler(
             cancellationToken)
             ?? throw CompanyNotFound.For(command.CompanyId);
 
+        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
+            ?? throw new CompaniesDomainException(
+                "companies.company.city_not_found",
+                "The city was not found.");
+
         var now = clock.UtcNow;
 
         // Los tres opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -55,6 +62,7 @@ public sealed class UpdateCompanyHandler(
             command.Name,
             command.BankAccounts.ToDomain(),
             command.TaxId,
+            command.CityId,
             new CompanyContactInfo
             {
                 Phone = command.Phone,
@@ -72,6 +80,6 @@ public sealed class UpdateCompanyHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return company.ToDto();
+        return company.ToDto(city);
     }
 }

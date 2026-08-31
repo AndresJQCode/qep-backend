@@ -312,6 +312,11 @@ public static class QepServiceCollectionExtensions
         // contra los repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICustomerGeographyLookup, CustomerGeographyLookup>();
 
+        // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
+        // otro, y el composition root cablea el puerto que declara `companies` contra los
+        // repositorios que ya registró AddGeographyInfrastructure.
+        services.AddScoped<ICompanyGeographyLookup, CompanyGeographyLookup>();
+
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
         // lo impide a proposito — y el composition root cablea los puertos que declara

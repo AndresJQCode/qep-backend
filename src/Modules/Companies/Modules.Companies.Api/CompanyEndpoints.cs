@@ -119,6 +119,7 @@ public static class CompanyEndpoints
                 request.Name,
                 request.BankAccounts,
                 request.TaxId,
+                request.CityId,
                 request.Phone,
                 request.Email,
                 request.Address),
@@ -143,6 +144,7 @@ public static class CompanyEndpoints
                 request.Name,
                 request.BankAccounts,
                 request.TaxId,
+                request.CityId,
                 request.Phone,
                 request.Email,
                 request.Address),
@@ -199,6 +201,8 @@ public static class CompanyEndpoints
         company.Phone,
         company.Email,
         company.Address,
+        company.City,
+        company.Department,
         company.CreatedAt,
         company.UpdatedAt);
 
@@ -210,5 +214,6 @@ public static class CompanyEndpoints
         company.BankAccounts.Select(account => account.AccountNumber).ToArray(),
         company.TaxId,
         company.Phone,
+        company.City.Name,
         company.IsActive);
 }
