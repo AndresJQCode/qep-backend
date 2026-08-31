@@ -237,8 +237,9 @@ public sealed class RealAuthenticationApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(invited);
 
-        // El admin no se asigna por invitación (InviteMember.EnsureInvitableRoles) — se
-        // invita con un rol invitable y se promueve después, por traspaso explícito.
+        // Se invita como advisor y se promueve después por traspaso explícito: lo que se
+        // ejercita acá es el PATCH de roles con auth real, no la invitación (que hoy admite
+        // cualquier rol del catálogo).
         using var promoteRequest = new HttpRequestMessage(
             HttpMethod.Patch,
             $"/api/v1/tenants/{tenantId}/memberships/{invited!.Id}/roles")
