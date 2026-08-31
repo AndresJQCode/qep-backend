@@ -15,4 +15,16 @@ public interface IQuotationCustomerLookup
         Guid tenantId, Guid clientId, CancellationToken cancellationToken);
 }
 
-public sealed record QuotationCustomerRef(Guid Id, Guid TenantId, string Cuc, bool IsActive);
+// Name/Phone/Address se agregaron para el envío por WhatsApp (SendQuotation.cs): son los
+// mismos tres campos que ya resuelve el frontend para armar el `wa.me` — se traen acá para
+// que el backend pueda mandar la plantilla de Zenvia sin una segunda ida y vuelta al módulo
+// Customers. Phone/Address quedan nullable porque lo son en el agregado `Customer` — el
+// llamador decide qué hacer si faltan (SendQuotation.cs lo trata como "no se puede enviar").
+public sealed record QuotationCustomerRef(
+    Guid Id,
+    Guid TenantId,
+    string Cuc,
+    bool IsActive,
+    string Name,
+    string? Phone,
+    string? Address);

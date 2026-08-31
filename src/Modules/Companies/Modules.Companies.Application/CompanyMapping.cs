@@ -4,7 +4,12 @@ namespace Modules.Companies.Application;
 
 internal static class CompanyMapping
 {
-    public static CompanyDto ToDto(this Company company) => new(
+    /// <summary>
+    /// Del agregado al DTO, con la ciudad ya resuelta por el llamador. No la resuelve esta
+    /// funcion: cada handler decide como (una consulta puntual en Get/Create/Update, un lote en
+    /// List) y esto solo ensambla — mismo criterio que <c>CustomerMapping.ToDto</c>.
+    /// </summary>
+    public static CompanyDto ToDto(this Company company, CompanyCityRef city) => new(
         company.Id.Value,
         company.Name,
         company.BankAccounts
@@ -18,8 +23,33 @@ internal static class CompanyMapping
         company.Phone,
         company.Email,
         company.Address,
+        new CompanyCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
+        new CompanyDepartmentDto(
+            city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
         company.CreatedAt,
         company.UpdatedAt);
+
+    /// <summary>
+    /// La version de una sola empresa: resuelve su ciudad y arma el DTO. Para
+    /// <c>GetCompanyHandler</c>, <c>DeactivateCompanyHandler</c> y <c>ActivateCompanyHandler</c>,
+    /// que ya tienen la <c>Company</c> en mano y no necesitan resolver nada mas antes.
+    ///
+    /// La FK de base garantiza que la ciudad exista, asi que un miss aca es corrupcion de datos
+    /// y no una entrada de usuario invalida — por eso lanza <see cref="InvalidOperationException"/>
+    /// (500) y no un <see cref="CompaniesDomainException"/> (422): no hay ningun campo del
+    /// request que el llamador pueda corregir.
+    /// </summary>
+    public static async Task<CompanyDto> ToDtoAsync(
+        this Company company,
+        ICompanyGeographyLookup geographyLookup,
+        CancellationToken cancellationToken)
+    {
+        var city = await geographyLookup.FindCityAsync(company.CityId, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"City '{company.CityId}' referenced by company '{company.Id}' was not found.");
+
+        return company.ToDto(city);
+    }
 
     /// <summary>
     /// Del contrato HTTP al dominio. No normaliza ni valida nada: eso es trabajo de

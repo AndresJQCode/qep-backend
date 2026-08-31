@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,6 +36,8 @@ public static class TenancyInfrastructureExtensions
         services.AddScoped<ITenancyUnitOfWork, TenancyUnitOfWork>();
         services.AddScoped<IAuditRecorder, TenancyAuditRecorder>();
         services.AddScoped<IOutboxWriter, OutboxWriter>();
+        // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
+        services.AddScoped<IUserReferenceProbe, MembershipUserReferenceProbe>();
 
         services.AddScoped<IIntegrationEventHandler, TenantSettingsChangeLogProjection>();
         services.AddScoped<IIntegrationEventDispatcher, IntegrationEventDispatcher>();

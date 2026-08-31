@@ -20,6 +20,8 @@ public interface ICompanyWriteCommand
 
     string TaxId { get; }
 
+    Guid CityId { get; }
+
     string? Phone { get; }
 
     string? Email { get; }
@@ -39,7 +41,7 @@ public interface ICompanyWriteCommand
 /// los dos repos.
 ///
 /// Los nombres de propiedad viajan en PascalCase y asi los espera el consumidor
-/// (<c>FIELD_BY_BACKEND_NAME</c>): Name, TaxId, Phone, Email, Address. Los de la coleccion llegan
+/// (<c>FIELD_BY_BACKEND_NAME</c>): Name, TaxId, CityId, Phone, Email, Address. Los de la coleccion llegan
 /// indexados —<c>BankAccounts[0].AccountNumber</c>— porque marcar la fila equivocada de un campo
 /// repetido es lo mismo que no marcar ninguna.
 /// </summary>
@@ -53,6 +55,12 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
         RuleFor(command => command.TaxId)
             .NotEmpty()
             .MaximumLength(Company.TaxIdMaxLength);
+
+        // Sólo se comprueba que no venga vacía — que la fila exista y sea del tenant lo
+        // resuelve el handler contra ICompanyGeographyLookup, y en la carrera, la FK de base.
+        // Mismo criterio que CityId/ClassificationId en CustomerWriteRules.
+        RuleFor(command => command.CityId).NotEmpty();
+
         RuleFor(command => command.Phone)
             .MaximumLength(CompanyContactInfo.PhoneMaxLength);
         RuleFor(command => command.Address)

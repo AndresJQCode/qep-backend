@@ -32,6 +32,15 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
         company.Property(value => value.TaxId)
             .HasColumnName("tax_id")
             .HasMaxLength(Company.TaxIdMaxLength);
+
+        // FK a geography.cities(id) — otro schema, de otro modulo, de otro DbContext.
+        // CompaniesDbContext no la modela con HasOne<City>(): EF Core no soporta una relacion
+        // hacia una entidad que no esta en el mismo ModelBuilder, asi que la FK real se agrega a
+        // mano con migrationBuilder.AddForeignKey en la migracion, no aca. Mismo criterio que
+        // CustomersDbContext.ConfigureCustomer con Customer.CityId.
+        company.Property(value => value.CityId).HasColumnName("city_id");
+        company.HasIndex(value => value.CityId).HasDatabaseName("IX_companies_city");
+
         company.Property(value => value.IsActive).HasColumnName("is_active");
         company.Property(value => value.Phone)
             .HasColumnName("phone")

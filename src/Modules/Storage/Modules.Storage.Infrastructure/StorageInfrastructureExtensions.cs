@@ -1,5 +1,6 @@
 using Amazon.Runtime;
 using Amazon.S3;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,6 +37,8 @@ public static class StorageInfrastructureExtensions
         services.AddScoped<IFileResourceRepository, FileResourceRepository>();
         services.AddScoped<IStorageUnitOfWork, StorageUnitOfWork>();
         services.AddScoped<IStorageAuditPublisher, StorageAuditPublisher>();
+        // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
+        services.AddScoped<IUserReferenceProbe, FileUserReferenceProbe>();
         services.AddSingleton<IFileContentInspector, FileContentInspector>();
         services.AddSingleton<IImageVariantGenerator, ImageSharpVariantGenerator>();
         services.AddSingleton<IFileScanner>(serviceProvider =>

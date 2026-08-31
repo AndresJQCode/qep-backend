@@ -8,6 +8,7 @@ public sealed record GetCompanyQuery(Guid TenantId, Guid CompanyId) : IQuery<Com
 
 public sealed class GetCompanyHandler(
     ICompanyRepository repository,
+    ICompanyGeographyLookup geographyLookup,
     IExecutionContext executionContext)
     : IQueryHandler<GetCompanyQuery, CompanyDto>
 {
@@ -22,6 +23,6 @@ public sealed class GetCompanyHandler(
             query.TenantId, new CompanyId(query.CompanyId), cancellationToken)
             ?? throw CompanyNotFound.For(query.CompanyId);
 
-        return company.ToDto();
+        return await company.ToDtoAsync(geographyLookup, cancellationToken);
     }
 }

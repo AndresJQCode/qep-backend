@@ -43,6 +43,7 @@ public static class IdentityInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<QepSessionOptions>, SessionOptionsValidator>();
         services.AddHostedService<SessionRevocationWorker>();
+        services.AddHostedService<OrphanUserCleanupWorker>();
 
         return services;
     }

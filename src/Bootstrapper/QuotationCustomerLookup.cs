@@ -26,6 +26,12 @@ internal sealed class QuotationCustomerLookup(ICustomerRepository repository)
         return customer is null
             ? null
             : new QuotationCustomerRef(
-                customer.Id.Value, customer.TenantId, customer.Cuc, customer.IsActive);
+                customer.Id.Value,
+                customer.TenantId,
+                customer.Cuc,
+                customer.IsActive,
+                customer.Name,
+                customer.Phone,
+                customer.Address);
     }
 }

@@ -22,6 +22,13 @@ public interface IMembershipRepository
         Guid userId,
         CancellationToken cancellationToken);
 
+    // Todas las membresías del usuario en cualquier tenant y en cualquier estado, terminales
+    // incluidas. Es la vista que necesita quien decide si un usuario todavía existe para
+    // Tenancy (MembershipUserReferenceProbe) o quién más lo referencia (IMembershipDirectory).
+    Task<IReadOnlyList<Membership>> ListByUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<Membership>> ListByTenantAsync(
         TenantId tenantId,
         CancellationToken cancellationToken);

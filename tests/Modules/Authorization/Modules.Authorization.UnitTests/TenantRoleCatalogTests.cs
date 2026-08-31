@@ -20,7 +20,7 @@ public sealed class TenantRoleCatalogTests
                     ["advisorship.invite", "advisorship.manage", "advisorship.read"]),
                 new RoleDefinition(
                     SystemRoleKeys.Advisor,
-                    "Asesora",
+                    "Asesor",
                     "Gestiona clientes.",
                     "Tenancy",
                     "medium",

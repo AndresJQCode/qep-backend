@@ -17,7 +17,7 @@ public sealed class RoleCommandsTests
                     SystemRoleKeys.Admin, "Administrador", "", "Tenancy", "high",
                     ["advisorship.manage", "advisorship.roles.manage", "catalog.product.read"]),
                 new RoleDefinition(
-                    SystemRoleKeys.Advisor, "Asesora", "", "Tenancy", "medium",
+                    SystemRoleKeys.Advisor, "Asesor", "", "Tenancy", "medium",
                     ["catalog.product.read"]),
             ],
             [
