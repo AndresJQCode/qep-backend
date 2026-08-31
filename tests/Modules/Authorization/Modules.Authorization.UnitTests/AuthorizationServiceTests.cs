@@ -127,5 +127,10 @@ public sealed class AuthorizationServiceTests
             Guid tenantId,
             CancellationToken cancellationToken) =>
             Task.FromResult<Guid?>(null);
+
+        public Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(
+            Guid userId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Guid>>([]);
     }
 }

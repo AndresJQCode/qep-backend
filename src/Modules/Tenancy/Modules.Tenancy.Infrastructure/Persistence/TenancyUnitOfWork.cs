@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Npgsql;
@@ -17,6 +18,29 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
     /// índice único— no se etiquete mal como un slug ya tomado.
     /// </summary>
     private const string TenantSlugIndex = "IX_tenants_slug";
+
+    public async Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
+        string email,
+        CancellationToken cancellationToken)
+    {
+        var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // Advisory lock acotado a la transacción: una sola base con varios esquemas, así que
+        // Identity y Tenancy comparten el espacio de locks aunque no compartan DbContext ni
+        // conexión. SaveChangesAsync se suma a esta transacción sin abrir otra.
+        await dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock(hashtext({UserLifecycleLockKey.For(email)}))",
+            cancellationToken);
+        return new UserLifecycleScope(transaction);
+    }
+
+    private sealed class UserLifecycleScope(IDbContextTransaction transaction) : IUserLifecycleScope
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) =>
+            transaction.CommitAsync(cancellationToken);
+
+        // Disponer sin commit hace rollback, y el rollback es lo que suelta el lock.
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
+    }
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {

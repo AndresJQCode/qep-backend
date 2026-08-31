@@ -45,6 +45,12 @@ public sealed class InviteMemberHandler(
         // definidos por el tenant: la única validación de rol es que el catálogo lo conozca.
         await EnsureKnownRolesAsync(command.TenantId, command.Roles, cancellationToken);
 
+        // Desde acá hasta el commit se corre serializado con el borrado de usuarios huérfanos
+        // de Identity; ver ITenancyUnitOfWork.BeginUserLifecycleScopeAsync.
+        await using var lifecycle = await unitOfWork.BeginUserLifecycleScopeAsync(
+            command.Email,
+            cancellationToken);
+
         // Aprovisiona (o resuelve) el usuario invitado por el contrato de Identity. Es
         // idempotente por email, así que re-invitar reutiliza el mismo id de usuario.
         var userId = await identityProvisioning.GetOrProvisionInvitedUserAsync(
@@ -57,7 +63,9 @@ public sealed class InviteMemberHandler(
             cancellationToken);
         if (existing is not null)
         {
-            return await ReinviteExistingAsync(existing, command, cancellationToken);
+            var renewed = await ReinviteExistingAsync(existing, command, cancellationToken);
+            await lifecycle.CommitAsync(cancellationToken);
+            return renewed;
         }
 
         var membership = Membership.Invite(
@@ -86,6 +94,7 @@ public sealed class InviteMemberHandler(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await lifecycle.CommitAsync(cancellationToken);
         return membership.ToDto();
     }
 
