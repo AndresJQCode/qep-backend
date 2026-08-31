@@ -24,4 +24,16 @@ public interface IMembershipDirectory
         Guid userId,
         Guid tenantId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los ids de <b>todas</b> las membresías del usuario, en cualquier tenant y en cualquier
+    /// estado, quitadas incluidas. Es la traducción inversa de
+    /// <see cref="FindActiveMembershipIdAsync"/>: un módulo que grabó <c>MemberId</c>s y tiene
+    /// que responder "¿este usuario me dejó huella?" (su <c>IUserReferenceProbe</c>) no puede
+    /// acotarse a las activas, porque una cotización referencia a la membresía con la que se
+    /// hizo aunque después la hayan quitado.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken);
 }

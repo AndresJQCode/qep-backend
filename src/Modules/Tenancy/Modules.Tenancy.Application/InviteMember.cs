@@ -41,8 +41,15 @@ public sealed class InviteMemberHandler(
     {
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         EnsureAuthorized(command.TenantId);
+        // Cualquier rol del catálogo del tenant es invitable, incluido admin y los roles
+        // definidos por el tenant: la única validación de rol es que el catálogo lo conozca.
         await EnsureKnownRolesAsync(command.TenantId, command.Roles, cancellationToken);
-        EnsureInvitableRoles(command.Roles);
+
+        // Desde acá hasta el commit se corre serializado con el borrado de usuarios huérfanos
+        // de Identity; ver ITenancyUnitOfWork.BeginUserLifecycleScopeAsync.
+        await using var lifecycle = await unitOfWork.BeginUserLifecycleScopeAsync(
+            command.Email,
+            cancellationToken);
 
         // Aprovisiona (o resuelve) el usuario invitado por el contrato de Identity. Es
         // idempotente por email, así que re-invitar reutiliza el mismo id de usuario.
@@ -56,7 +63,9 @@ public sealed class InviteMemberHandler(
             cancellationToken);
         if (existing is not null)
         {
-            return await ReinviteExistingAsync(existing, command, cancellationToken);
+            var renewed = await ReinviteExistingAsync(existing, command, cancellationToken);
+            await lifecycle.CommitAsync(cancellationToken);
+            return renewed;
         }
 
         var membership = Membership.Invite(
@@ -85,6 +94,7 @@ public sealed class InviteMemberHandler(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await lifecycle.CommitAsync(cancellationToken);
         return membership.ToDto();
     }
 
@@ -166,25 +176,6 @@ public sealed class InviteMemberHandler(
                     "tenancy.membership.role_unknown",
                     $"The role '{role}' is not part of the authorization catalog.");
             }
-        }
-    }
-
-    /// <summary>
-    /// Sección de negocio: el admin sólo se asigna al crear el tenant o por traspaso explícito
-    /// (<see cref="UpdateMemberRoles"/>), nunca por invitación por email. Allowlist, no
-    /// blocklist de <c>admin</c>: cualquier rol futuro que no se sume acá a propósito queda
-    /// no invitable por defecto.
-    /// </summary>
-    private static readonly string[] InvitableRoles = ["advisor", "billing"];
-
-    private static void EnsureInvitableRoles(IReadOnlyCollection<string> roles)
-    {
-        var notInvitable = roles.FirstOrDefault(role => !InvitableRoles.Contains(role));
-        if (notInvitable is not null)
-        {
-            throw new TenantDomainException(
-                "tenancy.membership.role_not_invitable",
-                $"The role '{notInvitable}' cannot be assigned through an invitation.");
         }
     }
 

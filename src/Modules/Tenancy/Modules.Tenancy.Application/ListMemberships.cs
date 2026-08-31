@@ -33,6 +33,11 @@ public static class MembershipListItemMappings
 }
 
 /// <summary>Cuántas membresías caen en cada estado visible, dentro de lo buscado.</summary>
+/// <remarks>
+/// <see cref="Removed"/> es siempre <c>0</c>: una membresía quitada ya no existe para el
+/// roster (ver <see cref="ListMembershipsHandler"/>). El campo se conserva porque el contrato
+/// con el frontend lo lee; quitarlo sería un cambio de contrato para no ganar nada.
+/// </remarks>
 public sealed record MembershipCountsDto(
     int Active,
     int Pending,
@@ -56,6 +61,10 @@ public sealed record MembershipListDto(
 /// <para><see cref="State"/> es distinto: es la pestaña que se está mirando dentro de ese
 /// universo. Por eso los conteos se calculan después de rol y búsqueda pero antes del
 /// estado — describen el universo, no la pestaña.</para>
+/// <para>Las membresías quitadas no están en el universo: se descartan antes que cualquier
+/// filtro, así que no aparecen en el listado ni en los conteos.
+/// <c>State = <see cref="MembershipViewState.Removed"/></c> sigue siendo un valor válido —el
+/// parser lo acepta— y simplemente devuelve una lista vacía.</para>
 /// </remarks>
 public sealed record ListMembershipsQuery(
     TenantId TenantId,
@@ -84,12 +93,22 @@ public sealed class ListMembershipsHandler(
         // handler para la resolución de email — la cantidad de miembros de un tenant es
         // chica hoy, no justifica un método de repositorio nuevo.
         //
+        // Las quitadas se descartan primero, antes que el rol: una membresía Removed es
+        // terminal (Membership.Remove no admite volver) y para el roster dejó de existir. No
+        // entra en el listado ni en los conteos, con o sin filtro de estado. Es además el
+        // único estado visible que se deriva 1:1 de la columna, así que acá no hace falta
+        // reloj. El usuario detrás puede seguir existiendo o no —eso lo decide Identity al
+        // consumir el evento de baja—; para este tenant es indistinto.
+        //
         // El rol se aplica antes de resolver los correos y no después: cada membresía que
         // sobrevive cuesta una consulta a IUserDirectory, así que descartar acá es lo que
         // evita ese trabajo.
+        var visible = memberships
+            .Where(membership => membership.State != MembershipState.Removed)
+            .ToList();
         var scoped = query.Role is null
-            ? memberships
-            : memberships.Where(membership => membership.Roles.Contains(query.Role)).ToList();
+            ? visible
+            : visible.Where(membership => membership.Roles.Contains(query.Role)).ToList();
 
         var items = new List<MembershipListItemDto>(scoped.Count);
         // Una búsqueda por membresía: IUserDirectory sólo expone resolución por id único
@@ -143,7 +162,8 @@ public sealed class ListMembershipsHandler(
     /// <summary>
     /// Los conteos se calculan sobre lo buscado pero antes de filtrar por estado: son lo que
     /// decide a cuál de los otros estados vale la pena ir, y contar sólo lo ya filtrado los
-    /// dejaría a todos en cero menos uno.
+    /// dejaría a todos en cero menos uno. <c>Removed</c> queda en cero por construcción: las
+    /// quitadas se descartaron antes de llegar acá.
     /// </summary>
     private MembershipCountsDto Count(IReadOnlyList<MembershipListItemDto> items)
     {

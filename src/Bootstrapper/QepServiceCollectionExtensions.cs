@@ -387,7 +387,7 @@ public static class QepServiceCollectionExtensions
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
-            "Asesora",
+            "Asesor",
             "Gestiona clientes y consulta los datos maestros con los que cotiza.",
             "Tenancy",
             "medium",

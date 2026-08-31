@@ -19,9 +19,9 @@ public sealed class MembershipLifecycleApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
-        // El admin no se asigna por invitación (InviteMember.EnsureInvitableRoles) — se
-        // invita con un rol invitable y se promueve después, mismo camino que
-        // UpdateRolesChangesMembershipRoles.
+        // Se invita como advisor y se promueve después por el mismo camino que
+        // UpdateRolesChangesMembershipRoles: lo que se prueba acá es la suspensión de un
+        // admin habiendo otro, no la invitación (que hoy admite cualquier rol del catálogo).
         var secondOwnerId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
         var promoted = await SendRolesAsync(ownerClient, tenantId, secondOwnerId, AdminRoles);
         Assert.Equal(HttpStatusCode.OK, promoted.StatusCode);
