@@ -10,6 +10,7 @@ public sealed record CreateCompanyCommand(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    Guid CityId,
     string? Phone,
     string? Email,
     string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
@@ -24,6 +25,7 @@ public sealed class CreateCompanyHandler(
     ICompanyRepository repository,
     ICompaniesUnitOfWork unitOfWork,
     ICompaniesAuditPublisher auditPublisher,
+    ICompanyGeographyLookup geographyLookup,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<CreateCompanyCommand> validator)
@@ -42,6 +44,14 @@ public sealed class CreateCompanyHandler(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
+        // Se resuelve antes de crear el agregado, no despues: un CityId sintacticamente valido
+        // pero de una ciudad inexistente tiene que fallar como 422 companies.company.city_not_found
+        // en vez de reventar la FK de base como 500 al hacer SaveChanges.
+        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
+            ?? throw new CompaniesDomainException(
+                "companies.company.city_not_found",
+                "The city was not found.");
+
         var now = clock.UtcNow;
         var company = Company.Create(
             CompanyId.New(),
@@ -49,6 +59,7 @@ public sealed class CreateCompanyHandler(
             command.Name,
             command.BankAccounts.ToDomain(),
             command.TaxId,
+            command.CityId,
             new CompanyContactInfo
             {
                 Phone = command.Phone,
@@ -72,6 +83,6 @@ public sealed class CreateCompanyHandler(
         // tiene detras ninguna rama de traduccion de 23505.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return company.ToDto();
+        return company.ToDto(city);
     }
 }

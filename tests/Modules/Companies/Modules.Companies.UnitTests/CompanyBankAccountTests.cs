@@ -22,6 +22,9 @@ public sealed class CompanyBankAccountTests
     private static readonly Guid TenantId =
         Guid.Parse("01900000-0000-7000-8000-000000000001");
 
+    private static readonly Guid CityId =
+        Guid.Parse("01a0272d-4c71-722b-abc0-5c2311ae384f");
+
     private static CompanyBankAccount Account(
         string bankName = "Bancolombia",
         string accountNumber = "CTA-000123",
@@ -35,6 +38,7 @@ public sealed class CompanyBankAccountTests
             "Andes Logistica S.A.S.",
             accounts.Length == 0 ? [Account()] : accounts,
             "900.111.222-3",
+            CityId,
             CompanyContactInfo.Empty,
             Now);
 
@@ -174,6 +178,7 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [],
             "900-1",
+            CityId,
             CompanyContactInfo.Empty,
             Now));
 
@@ -208,6 +213,7 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [Account(bankName: "Davivienda", accountNumber: "CTA-9", currency: "USD")],
             "900-1",
+            CityId,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5));
 
@@ -226,6 +232,7 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [],
             "900-1",
+            CityId,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5)));
 
@@ -245,6 +252,7 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [Account(accountNumber: "CTA-9"), Account(accountNumber: "CTA-9")],
             "900-1",
+            CityId,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5)));
 

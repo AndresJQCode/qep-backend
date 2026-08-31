@@ -14,6 +14,9 @@ public sealed class CompanyTests
     private static readonly Guid TenantId =
         Guid.Parse("01900000-0000-7000-8000-000000000001");
 
+    private static readonly Guid CityId =
+        Guid.Parse("01a0272d-4c71-722b-abc0-5c2311ae384f");
+
     private static CompanyBankAccount[] Accounts(string accountNumber = "CTA-000123") =>
     [
         new()
@@ -34,6 +37,7 @@ public sealed class CompanyTests
             name,
             Accounts(),
             taxId,
+            CityId,
             contact ?? CompanyContactInfo.Empty,
             Now);
 
@@ -178,6 +182,7 @@ public sealed class CompanyTests
             "Andes Logistica S.A.S.",
             Accounts(),
             "900.111.222-3",
+            CityId,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5));
 
@@ -192,7 +197,7 @@ public sealed class CompanyTests
         var company = Create();
         var later = Now.AddMinutes(5);
 
-        company.Update("Otro", Accounts("CTA-2"), "900-2", CompanyContactInfo.Empty, later);
+        company.Update("Otro", Accounts("CTA-2"), "900-2", CityId, CompanyContactInfo.Empty, later);
 
         Assert.Equal(2, company.Version);
         Assert.Equal(later, company.UpdatedAt);
@@ -211,6 +216,7 @@ public sealed class CompanyTests
             "Nombre nuevo",
             Accounts(),
             "   ",
+            CityId,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5)));
 
@@ -225,7 +231,8 @@ public sealed class CompanyTests
         company.Deactivate(Now);
 
         var exception = Assert.Throws<CompaniesDomainException>(
-            () => company.Update("Otro", Accounts("CTA-2"), "900-2", CompanyContactInfo.Empty, Now));
+            () => company.Update(
+                "Otro", Accounts("CTA-2"), "900-2", CityId, CompanyContactInfo.Empty, Now));
 
         Assert.Equal("companies.company.inactive", exception.Code);
     }
@@ -260,7 +267,8 @@ public sealed class CompanyTests
         company.Deactivate(Now);
 
         company.Activate(Now.AddMinutes(1));
-        company.Update("Otro", Accounts("CTA-2"), "900-2", CompanyContactInfo.Empty, Now.AddMinutes(2));
+        company.Update(
+            "Otro", Accounts("CTA-2"), "900-2", CityId, CompanyContactInfo.Empty, Now.AddMinutes(2));
 
         Assert.True(company.IsActive);
         Assert.Equal("Otro", company.Name);

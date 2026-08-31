@@ -36,6 +36,7 @@ public sealed class Company
         string name,
         IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
+        Guid cityId,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt)
     {
@@ -43,6 +44,7 @@ public sealed class Company
         TenantId = tenantId;
         Name = name;
         TaxId = taxId;
+        CityId = cityId;
         _bankAccounts.AddRange(bankAccounts);
         Apply(contact);
         IsActive = true;
@@ -76,6 +78,17 @@ public sealed class Company
     /// </summary>
     public string TaxId { get; private set; }
 
+    /// <summary>
+    /// FK a <c>geography.cities(id)</c>, tipada como <see cref="Guid"/> plano y no como el
+    /// <c>CityId</c> de Geography — mismo motivo que <c>Customer.CityId</c>: ningún módulo de
+    /// dominio de este repo referencia el dominio de otro, así que este agregado no puede
+    /// nombrar un tipo que vive en <c>Modules.Geography.Domain</c>. Que la fila exista la
+    /// garantiza la FK de base (agregada a mano en la migración, ver
+    /// <c>CompaniesDbContext.ConfigureCompany</c>) más la resolución previa contra
+    /// <c>ICompanyGeographyLookup</c> en el handler — acá sólo se comprueba que no venga vacía.
+    /// </summary>
+    public Guid CityId { get; private set; }
+
     public bool IsActive { get; private set; }
 
     public string? Phone { get; private set; }
@@ -107,6 +120,7 @@ public sealed class Company
         string name,
         IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
+        Guid cityId,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt) =>
         new(
@@ -115,6 +129,7 @@ public sealed class Company
             NormalizeName(name),
             NormalizeBankAccounts(bankAccounts),
             NormalizeTaxId(taxId),
+            EnsureValidCityId(cityId),
             contact,
             occurredAt);
 
@@ -126,6 +141,7 @@ public sealed class Company
         string name,
         IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
+        Guid cityId,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt)
     {
@@ -140,10 +156,12 @@ public sealed class Company
         var normalizedName = NormalizeName(name);
         var normalizedAccounts = NormalizeBankAccounts(bankAccounts);
         var normalizedTaxId = NormalizeTaxId(taxId);
+        var normalizedCityId = EnsureValidCityId(cityId);
         var normalizedContact = contact.Normalized();
 
         Name = normalizedName;
         TaxId = normalizedTaxId;
+        CityId = normalizedCityId;
         _bankAccounts.Clear();
         _bankAccounts.AddRange(normalizedAccounts);
         Assign(normalizedContact);
@@ -272,6 +290,17 @@ public sealed class Company
             "The company tax id is required.",
             "companies.company.tax_id_too_long",
             $"The company tax id cannot exceed {TaxIdMaxLength} characters.");
+
+    // Mismo criterio que Customer.EnsureValidCityId: acá sólo se comprueba que no venga vacía.
+    // Que la fila exista es responsabilidad del handler, que resuelve contra
+    // ICompanyGeographyLookup *antes* de llegar hasta acá — el dominio no puede llamar a
+    // Geography para confirmarlo él mismo.
+    private static Guid EnsureValidCityId(Guid cityId) =>
+        cityId == Guid.Empty
+            ? throw new CompaniesDomainException(
+                "companies.company.city_required",
+                "The city is required.")
+            : cityId;
 
     private static string Normalize(
         string value,

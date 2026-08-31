@@ -165,6 +165,20 @@ dotnet user-secrets set "Notifications:Infobip:ApiKey"  "<infobip-api-key>"     
 > `Notifications:Infobip:ApiKey is required` sin pista de que el problema es el
 > prefijo.
 
+Zenvia (envío de la cotización por WhatsApp, `SendQuotation.cs` — "de momento" con estas dos
+variables). Sin configurar, `AddWhatsAppSender` cae a `LogWhatsAppSender` (registra el mensaje,
+no llama a nada externo): "Enviar" sigue funcionando igual que hoy, sólo que sin mandar el
+WhatsApp real hasta que esto se aprovisione:
+
+```powershell
+dotnet user-secrets set "Quotations:WhatsApp:ApiToken"    "<zenvia-api-token>"    --project src/Api
+dotnet user-secrets set "Quotations:WhatsApp:FromNumber"  "<zenvia-from-number>" --project src/Api
+```
+
+> `TemplateId` no es secreto — vive en `appsettings.json`, mismo criterio que
+> `SenderEmail` en Infobip. Pisarlo por ambiente es opcional
+> (`Quotations:WhatsApp:TemplateId`).
+
 Cloudflare R2 (object storage obligatorio, ADR 0020):
 
 ```powershell
