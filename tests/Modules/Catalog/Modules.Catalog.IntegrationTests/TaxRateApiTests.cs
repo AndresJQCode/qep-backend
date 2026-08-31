@@ -254,6 +254,44 @@ public sealed class TaxRateApiTests
         Assert.Single(await QueryAuditEventsAsync(connection, "catalog.tax_rate.deactivated"));
     }
 
+    /// <summary>
+    /// Simétrico de <c>ATaxRateInUseByAProductIsRejectedAndSurvives</c>
+    /// (<c>TaxRateDeletionApiTests</c>), del lado de desactivar: sin este chequeo no había nada
+    /// —ni FK ni regla de dominio— que impidiera guardar una tasa inactiva mientras un producto
+    /// activo la sigue resolviendo, así que el 422 tenía que agregarse a mano en el handler.
+    /// </summary>
+    [Fact]
+    public async Task DeactivateRejectsATaxRateInUseByAProductAndLeavesItActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var taxRateId = (await ReadTaxRateAsync(
+            await CreateTaxRateAsync(client, TenantId, "IVA en uso", 19))).Id;
+        var product = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            new { name = "Vela de soja", code = "VS-201", taxRateId, pricing = new { baseUsd = 10m } },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, product.StatusCode);
+
+        var response = await client.PostAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{taxRateId}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.in_use",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+
+        var stillActive = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{taxRateId}",
+            TestContext.Current.CancellationToken);
+        Assert.True((await ReadTaxRateAsync(stillActive)).IsActive);
+    }
+
     // Actualizar cambia los campos, avanza updatedAt y deja su propia entrada de auditoría.
     [Fact]
     public async Task UpdateChangesTheFieldsAndAdvancesUpdatedAt()

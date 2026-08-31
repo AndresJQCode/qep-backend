@@ -238,6 +238,14 @@ public sealed class TaxRateActivationApiTests
     // CA-CAT-08-10 — el criterio que justifica el slice. Reproduce el atolladero completo antes
     // de resolverlo: una tasa inactiva que un producto usa no se puede editar (EnsureActive) ni
     // borrar (la FK es RESTRICT). Sin este endpoint, la única salida era un UPDATE por SQL.
+    //
+    // El orden de los pasos importa desde que `DeactivateTaxRateHandler` también rechaza "en
+    // uso": ya no se puede llegar a este estado creando el producto primero y desactivando
+    // después —esa desactivación ahora la frena el 422 que verifica
+    // `TaxRateApiTests.DeactivateRejectsATaxRateInUseByAProductAndLeavesItActive`—, así que acá
+    // se llega igual que sucede en producción: la tasa se desactiva mientras nadie la usa
+    // todavía, y **después** alguien arma un producto apuntando a una tasa ya inactiva, algo que
+    // `ProductTaxRateResolver` acepta a propósito.
     [Fact]
     public async Task ActivateRescuesAnInactiveTaxRateThatCannotBeDeletedBecauseAProductUsesIt()
     {
@@ -246,13 +254,13 @@ public sealed class TaxRateActivationApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var id = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
+        await DeactivateAsync(client, TenantId, id);
+
         var product = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
             new { name = "Vela de soja", code = "VS-101", taxRateId = id, pricing = new { baseUsd = 10m } },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, product.StatusCode);
-
-        await DeactivateAsync(client, TenantId, id);
 
         // Las dos puertas cerradas, antes de abrir la tercera.
         var blockedUpdate = await UpdateAsync(client, TenantId, id, "IVA corregido", 21);
