@@ -117,6 +117,7 @@ local y por variable de entorno en k8s
 | `Audit:SecurityRetentionDays`                          | `2555` (~7 años)                                                                              | Ventana de retención de auditoría de seguridad. Debe ser positiva                                                   |
 | `Audit:OperationalRetentionDays`                       | `730` (2 años)                                                                                | Ventana de retención de auditoría operativa. Debe ser positiva                                                      |
 | `Storage:PresignedUrlMinutes`                          | `5`                                                                                           | Vigencia de la URL firmada. Debe ser positiva                                                                       |
+| `Storage:ExportUrlHours`                               | `24`                                                                                          | Vigencia del enlace de descarga de un reporte exportado. Entre 1 y 168 (SigV4 no firma mas de 7 dias)               |
 | `Storage:StagingRetentionHours`                        | `24`                                                                                          | Retención de los objetos en staging. Debe ser positiva                                                              |
 | `Storage:StagingCleanupMinutes`                        | `60`                                                                                          | Período del barrido de staging. Debe ser positivo                                                                   |
 | `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
@@ -753,6 +754,30 @@ reemplaza sus orígenes por los dominios reales del frontend. Las credenciales y
 el bucket se configuran bajo `Storage:R2`; nunca se entregan al cliente.
 Para AWS CLI se incluye la variante envuelta en `CORSRules` en
 [`ops/r2-cors.aws.json`](ops/r2-cors.aws.json).
+
+### Reportes exportados (`exports/`)
+
+La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) no devuelve
+el archivo: lo genera, lo sube bajo el prefijo `exports/` del **bucket privado** y le manda a
+quien la pidió un correo con una URL prefirmada. La vigencia de ese enlace es
+`Storage:ExportUrlHours` (24 h por defecto), propia y no `Storage:PresignedUrlMinutes`: aquellas
+URLs las consume un navegador que ya está en pantalla, y ésta espera en una bandeja de entrada.
+
+**Estos objetos no los purga la aplicación.** `StagingCleanupWorker` se guía por filas de
+`storage.file_resources`, y una exportación no crea ninguna. La limpieza es una **regla de
+lifecycle del bucket**, configurada a mano en Cloudflare porque el repositorio no tiene
+infraestructura como código para R2:
+
+```powershell
+npx wrangler r2 bucket lifecycle add <bucket-privado> expire-exports "exports/" --expire-days 2
+npx wrangler r2 bucket lifecycle list <bucket-privado>   # para verificarla
+```
+
+El prefijo **no es opcional**: una regla sin él aplica a todo el bucket y se lleva puestos
+`files/` y `staging/`. Y `--expire-days` tiene que cubrir con margen a `ExportUrlHours`, o un
+enlace todavía vigente puede apuntar a un objeto ya borrado. Cloudflare ejecuta las reglas dentro
+de las 24 h posteriores al vencimiento, así que el objeto vive **entre 2 y 3 días** con el valor
+de arriba; el error siempre va para el lado seguro.
 
 El análisis antimalware usa el protocolo `INSTREAM` de ClamAV. En producción
 configura `Storage:ClamAv:Enabled=true`, junto con `Host`, `Port` y
