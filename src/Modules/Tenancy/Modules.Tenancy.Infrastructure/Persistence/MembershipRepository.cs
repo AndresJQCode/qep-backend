@@ -48,6 +48,13 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
             membership => membership.Id == id && membership.TenantId == tenantId,
             cancellationToken);
 
+    public Task<Membership?> FindByInvitationTokenHashAsync(
+        string tokenHash,
+        CancellationToken cancellationToken) =>
+        dbContext.Memberships.SingleOrDefaultAsync(
+            membership => membership.InvitationTokenHash == tokenHash,
+            cancellationToken);
+
     public async Task<IReadOnlyList<Membership>> ListByTenantAsync(
         TenantId tenantId,
         CancellationToken cancellationToken) =>

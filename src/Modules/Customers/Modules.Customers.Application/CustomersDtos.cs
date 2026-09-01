@@ -189,6 +189,15 @@ public sealed record CustomerImportTemplateFile(byte[] Content, string FileName)
 /// </summary>
 public sealed record ExportFailedCustomerRowsRequest(IReadOnlyList<CustomerImportRowData> Rows);
 
+/// <summary>
+/// La respuesta de <c>POST .../customers/export</c>. Confirma que el archivo se genero y se subio,
+/// y hasta cuando va a servir el enlace — el enlace en si sale por correo, no por acá.
+/// </summary>
+public sealed record ExportCustomersResponse(
+    string FileName,
+    int CustomerCount,
+    DateTimeOffset ExpiresAt);
+
 // El catalogo de clasificaciones de cliente: nombre + prefijo, mismo shape que TaxRateDto en
 // Catalog. IsActive no viaja en los requests, mismo criterio que Customer: nace activa y solo
 // cambia por /deactivate y /activate.

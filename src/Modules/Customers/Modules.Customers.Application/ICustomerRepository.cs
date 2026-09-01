@@ -26,6 +26,25 @@ public interface ICustomerRepository
         int pageSize,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Un lote del padron para exportar, con los mismos filtros que <see cref="SearchAsync"/> pero
+    /// sin su tope de pagina: aquel existe para acotar una respuesta HTTP, y este camino escribe un
+    /// archivo. El llamador recorre con <c>skip</c>/<c>take</c> hasta recibir menos de los que
+    /// pidio, y es quien pone el limite de cuantas filas acepta exportar.
+    ///
+    /// El orden es estable —por CUC, que es unico dentro del tenant— y no por relevancia: recorrer
+    /// en lotes un orden que no desempata puede saltear o repetir filas entre consultas.
+    /// </summary>
+    Task<IReadOnlyList<Customer>> ListForExportAsync(
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? identificationNumber,
+        string? cuc,
+        int skip,
+        int take,
+        CancellationToken cancellationToken);
+
     Task<Customer?> FindAsync(
         Guid tenantId,
         CustomerId customerId,

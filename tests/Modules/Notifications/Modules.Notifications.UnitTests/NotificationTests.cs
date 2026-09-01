@@ -41,16 +41,32 @@ public sealed class NotificationTests
     }
 
     [Fact]
-    public void InvitationTemplateRendersRecipientAndLoginUrl()
+    public void InvitationTemplateRendersRecipientAndInvitationLink()
     {
         var message = InvitationEmailTemplate.Render(
             "person@example.com",
-            Guid.CreateVersion7(),
-            "http://localhost:3002/login");
+            "http://localhost:3002/invitations/abc-123");
 
         Assert.Equal("person@example.com", message.ToAddress);
         Assert.False(string.IsNullOrWhiteSpace(message.Subject));
-        Assert.Contains("http://localhost:3002/login", message.HtmlBody, StringComparison.Ordinal);
-        Assert.Contains("http://localhost:3002/login", message.TextBody, StringComparison.Ordinal);
+        Assert.Contains(
+            "http://localhost:3002/invitations/abc-123",
+            message.HtmlBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "http://localhost:3002/invitations/abc-123",
+            message.TextBody,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Las plantillas publicadas son inmutables y la referencia es la que audita qué se le
+    /// mandó a quién: cambiar el contenido (el link ahora lleva el token de invitación, no
+    /// la pantalla de login) exige subir la versión, no reusar la v1.
+    /// </summary>
+    [Fact]
+    public void InvitationTemplateRefIsVersionTwo()
+    {
+        Assert.Equal("identity.invitation.v2", InvitationEmailTemplate.TemplateRef);
     }
 }

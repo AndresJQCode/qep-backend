@@ -34,6 +34,11 @@ public static class CustomersInfrastructureExtensions
         // criterio que el resto de este metodo. Application solo conoce los puertos.
         services.AddScoped<IExcelCustomerImporter, ClosedXmlCustomerImporter>();
         services.AddScoped<ICustomerImportTemplateBuilder, ClosedXmlCustomerImportTemplateBuilder>();
+        services.AddScoped<ICustomerExportBuilder, ClosedXmlCustomerExportBuilder>();
+
+        // El adaptador que sube a R2 no vive aca sino en el composition root: necesita
+        // Modules.Storage, y este modulo no lo referencia.
+        services.AddScoped<ICustomerExportEventPublisher, CustomerExportEventPublisher>();
 
         return services;
     }

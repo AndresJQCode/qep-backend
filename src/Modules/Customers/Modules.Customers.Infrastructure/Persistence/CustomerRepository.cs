@@ -23,15 +23,17 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return string.IsNullOrEmpty(trimmed) ? null : $"%{EscapeLikeWildcards(trimmed)}%";
     }
 
-    public async Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
+    // Los cuatro filtros del listado, aplicados una sola vez para los dos caminos que los usan
+    // (la pagina del listado y el recorrido de la exportacion). Los bloques van repetidos y no
+    // detras de un helper generico sobre un selector de propiedad: EF Core no traduce
+    // `EF.Functions.ILike` detras de una expresion invocada de forma generica, y forzarlo
+    // terminaria evaluando el filtro en memoria en vez de en la base.
+    private IQueryable<Customer> FilteredQuery(
         Guid tenantId,
-        string? search,
-        string? name,
-        string? identificationNumber,
-        string? cuc,
-        int page,
-        int pageSize,
-        CancellationToken cancellationToken)
+        string? searchPattern,
+        string? namePattern,
+        string? identificationPattern,
+        string? cucPattern)
     {
         var query = dbContext.Customers
             .AsNoTracking()
@@ -39,7 +41,6 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
         // El criterio combinado original: un solo termino, OR entre los tres campos. Sigue
         // vivo para el combobox de clientes de quotes, que necesita un unico cuadro de texto.
-        var searchPattern = LikePattern(search);
         if (searchPattern is not null)
         {
             query = query.Where(customer =>
@@ -50,18 +51,13 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         }
 
         // Tres cajas separadas en el listado (CLI-FILTROS-01), cada una filtra su propia columna
-        // y se combinan con AND cuando el llamador manda mas de una. Bloques repetidos y no un
-        // helper generico sobre un selector de propiedad: EF Core no traduce
-        // `EF.Functions.ILike` detras de una expresion invocada de forma generica, y forzarlo
-        // terminaria evaluando el filtro en memoria en vez de en la base.
-        var namePattern = LikePattern(name);
+        // y se combinan con AND cuando el llamador manda mas de una.
         if (namePattern is not null)
         {
             query = query.Where(customer =>
                 EF.Functions.ILike(customer.Name, namePattern, LikeEscapeCharacter));
         }
 
-        var identificationPattern = LikePattern(identificationNumber);
         if (identificationPattern is not null)
         {
             query = query.Where(customer =>
@@ -69,12 +65,54 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     customer.IdentificationNumber, identificationPattern, LikeEscapeCharacter));
         }
 
-        var cucPattern = LikePattern(cuc);
         if (cucPattern is not null)
         {
             query = query.Where(customer =>
                 EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter));
         }
+
+        return query;
+    }
+
+    // Orden por CUC y no por relevancia como SearchAsync: el CUC es unico dentro del tenant, asi
+    // que desempata siempre. Recorrer en lotes un orden que empata puede saltear o repetir filas
+    // entre una consulta y la siguiente, y eso en un archivo exportado no lo ve nadie.
+    public async Task<IReadOnlyList<Customer>> ListForExportAsync(
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? identificationNumber,
+        string? cuc,
+        int skip,
+        int take,
+        CancellationToken cancellationToken) =>
+        await FilteredQuery(
+                tenantId,
+                LikePattern(search),
+                LikePattern(name),
+                LikePattern(identificationNumber),
+                LikePattern(cuc))
+            .OrderBy(customer => customer.Cuc)
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+    public async Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? identificationNumber,
+        string? cuc,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var searchPattern = LikePattern(search);
+        var namePattern = LikePattern(name);
+        var identificationPattern = LikePattern(identificationNumber);
+        var cucPattern = LikePattern(cuc);
+        var query = FilteredQuery(
+            tenantId, searchPattern, namePattern, identificationPattern, cucPattern);
 
         // El total se cuenta sobre la consulta **ya filtrada** y antes de paginar: es cuantos
         // clientes coinciden con la busqueda, no cuantos tiene el tenant. Contar despues del Skip

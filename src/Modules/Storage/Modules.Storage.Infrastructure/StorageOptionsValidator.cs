@@ -15,6 +15,11 @@ internal sealed class StorageOptionsValidator : IValidateOptions<StorageOptions>
             failures.Add("Storage:PresignedUrlMinutes must be greater than zero.");
         }
 
+        if (options.ExportUrlHours is < 1 or > 168)
+        {
+            failures.Add("Storage:ExportUrlHours must be between 1 and 168.");
+        }
+
         if (options.StagingRetentionHours <= 0)
         {
             failures.Add("Storage:StagingRetentionHours must be greater than zero.");

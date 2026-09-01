@@ -68,12 +68,17 @@ public sealed class InviteMemberHandler(
             return renewed;
         }
 
+        // El token plano nace acá y sólo entra al agregado para viajar en el evento de
+        // dominio (outbox → email); la fila persiste únicamente su hash.
+        var invitationToken = InvitationTokens.Generate();
         var membership = Membership.Invite(
             MembershipId.New(),
             userId,
             command.TenantId,
             command.Roles,
             Origin,
+            invitationToken,
+            InvitationTokens.HashOf(invitationToken),
             clock.UtcNow,
             Membership.DefaultInvitationTimeToLive);
         membershipRepository.Add(membership);
@@ -127,7 +132,14 @@ public sealed class InviteMemberHandler(
         // Todo lo demás es o una invitación vencida (todavía en Invited, porque el vencimiento es
         // perezoso y nadie intentó entrar) o una ya marcada como Expired. Las dos son
         // renovables; Reinvite rechaza los estados que no lo son. SDD-OD-04.
-        existing.Reinvite(command.Roles, now, Membership.DefaultInvitationTimeToLive);
+        // Token nuevo en cada renovación: el link vencido muere con su ventana.
+        var invitationToken = InvitationTokens.Generate();
+        existing.Reinvite(
+            command.Roles,
+            invitationToken,
+            InvitationTokens.HashOf(invitationToken),
+            now,
+            Membership.DefaultInvitationTimeToLive);
 
         auditRecorder.Record(
             command.TenantId.Value,

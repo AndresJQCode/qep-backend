@@ -45,6 +45,12 @@ public static class NotificationsInfrastructureExtensions
             sp.GetRequiredService<IOptions<NotificationsOptions>>(),
             sp.GetRequiredService<ILogger<InvitationDeliveryWorker>>()));
 
+        // Sin IOptions, a diferencia del de invitaciones: ese arma el enlace con
+        // NotificationsOptions.InvitationUrl, y acá el enlace ya viene prefirmado en el evento.
+        services.AddHostedService(sp => new CustomerExportDeliveryWorker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<CustomerExportDeliveryWorker>>()));
+
         return services;
     }
 

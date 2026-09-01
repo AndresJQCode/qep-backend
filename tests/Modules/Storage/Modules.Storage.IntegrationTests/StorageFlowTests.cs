@@ -262,6 +262,13 @@ public sealed class StorageFlowTests
             CancellationToken cancellationToken) =>
             Task.FromResult(new Uri($"https://r2.test/{key}"));
 
+        public Task<Uri> CreatePresignedDownloadUrlAsync(
+            string key,
+            TimeSpan expiry,
+            string? downloadFileName,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new Uri($"https://r2.test/{key}"));
+
         public Task<StoredObject?> StatAsync(
             string key,
             CancellationToken cancellationToken)

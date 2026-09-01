@@ -35,7 +35,7 @@ data:
   # crear un tenant es una decisión de seguridad, y producción la declara de forma
   # explícita en lugar de heredarla en silencio.
   Registration__PublicTenantSignupEnabled: "true"
-  Notifications__LoginUrl: "#{NOTIFICATIONS_LOGIN_URL}#"
+  Notifications__InvitationUrl: "#{NOTIFICATIONS_INVITATION_URL}#"
   Notifications__Infobip__BaseUrl: "#{NOTIFICATIONS_INFOBIP_BASE_URL}#"
   Notifications__Infobip__SenderEmail: "#{NOTIFICATIONS_INFOBIP_SENDER_EMAIL}#"
   # Identificadores, no credenciales. El par de claves de R2 está en prod-secret.yaml.
