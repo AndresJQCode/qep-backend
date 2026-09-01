@@ -48,6 +48,49 @@ public sealed class R2ObjectStorageTests
     }
 
     [Fact]
+    public async Task DownloadUrlHonoursTheRequestedExpiryAndFileName()
+    {
+        using var client = new CapturingS3Client();
+        var storage = new R2ObjectStorage(client, Options.Create(new StorageOptions
+        {
+            R2 = new R2Options { Bucket = "qep-private" },
+        }));
+
+        var url = await storage.CreatePresignedDownloadUrlAsync(
+            "exports/tenants/x/2026/08/report.xlsx",
+            TimeSpan.FromHours(24),
+            "clientes-20260831-101500.xlsx",
+            TestContext.Current.CancellationToken);
+
+        var query = Uri.UnescapeDataString(url.Query);
+        Assert.Contains("X-Amz-Expires=86400", query, StringComparison.Ordinal);
+        Assert.Contains("attachment", query, StringComparison.Ordinal);
+        Assert.Contains("clientes-20260831-101500.xlsx", query, StringComparison.Ordinal);
+    }
+
+    // Sin nombre de descarga no se manda el override: la cabecera vacía haría que el navegador
+    // muestre el objeto en vez de bajarlo, que es peor que no decir nada.
+    [Fact]
+    public async Task DownloadUrlOmitsContentDispositionWhenNoFileNameIsGiven()
+    {
+        using var client = new CapturingS3Client();
+        var storage = new R2ObjectStorage(client, Options.Create(new StorageOptions
+        {
+            R2 = new R2Options { Bucket = "qep-private" },
+        }));
+
+        var url = await storage.CreatePresignedDownloadUrlAsync(
+            "exports/tenants/x/2026/08/report.xlsx",
+            TimeSpan.FromHours(1),
+            downloadFileName: null,
+            TestContext.Current.CancellationToken);
+
+        var query = Uri.UnescapeDataString(url.Query);
+        Assert.Contains("X-Amz-Expires=3600", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("response-content-disposition", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ClientIsBuiltWithoutChecksumTrailers()
     {
         var services = new ServiceCollection();

@@ -13,6 +13,16 @@ public interface IObjectStorage
         string key,
         CancellationToken cancellationToken);
 
+    // Igual que la anterior, pero con vida y nombre de archivo propios. Existe para los enlaces
+    // que no consume un navegador ya abierto sino que viajan por correo: la expiración global es
+    // de minutos, y el destinatario necesita además que el archivo baje con un nombre legible en
+    // vez del identificador de la clave.
+    Task<Uri> CreatePresignedDownloadUrlAsync(
+        string key,
+        TimeSpan expiry,
+        string? downloadFileName,
+        CancellationToken cancellationToken);
+
     // Metadata del objeto almacenado, o null si el objeto no está (la subida nunca ocurrió).
     Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken);
 

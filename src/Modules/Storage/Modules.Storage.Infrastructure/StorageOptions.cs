@@ -8,6 +8,12 @@ public sealed class StorageOptions
 
     public int PresignedUrlMinutes { get; init; } = 5;
 
+    // Vida del enlace de descarga de un reporte generado. Es propia y no PresignedUrlMinutes
+    // porque los públicos son opuestos: aquellas URLs las consume un navegador que ya está en
+    // pantalla, y ésta viaja por correo hasta una bandeja de entrada que puede tardar horas en
+    // abrirse. El techo lo pone SigV4, que no firma más de 7 días (168 h).
+    public int ExportUrlHours { get; init; } = 24;
+
     public int StagingRetentionHours { get; init; } = 24;
 
     public int StagingCleanupMinutes { get; init; } = 60;
