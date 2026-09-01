@@ -14,6 +14,19 @@ public sealed class Membership
     /// <summary>Ventana de invitación por defecto, según el ADR 0016 (72 horas).</summary>
     public static readonly TimeSpan DefaultInvitationTimeToLive = TimeSpan.FromHours(72);
 
+    /// <summary>
+    /// Origen de la membresía que nace con el auto-registro del tenant (ADR 0017). Es la
+    /// única marca que identifica al owner: el tenant no guarda referencia a quién lo creó.
+    /// </summary>
+    public const string RegistrationOrigin = "registration";
+
+    /// <summary>
+    /// Referencia al rol de sistema `admin` del catálogo de Authorization
+    /// (<c>SystemRoleKeys.Admin</c>). Tenancy guarda roles sólo como referencias y no puede
+    /// importar ese assembly, así que la clave se repite acá por su nombre.
+    /// </summary>
+    public const string AdminRole = "admin";
+
     private readonly List<IDomainEvent> _domainEvents = [];
     private readonly List<string> _roles = [];
 
@@ -59,6 +72,15 @@ public sealed class Membership
 
     public DateTimeOffset ExpiresAt { get; private set; }
 
+    /// <summary>
+    /// SHA-256 (hex minúsculo) del token de invitación que viaja en el email. Sólo el hash
+    /// se persiste: el valor plano existe únicamente dentro del evento
+    /// <see cref="MembershipInvitedDomainEvent"/>, rumbo al outbox y al email — quien lea
+    /// la tabla no puede armar un link válido. Es nulo para la membresía del owner (nunca
+    /// fue invitada) y para las filas anteriores a este cambio.
+    /// </summary>
+    public string? InvitationTokenHash { get; private set; }
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -79,6 +101,8 @@ public sealed class Membership
         TenantId tenantId,
         IEnumerable<string> roles,
         string origin,
+        string invitationToken,
+        string invitationTokenHash,
         DateTimeOffset invitedAt,
         TimeSpan timeToLive)
     {
@@ -96,6 +120,8 @@ public sealed class Membership
                 "Invitation time-to-live must be positive.");
         }
 
+        ValidateInvitationToken(invitationToken, invitationTokenHash);
+
         var membership = new Membership(
             id,
             userId,
@@ -103,14 +129,18 @@ public sealed class Membership
             roles,
             origin,
             invitedAt,
-            invitedAt + timeToLive);
+            invitedAt + timeToLive)
+        {
+            InvitationTokenHash = invitationTokenHash,
+        };
         membership._domainEvents.Add(new MembershipInvitedDomainEvent(
             Guid.CreateVersion7(),
             invitedAt,
             membership.Id,
             membership.TenantId,
             membership.UserId,
-            membership.ExpiresAt));
+            membership.ExpiresAt,
+            invitationToken));
         return membership;
     }
 
@@ -230,6 +260,8 @@ public sealed class Membership
     /// </remarks>
     public void Reinvite(
         IEnumerable<string> roles,
+        string invitationToken,
+        string invitationTokenHash,
         DateTimeOffset occurredAt,
         TimeSpan timeToLive)
     {
@@ -239,6 +271,8 @@ public sealed class Membership
                 "tenancy.membership.ttl_invalid",
                 "Invitation time-to-live must be positive.");
         }
+
+        ValidateInvitationToken(invitationToken, invitationTokenHash);
 
         if (State == MembershipState.Invited && occurredAt <= ExpiresAt)
         {
@@ -260,6 +294,9 @@ public sealed class Membership
         InvitedAt = occurredAt;
         ExpiresAt = occurredAt + timeToLive;
         AcceptedAt = null;
+        // Rotar el token invalida el link vencido que quedó en alguna bandeja; el vigente
+        // viaja en el evento re-emitido, que es lo que dispara el email nuevo.
+        InvitationTokenHash = invitationTokenHash;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new MembershipInvitedDomainEvent(
@@ -268,7 +305,8 @@ public sealed class Membership
             Id,
             TenantId,
             UserId,
-            ExpiresAt));
+            ExpiresAt,
+            invitationToken));
     }
 
     /// <summary>
@@ -279,6 +317,8 @@ public sealed class Membership
     /// </summary>
     public void Suspend(DateTimeOffset occurredAt)
     {
+        EnsureNotOwner("The tenant owner membership cannot be suspended.");
+
         if (State != MembershipState.Active)
         {
             throw new TenantDomainException(
@@ -342,6 +382,8 @@ public sealed class Membership
     /// </summary>
     public void Remove(DateTimeOffset occurredAt)
     {
+        EnsureNotOwner("The tenant owner membership cannot be removed.");
+
         if (State is MembershipState.Removed or MembershipState.Expired)
         {
             throw new TenantDomainException(
@@ -377,6 +419,17 @@ public sealed class Membership
                 "A membership requires at least one role.");
         }
 
+        // El owner es la última autoridad del tenant y nadie puede devolverle el rol si lo
+        // pierde: quitárselo dejaría la administración en manos de miembros revocables.
+        // Cambiar roles conservando `admin` sí está permitido.
+        if (Origin == RegistrationOrigin &&
+            !normalizedRoles.Contains(AdminRole, StringComparer.Ordinal))
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.owner_protected",
+                "The tenant owner membership must keep the admin role.");
+        }
+
         if (_roles.SequenceEqual(normalizedRoles, StringComparer.Ordinal))
         {
             return;
@@ -404,11 +457,35 @@ public sealed class Membership
         return events;
     }
 
+    /// <summary>
+    /// La membresía del owner (Origin de registro, ADR 0017) no se suspende ni se quita, por
+    /// nadie: es la última autoridad del tenant y no hay quien pueda restituirla. La guarda
+    /// vive en el agregado —como los chequeos de estado— porque depende sólo de su propia
+    /// marca, no de quién ejecuta la operación.
+    /// </summary>
+    private void EnsureNotOwner(string message)
+    {
+        if (Origin == RegistrationOrigin)
+        {
+            throw new TenantDomainException("tenancy.membership.owner_protected", message);
+        }
+    }
+
     private static IEnumerable<string> NormalizeRoles(IEnumerable<string> roles) =>
         roles
             .Select(role => role.Trim())
             .Where(role => role.Length > 0)
             .Distinct(StringComparer.Ordinal);
+
+    private static void ValidateInvitationToken(string token, string tokenHash)
+    {
+        if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(tokenHash))
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.invitation_token_required",
+                "An invitation requires a token and its hash.");
+        }
+    }
 
     private static string ValidateOrigin(string value)
     {

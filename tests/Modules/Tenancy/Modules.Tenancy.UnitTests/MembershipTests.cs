@@ -9,6 +9,13 @@ public sealed class MembershipTests
 
     private static readonly TimeSpan Ttl = Membership.DefaultInvitationTimeToLive;
 
+    // El agregado no genera ni hashea: recibe el par ya resuelto desde Application
+    // (InvitationTokens), así que acá alcanza con valores distinguibles entre sí.
+    private const string Token = "plain-invitation-token";
+    private const string TokenHash = "plain-invitation-token-hash";
+    private const string RenewedToken = "renewed-invitation-token";
+    private const string RenewedTokenHash = "renewed-invitation-token-hash";
+
     [Fact]
     public void InviteStartsInvitedAndRaisesEventWithExpiry()
     {
@@ -153,6 +160,39 @@ public sealed class MembershipTests
         Assert.Equal("tenancy.membership.already_terminal", exception.Code);
     }
 
+    /// <summary>
+    /// El owner es la última autoridad del tenant (ADR 0017) y su membresía no se puede
+    /// suspender ni quitar, por nadie: la marca es el Origin de registro, porque el tenant
+    /// no guarda referencia a quién lo creó.
+    /// </summary>
+    [Fact]
+    public void SuspendOwnerMembershipThrows()
+    {
+        var membership = CreateOwner();
+        membership.PullDomainEvents();
+
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            membership.Suspend(InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.owner_protected", exception.Code);
+        Assert.Equal(MembershipState.Active, membership.State);
+        Assert.Empty(membership.DomainEvents);
+    }
+
+    [Fact]
+    public void RemoveOwnerMembershipThrows()
+    {
+        var membership = CreateOwner();
+        membership.PullDomainEvents();
+
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            membership.Remove(InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.owner_protected", exception.Code);
+        Assert.Equal(MembershipState.Active, membership.State);
+        Assert.Empty(membership.DomainEvents);
+    }
+
     [Fact]
     public void ChangeRolesNormalizesRolesAndRaisesEvent()
     {
@@ -182,6 +222,30 @@ public sealed class MembershipTests
     }
 
     [Fact]
+    public void ChangeRolesCannotRemoveAdminFromOwnerMembership()
+    {
+        var membership = CreateOwner();
+        membership.PullDomainEvents();
+
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            membership.ChangeRoles(["advisor"], InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.owner_protected", exception.Code);
+        Assert.Equal(["admin"], membership.Roles);
+    }
+
+    [Fact]
+    public void ChangeRolesOnOwnerMembershipAllowsExtraRolesWhileKeepingAdmin()
+    {
+        var membership = CreateOwner();
+        membership.PullDomainEvents();
+
+        membership.ChangeRoles(["admin", "advisor"], InvitedAt.AddHours(1));
+
+        Assert.Equal(["admin", "advisor"], membership.Roles);
+    }
+
+    [Fact]
     public void ChangeRolesForRemovedMembershipThrows()
     {
         var membership = Invite(Guid.CreateVersion7());
@@ -191,6 +255,80 @@ public sealed class MembershipTests
             membership.ChangeRoles(["admin"], InvitedAt.AddHours(2)));
 
         Assert.Equal("tenancy.membership.already_terminal", exception.Code);
+    }
+
+    /// <summary>
+    /// El token plano viaja únicamente en el evento de dominio (outbox → email); en el
+    /// agregado queda sólo el hash. Guardar el token en la fila lo dejaría legible para
+    /// cualquiera con acceso a la base, que es lo que el hash viene a impedir.
+    /// </summary>
+    [Fact]
+    public void InviteStoresOnlyTheTokenHashAndTheEventCarriesThePlainToken()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+
+        Assert.Equal(TokenHash, membership.InvitationTokenHash);
+        var invited = Assert.IsType<MembershipInvitedDomainEvent>(
+            Assert.Single(membership.DomainEvents));
+        Assert.Equal(Token, invited.Token);
+    }
+
+    [Fact]
+    public void InviteRequiresAnInvitationToken()
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Membership.Invite(
+                MembershipId.New(),
+                Guid.CreateVersion7(),
+                TenantId.New(),
+                ["advisor"],
+                "invitation",
+                " ",
+                TokenHash,
+                InvitedAt,
+                Ttl));
+
+        Assert.Equal("tenancy.membership.invitation_token_required", exception.Code);
+    }
+
+    /// <summary>
+    /// Renovar rota el token: el link vencido que quedó en la bandeja no puede seguir
+    /// siendo válido, y el email nuevo lleva el token nuevo vía el evento re-emitido.
+    /// </summary>
+    [Fact]
+    public void ReinviteRotatesTheInvitationToken()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.PullDomainEvents();
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        membership.Reinvite(["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
+
+        Assert.Equal(RenewedTokenHash, membership.InvitationTokenHash);
+        var invited = Assert.IsType<MembershipInvitedDomainEvent>(
+            Assert.Single(membership.DomainEvents));
+        Assert.Equal(RenewedToken, invited.Token);
+    }
+
+    /// <summary>
+    /// El hash sobrevive a la aceptación: GET /invitations/{token} tiene que poder
+    /// responder "ya aceptada" y el accept repetido ser idempotente por el mismo link.
+    /// </summary>
+    [Fact]
+    public void AcceptKeepsTheInvitationTokenHash()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+
+        membership.Accept(InvitedAt.AddHours(1));
+
+        Assert.Equal(TokenHash, membership.InvitationTokenHash);
+    }
+
+    [Fact]
+    public void CreateActiveHasNoInvitationToken()
+    {
+        // El owner de un tenant auto-registrado nunca fue invitado: no hay link que honrar.
+        Assert.Null(CreateOwner().InvitationTokenHash);
     }
 
     [Fact]
@@ -203,6 +341,8 @@ public sealed class MembershipTests
                 TenantId.New(),
                 [],
                 "invitation",
+                Token,
+                TokenHash,
                 InvitedAt,
                 Ttl));
 
@@ -228,7 +368,7 @@ public sealed class MembershipTests
         var originalId = membership.Id;
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
 
-        membership.Reinvite(["tenancy.admin"], lapsed, Ttl);
+        membership.Reinvite(["tenancy.admin"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
 
         Assert.Equal(originalId, membership.Id);
         Assert.Equal(MembershipState.Invited, membership.State);
@@ -246,7 +386,7 @@ public sealed class MembershipTests
         membership.PullDomainEvents();
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
 
-        membership.Reinvite(["advisor"], lapsed, Ttl);
+        membership.Reinvite(["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
 
         var domainEvent = Assert.Single(membership.DomainEvents);
         var invited = Assert.IsType<MembershipInvitedDomainEvent>(domainEvent);
@@ -261,7 +401,7 @@ public sealed class MembershipTests
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
         Assert.True(membership.Expire(lapsed));
 
-        membership.Reinvite(["advisor"], lapsed, Ttl);
+        membership.Reinvite(["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
 
         Assert.Equal(MembershipState.Invited, membership.State);
         Assert.Equal(lapsed + Ttl, membership.ExpiresAt);
@@ -278,7 +418,8 @@ public sealed class MembershipTests
         var withinWindow = InvitedAt + TimeSpan.FromHours(1);
 
         var error = Assert.Throws<TenantDomainException>(
-            () => membership.Reinvite(["advisor"], withinWindow, Ttl));
+            () => membership.Reinvite(
+                ["advisor"], RenewedToken, RenewedTokenHash, withinWindow, Ttl));
 
         Assert.Equal("tenancy.membership.invitation_still_valid", error.Code);
         Assert.Equal(MembershipState.Invited, membership.State);
@@ -294,6 +435,8 @@ public sealed class MembershipTests
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
                 ["advisor"],
+                RenewedToken,
+                RenewedTokenHash,
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
@@ -317,6 +460,8 @@ public sealed class MembershipTests
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
                 ["advisor"],
+                RenewedToken,
+                RenewedTokenHash,
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
@@ -334,6 +479,8 @@ public sealed class MembershipTests
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
                 ["advisor"],
+                RenewedToken,
+                RenewedTokenHash,
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
@@ -354,10 +501,14 @@ public sealed class MembershipTests
         Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
                 ["tenancy.admin"],
+                RenewedToken,
+                RenewedTokenHash,
                 InvitedAt + Ttl + TimeSpan.FromHours(1),
                 Ttl));
 
         Assert.Equal(["advisor"], membership.Roles);
+        // Tampoco rota el token: el link que ya está en la bandeja tiene que seguir andando.
+        Assert.Equal(TokenHash, membership.InvitationTokenHash);
     }
 
     /// <summary>
@@ -452,6 +603,17 @@ public sealed class MembershipTests
             TenantId.New(),
             ["advisor"],
             "invitation",
+            Token,
+            TokenHash,
             InvitedAt,
             Ttl);
+
+    private static Membership CreateOwner() =>
+        Membership.CreateActive(
+            MembershipId.New(),
+            Guid.CreateVersion7(),
+            TenantId.New(),
+            ["admin"],
+            Membership.RegistrationOrigin,
+            InvitedAt);
 }

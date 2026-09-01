@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Modules.Identity.Application;
 using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
@@ -12,21 +11,22 @@ using Modules.Notifications.Infrastructure.Persistence;
 
 namespace Modules.Notifications.Infrastructure.Messaging;
 
-// Consume del Outbox de plataforma el evento de integración de membresía invitada y
-// entrega el email de invitación. Es idempotente por el inbox propio de este módulo, con
-// clave (consumidor, id de mensaje de outbox): un mensaje reentregado se saltea. Cada
-// mensaje se commitea independiente, así que una falla no bloquea el lote.
-internal sealed partial class InvitationDeliveryWorker(
+// Consume del Outbox de plataforma el evento de exportación de clientes lista y entrega el email
+// con el enlace de descarga. Mismo mecanismo que InvitationDeliveryWorker: idempotente por el inbox
+// propio del módulo, con clave (consumidor, id de mensaje de outbox), y cada mensaje se commitea
+// independiente para que una falla no bloquee el lote.
+//
+// El enlace ya viene prefirmado en el payload: este módulo no conoce Storage ni sabe firmar nada.
+internal sealed partial class CustomerExportDeliveryWorker(
     IServiceScopeFactory scopeFactory,
-    IOptions<NotificationsOptions> options,
-    ILogger<InvitationDeliveryWorker> logger) : BackgroundService
+    ILogger<CustomerExportDeliveryWorker> logger) : BackgroundService
 {
-    private const string Consumer = "notifications.invitation-email";
-    private const string EventName = "tenancy.membership-invited.v1";
+    private const string Consumer = "notifications.customer-export-email";
+    private const string EventName = "customers.export-ready.v1";
     private const int BatchSize = 20;
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Invitation delivery tick failed.")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "Customer export delivery tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -72,7 +72,7 @@ internal sealed partial class InvitationDeliveryWorker(
         }
     }
 
-    private async Task DeliverAsync(
+    private static async Task DeliverAsync(
         NotificationsDbContext dbContext,
         IEmailChannel channel,
         IUserDirectory userDirectory,
@@ -80,33 +80,29 @@ internal sealed partial class InvitationDeliveryWorker(
         OutboxRecord record,
         CancellationToken cancellationToken)
     {
-        var (userId, tenantId, token) = ParsePayload(record.PayloadJson);
-        var email = await userDirectory.GetEmailAsync(userId, cancellationToken);
+        var export = ParsePayload(record.PayloadJson);
+        var email = await userDirectory.GetEmailAsync(export.SubjectId, cancellationToken);
         var notification = Notification.CreateEmail(
-            tenantId,
-            userId,
+            export.TenantId,
+            export.SubjectId,
             email ?? string.Empty,
-            InvitationEmailTemplate.TemplateRef,
+            CustomerExportEmailTemplate.TemplateRef,
             clock.UtcNow);
 
         if (string.IsNullOrWhiteSpace(email))
         {
             notification.MarkFailed("recipient_email_unavailable", clock.UtcNow);
         }
-        else if (string.IsNullOrWhiteSpace(token))
-        {
-            // Un evento anterior al token de invitación (encolado antes del despliegue) no
-            // tiene link que armar. Se marca fallido y se registra en el inbox en vez de
-            // tirar: una excepción acá aborta el lote entero y lo reintenta para siempre.
-            notification.MarkFailed("invitation_token_unavailable", clock.UtcNow);
-        }
         else
         {
             try
             {
-                var message = InvitationEmailTemplate.Render(
+                var message = CustomerExportEmailTemplate.Render(
                     email,
-                    InvitationLink.Compose(options.Value.InvitationUrl, token));
+                    export.DownloadUrl,
+                    export.FileName,
+                    export.CustomerCount,
+                    export.ExpiresAt);
                 await channel.SendAsync(message, cancellationToken);
                 notification.MarkSent(clock.UtcNow);
             }
@@ -116,6 +112,8 @@ internal sealed partial class InvitationDeliveryWorker(
             }
         }
 
+        // Se marca el fallo y se escribe el inbox en vez de tirar: una excepción acá aborta el lote
+        // entero y lo reintenta para siempre. Misma regla que el worker de invitaciones.
         dbContext.Notifications.Add(notification);
         dbContext.Inbox.Add(new NotificationInboxMessage
         {
@@ -126,17 +124,24 @@ internal sealed partial class InvitationDeliveryWorker(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private static (Guid UserId, Guid TenantId, string? Token) ParsePayload(string payloadJson)
+    private static ExportPayload ParsePayload(string payloadJson)
     {
         using var document = JsonDocument.Parse(payloadJson);
         var root = document.RootElement;
-        var userId = root.GetProperty("userId").GetGuid();
-        var tenantId = root.GetProperty("tenantId").GetProperty("value").GetGuid();
-        // TryGetProperty y no GetProperty: los mensajes encolados antes del despliegue del
-        // token no lo traen, y esos se resuelven como fallo marcado, no como poison message.
-        var token = root.TryGetProperty("token", out var tokenElement)
-            ? tokenElement.GetString()
-            : null;
-        return (userId, tenantId, token);
+        return new ExportPayload(
+            root.GetProperty("tenantId").GetGuid(),
+            root.GetProperty("subjectId").GetGuid(),
+            root.GetProperty("downloadUrl").GetString() ?? string.Empty,
+            root.GetProperty("fileName").GetString() ?? string.Empty,
+            root.GetProperty("customerCount").GetInt32(),
+            root.GetProperty("expiresAt").GetDateTimeOffset());
     }
+
+    private sealed record ExportPayload(
+        Guid TenantId,
+        Guid SubjectId,
+        string DownloadUrl,
+        string FileName,
+        int CustomerCount,
+        DateTimeOffset ExpiresAt);
 }

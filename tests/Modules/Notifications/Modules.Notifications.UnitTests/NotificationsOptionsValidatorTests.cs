@@ -65,24 +65,24 @@ public sealed class NotificationsOptionsValidatorTests
     }
 
     [Fact]
-    public void NonAbsoluteLoginUrlFails()
+    public void NonAbsoluteInvitationUrlFails()
     {
-        var options = new NotificationsOptions { LoginUrl = "/login" };
+        var options = new NotificationsOptions { InvitationUrl = "/invitations" };
 
         var result = validator.Validate(null, options);
 
         Assert.True(result.Failed);
     }
 
-    // En Linux, "/login" es una ruta de archivo absoluta valida y Uri.TryCreate(...,
-    // UriKind.Absolute, ...) la acepta como file:///login — NonAbsoluteLoginUrlFails pasaba
-    // en Windows por la razon equivocada y fallaba en CI. Esta prueba no depende del
+    // En Linux, "/invitations" es una ruta de archivo absoluta valida y Uri.TryCreate(...,
+    // UriKind.Absolute, ...) la acepta como file:///invitations — la variante NonAbsolute
+    // pasaba en Windows por la razon equivocada y fallaba en CI. Esta prueba no depende del
     // sistema operativo: ftp:// es una URI absoluta en cualquier plataforma, asi que expone
     // la falta de chequeo de esquema sin importar donde corra.
     [Fact]
-    public void NonHttpSchemeLoginUrlFails()
+    public void NonHttpSchemeInvitationUrlFails()
     {
-        var options = new NotificationsOptions { LoginUrl = "ftp://example.com/login" };
+        var options = new NotificationsOptions { InvitationUrl = "ftp://example.com/invitations" };
 
         var result = validator.Validate(null, options);
 

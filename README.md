@@ -113,7 +113,7 @@ local y por variable de entorno en k8s
 | `Authentication:Session:IdleTimeoutDays`               | `7`                                                                                           | Expiración por inactividad                                                                                          |
 | `Registration:PublicTenantSignupEnabled`               | `true` en `appsettings.json`                                                                  | Alta pública de tenants. **Ausente ⇒ `false`**: se lee con `GetValue<bool>`                                         |
 | `Notifications:EmailProvider`                          | `infobip` en `appsettings.json` (default del binding: `log`)                                  | `log` o `infobip`. Con `infobip`, las tres claves `Notifications:Infobip:*` pasan a ser requeridas                  |
-| `Notifications:LoginUrl`                               | `http://localhost:3002/login`                                                                 | URL absoluta que se inserta en los emails                                                                           |
+| `Notifications:InvitationUrl`                          | `http://localhost:3002/invitations`                                                           | Base absoluta del deep-link de invitación; el email lleva `{InvitationUrl}/{token}`                                 |
 | `Audit:SecurityRetentionDays`                          | `2555` (~7 años)                                                                              | Ventana de retención de auditoría de seguridad. Debe ser positiva                                                   |
 | `Audit:OperationalRetentionDays`                       | `730` (2 años)                                                                                | Ventana de retención de auditoría operativa. Debe ser positiva                                                      |
 | `Storage:PresignedUrlMinutes`                          | `5`                                                                                           | Vigencia de la URL firmada. Debe ser positiva                                                                       |
@@ -395,6 +395,12 @@ La operación obtiene o crea en Identity un usuario invitado, y después crea su
 Membership en Tenancy con estado `Invited`, auditoría y el evento Outbox
 `tenancy.membership-invited.v1`. La invitación vence después de 72 horas.
 
+Además emite un **token de invitación** de 32 bytes en base64url. De ese token
+sólo se persiste su SHA-256 en `memberships.invitation_token_hash`, con índice
+único: el valor plano viaja únicamente dentro del evento de dominio, rumbo al
+Outbox y al email. Quien lea la tabla no puede reconstruir un link válido.
+Re-invitar rota el token, con lo que el link anterior deja de servir.
+
 Ejemplo en PowerShell, reutilizando `$tenantId` y `$headers` del ejemplo
 anterior:
 
@@ -441,6 +447,52 @@ validación también incluyen un mapa `errors`.
 | `412`  | El `ETag` enviado ya no es la versión vigente                       |
 | `422`  | Falló una validación o regla de dominio                             |
 | `428`  | Falta un encabezado `If-Match` válido                               |
+
+### Aceptación de la invitación
+
+El email lleva `{Notifications:InvitationUrl}/{token}`. La pantalla que abre ese
+link resuelve la invitación **antes** de pedir sesión, para poder decir a qué
+organización invitan y con qué cuenta hay que entrar.
+
+| Método | Ruta                                 | Autenticación |
+| ------ | ------------------------------------ | ------------- |
+| `GET`  | `/api/v1/invitations/{token}`        | Anónimo       |
+| `POST` | `/api/v1/invitations/{token}/accept` | Sesión QEP    |
+
+El `GET` es anónimo por necesidad —quien abre el link todavía no tiene sesión— y
+por eso va limitado por IP con la política `Public`. Responde `200 OK`:
+
+```json
+{
+  "tenantId": "01900000-0000-7000-8000-000000000001",
+  "tenantName": "Verde Alba",
+  "email": "new.member@example.com",
+  "status": "pending"
+}
+```
+
+`status` es el estado derivado (`MembershipViewStates.Of`), no la columna cruda:
+el vencimiento es perezoso y una fila puede seguir `Invited` con la ventana ya
+pasada. `Active` se dice **`accepted`** acá, porque `active` es el vocabulario
+del filtro del roster y no el de este link. `suspended` y `removed` viajan tal
+cual; el cliente trata como no aceptable todo lo que no reconozca.
+
+El `POST` exige sesión y responde `204 No Content`. Es **idempotente** contra el
+auto-accept del login: `POST /api/v1/auth/session` sigue aceptando todas las
+membresías invitadas del usuario al iniciar sesión, y este camino se le suma en
+lugar de reemplazarlo.
+
+| Estado | Código de dominio                       | Significado                              |
+| ------ | --------------------------------------- | ---------------------------------------- |
+| `401`  | —                                       | No hay sesión                            |
+| `403`  | `tenancy.invitation.user_mismatch`      | La sesión es de otra cuenta              |
+| `404`  | `tenancy.invitation.not_found`          | Ningún hash coincide con el token        |
+| `422`  | `tenancy.membership.invitation_expired` | La invitación venció                     |
+| `422`  | `tenancy.membership.not_invited`        | El estado ya no admite aceptar           |
+
+El `403` no revela de quién es la invitación: mismo criterio de no filtrar
+identidades que el `403` de login. Y el `422` distingue vencimiento de estado no
+aceptable porque sólo el primero se arregla pidiendo un link nuevo.
 
 ## Arquitectura y persistencia
 

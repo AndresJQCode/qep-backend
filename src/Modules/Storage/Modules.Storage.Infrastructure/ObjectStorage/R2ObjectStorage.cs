@@ -31,16 +31,33 @@ internal sealed class R2ObjectStorage(IAmazonS3 client, IOptions<StorageOptions>
         return new Uri(url);
     }
 
+    public Task<Uri> CreatePresignedDownloadUrlAsync(
+        string key, CancellationToken cancellationToken) =>
+        CreatePresignedDownloadUrlAsync(key, Expiry, downloadFileName: null, cancellationToken);
+
     public async Task<Uri> CreatePresignedDownloadUrlAsync(
-        string key, CancellationToken cancellationToken)
+        string key,
+        TimeSpan expiry,
+        string? downloadFileName,
+        CancellationToken cancellationToken)
     {
-        var url = await client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
+        var request = new GetPreSignedUrlRequest
         {
             BucketName = Bucket,
             Key = key,
             Verb = HttpVerb.GET,
-            Expires = DateTime.UtcNow.Add(Expiry),
-        });
+            Expires = DateTime.UtcNow.Add(expiry),
+        };
+
+        if (!string.IsNullOrWhiteSpace(downloadFileName))
+        {
+            // Va firmado como override de cabecera de respuesta: sin esto el navegador nombra la
+            // descarga con el último segmento de la clave, que es un identificador opaco.
+            request.ResponseHeaderOverrides.ContentDisposition =
+                $"attachment; filename=\"{downloadFileName}\"";
+        }
+
+        var url = await client.GetPreSignedURLAsync(request);
         return new Uri(url);
     }
 

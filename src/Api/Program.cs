@@ -93,6 +93,7 @@ app.MapAuthorizationCatalogEndpoints();
 app.MapRoleEndpoints();
 app.MapTenantSettingsEndpoints();
 app.MapMembershipEndpoints();
+app.MapInvitationEndpoints();
 app.MapStorageEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
