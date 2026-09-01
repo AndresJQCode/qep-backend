@@ -97,6 +97,13 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         membership.Property(value => value.InvitedAt).HasColumnName("invited_at");
         membership.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
         membership.Property(value => value.ExpiresAt).HasColumnName("expires_at");
+        // SHA-256 en hex son 64 caracteres exactos. Nullable: el owner de registro y las
+        // filas anteriores al token no tienen hash, y Postgres trata los NULL del índice
+        // único como distintos entre sí.
+        membership.Property(value => value.InvitationTokenHash)
+            .HasColumnName("invitation_token_hash")
+            .HasMaxLength(64);
+        membership.HasIndex(value => value.InvitationTokenHash).IsUnique();
         membership.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();

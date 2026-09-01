@@ -17,7 +17,9 @@ public sealed class NotificationsOptions
     // "log" (canal de desarrollo por defecto) o "infobip" (ADR 0018).
     public string EmailProvider { get; init; } = LogProvider;
 
-    public string LoginUrl { get; init; } = "http://localhost:3002/login";
+    // Base de los deep-links de invitación: el email lleva "{InvitationUrl}/{token}",
+    // que el frontend resuelve contra GET /api/v1/invitations/{token}.
+    public string InvitationUrl { get; init; } = "http://localhost:3002/invitations";
 
     public InfobipOptions Infobip { get; init; } = new();
 }

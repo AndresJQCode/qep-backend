@@ -80,7 +80,7 @@ internal sealed partial class InvitationDeliveryWorker(
         OutboxRecord record,
         CancellationToken cancellationToken)
     {
-        var (userId, tenantId) = ParsePayload(record.PayloadJson);
+        var (userId, tenantId, token) = ParsePayload(record.PayloadJson);
         var email = await userDirectory.GetEmailAsync(userId, cancellationToken);
         var notification = Notification.CreateEmail(
             tenantId,
@@ -93,11 +93,20 @@ internal sealed partial class InvitationDeliveryWorker(
         {
             notification.MarkFailed("recipient_email_unavailable", clock.UtcNow);
         }
+        else if (string.IsNullOrWhiteSpace(token))
+        {
+            // Un evento anterior al token de invitación (encolado antes del despliegue) no
+            // tiene link que armar. Se marca fallido y se registra en el inbox en vez de
+            // tirar: una excepción acá aborta el lote entero y lo reintenta para siempre.
+            notification.MarkFailed("invitation_token_unavailable", clock.UtcNow);
+        }
         else
         {
             try
             {
-                var message = InvitationEmailTemplate.Render(email, tenantId, options.Value.LoginUrl);
+                var message = InvitationEmailTemplate.Render(
+                    email,
+                    InvitationLink.Compose(options.Value.InvitationUrl, token));
                 await channel.SendAsync(message, cancellationToken);
                 notification.MarkSent(clock.UtcNow);
             }
@@ -117,12 +126,17 @@ internal sealed partial class InvitationDeliveryWorker(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private static (Guid UserId, Guid TenantId) ParsePayload(string payloadJson)
+    private static (Guid UserId, Guid TenantId, string? Token) ParsePayload(string payloadJson)
     {
         using var document = JsonDocument.Parse(payloadJson);
         var root = document.RootElement;
         var userId = root.GetProperty("userId").GetGuid();
         var tenantId = root.GetProperty("tenantId").GetProperty("value").GetGuid();
-        return (userId, tenantId);
+        // TryGetProperty y no GetProperty: los mensajes encolados antes del despliegue del
+        // token no lo traen, y esos se resuelven como fallo marcado, no como poison message.
+        var token = root.TryGetProperty("token", out var tokenElement)
+            ? tokenElement.GetString()
+            : null;
+        return (userId, tenantId, token);
     }
 }

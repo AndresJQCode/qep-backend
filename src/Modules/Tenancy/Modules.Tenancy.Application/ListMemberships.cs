@@ -4,6 +4,11 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Tenancy.Application;
 
+/// <param name="IsOwner">
+/// Marca la membresía del owner (Origin de registro, ADR 0017), la que el dominio protege de
+/// suspender, quitar o perder `admin`. Viaja en el contrato para que el frontend deshabilite
+/// esas acciones en vez de descubrir el 422 al intentarlas.
+/// </param>
 public sealed record MembershipListItemDto(
     MembershipId Id,
     Guid UserId,
@@ -14,7 +19,8 @@ public sealed record MembershipListItemDto(
     DateTimeOffset InvitedAt,
     DateTimeOffset? AcceptedAt,
     DateTimeOffset ExpiresAt,
-    long Version);
+    long Version,
+    bool IsOwner);
 
 public static class MembershipListItemMappings
 {
@@ -29,7 +35,8 @@ public static class MembershipListItemMappings
             membership.InvitedAt,
             membership.AcceptedAt,
             membership.ExpiresAt,
-            membership.Version);
+            membership.Version,
+            membership.Origin == Membership.RegistrationOrigin);
 }
 
 /// <summary>Cuántas membresías caen en cada estado visible, dentro de lo buscado.</summary>

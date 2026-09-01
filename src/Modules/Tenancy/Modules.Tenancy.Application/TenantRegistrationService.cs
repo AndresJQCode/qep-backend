@@ -13,8 +13,8 @@ public sealed class TenantRegistrationService(
     IClock clock)
     : ITenantRegistration
 {
-    private static readonly string[] AdminRoles = ["admin"];
-    private const string Origin = "registration";
+    private static readonly string[] AdminRoles = [Membership.AdminRole];
+    private const string Origin = Membership.RegistrationOrigin;
 
     public async Task<Guid> RegisterOwnerTenantAsync(
         Guid ownerUserId,

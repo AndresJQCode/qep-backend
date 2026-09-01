@@ -17,22 +17,120 @@ public sealed class MembershipLifecycleApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, ownerMembershipId, _, ownerClient) =
+        var (tenantId, _, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
         // Se invita como advisor y se promueve después por el mismo camino que
         // UpdateRolesChangesMembershipRoles: lo que se prueba acá es la suspensión de un
         // admin habiendo otro, no la invitación (que hoy admite cualquier rol del catálogo).
-        var secondOwnerId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
-        var promoted = await SendRolesAsync(ownerClient, tenantId, secondOwnerId, AdminRoles);
+        // Se suspende al promovido y no al owner: la membresía de registro está protegida.
+        var secondAdminId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        var promoted = await SendRolesAsync(ownerClient, tenantId, secondAdminId, AdminRoles);
         Assert.Equal(HttpStatusCode.OK, promoted.StatusCode);
-        await ActivateMembershipAsync(factory.ConnectionString, secondOwnerId);
+        await ActivateMembershipAsync(factory.ConnectionString, secondAdminId);
 
-        var response = await SendActionAsync(ownerClient, tenantId, ownerMembershipId, "suspend");
+        var response = await SendActionAsync(ownerClient, tenantId, secondAdminId, "suspend");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
             TestContext.Current.CancellationToken);
         Assert.Equal("Suspended", membership!.State);
+    }
+
+    /// <summary>
+    /// La membresía del owner (Origin de registro, ADR 0017) no se suspende, no se quita y
+    /// no pierde el rol admin — por nadie, aunque haya otro admin activo. Sin esta guarda,
+    /// `last_active_manager` deja de proteger al owner apenas se promueve un segundo admin.
+    /// </summary>
+    [Fact]
+    public async Task SuspendOwnerMembershipIsRejectedEvenWithAnotherActiveAdmin()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, ownerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+        await AddActiveAdminAsync(factory, ownerClient, tenantId);
+
+        var response = await SendActionAsync(ownerClient, tenantId, ownerMembershipId, "suspend");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.owner_protected", problem!.Code);
+    }
+
+    [Fact]
+    public async Task RemoveOwnerMembershipIsRejectedEvenWithAnotherActiveAdmin()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, ownerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+        await AddActiveAdminAsync(factory, ownerClient, tenantId);
+
+        var response = await SendActionAsync(ownerClient, tenantId, ownerMembershipId, "remove");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.owner_protected", problem!.Code);
+    }
+
+    [Fact]
+    public async Task UpdateRolesCannotStripAdminFromOwnerMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, ownerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+        await AddActiveAdminAsync(factory, ownerClient, tenantId);
+
+        var response = await SendRolesAsync(
+            ownerClient, tenantId, ownerMembershipId, AdvisorRoles);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.owner_protected", problem!.Code);
+    }
+
+    [Fact]
+    public async Task UpdateRolesOnOwnerKeepingAdminIsAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, ownerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+
+        var response = await SendRolesAsync(
+            ownerClient, tenantId, ownerMembershipId, ["admin", "advisor"]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(["admin", "advisor"], membership!.Roles);
+        Assert.True(membership.IsOwner);
+    }
+
+    [Fact]
+    public async Task ListMarksOnlyTheOwnerMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, ownerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+        var invitedId = await InviteAsync(ownerClient, tenantId, NewEmail());
+
+        var response = await ownerClient.GetAsync(
+            $"/api/v1/tenants/{tenantId}/memberships",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var owner = Assert.Single(list!.Items, item => item.Id == ownerMembershipId);
+        Assert.True(owner.IsOwner);
+        var invited = Assert.Single(list.Items, item => item.Id == invitedId);
+        Assert.False(invited.IsOwner);
     }
 
     [Fact]
@@ -329,6 +427,19 @@ public sealed class MembershipLifecycleApiTests
         return membership!.Id;
     }
 
+    // Deja al tenant con un segundo admin activo, para que la guarda que se ejercite sea la
+    // del owner y no `last_active_manager`. Se invita directo como admin: la invitación hoy
+    // admite cualquier rol del catálogo.
+    private static async Task<Guid> AddActiveAdminAsync(
+        QepApiFactory factory,
+        HttpClient client,
+        string tenantId)
+    {
+        var membershipId = await InviteAsync(client, tenantId, NewEmail(), AdminRoles);
+        await ActivateMembershipAsync(factory.ConnectionString, membershipId);
+        return membershipId;
+    }
+
     private static async Task<HttpResponseMessage> SendActionAsync(
         HttpClient client,
         string tenantId,
@@ -425,7 +536,13 @@ public sealed class MembershipLifecycleApiTests
         DateTimeOffset InvitedAt,
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
-        long Version);
+        long Version,
+        bool IsOwner);
+
+    private sealed record MembershipListPayload(
+        IReadOnlyList<MembershipListItemPayload> Items);
+
+    private sealed record ProblemPayload(string Code);
 
     private sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
     {

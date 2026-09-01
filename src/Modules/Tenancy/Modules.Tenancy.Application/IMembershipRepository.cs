@@ -14,6 +14,13 @@ public interface IMembershipRepository
         TenantId tenantId,
         CancellationToken cancellationToken);
 
+    // Resuelve el hash (SHA-256 hex) de un token de invitación a su membresía. El token
+    // plano nunca se persiste, así que éste es el único camino de un link de email a una
+    // fila; la unicidad la garantiza el índice único de invitation_token_hash.
+    Task<Membership?> FindByInvitationTokenHashAsync(
+        string tokenHash,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<Membership>> ListInvitedByUserAsync(
         Guid userId,
         CancellationToken cancellationToken);
