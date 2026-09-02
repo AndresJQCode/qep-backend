@@ -115,12 +115,22 @@ public static class CustomerEndpoints
         string? name = null,
         string? identificationNumber = null,
         string? cuc = null,
+        Guid[]? departmentIds = null,
+        Guid[]? cityIds = null,
         int page = 1,
         int pageSize = CustomerPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
             new ListCustomersQuery(
-                tenantId, search, name, identificationNumber, cuc, page, pageSize),
+                tenantId,
+                search,
+                name,
+                identificationNumber,
+                cuc,
+                departmentIds,
+                cityIds,
+                page,
+                pageSize),
             cancellationToken);
 
         return Results.Ok(new CustomersResponse(
@@ -160,7 +170,8 @@ public static class CustomerEndpoints
                 request.Address,
                 request.CityId,
                 request.ClassificationId,
-                request.WithRetention),
+                request.WithRetention,
+                request.VatSurplus),
             cancellationToken);
 
         return Results.Created(
@@ -187,7 +198,8 @@ public static class CustomerEndpoints
                 request.Address,
                 request.CityId,
                 request.ClassificationId,
-                request.WithRetention),
+                request.WithRetention,
+                request.VatSurplus),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -272,6 +284,7 @@ public static class CustomerEndpoints
         customer.Department,
         customer.Classification,
         customer.WithRetention,
+        customer.VatSurplus,
         customer.IsActive,
         customer.CreatedAt,
         customer.UpdatedAt);
@@ -284,6 +297,7 @@ public static class CustomerEndpoints
         customer.Phone,
         customer.Email,
         customer.City,
+        customer.Department,
         customer.Classification,
         customer.IsActive);
 }

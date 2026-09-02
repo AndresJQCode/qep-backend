@@ -93,6 +93,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .OnDelete(DeleteBehavior.Restrict);
 
         customer.Property(value => value.WithRetention).HasColumnName("with_retention");
+        customer.Property(value => value.VatSurplus).HasColumnName("vat_surplus");
         customer.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();

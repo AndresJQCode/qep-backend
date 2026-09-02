@@ -6,9 +6,17 @@ namespace Modules.Companies.Application;
 // argumento opcional que el llamador se pueda olvidar.
 public interface ICompanyRepository
 {
+    /// <summary>
+    /// <c>name</c>/<c>taxId</c> son dos filtros independientes (CLI-FILTROS-01, mismo criterio
+    /// que <c>ICustomerRepository.SearchAsync</c>): cada uno filtra su propia columna con ILIKE
+    /// y se combinan con AND cuando el llamador manda los dos. <c>search</c> es el criterio OR
+    /// original (nombre o numero de cuenta) que la grilla ya usaba.
+    /// </summary>
     Task<IReadOnlyList<Company>> SearchAsync(
         Guid tenantId,
         string? search,
+        string? name,
+        string? taxId,
         CompanyStatusFilter? status,
         CancellationToken cancellationToken);
 

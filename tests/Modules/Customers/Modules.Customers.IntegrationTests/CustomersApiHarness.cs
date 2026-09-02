@@ -88,9 +88,14 @@ internal static class CustomersApiHarness
     /// </summary>
     // CityName y DepartmentName al final, agregados para la importacion masiva (Fase 5): el Excel
     // resuelve por nombre, no por id, asi que las pruebas de import necesitan el texto exacto que
-    // hay que escribir en las celdas de Departamento y Ciudad.
+    // hay que escribir en las celdas de Departamento y Ciudad. DepartmentId se agrego para el
+    // filtro multiple de Departamento/Ciudad del listado, que filtra por id, no por nombre.
     public sealed record CityFixture(
-        Guid CityId, string DepartmentDivipolaCode, string CityName, string DepartmentName);
+        Guid CityId,
+        Guid DepartmentId,
+        string DepartmentDivipolaCode,
+        string CityName,
+        string DepartmentName);
 
     public static async Task<CityFixture> EnsureCityAsync(HttpClient client) =>
         (await EnsureCitiesAsync(client, 1))[0];
@@ -126,7 +131,11 @@ internal static class CustomersApiHarness
             if (cities is { Count: > 0 })
             {
                 fixtures.Add(new CityFixture(
-                    cities[0].Id, department.DivipolaCode, cities[0].Name, department.Name));
+                    cities[0].Id,
+                    department.Id,
+                    department.DivipolaCode,
+                    cities[0].Name,
+                    department.Name));
             }
         }
 
@@ -145,11 +154,13 @@ internal static class CustomersApiHarness
     private sealed record GeographyCityDto(Guid Id, string DivipolaCode, string Name, Guid DepartmentId);
 
     /// <summary>
-    /// Una fila del Excel de importacion, para armar workbooks de prueba sin repetir las diez
+    /// Una fila del Excel de importacion, para armar workbooks de prueba sin repetir las once
     /// columnas en cada test. Todos los campos son opcionales — un test que quiere una fila
-    /// invalida por una celda vacia simplemente no la pasa.
+    /// invalida por una celda vacia simplemente no la pasa. <c>Cuc</c> vacio (el default) es una
+    /// fila que crea; con un valor, una fila que actualiza el cliente con ese Cuc.
     /// </summary>
     public sealed record ExcelRowInput(
+        string? Cuc = null,
         string? Name = "Verde Esencial S.A.S.",
         string? IdentificationType = "NIT",
         string? IdentificationNumber = "900.123.456-1",
@@ -185,8 +196,9 @@ internal static class CustomersApiHarness
             var row = rows[index];
             var values = new[]
             {
-                row.Name, row.IdentificationType, row.IdentificationNumber, row.Phone, row.Email,
-                row.Address, row.Department, row.City, row.Classification, row.WithRetention
+                row.Cuc, row.Name, row.IdentificationType, row.IdentificationNumber, row.Phone,
+                row.Email, row.Address, row.Department, row.City, row.Classification,
+                row.WithRetention
             };
             for (var column = 0; column < values.Length && column < columns.Count; column++)
             {
@@ -233,7 +245,9 @@ internal static class CustomersApiHarness
         Guid classificationId,
         string name = "Verde Esencial S.A.S.",
         string identificationType = "NIT",
-        string identificationNumber = "900.123.456-1") =>
+        string identificationNumber = "900.123.456-1",
+        bool withRetention = false,
+        bool vatSurplus = false) =>
         new
         {
             name,
@@ -241,7 +255,8 @@ internal static class CustomersApiHarness
             identificationNumber,
             cityId,
             classificationId,
-            withRetention = false
+            withRetention,
+            vatSurplus
         };
 
     /// <summary>Da de alta un cliente y devuelve la respuesta ya deserializada.</summary>

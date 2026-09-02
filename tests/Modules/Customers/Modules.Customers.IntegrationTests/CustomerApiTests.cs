@@ -27,6 +27,30 @@ public sealed class CustomerApiTests
         Assert.Equal(1, page.Page);
     }
 
+    // Sin filtro de texto, el listado muestra primero al cliente creado mas recientemente — el
+    // orden util para operar, no el alfabetico.
+    [Fact]
+    public async Task ListWithNoFilterOrdersByCreationDateDescending()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Primero Creado", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Segundo Creado", "900.222.222-2");
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Tercero Creado", "900.333.333-3");
+
+        var page = await ListAsync(client, string.Empty);
+
+        Assert.Equal(
+            ["Tercero Creado", "Segundo Creado", "Primero Creado"],
+            page.Items.Select(item => item.Name));
+    }
+
     // La ciudad y la clasificacion viajan resueltas en cada fila del listado (Fase 3), no solo en
     // el detalle: la grilla las pinta sin pedir un GET por cliente.
     [Fact]
@@ -45,6 +69,91 @@ public sealed class CustomerApiTests
         Assert.Equal(city.CityId, item.City.Id);
         Assert.Equal(classification.Id, item.Classification.Id);
         Assert.Equal(classification.Prefix, item.Classification.Prefix);
+    }
+
+    // El departamento viaja resuelto en cada fila para el filtro multiple de
+    // Departamento/Ciudad de la grilla: sin el, elegir un departamento no tiene con que columna
+    // mostrarse.
+    [Fact]
+    public async Task ListResolvesTheDepartmentOfEachItem()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(client, city.CityId, classification.Id);
+
+        var page = await ListAsync(client, string.Empty);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(city.DepartmentId, item.Department.Id);
+        Assert.Equal(city.DepartmentName, item.Department.Name);
+    }
+
+    // Departamento y Ciudad son dos filtros independientes por id (no por texto): cada uno acota
+    // el listado a los clientes de ese departamento/ciudad exactos.
+    [Fact]
+    public async Task ListFiltersByDepartmentIdsAndByCityIds()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, cities[0].CityId, classification.Id, "Verde Esencial", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, cities[1].CityId, classification.Id, "Naturaleza Viva", "830.222.222-2");
+
+        var byDepartment = await ListAsync(client, $"?departmentIds={cities[0].DepartmentId}");
+        var byCity = await ListAsync(client, $"?cityIds={cities[1].CityId}");
+
+        Assert.Equal("Verde Esencial", Assert.Single(byDepartment.Items).Name);
+        Assert.Equal("Naturaleza Viva", Assert.Single(byCity.Items).Name);
+    }
+
+    // Los dos filtros se combinan con AND: una ciudad de un departamento distinto al elegido no
+    // matchea, aunque esa ciudad si este en la lista de `cityIds`.
+    [Fact]
+    public async Task ListCombinesDepartmentAndCityFiltersWithAnd()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, cities[0].CityId, classification.Id, "Verde Esencial", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, cities[1].CityId, classification.Id, "Naturaleza Viva", "830.222.222-2");
+
+        var page = await ListAsync(
+            client, $"?departmentIds={cities[0].DepartmentId}&cityIds={cities[1].CityId}");
+
+        Assert.Empty(page.Items);
+    }
+
+    // El filtro admite mas de un id a la vez: es "multiple departamento y ciudades", no un unico
+    // valor.
+    [Fact]
+    public async Task ListFiltersByMultipleDepartmentIdsAtOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, cities[0].CityId, classification.Id, "Verde Esencial", "900.111.111-1");
+        await CreateCustomerAsync(
+            client, cities[1].CityId, classification.Id, "Naturaleza Viva", "830.222.222-2");
+
+        var page = await ListAsync(
+            client,
+            $"?departmentIds={cities[0].DepartmentId}&departmentIds={cities[1].DepartmentId}");
+
+        Assert.Equal(2, page.Items.Count);
     }
 
     // Con clientes en ciudades y clasificaciones distintas, el listado tiene que resolver cada uno
@@ -187,11 +296,13 @@ public sealed class CustomerApiTests
         var first = await ListAsync(client, "?page=1&pageSize=2");
         var third = await ListAsync(client, "?page=3&pageSize=2");
 
+        // Sin filtro de texto el orden es por fecha de creacion descendente (mas nuevo primero),
+        // no alfabetico — "Cliente 05" se creo ultimo.
         Assert.Equal(5, first.Total);
         Assert.Equal(2, first.Items.Count);
-        Assert.Equal("Cliente 01", first.Items.First().Name);
+        Assert.Equal("Cliente 05", first.Items.First().Name);
         Assert.Equal(5, third.Total);
-        Assert.Equal("Cliente 05", Assert.Single(third.Items).Name);
+        Assert.Equal("Cliente 01", Assert.Single(third.Items).Name);
     }
 
     // Un pageSize desmedido se recorta al tope en vez de fallar, y la respuesta lleva el valor real

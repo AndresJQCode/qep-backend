@@ -41,16 +41,19 @@ public sealed class ExportFailedCustomerRowsHandler(
                 "There are no failed rows to export.");
         }
 
-        var departments = await geographyLookup.ListDepartmentsAsync(cancellationToken);
+        var departments = await geographyLookup.ListDepartmentsWithCitiesAsync(cancellationToken);
         var classifications = await classificationRepository.ListAsync(query.TenantId, cancellationToken);
         var activeClassificationNames = classifications
             .Where(classification => classification.IsActive)
             .Select(classification => classification.Name)
             .ToArray();
-        var departmentNames = departments.Select(department => department.Name).ToArray();
+        var departmentOptions = departments
+            .Select(department => new CustomerImportDepartmentOption(
+                department.Name, department.DivipolaCode, department.CityNames))
+            .ToArray();
 
         var content = templateBuilder.BuildWithRows(
-            departmentNames,
+            departmentOptions,
             activeClassificationNames,
             IdentificationTypeParser.SupportedWireValues,
             query.Rows,

@@ -29,6 +29,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         string? name,
         string? identificationNumber,
         string? cuc,
+        IReadOnlyCollection<Guid>? cityIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -76,6 +77,14 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter));
         }
 
+        // `null` es "sin filtro"; una coleccion (incluso vacia) filtra por esos ids exactos —
+        // Departamento ya se tradujo a ids de ciudad en ListCustomersHandler, asi que aca no hay
+        // nada que resolver, solo aplicar el IN.
+        if (cityIds is not null)
+        {
+            query = query.Where(customer => cityIds.Contains(customer.CityId));
+        }
+
         // El total se cuenta sobre la consulta **ya filtrada** y antes de paginar: es cuantos
         // clientes coinciden con la busqueda, no cuantos tiene el tenant. Contar despues del Skip
         // devolveria como mucho pageSize y la UI dibujaria una sola pagina siempre.
@@ -95,6 +104,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         var identificationTerm = identificationNumber?.Trim() ?? string.Empty;
         var cucTerm = cuc?.Trim() ?? string.Empty;
 
+        // Sin filtro de texto, el mas nuevo va primero: es el orden que importa para operar (el
+        // cliente que alguien acaba de cargar aparece arriba de entrada, sin tener que buscarlo),
+        // no el alfabetico que solo ayuda a ubicar un nombre que ya se conoce.
         var orderedQuery = searchPattern is not null
             ? query.OrderByDescending(customer =>
                 EF.Functions.TrigramsSimilarity(customer.Name, searchTerm) +
@@ -105,7 +117,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     EF.Functions.TrigramsSimilarity(customer.Name, nameTerm) +
                     EF.Functions.TrigramsSimilarity(customer.IdentificationNumber, identificationTerm) +
                     EF.Functions.TrigramsSimilarity(customer.Cuc, cucTerm))
-                : query.OrderBy(customer => customer.Name);
+                : query.OrderByDescending(customer => customer.CreatedAt);
 
         var items = await orderedQuery
             .ThenBy(customer => customer.Name)
@@ -139,14 +151,15 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     customer.ClassificationId == classificationId,
                 cancellationToken);
 
-    public async Task<IReadOnlySet<(IdentificationType Type, string Number)>> FindExistingIdentificationsAsync(
-        Guid tenantId,
-        IReadOnlyCollection<(IdentificationType Type, string Number)> identifications,
-        CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>
+        FindExistingIdentificationsAsync(
+            Guid tenantId,
+            IReadOnlyCollection<(IdentificationType Type, string Number)> identifications,
+            CancellationToken cancellationToken)
     {
         if (identifications.Count == 0)
         {
-            return new HashSet<(IdentificationType, string)>();
+            return new Dictionary<(IdentificationType, string), CustomerId>();
         }
 
         // Postgres/EF no traduce un `Contains` sobre una lista de tuplas (tipo, numero) a una sola
@@ -163,14 +176,53 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 customer.TenantId == tenantId &&
                 types.Contains(customer.IdentificationType) &&
                 numbers.Contains(customer.IdentificationNumber))
-            .Select(customer => new { customer.IdentificationType, customer.IdentificationNumber })
+            .Select(customer => new
+            {
+                customer.Id, customer.IdentificationType, customer.IdentificationNumber
+            })
             .ToListAsync(cancellationToken);
 
-        var candidateSet = candidates
-            .Select(candidate => (candidate.IdentificationType, candidate.IdentificationNumber))
-            .ToHashSet();
+        var ownerByIdentification = candidates.ToDictionary(
+            candidate => (candidate.IdentificationType, candidate.IdentificationNumber),
+            candidate => candidate.Id);
 
-        return identifications.Where(candidateSet.Contains).ToHashSet();
+        return identifications
+            .Where(ownerByIdentification.ContainsKey)
+            .ToDictionary(identification => identification, identification => ownerByIdentification[identification]);
+    }
+
+    public async Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
+        Guid tenantId,
+        IReadOnlyCollection<string> suffixes,
+        CancellationToken cancellationToken)
+    {
+        if (suffixes.Count == 0)
+        {
+            return new Dictionary<string, CustomerId>();
+        }
+
+        // Igual criterio que FindExistingIdentificationsAsync: un WHERE amplio en la base (solo
+        // tenant, que ya usa indice) y el match exacto del sufijo en memoria — EF/Npgsql no
+        // traduce bien un `Contains` sobre un substring calculado por fila, y el conjunto ya
+        // filtrado por tenant es chico.
+        var tenantCustomers = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId)
+            .Select(customer => new { customer.Id, customer.Cuc })
+            .ToListAsync(cancellationToken);
+
+        var suffixSet = suffixes.ToHashSet();
+        var result = new Dictionary<string, CustomerId>();
+        foreach (var customer in tenantCustomers)
+        {
+            var suffix = Customer.StableSuffixOf(customer.Cuc);
+            if (suffixSet.Contains(suffix))
+            {
+                result[suffix] = customer.Id;
+            }
+        }
+
+        return result;
     }
 
     public void Add(Customer customer) => dbContext.Customers.Add(customer);

@@ -1,13 +1,23 @@
 namespace Modules.Customers.Application;
 
 /// <summary>
-/// Las diez columnas que la importacion masiva de clientes (Fase 5) espera y que la plantilla
+/// Las once columnas que la importacion masiva de clientes (Fase 5) espera y que la plantilla
 /// descargable (Fase 6) genera — el contrato exacto entre las dos fases. En espanol y en este
 /// orden: es el mismo vocabulario que ya usa el resto del sistema, y el orden es el que la
 /// plantilla escribe.
 /// </summary>
 public static class CustomerImportColumns
 {
+    /// <summary>
+    /// Opcional y primera columna: vacia, la fila crea un cliente nuevo (comportamiento
+    /// original). Con un valor, identifica un cliente existente del tenant y la fila lo
+    /// actualiza en vez de crear uno — ver <c>ImportCustomersHandler</c>. La persona pega el CUC
+    /// completo tal cual lo ve en la app; el handler lo resuelve contra
+    /// <see cref="Modules.Customers.Domain.Customer.StableSuffixOf"/>, no contra el texto
+    /// completo (el prefijo puede haber cambiado desde que se exporto ese CUC).
+    /// </summary>
+    public const string Cuc = "Cuc";
+
     public const string Name = "Nombre";
 
     public const string IdentificationType = "Tipo Identificacion";
@@ -24,12 +34,15 @@ public static class CustomerImportColumns
 
     public const string City = "Ciudad";
 
-    public const string Classification = "Clasificacion";
+    // "Tamano", no "Clasificacion": mismo concepto (ClientClassification), pero la columna
+    // visible en el Excel usa el nombre con el que el negocio lo conoce.
+    public const string Classification = "Tamano";
 
     public const string WithRetention = "Con Retencion";
 
     public static readonly IReadOnlyList<string> Ordered =
     [
+        Cuc,
         Name,
         IdentificationType,
         IdentificationNumber,
@@ -55,6 +68,7 @@ public static class CustomerImportColumns
 /// </summary>
 public sealed record ExcelCustomerRow(
     int RowNumber,
+    string? Cuc,
     string? Name,
     string? IdentificationType,
     string? IdentificationNumber,
@@ -67,7 +81,7 @@ public sealed record ExcelCustomerRow(
     string? WithRetention);
 
 /// <summary>
-/// El resultado de parsear un Excel: si la cabecera trae las diez columnas esperadas y, si las
+/// El resultado de parsear un Excel: si la cabecera trae las once columnas esperadas y, si las
 /// trae, las filas de datos ya leidas. Cuando <see cref="HasExpectedColumns"/> es falso,
 /// <see cref="Rows"/> viene vacio — no tiene sentido leer datos de columnas que no se pudieron
 /// ubicar, y el llamador trata eso como un archivo estructuralmente invalido, no como un reporte

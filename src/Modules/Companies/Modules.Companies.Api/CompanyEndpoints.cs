@@ -85,10 +85,13 @@ public static class CompanyEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         string? search = null,
+        string? name = null,
+        string? taxId = null,
         string? status = null)
     {
         var companies = await dispatcher.QueryAsync(
-            new ListCompaniesQuery(tenantId, search, CompanyStatusFilterParser.Parse(status)),
+            new ListCompaniesQuery(
+                tenantId, search, name, taxId, CompanyStatusFilterParser.Parse(status)),
             cancellationToken);
 
         return Results.Ok(new CompaniesResponse(companies.Select(ToListItem).ToArray()));

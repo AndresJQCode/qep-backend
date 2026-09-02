@@ -4,9 +4,17 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Companies.Application;
 
+/// <summary>
+/// <c>Name</c> y <c>TaxId</c> son dos cajas separadas (CLI-FILTROS-01, mismo criterio que
+/// <c>ListCustomersQuery</c>): cada una filtra su propia columna y se combinan con AND cuando
+/// el llamador manda las dos. <c>Search</c> sigue vivo, sin tocar: es el criterio OR original
+/// (nombre o numero de cuenta) que ya usaba la grilla antes de que este filtro existiera.
+/// </summary>
 public sealed record ListCompaniesQuery(
     Guid TenantId,
     string? Search,
+    string? Name,
+    string? TaxId,
     CompanyStatusFilter? Status) : IQuery<IReadOnlyList<CompanyDto>>;
 
 public sealed class ListCompaniesHandler(
@@ -23,7 +31,7 @@ public sealed class ListCompaniesHandler(
             executionContext, query.TenantId, CompaniesPermissions.CompanyRead);
 
         var companies = await repository.SearchAsync(
-            query.TenantId, query.Search, query.Status, cancellationToken);
+            query.TenantId, query.Search, query.Name, query.TaxId, query.Status, cancellationToken);
 
         // Una sola consulta en lote para toda la pagina, no una por empresa — mismo criterio
         // que ListCustomersHandler con FindCitiesAsync.

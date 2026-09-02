@@ -37,6 +37,18 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
 
     public ExcelCustomerRowRules()
     {
+        // Opcional a proposito: vacio significa "esta fila crea un cliente"; con un valor,
+        // "esta fila actualiza el cliente con ese CUC" (ImportCustomersHandler resuelve cual).
+        // El resto de las reglas de esta clase NO se condicionan por Cuc — una fila de
+        // actualizacion tiene que traer el registro completo igual que el PUT de un cliente,
+        // porque Customer.Update reemplaza todo lo que no viene.
+        RuleFor(row => row.Cuc)
+            .Must(value => value!.Trim().Length >= Customer.CucSuffixLength)
+                .WithErrorCode("customers.import.row.cuc_invalid")
+                .WithMessage(
+                    $"The Cuc must be at least {Customer.CucSuffixLength} characters.")
+            .When(row => !string.IsNullOrWhiteSpace(row.Cuc));
+
         RuleFor(row => row.Name)
             .NotEmpty()
                 .WithErrorCode("customers.import.row.name_required")
@@ -177,7 +189,7 @@ public sealed class ImportCustomersHandler(
 
         var fileName = EnsureAcceptableFile(command.FileName, command.SizeInBytes);
 
-        // Estructural, no de negocio: ¿el Excel tiene las diez columnas esperadas? Un archivo
+        // Estructural, no de negocio: ¿el Excel tiene las once columnas esperadas? Un archivo
         // corrupto, protegido con contrasena, o que no es realmente un .xlsx tambien cae aca
         // (ClosedXmlCustomerImporter lo homogeneiza a "columnas no encontradas") — desde afuera es
         // indistinguible de una cabecera equivocada, y los dos son "el archivo no sirve".
@@ -197,11 +209,14 @@ public sealed class ImportCustomersHandler(
         }
 
         var (candidates, errors) = await ValidateRowsAsync(command.TenantId, parsed.Rows, cancellationToken);
+        candidates = await ResolveCucTargetsAsync(
+            command.TenantId, candidates, errors, cancellationToken);
         candidates = await RemoveExistingIdentificationsAsync(
             command.TenantId, candidates, errors, cancellationToken);
 
         var now = clock.UtcNow;
-        var imported = await CreateCustomersAsync(command.TenantId, candidates, now, cancellationToken);
+        var imported = await CreateOrUpdateCustomersAsync(
+            command.TenantId, candidates, errors, now, cancellationToken);
 
         // Un solo evento por el import completo, no uno por cliente: mil clientes importados de
         // una vez no deben dejar mil filas en el outbox. Los conteos van en el resourceId porque
@@ -320,6 +335,7 @@ public sealed class ImportCustomersHandler(
 
             candidates.Add(new CandidateRow(
                 row.RowNumber,
+                string.IsNullOrWhiteSpace(row.Cuc) ? null : row.Cuc.Trim(),
                 row.Name!.Trim(),
                 type,
                 number,
@@ -329,10 +345,64 @@ public sealed class ImportCustomersHandler(
                 city,
                 classification,
                 ParseWithRetention(row.WithRetention),
+                null,
                 row));
         }
 
         return (candidates, errors);
+    }
+
+    /// <summary>
+    /// Las candidatas con Cuc son actualizaciones: resuelve cada una contra un cliente existente
+    /// del tenant, en una sola consulta batch por sufijo estable (ver
+    /// <see cref="Customer.StableSuffixOf"/>), no una por fila. Una candidata cuyo Cuc no matchea
+    /// ningun cliente pasa a error <c>cuc_not_found</c> — el pedido es explicito: traer Cuc es
+    /// pedir una actualizacion, y si no hay a quien actualizar la fila falla, no cae a crear.
+    /// </summary>
+    private async Task<List<CandidateRow>> ResolveCucTargetsAsync(
+        Guid tenantId,
+        List<CandidateRow> candidates,
+        List<ImportRowError> errors,
+        CancellationToken cancellationToken)
+    {
+        var suffixes = candidates
+            .Where(candidate => candidate.Cuc is not null)
+            .Select(candidate => Customer.StableSuffixOf(candidate.Cuc!))
+            .Distinct()
+            .ToArray();
+        if (suffixes.Length == 0)
+        {
+            return candidates;
+        }
+
+        var targetIdsBySuffix = await customerRepository.FindIdsByCucSuffixAsync(
+            tenantId, suffixes, cancellationToken);
+
+        var resolved = new List<CandidateRow>(candidates.Count);
+        foreach (var candidate in candidates)
+        {
+            if (candidate.Cuc is null)
+            {
+                resolved.Add(candidate);
+                continue;
+            }
+
+            if (targetIdsBySuffix.TryGetValue(Customer.StableSuffixOf(candidate.Cuc), out var targetId))
+            {
+                resolved.Add(candidate.WithTargetId(targetId));
+            }
+            else
+            {
+                errors.Add(new ImportRowError(
+                    candidate.RowNumber,
+                    "customers.import.row.cuc_not_found",
+                    "No customer with that Cuc was found in this tenant.",
+                    nameof(ExcelCustomerRow.Cuc),
+                    ToRowData(candidate.SourceRow)));
+            }
+        }
+
+        return resolved;
     }
 
     /// <summary>
@@ -363,7 +433,12 @@ public sealed class ImportCustomersHandler(
         var stillValid = new List<CandidateRow>(candidates.Count);
         foreach (var candidate in candidates)
         {
-            if (existing.Contains((candidate.Type, candidate.Number)))
+            // Una fila de actualizacion que conserva su propia identificacion no esta "tomada":
+            // el dueno existente y el objetivo de esta fila (TargetId) son el mismo cliente. Para
+            // una fila de creacion, TargetId siempre es null, asi que cualquier dueno encontrado
+            // cuenta como "otro" — mismo comportamiento que antes.
+            if (existing.TryGetValue((candidate.Type, candidate.Number), out var ownerId) &&
+                ownerId != candidate.TargetId)
             {
                 errors.Add(new ImportRowError(
                     candidate.RowNumber,
@@ -382,13 +457,18 @@ public sealed class ImportCustomersHandler(
     }
 
     /// <summary>
-    /// Con las filas que quedaron realmente validas: reserva el bloque de CUCs de una sola vez
-    /// (<see cref="ICucGenerator.NextBatchAsync"/>) y los asigna en el mismo orden en que las filas
-    /// aparecen en el archivo.
+    /// Con las filas que quedaron realmente validas: las que no tienen <c>TargetId</c> crean
+    /// (reservan su bloque de CUCs de una sola vez con
+    /// <see cref="ICucGenerator.NextBatchAsync"/>, asignados en el mismo orden en que las filas
+    /// aparecen en el archivo) y las que si tienen actualizan ese cliente
+    /// (<see cref="Customer.Update"/>, mismo reemplazo total que usa el PUT de un cliente). Un
+    /// solo recorrido en orden de archivo para que <c>imported</c> salga en ese mismo orden sin
+    /// importar la mezcla de creaciones y actualizaciones.
     /// </summary>
-    private async Task<List<ImportedCustomerRow>> CreateCustomersAsync(
+    private async Task<List<ImportedCustomerRow>> CreateOrUpdateCustomersAsync(
         Guid tenantId,
         List<CandidateRow> candidates,
+        List<ImportRowError> errors,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -398,17 +478,63 @@ public sealed class ImportCustomersHandler(
             return imported;
         }
 
-        var firstSequence = await cucGenerator.NextBatchAsync(
-            tenantId, candidates.Count, cancellationToken);
+        var createCount = candidates.Count(candidate => candidate.TargetId is null);
+        var nextSequence = createCount > 0
+            ? await cucGenerator.NextBatchAsync(tenantId, createCount, cancellationToken)
+            : 0L;
 
-        for (var index = 0; index < candidates.Count; index++)
+        foreach (var candidate in candidates)
         {
-            var candidate = candidates[index];
-            var sequence = firstSequence + index;
+            if (candidate.TargetId is { } targetId)
+            {
+                var customer = await customerRepository.FindAsync(tenantId, targetId, cancellationToken)
+                    ?? throw new InvalidOperationException(
+                        $"Customer '{targetId}' resolved by Cuc suffix was not found when applying the update.");
+
+                // Mismo chequeo que UpdateCustomerHandler hace via Customer.Update, pero
+                // adelantado: Update() lanza CustomersDomainException si el cliente esta
+                // inactivo, y esta funcion no tiene un try/catch por fila — dejarlo pasar
+                // abortaria el import entero por una sola fila en vez de reportarla como error.
+                if (!customer.IsActive)
+                {
+                    errors.Add(new ImportRowError(
+                        candidate.RowNumber,
+                        "customers.import.row.customer_inactive",
+                        "The customer with that Cuc is inactive and cannot be edited.",
+                        nameof(ExcelCustomerRow.Cuc),
+                        ToRowData(candidate.SourceRow)));
+                    continue;
+                }
+
+                customer.Update(
+                    candidate.Name,
+                    candidate.City.CityId,
+                    new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                    new CustomerContactInfo
+                    {
+                        Phone = candidate.Phone,
+                        Email = candidate.Email,
+                        Address = candidate.Address
+                    },
+                    new CustomerCommercialInfo
+                    {
+                        ClassificationId = candidate.Classification.Id,
+                        WithRetention = candidate.WithRetention
+                    },
+                    candidate.Classification.Prefix,
+                    now);
+
+                imported.Add(new ImportedCustomerRow(
+                    candidate.RowNumber, customer.Cuc, candidate.Name, "updated"));
+                continue;
+            }
+
+            var sequence = nextSequence;
+            nextSequence++;
             var cuc = CucFormatter.Build(
                 candidate.Classification.Prefix, candidate.City.DepartmentDivipolaCode, sequence);
 
-            var customer = Customer.Create(
+            var newCustomer = Customer.Create(
                 CustomerId.New(),
                 tenantId,
                 cuc,
@@ -428,8 +554,8 @@ public sealed class ImportCustomersHandler(
                 },
                 now);
 
-            customerRepository.Add(customer);
-            imported.Add(new ImportedCustomerRow(candidate.RowNumber, cuc, candidate.Name));
+            customerRepository.Add(newCustomer);
+            imported.Add(new ImportedCustomerRow(candidate.RowNumber, cuc, candidate.Name, "created"));
         }
 
         return imported;
@@ -445,6 +571,7 @@ public sealed class ImportCustomersHandler(
     /// esta vacia). El resto de las columnas viaja tal cual, nulo incluido.
     /// </summary>
     private static CustomerImportRowData ToRowData(ExcelCustomerRow row) => new(
+        row.Cuc,
         row.Name ?? string.Empty,
         row.IdentificationType ?? string.Empty,
         row.IdentificationNumber ?? string.Empty,
@@ -497,8 +624,12 @@ public sealed class ImportCustomersHandler(
     // `SourceRow`: la fila cruda de origen, guardada solo para poder adjuntar
     // `CustomerImportRowData` a un `identification_taken` — el unico error que se detecta
     // despues de que la fila ya paso a candidata.
+    // `Cuc`: el valor crudo de la columna Cuc, recortado — null si la fila crea. `TargetId` lo
+    // llena `ResolveCucTargetsAsync` una vez que matchea contra un cliente existente; hasta
+    // entonces viaja null aunque `Cuc` no lo sea.
     private sealed record CandidateRow(
         int RowNumber,
+        string? Cuc,
         string Name,
         IdentificationType Type,
         string Number,
@@ -508,7 +639,11 @@ public sealed class ImportCustomersHandler(
         CustomerCityRef City,
         ClientClassification Classification,
         bool WithRetention,
-        ExcelCustomerRow SourceRow);
+        CustomerId? TargetId,
+        ExcelCustomerRow SourceRow)
+    {
+        public CandidateRow WithTargetId(CustomerId targetId) => this with { TargetId = targetId };
+    }
 }
 
 /// <summary>

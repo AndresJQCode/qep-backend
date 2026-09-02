@@ -94,6 +94,47 @@ public sealed class CompanyApiTests
             Assert.Single(Assert.Single(byAccount.Items).AccountNumbers));
     }
 
+    // Dos cajas separadas (CLI-FILTROS-01): `name` filtra solo por nombre, `taxId` solo por
+    // NIT — a diferencia de `search`, que combina nombre y numero de cuenta con OR.
+    [Fact]
+    public async Task ListFiltersByNameAndByTaxIdIndependently()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        await CreateCompanyAsync(
+            client, "Andes Logistica S.A.S.", "CTA-000123", taxId: "900.111.111-1");
+        await CreateCompanyAsync(
+            client, "Textiles Andinos S.A.S.", "CTA-000456", taxId: "900.222.222-2");
+
+        var byName = await ListAsync(client, "?name=logistica");
+        var byTaxId = await ListAsync(client, "?taxId=900.222");
+
+        Assert.Equal("Andes Logistica S.A.S.", Assert.Single(byName.Items).Name);
+        Assert.Equal("Textiles Andinos S.A.S.", Assert.Single(byTaxId.Items).Name);
+    }
+
+    // Se combinan con AND cuando se llenan las dos, igual que las tres cajas de clientes.
+    [Fact]
+    public async Task ListCombinesNameAndTaxIdWithAnd()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        await CreateCompanyAsync(
+            client, "Andes Logistica S.A.S.", "CTA-000123", taxId: "900.111.111-1");
+        await CreateCompanyAsync(
+            client, "Andes Textiles S.A.S.", "CTA-000456", taxId: "900.222.222-2");
+
+        var both = await ListAsync(client, "?name=andes&taxId=900.111");
+        // Las dos empresas coinciden por nombre ("andes"), pero ningun NIT coincide con este
+        // — si el AND no se aplicara, esto devolveria alguna igual.
+        var neither = await ListAsync(client, "?name=andes&taxId=999.999");
+
+        Assert.Equal("Andes Logistica S.A.S.", Assert.Single(both.Items).Name);
+        Assert.Empty(neither.Items);
+    }
+
     // `%` y `_` son comodines de LIKE: sin escaparlos, `?search=_` devuelve el listado entero
     // —coincide con cualquier caracter—, que es lo contrario de filtrar. Es el defecto que la
     // revision de fiabilidad de CAT-02 encontro en este mismo codigo.

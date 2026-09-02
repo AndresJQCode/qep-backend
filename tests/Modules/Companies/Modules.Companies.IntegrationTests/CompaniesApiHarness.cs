@@ -76,12 +76,50 @@ internal static class CompaniesApiHarness
         string currency = "COP") =>
         new { bankName, accountNumber, currency };
 
+    private sealed record GeographyDepartmentDto(Guid Id, string DivipolaCode, string Name);
+
+    private sealed record GeographyCityDto(Guid Id, string DivipolaCode, string Name, Guid DepartmentId);
+
+    /// <summary>
+    /// Una ciudad real (Geography no tiene tenant: los datos son los que siembra
+    /// <c>GeographySeeder</c> en cada arranque), para satisfacer el <c>CityId</c> obligatorio de
+    /// <c>CreateCompanyRequest</c>/<c>UpdateCompanyRequest</c> desde "feat(empresas): agregar
+    /// departamento y ciudad". No se hardcodea ningun id: los dos endpoints de Geography son la
+    /// unica fuente confiable de ids reales en esta base de prueba — mismo patron que
+    /// <c>CustomersApiHarness.EnsureCityAsync</c>.
+    /// </summary>
+    public static async Task<Guid> EnsureCityIdAsync(HttpClient client)
+    {
+        var departments = await client.GetFromJsonAsync<List<GeographyDepartmentDto>>(
+            "/api/v1/departments", TestContext.Current.CancellationToken);
+        Assert.NotNull(departments);
+        Assert.NotEmpty(departments);
+
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<GeographyCityDto>>(
+                $"/api/v1/cities?departmentId={department.Id}",
+                TestContext.Current.CancellationToken);
+            if (cities is { Count: > 0 })
+            {
+                return cities[0].Id;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "No seeded DIVIPOLA department has at least one city.");
+    }
+
     /// <summary>
     /// Da de alta una empresa con una sola cuenta y devuelve la respuesta ya deserializada.
     ///
     /// Sigue tomando el numero suelto porque es lo que la mayoria de las pruebas necesita —una
     /// empresa cualquiera, distinguible por su numero—. Las que ejercen la coleccion arman el
     /// cuerpo a mano con <see cref="BankAccount"/>.
+    ///
+    /// <c>cityId</c> es opcional: sin uno explicito, resuelve el primero disponible con
+    /// <see cref="EnsureCityIdAsync"/> — la mayoria de las pruebas no le importa cual ciudad,
+    /// solo que la empresa se pueda crear.
     /// </summary>
     public static async Task<CompanyResponse> CreateCompanyAsync(
         HttpClient client,
@@ -91,8 +129,10 @@ internal static class CompaniesApiHarness
         string? phone = null,
         string? email = null,
         string? address = null,
-        string tenantId = TenantId)
+        string tenantId = TenantId,
+        Guid? cityId = null)
     {
+        var resolvedCityId = cityId ?? await EnsureCityIdAsync(client);
         var response = await client.PostAsJsonAsync(
             CompaniesUrl(tenantId),
             new
@@ -102,7 +142,8 @@ internal static class CompaniesApiHarness
                 taxId,
                 phone,
                 email,
-                address
+                address,
+                cityId = resolvedCityId
             },
             TestContext.Current.CancellationToken);
 

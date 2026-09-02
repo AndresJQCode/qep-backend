@@ -25,6 +25,13 @@ internal sealed class CityRepository(GeographyDbContext dbContext) : ICityReposi
             .Where(city => cityIds.Contains(city.Id))
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<City>> ListByDepartmentsAsync(
+        IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken) =>
+        await dbContext.Cities
+            .AsNoTracking()
+            .Where(city => departmentIds.Contains(city.DepartmentId))
+            .ToArrayAsync(cancellationToken);
+
     // En memoria y no ILike: ILike ya cubria mayusculas pero no tildes ("Bogota" vs "BOGOTÁ"), y
     // Postgres no tiene una funcion nativa de "sin tildes" sin la extension `unaccent`. Acotado por
     // departamento en la consulta (a lo sumo unas pocas decenas de ciudades), asi que traerlas

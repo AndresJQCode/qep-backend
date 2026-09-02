@@ -452,6 +452,38 @@ public sealed class CustomerWriteApiTests
         Assert.False(updated.WithRetention);
     }
 
+    // Mismo criterio que withRetention: viaja en el POST/PUT, se guarda y se devuelve tal cual.
+    [Fact]
+    public async Task CreateAndUpdateRoundTripVatSurplus()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var created = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, classification.Id, vatSurplus: true),
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        var customer = await created.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        Assert.True(customer.VatSurplus);
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
+            NewCustomerBody(city.CityId, classification.Id, vatSurplus: false),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var result = await updated.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.False(result.VatSurplus);
+    }
+
     // El CUC no viaja en el request y el PUT no lo puede pisar con un valor propio ("cuc":
     // "CUC-999999" aca no tiene efecto). Sin cambio de clasificacion, tampoco cambia por si solo.
     [Fact]

@@ -4,7 +4,7 @@ using Modules.Customers.Application;
 namespace Modules.Customers.Infrastructure.Excel;
 
 /// <summary>
-/// Lee un Excel de clientes con ClosedXML. Solo parseo estructural: ubica las diez columnas
+/// Lee un Excel de clientes con ClosedXML. Solo parseo estructural: ubica las once columnas
 /// esperadas por su nombre de cabecera (no por posicion — una persona reordenando columnas en
 /// Excel es mas probable que reordenar texto) y lee las filas de datos como texto crudo. Ninguna
 /// regla de negocio vive aca; eso es <c>ExcelCustomerRowRules</c> y <c>ImportCustomersHandler</c>,
@@ -54,6 +54,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             cancellationToken.ThrowIfCancellationRequested();
 
             var row = worksheet.Row(rowNumber);
+            var cuc = Cell(row, indexes, CustomerImportColumns.Cuc);
             var name = Cell(row, indexes, CustomerImportColumns.Name);
             var identificationType = Cell(row, indexes, CustomerImportColumns.IdentificationType);
             var identificationNumber = Cell(row, indexes, CustomerImportColumns.IdentificationNumber);
@@ -68,15 +69,17 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             // Una fila completamente vacia es ruido de formato (una fila en blanco que Excel deja
             // entre los datos y el final de la hoja), no una fila de datos que haya que reportar
             // como invalida.
-            if (name is null && identificationType is null && identificationNumber is null &&
-                phone is null && email is null && address is null && department is null &&
-                city is null && classification is null && withRetention is null)
+            if (cuc is null && name is null && identificationType is null &&
+                identificationNumber is null && phone is null && email is null &&
+                address is null && department is null && city is null &&
+                classification is null && withRetention is null)
             {
                 continue;
             }
 
             rows.Add(new ExcelCustomerRow(
                 rowNumber,
+                cuc,
                 name,
                 identificationType,
                 identificationNumber,

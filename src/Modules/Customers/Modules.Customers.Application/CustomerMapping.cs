@@ -24,6 +24,7 @@ internal static class CustomerMapping
             city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
         classification.ToDto(),
         customer.WithRetention,
+        customer.VatSurplus,
         customer.IsActive,
         customer.CreatedAt,
         customer.UpdatedAt);
@@ -73,10 +74,12 @@ internal static class CustomerMapping
 
     public static CustomerCommercialInfo ToCommercialInfo(
         Guid classificationId,
-        bool withRetention) =>
+        bool withRetention,
+        bool vatSurplus) =>
         new()
         {
             ClassificationId = new ClientClassificationId(classificationId),
-            WithRetention = withRetention
+            WithRetention = withRetention,
+            VatSurplus = vatSurplus
         };
 }
