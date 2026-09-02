@@ -9,3 +9,12 @@ coverage/
 *.suo
 .env
 artifacts/
+
+# Indice de CodeGraph: 42 MB de base de datos, sockets y logs, propios de cada
+# checkout. Nunca se comparte ni se copia entre worktrees --su raiz y los bytes
+# indexados difieren-- asi que cada clon reconstruye el suyo.
+.codegraph/
+
+# Cache local de wrangler (CLI de Cloudflare). Guarda datos de la cuenta con la
+# que se inicio sesion.
+.wrangler/
