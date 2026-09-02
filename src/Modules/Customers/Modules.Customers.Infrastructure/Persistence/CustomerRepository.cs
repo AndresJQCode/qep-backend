@@ -30,14 +30,10 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     // terminaria evaluando el filtro en memoria en vez de en la base.
     private IQueryable<Customer> FilteredQuery(
         Guid tenantId,
-        string? search,
-        string? name,
-        string? identificationNumber,
-        string? cuc,
-        IReadOnlyCollection<Guid>? cityIds,
-        int page,
-        int pageSize,
-        CancellationToken cancellationToken)
+        string? searchPattern,
+        string? namePattern,
+        string? identificationPattern,
+        string? cucPattern)
     {
         var query = dbContext.Customers
             .AsNoTracking()
@@ -75,9 +71,54 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter));
         }
 
+        return query;
+    }
+
+    // Orden por CUC y no por relevancia como SearchAsync: el CUC es unico dentro del tenant, asi
+    // que desempata siempre. Recorrer en lotes un orden que empata puede saltear o repetir filas
+    // entre una consulta y la siguiente, y eso en un archivo exportado no lo ve nadie.
+    public async Task<IReadOnlyList<Customer>> ListForExportAsync(
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? identificationNumber,
+        string? cuc,
+        int skip,
+        int take,
+        CancellationToken cancellationToken) =>
+        await FilteredQuery(
+                tenantId,
+                LikePattern(search),
+                LikePattern(name),
+                LikePattern(identificationNumber),
+                LikePattern(cuc))
+            .OrderBy(customer => customer.Cuc)
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+    public async Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? identificationNumber,
+        string? cuc,
+        IReadOnlyCollection<Guid>? cityIds,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var searchPattern = LikePattern(search);
+        var namePattern = LikePattern(name);
+        var identificationPattern = LikePattern(identificationNumber);
+        var cucPattern = LikePattern(cuc);
+        var query = FilteredQuery(
+            tenantId, searchPattern, namePattern, identificationPattern, cucPattern);
+
         // `null` es "sin filtro"; una coleccion (incluso vacia) filtra por esos ids exactos —
         // Departamento ya se tradujo a ids de ciudad en ListCustomersHandler, asi que aca no hay
-        // nada que resolver, solo aplicar el IN.
+        // nada que resolver, solo aplicar el IN. Va aca y no en FilteredQuery porque la
+        // exportacion no filtra por ciudad.
         if (cityIds is not null)
         {
             query = query.Where(customer => cityIds.Contains(customer.CityId));
