@@ -130,6 +130,8 @@ public sealed class Customer
 
     public bool WithRetention { get; private set; }
 
+    public bool VatSurplus { get; private set; }
+
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Company</c>, <c>Product</c> y <c>Membership</c>.
     /// Cada mutacion lo incrementa, y la infraestructura lo mapea con <c>IsConcurrencyToken()</c>,
@@ -242,6 +244,7 @@ public sealed class Customer
     {
         ClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         WithRetention = commercial.WithRetention;
+        VatSurplus = commercial.VatSurplus;
     }
 
     public void Deactivate(DateTimeOffset occurredAt)
@@ -323,11 +326,22 @@ public sealed class Customer
     // El CUC es "{prefijo}{depto}{consecutivo}" (CucFormatter, en Application): el codigo de
     // departamento DIVIPOLA son siempre 2 digitos y el consecutivo siempre 6
     // (CucFormatter.SequenceDigits) — los ultimos ocho caracteres de cualquier CUC valido. Cambiar
-    // de clasificacion solo reescribe lo que viene antes de eso.
-    private const int CucSuffixLength = 8;
+    // de clasificacion solo reescribe lo que viene antes de eso. Publico porque la importacion
+    // masiva (Application) tambien lo necesita: matchear un cliente existente por este mismo
+    // sufijo, no por el CUC completo, es lo unico estable si el prefijo cambio desde que se
+    // exporto ese CUC.
+    public const int CucSuffixLength = 8;
+
+    /// <summary>
+    /// La parte de un CUC que nunca cambia: sus ultimos <see cref="CucSuffixLength"/> caracteres.
+    /// Un solo lugar para este invariante — <see cref="ReplaceClassificationPrefix"/> y la
+    /// importacion masiva (<c>ImportCustomersHandler</c>) lo comparten en vez de repetir el
+    /// "ultimos ocho caracteres" en dos archivos.
+    /// </summary>
+    public static string StableSuffixOf(string cuc) => cuc[^CucSuffixLength..];
 
     private static string ReplaceClassificationPrefix(string cuc, string newPrefix) =>
-        newPrefix + cuc[^CucSuffixLength..];
+        newPrefix + StableSuffixOf(cuc);
 
     // Mismo criterio que NormalizeName/NormalizeCuc: el prefijo llega resuelto desde
     // ClientClassification, pero Update lo vuelve a validar aca porque hace falta **antes** de

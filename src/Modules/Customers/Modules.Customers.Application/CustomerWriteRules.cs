@@ -43,7 +43,7 @@ public interface ICustomerWriteCommand
 ///
 /// Los nombres de propiedad viajan en PascalCase y asi los espera el consumidor
 /// (<c>FIELD_BY_BACKEND_NAME</c>): Name, IdentificationType, IdentificationNumber, Phone, Email,
-/// Address, CityId, ClassificationId, WithRetention.
+/// Address, CityId, ClassificationId, WithRetention, VatSurplus.
 ///
 /// <c>CityId</c> y <c>ClassificationId</c> solo se comprueban **no vacios** aca: que la fila
 /// exista y sea del tenant lo resuelve el handler (para armar el CUC) y, en la carrera, la FK de

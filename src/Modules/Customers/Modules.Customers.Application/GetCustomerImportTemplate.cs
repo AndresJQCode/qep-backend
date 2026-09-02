@@ -27,7 +27,7 @@ public sealed class GetCustomerImportTemplateHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, CustomersPermissions.CustomerImport);
 
-        var departments = await geographyLookup.ListDepartmentsAsync(cancellationToken);
+        var departments = await geographyLookup.ListDepartmentsWithCitiesAsync(cancellationToken);
 
         // Solo las clasificaciones activas: una que esta desactivada no deberia sugerirse en una
         // plantilla que alguien va a llenar de ahora en adelante, aunque FindByNameAsync (el que
@@ -38,10 +38,13 @@ public sealed class GetCustomerImportTemplateHandler(
             .Where(classification => classification.IsActive)
             .Select(classification => classification.Name)
             .ToArray();
-        var departmentNames = departments.Select(department => department.Name).ToArray();
+        var departmentOptions = departments
+            .Select(department => new CustomerImportDepartmentOption(
+                department.Name, department.DivipolaCode, department.CityNames))
+            .ToArray();
 
         var content = templateBuilder.Build(
-            departmentNames,
+            departmentOptions,
             activeClassificationNames,
             IdentificationTypeParser.SupportedWireValues,
             cancellationToken);

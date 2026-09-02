@@ -20,6 +20,8 @@ public sealed record ListCustomersQuery(
     string? Name,
     string? IdentificationNumber,
     string? Cuc,
+    IReadOnlyCollection<Guid>? DepartmentIds,
+    IReadOnlyCollection<Guid>? CityIds,
     int Page,
     int PageSize) : IQuery<CustomerPage>;
 
@@ -72,6 +74,7 @@ public sealed class ListCustomersHandler(
 
         var page = CustomerPaging.NormalizePage(query.Page);
         var pageSize = CustomerPaging.NormalizePageSize(query.PageSize);
+        var cityIds = await ResolveCityIdsAsync(query.DepartmentIds, query.CityIds, cancellationToken);
 
         var (customers, total) = await repository.SearchAsync(
             query.TenantId,
@@ -79,6 +82,7 @@ public sealed class ListCustomersHandler(
             query.Name,
             query.IdentificationNumber,
             query.Cuc,
+            cityIds,
             page,
             pageSize,
             cancellationToken);
@@ -86,6 +90,30 @@ public sealed class ListCustomersHandler(
         var items = await ToDtosAsync(query.TenantId, customers, cancellationToken);
 
         return new CustomerPage(items, total, page, pageSize);
+    }
+
+    // `null` significa "sin filtro de ciudad"; una coleccion (incluso vacia) significa "filtrar
+    // por estos ids exactos". Departamento y Ciudad son dos filtros independientes que se
+    // combinan con AND: si vienen los dos, el resultado es la interseccion (la ciudad tiene que
+    // estar en el departamento elegido Y en la lista de ciudades elegida). `Customer` solo
+    // guarda `CityId`, nunca el departamento, asi que Departamento se resuelve aca a los ids de
+    // ciudad que realmente representa antes de llegar al repositorio.
+    private async Task<IReadOnlyCollection<Guid>?> ResolveCityIdsAsync(
+        IReadOnlyCollection<Guid>? departmentIds,
+        IReadOnlyCollection<Guid>? cityIds,
+        CancellationToken cancellationToken)
+    {
+        if (departmentIds is not { Count: > 0 })
+        {
+            return cityIds is { Count: > 0 } ? cityIds : null;
+        }
+
+        var cityIdsInDepartments = await geographyLookup.ListCityIdsByDepartmentsAsync(
+            departmentIds, cancellationToken);
+
+        return cityIds is { Count: > 0 }
+            ? cityIds.Intersect(cityIdsInDepartments).ToArray()
+            : cityIdsInDepartments;
     }
 
     // Resuelve las ciudades y las clasificaciones distintas de la pagina con una sola consulta en

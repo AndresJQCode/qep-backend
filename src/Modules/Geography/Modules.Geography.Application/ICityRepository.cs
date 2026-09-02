@@ -30,4 +30,13 @@ public interface ICityRepository
     /// </summary>
     Task<City?> FindByNameAsync(
         DepartmentId departmentId, string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Todas las ciudades de cualquiera de estos departamentos, en una sola consulta. La usa
+    /// <c>CustomerGeographyLookup</c> para resolver el filtro "Departamento" del listado de
+    /// clientes a los ids de ciudad que ese filtro realmente necesita: <c>Customer</c> solo
+    /// guarda <c>CityId</c>, nunca el departamento.
+    /// </summary>
+    Task<IReadOnlyList<City>> ListByDepartmentsAsync(
+        IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken);
 }

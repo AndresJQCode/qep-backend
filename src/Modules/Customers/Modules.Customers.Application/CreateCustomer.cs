@@ -15,7 +15,8 @@ public sealed record CreateCustomerCommand(
     string? Address,
     Guid CityId,
     Guid ClassificationId,
-    bool WithRetention) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    bool WithRetention,
+    bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
@@ -84,7 +85,8 @@ public sealed class CreateCustomerHandler(
                 Email = command.Email,
                 Address = command.Address
             },
-            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.WithRetention),
+            CustomerMapping.ToCommercialInfo(
+                command.ClassificationId, command.WithRetention, command.VatSurplus),
             now);
 
         repository.Add(customer);

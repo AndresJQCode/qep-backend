@@ -16,7 +16,8 @@ public sealed record UpdateCustomerCommand(
     string? Address,
     Guid CityId,
     Guid ClassificationId,
-    bool WithRetention) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    bool WithRetention,
+    bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
 public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCommand>
@@ -81,7 +82,8 @@ public sealed class UpdateCustomerHandler(
                 Email = command.Email,
                 Address = command.Address
             },
-            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.WithRetention),
+            CustomerMapping.ToCommercialInfo(
+                command.ClassificationId, command.WithRetention, command.VatSurplus),
             classification.Prefix,
             now);
 

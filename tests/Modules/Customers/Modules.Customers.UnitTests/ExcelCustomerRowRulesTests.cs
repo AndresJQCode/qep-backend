@@ -14,6 +14,7 @@ public sealed class ExcelCustomerRowRulesTests
     private readonly ExcelCustomerRowRules validator = new();
 
     private static ExcelCustomerRow ValidRow(
+        string? cuc = null,
         string? name = "Verde Esencial S.A.S.",
         string? identificationType = "NIT",
         string? identificationNumber = "900.123.456-1",
@@ -24,7 +25,7 @@ public sealed class ExcelCustomerRowRulesTests
         string? city = "Medellin",
         string? classification = "Mayorista",
         string? withRetention = "No") =>
-        new(2, name, identificationType, identificationNumber, phone, email, address,
+        new(2, cuc, name, identificationType, identificationNumber, phone, email, address,
             department, city, classification, withRetention);
 
     [Fact]
@@ -33,6 +34,25 @@ public sealed class ExcelCustomerRowRulesTests
         var result = validator.Validate(ValidRow());
 
         Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void ARowWithAValidCucPassesEveryRule()
+    {
+        var result = validator.Validate(ValidRow(cuc: "CLI08000037"));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void ACucShorterThanTheStableSuffixFails()
+    {
+        var result = validator.Validate(ValidRow(cuc: "CLI0800"));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.cuc_invalid" &&
+            error.PropertyName == nameof(ExcelCustomerRow.Cuc));
     }
 
     [Fact]

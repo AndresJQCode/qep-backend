@@ -26,6 +26,14 @@ public sealed record CustomerCommercialInfo
     public bool WithRetention { get; init; }
 
     /// <summary>
+    /// Si el cliente tiene excedente de IVA.
+    ///
+    /// Mismo criterio que <see cref="WithRetention"/>: <c>bool</c>, no <c>bool?</c> — el
+    /// formulario lo presenta como un interruptor con dos estados, sin "sin definir".
+    /// </summary>
+    public bool VatSurplus { get; init; }
+
+    /// <summary>
     /// **No usar para <c>Customer.Create</c>/<c>Update</c>.** Deja <c>ClassificationId</c> en su
     /// default (<c>Guid.Empty</c>), que <c>Customer</c> rechaza — la clasificacion es obligatoria.
     /// Sigue existiendo para pruebas que arman un <c>CustomerCommercialInfo</c> parcial y

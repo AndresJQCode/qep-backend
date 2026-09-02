@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="ClosedXML" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="FluentValidation" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
@@ -13,5 +14,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Customers\Modules.Customers.Application\Modules.Customers.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Customers\Modules.Customers.Domain\Modules.Customers.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

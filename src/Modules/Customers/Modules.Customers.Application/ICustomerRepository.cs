@@ -15,6 +15,12 @@ public interface ICustomerRepository
     /// (CLI-FILTROS-01): cada uno filtra su propia columna con ILIKE, y se combinan con AND
     /// cuando el llamador manda mas de uno. <c>search</c> es el criterio OR original —sobre los
     /// mismos tres campos— que el combobox de clientes de <c>quotes</c> todavia necesita.
+    ///
+    /// <c>cityIds</c> filtra por ciudad exacta (no ILIKE: son ids). <c>null</c> es "sin filtro";
+    /// una coleccion vacia es "no matchear ninguna fila" — la usa <c>ListCustomersHandler</c>
+    /// cuando el filtro de Departamento ya resolvio que ningun id de ciudad aplica. El filtro de
+    /// Departamento en si no llega hasta aca: <c>Customer</c> no guarda departamento, asi que el
+    /// handler ya lo tradujo a ids de ciudad antes de llamar a este metodo.
     /// </summary>
     Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
         Guid tenantId,
@@ -22,6 +28,7 @@ public interface ICustomerRepository
         string? name,
         string? identificationNumber,
         string? cuc,
+        IReadOnlyCollection<Guid>? cityIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
@@ -66,14 +73,30 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Cuales de estas identificaciones ya existen en el tenant, en una sola consulta. La usa la
-    /// importacion masiva (Fase 5) para el chequeo de duplicados **contra la base** de todas las
-    /// filas que pasaron la validacion de campo y la deduplicacion dentro del archivo: una consulta
-    /// batch en vez de una por fila, para que una carga de mil clientes no haga mil round-trips.
+    /// Cuales de estas identificaciones ya existen en el tenant, en una sola consulta, junto con
+    /// el <see cref="CustomerId"/> que ya la usa. La usa la importacion masiva (Fase 5) para el
+    /// chequeo de duplicados **contra la base** de todas las filas que pasaron la validacion de
+    /// campo y la deduplicacion dentro del archivo: una consulta batch en vez de una por fila,
+    /// para que una carga de mil clientes no haga mil round-trips. El dueno viaja para que una
+    /// fila de actualizacion (Fase 8) que conserva su propia identificacion no se marque como
+    /// "tomada por otro" — el llamador compara ese dueno contra el cliente que esa fila esta
+    /// actualizando.
     /// </summary>
-    Task<IReadOnlySet<(IdentificationType Type, string Number)>> FindExistingIdentificationsAsync(
+    Task<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>
+        FindExistingIdentificationsAsync(
+            Guid tenantId,
+            IReadOnlyCollection<(IdentificationType Type, string Number)> identifications,
+            CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resuelve cada uno de estos sufijos estables de CUC (<see cref="Customer.StableSuffixOf"/>)
+    /// contra el cliente del tenant que lo tiene, en una sola consulta batch — la usa la
+    /// importacion masiva (Fase 8) para decidir, por fila, si la columna Cuc del Excel identifica
+    /// un cliente existente. Un sufijo sin match simplemente no aparece en el resultado.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId,
-        IReadOnlyCollection<(IdentificationType Type, string Number)> identifications,
+        IReadOnlyCollection<string> suffixes,
         CancellationToken cancellationToken);
 
     void Add(Customer customer);

@@ -42,6 +42,23 @@ public interface ICustomerGeographyLookup
     /// adivinarlos.
     /// </summary>
     Task<IReadOnlyList<CustomerDepartmentDto>> ListDepartmentsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Cada departamento DIVIPOLA con sus ciudades. La usa la plantilla de importacion (Fase 6)
+    /// para armar el desplegable de Ciudad en cascada: cada fila solo puede elegir una ciudad del
+    /// departamento que esa misma fila declaro, en vez de un listado plano de las 1122 ciudades
+    /// del pais.
+    /// </summary>
+    Task<IReadOnlyList<CustomerDepartmentWithCitiesDto>> ListDepartmentsWithCitiesAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los ids de ciudad de cualquiera de estos departamentos. La usa el filtro "Departamento"
+    /// del listado de clientes: <c>Customer</c> solo guarda <c>CityId</c>, asi que filtrar por
+    /// departamento primero necesita traducirlo a que ciudades caen dentro.
+    /// </summary>
+    Task<IReadOnlyCollection<Guid>> ListCityIdsByDepartmentsAsync(
+        IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -57,3 +74,9 @@ public sealed record CustomerCityRef(
     Guid DepartmentId,
     string DepartmentDivipolaCode,
     string DepartmentName);
+
+/// <summary>Un departamento DIVIPOLA con los nombres de sus ciudades, para la plantilla de
+/// importacion (Fase 6). <c>CityNames</c> no trae el id: la plantilla solo necesita el texto que
+/// va a la celda.</summary>
+public sealed record CustomerDepartmentWithCitiesDto(
+    Guid Id, string DivipolaCode, string Name, IReadOnlyList<string> CityNames);
