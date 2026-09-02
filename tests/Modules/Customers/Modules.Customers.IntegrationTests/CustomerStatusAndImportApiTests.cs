@@ -221,8 +221,10 @@ public sealed class CustomerStatusAndImportApiTests
         var expectedSecondCuc = $"{classification.Prefix}{city.DepartmentDivipolaCode}000002";
         Assert.Equal(2, result.Imported[0].RowNumber);
         Assert.Equal(expectedFirstCuc, result.Imported[0].Cuc);
+        Assert.Equal("created", result.Imported[0].Action);
         Assert.Equal(3, result.Imported[1].RowNumber);
         Assert.Equal(expectedSecondCuc, result.Imported[1].Cuc);
+        Assert.Equal("created", result.Imported[1].Action);
 
         var page = await ListAsync(client, string.Empty);
         Assert.Equal(2, page.Items.Count);
@@ -367,6 +369,134 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Contains(page.Items, item => item.Name == "Cliente Valido");
     }
 
+    /// <summary>
+    /// Fase 8: una fila con la columna Cuc llena de un cliente existente lo actualiza en vez de
+    /// crear uno nuevo — reemplazo total, mismas reglas que el PUT de un cliente.
+    /// </summary>
+    [Fact]
+    public async Task ImportRowWithAnExistingCucUpdatesThatCustomerInsteadOfCreatingANewOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var existing = await CreateCustomerAsync(manager, city.CityId, classification.Id);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: existing.Cuc,
+                    Name: "Nombre Actualizado",
+                    IdentificationType: existing.IdentificationType,
+                    IdentificationNumber: existing.IdentificationNumber,
+                    Phone: "3009998877",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal("completed", result.Status);
+        Assert.Equal(1, result.ImportedCount);
+        Assert.Equal("updated", result.Imported[0].Action);
+        Assert.Equal(existing.Cuc, result.Imported[0].Cuc);
+
+        // Ni un cliente nuevo (sigue habiendo uno solo) ni el Cuc cambio — solo el nombre y el
+        // telefono, que es lo que la fila traia distinto.
+        var page = await ListAsync(client, string.Empty);
+        var item = Assert.Single(page.Items);
+        Assert.Equal(existing.Cuc, item.Cuc);
+        Assert.Equal("Nombre Actualizado", item.Name);
+        Assert.Equal("3009998877", item.Phone);
+    }
+
+    /// <summary>
+    /// El pedido es explicito: traer Cuc en una fila pide una actualizacion. Si no hay a quien
+    /// actualizar, la fila falla — no cae a crear un cliente nuevo con ese Cuc inventado.
+    /// </summary>
+    [Fact]
+    public async Task ImportRowWithACucThatMatchesNoCustomerFailsWithoutCreatingAnything()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: "CLI08999999",
+                    IdentificationNumber: "900.777.777-7",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal("failed", result.Status);
+        Assert.Equal(0, result.ImportedCount);
+        Assert.Contains(result.Errors, error => error.Code == "customers.import.row.cuc_not_found");
+
+        var page = await ListAsync(client, string.Empty);
+        Assert.Empty(page.Items);
+    }
+
+    /// <summary>
+    /// Una fila de actualizacion que conserva su propia identificacion no puede marcarse como
+    /// "tomada por otro cliente" — el dueno existente de esa identificacion es el mismo cliente
+    /// que la fila esta actualizando.
+    /// </summary>
+    [Fact]
+    public async Task ImportRowUpdatingACustomerWithItsOwnIdentificationDoesNotFailAsTaken()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var existing = await CreateCustomerAsync(manager, city.CityId, classification.Id);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: existing.Cuc,
+                    Name: existing.Name,
+                    IdentificationType: existing.IdentificationType,
+                    IdentificationNumber: existing.IdentificationNumber,
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal("completed", result.Status);
+        Assert.Equal(1, result.ImportedCount);
+        Assert.Empty(result.Errors);
+    }
+
     [Fact]
     public async Task ImportCustomersWithMissingColumnsIsRejected()
     {
@@ -446,7 +576,7 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
-    /// Fase 6: la plantilla trae exactamente las diez columnas esperadas, en el orden del
+    /// Fase 6: la plantilla trae exactamente las once columnas esperadas, en el orden del
     /// contrato — se parsea de vuelta con ClosedXML, no alcanza con comprobar el content-type.
     /// </summary>
     [Fact]
@@ -503,6 +633,7 @@ public sealed class CustomerStatusAndImportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateImporter(factory);
         var rowData = new CustomerImportRowData(
+            null,
             "Cliente A Corregir",
             "NIT",
             "900.999.999-9",
@@ -527,9 +658,9 @@ public sealed class CustomerStatusAndImportApiTests
         var bytes = await response.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken);
         using var workbook = new XLWorkbook(new MemoryStream(bytes));
         var sheet = workbook.Worksheets.First();
-        Assert.Equal("Cliente A Corregir", sheet.Cell(2, 1).GetString());
-        Assert.Equal("900.999.999-9", sheet.Cell(2, 3).GetString());
-        Assert.Equal("Ciudad Que No Existe", sheet.Cell(2, 8).GetString());
+        Assert.Equal("Cliente A Corregir", sheet.Cell(2, 2).GetString());
+        Assert.Equal("900.999.999-9", sheet.Cell(2, 4).GetString());
+        Assert.Equal("Ciudad Que No Existe", sheet.Cell(2, 9).GetString());
     }
 
     [Fact]
@@ -557,7 +688,7 @@ public sealed class CustomerStatusAndImportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
         var rowData = new CustomerImportRowData(
-            "Cliente", "NIT", "900.000.000-0", null, null, null, "Antioquia", "Medellin", "X", null);
+            null, "Cliente", "NIT", "900.000.000-0", null, null, null, "Antioquia", "Medellin", "X", null);
 
         var response = await client.PostAsJsonAsync(
             $"{CustomersUrl()}/import/failed-rows",

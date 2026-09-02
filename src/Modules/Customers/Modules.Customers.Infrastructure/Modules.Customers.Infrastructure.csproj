@@ -1,6 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- ClosedXmlCustomerImportTemplateBuilder es internal: no es API publica del modulo, y su
+         armado de desplegables/rangos con nombre se prueba unitariamente. Mismo patron que
+         Geography. -->
+    <InternalsVisibleTo Include="Modules.Customers.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Modules.Customers.Application\Modules.Customers.Application.csproj" />
     <ProjectReference Include="..\Modules.Customers.Domain\Modules.Customers.Domain.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />

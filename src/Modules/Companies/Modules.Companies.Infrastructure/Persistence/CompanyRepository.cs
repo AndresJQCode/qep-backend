@@ -15,9 +15,19 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
         .Replace("%", "\\%", StringComparison.Ordinal)
         .Replace("_", "\\_", StringComparison.Ordinal);
 
+    // `null` para un filtro vacio/ausente, para que el llamador sepa si tiene que agregar el
+    // `Where` o no — mismo patron que `CustomerRepository.LikePattern`.
+    private static string? LikePattern(string? term)
+    {
+        var trimmed = term?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : $"%{EscapeLikeWildcards(trimmed)}%";
+    }
+
     public async Task<IReadOnlyList<Company>> SearchAsync(
         Guid tenantId,
         string? search,
+        string? name,
+        string? taxId,
         CompanyStatusFilter? status,
         CancellationToken cancellationToken)
     {
@@ -31,31 +41,48 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
             query = query.Where(company => company.IsActive == isActive);
         }
 
-        var term = search?.Trim();
-        if (!string.IsNullOrEmpty(term))
+        // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
+        // solo los dos que pone `LikePattern`: `%` y `_` son comodines de LIKE, asi que un
+        // termino sin escapar los convierte en parte de la sintaxis. `?search=_` devolvia el
+        // catalogo entero —coincide con cualquier caracter—, que es lo contrario de filtrar.
+        // Lo encontro la revision de fiabilidad de CAT-02, sobre este mismo codigo.
+        //
+        // Busca por nombre y por numero de cuenta. El NIT no entra aca: es el criterio OR
+        // original, y agregarlo lo haria menos preciso — para eso esta `taxId`, mas abajo, como
+        // caja propia (CLI-FILTROS-01).
+        //
+        // Desde EMP-08 el numero vive en la coleccion, asi que la condicion pasa a ser "alguna
+        // de sus cuentas coincide" y EF la traduce a un EXISTS sobre company_bank_accounts.
+        // Coincidir en una sola alcanza: quien escribe un numero en el buscador quiere la
+        // empresa que lo tiene.
+        //
+        // El nombre del banco no entra todavia. Es defendible que entre —"todas las de
+        // Bancolombia" es una busqueda razonable—, pero cambia lo que el usuario espera de la
+        // caja y eso lo decide el gate del modulo, no este slice.
+        var searchPattern = LikePattern(search);
+        if (searchPattern is not null)
         {
-            // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
-            // solo los dos que pone esta linea: `%` y `_` son comodines de LIKE, asi que un
-            // termino sin escapar los convierte en parte de la sintaxis. `?search=_` devolvia el
-            // catalogo entero —coincide con cualquier caracter—, que es lo contrario de filtrar.
-            // Lo encontro la revision de fiabilidad de CAT-02, sobre este mismo codigo.
-            //
-            // Busca por nombre y por numero de cuenta. El NIT no entra: nadie lo escribe de memoria
-            // en un buscador, y agregarlo despues no rompe a nadie.
-            //
-            // Desde EMP-08 el numero vive en la coleccion, asi que la condicion pasa a ser "alguna
-            // de sus cuentas coincide" y EF la traduce a un EXISTS sobre company_bank_accounts.
-            // Coincidir en una sola alcanza: quien escribe un numero en el buscador quiere la
-            // empresa que lo tiene.
-            //
-            // El nombre del banco no entra todavia. Es defendible que entre —"todas las de
-            // Bancolombia" es una busqueda razonable—, pero cambia lo que el usuario espera de la
-            // caja y eso lo decide el gate del modulo, no este slice.
-            var pattern = $"%{EscapeLikeWildcards(term)}%";
             query = query.Where(company =>
-                EF.Functions.ILike(company.Name, pattern, LikeEscapeCharacter) ||
+                EF.Functions.ILike(company.Name, searchPattern, LikeEscapeCharacter) ||
                 company.BankAccounts.Any(account =>
-                    EF.Functions.ILike(account.AccountNumber, pattern, LikeEscapeCharacter)));
+                    EF.Functions.ILike(account.AccountNumber, searchPattern, LikeEscapeCharacter)));
+        }
+
+        // Dos cajas separadas (CLI-FILTROS-01), cada una filtra su propia columna y se combinan
+        // con AND cuando el llamador manda mas de una — mismo patron que
+        // `CustomerRepository.SearchAsync`.
+        var namePattern = LikePattern(name);
+        if (namePattern is not null)
+        {
+            query = query.Where(company =>
+                EF.Functions.ILike(company.Name, namePattern, LikeEscapeCharacter));
+        }
+
+        var taxIdPattern = LikePattern(taxId);
+        if (taxIdPattern is not null)
+        {
+            query = query.Where(company =>
+                EF.Functions.ILike(company.TaxId, taxIdPattern, LikeEscapeCharacter));
         }
 
         return await query

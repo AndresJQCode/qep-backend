@@ -88,6 +88,47 @@ internal sealed class CustomerGeographyLookup(
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<CustomerDepartmentWithCitiesDto>> ListDepartmentsWithCitiesAsync(
+        CancellationToken cancellationToken)
+    {
+        var departments = await departmentRepository.ListAllAsync(cancellationToken);
+
+        // Una consulta por departamento (33 en total) en vez de traer las 1122 ciudades del pais
+        // y agruparlas en memoria: este metodo solo lo llama la descarga de la plantilla de
+        // importacion, no un endpoint de trafico alto, y ICityRepository ya expone
+        // ListByDepartmentAsync para el caso de uso existente de FindCityByNameAsync.
+        //
+        // Secuencial y no Task.WhenAll: las consultas comparten el mismo DbContext con ambito de
+        // request, y EF Core no admite mas de una operacion concurrente sobre la misma instancia
+        // — en paralelo tira "A second operation was started on this context instance before a
+        // previous operation completed", que la API mapea a 500.
+        var result = new List<CustomerDepartmentWithCitiesDto>(departments.Count);
+        foreach (var department in departments)
+        {
+            var cities = await cityRepository.ListByDepartmentAsync(department.Id, cancellationToken);
+            result.Add(new CustomerDepartmentWithCitiesDto(
+                department.Id.Value,
+                department.DivipolaCode,
+                department.Name,
+                cities.Select(city => city.Name).ToArray()));
+        }
+
+        return result;
+    }
+
+    public async Task<IReadOnlyCollection<Guid>> ListCityIdsByDepartmentsAsync(
+        IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken)
+    {
+        if (departmentIds.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = departmentIds.Select(id => new DepartmentId(id)).ToArray();
+        var cities = await cityRepository.ListByDepartmentsAsync(ids, cancellationToken);
+        return cities.Select(city => city.Id.Value).ToArray();
+    }
+
     private static CustomerCityRef ToRef(City city, Department department) =>
         new(
             city.Id.Value,

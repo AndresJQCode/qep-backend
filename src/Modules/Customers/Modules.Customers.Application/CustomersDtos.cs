@@ -23,6 +23,7 @@ public sealed record CustomerDto(
     CustomerDepartmentDto Department,
     ClientClassificationDto Classification,
     bool WithRetention,
+    bool VatSurplus,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -40,22 +41,23 @@ public sealed record CustomerResponse(
     CustomerDepartmentDto Department,
     ClientClassificationDto Classification,
     bool WithRetention,
+    bool VatSurplus,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
 /// <summary>
-/// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> y
-/// <c>department</c> no se pintan en la grilla, y mandarlos multiplica el cuerpo de la respuesta
-/// por cada cliente del tenant sin que nadie los mire.
+/// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
+/// se pinta en la grilla, y mandarla multiplica el cuerpo de la respuesta por cada cliente del
+/// tenant sin que nadie la mire.
 ///
 /// <c>Email</c> si viaja (CLI-FILTROS-01, columna "Contacto" junto a <c>Phone</c>) — decision de
 /// producto explicita de mostrar PII de contacto en la grilla, a cambio de que el usuario no
 /// tenga que abrir el detalle para ver como comunicarse con el cliente.
 ///
-/// <c>City</c> y <c>Classification</c> si viajan, resueltos, con el mismo criterio liviano:
-/// <c>Department</c> se omite aca aunque el detalle lo lleve, porque la grilla ya pinta la ciudad
-/// y el departamento es redundante para esa vista.
+/// <c>City</c>, <c>Department</c> y <c>Classification</c> viajan resueltos. <c>Department</c> se
+/// agrego para el filtro multiple de Departamento/Ciudad del listado: sin el, elegir un
+/// departamento en el filtro no tiene con que columna mostrarse en la grilla.
 /// </summary>
 public sealed record CustomerListItemResponse(
     Guid Id,
@@ -65,6 +67,7 @@ public sealed record CustomerListItemResponse(
     string? Phone,
     string? Email,
     CustomerCityDto City,
+    CustomerDepartmentDto Department,
     ClientClassificationDto Classification,
     bool IsActive);
 
@@ -100,7 +103,8 @@ public sealed record CreateCustomerRequest(
     string? Address,
     Guid CityId,
     Guid ClassificationId,
-    bool WithRetention);
+    bool WithRetention,
+    bool VatSurplus);
 
 public sealed record UpdateCustomerRequest(
     string Name,
@@ -111,14 +115,20 @@ public sealed record UpdateCustomerRequest(
     string? Address,
     Guid CityId,
     Guid ClassificationId,
-    bool WithRetention);
+    bool WithRetention,
+    bool VatSurplus);
 
 /// <summary>
 /// Una fila que se importo con exito: su numero de fila en el Excel (2-based; la fila 1 es la
 /// cabecera), el CUC que le emitio el backend y su nombre, para que quien subio el archivo pueda
 /// ubicarla sin tener que volver a abrirlo.
 /// </summary>
-public sealed record ImportedCustomerRow(int RowNumber, string Cuc, string Name);
+/// <summary>
+/// <c>Action</c> es <c>"created"</c> o <c>"updated"</c> — mismo estilo de string-enum que
+/// <see cref="ImportCustomersResponse.Status"/>, para no agregar un segundo shape de respuesta
+/// solo para distinguir los dos casos que <c>ImportCustomersHandler</c> ahora produce.
+/// </summary>
+public sealed record ImportedCustomerRow(int RowNumber, string Cuc, string Name, string Action);
 
 /// <summary>
 /// Los campos crudos de una fila del Excel, texto tal cual la persona lo tipeo (recortado,
@@ -130,6 +140,7 @@ public sealed record ImportedCustomerRow(int RowNumber, string Cuc, string Name)
 /// la descarga.
 /// </summary>
 public sealed record CustomerImportRowData(
+    string? Cuc,
     string Name,
     string IdentificationType,
     string IdentificationNumber,

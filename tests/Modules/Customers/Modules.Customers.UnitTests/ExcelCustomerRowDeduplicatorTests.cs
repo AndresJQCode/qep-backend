@@ -13,6 +13,7 @@ public sealed class ExcelCustomerRowDeduplicatorTests
         int rowNumber, string identificationType, string identificationNumber) =>
         new(
             rowNumber,
+            null,
             "Cliente " + rowNumber,
             identificationType,
             identificationNumber,

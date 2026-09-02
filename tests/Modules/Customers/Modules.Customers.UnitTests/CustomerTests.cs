@@ -33,11 +33,13 @@ public sealed class CustomerTests
 
     private static CustomerCommercialInfo Commercial(
         ClientClassificationId? classificationId = null,
-        bool withRetention = false) =>
+        bool withRetention = false,
+        bool vatSurplus = false) =>
         new()
         {
             ClassificationId = classificationId ?? ClassificationId,
-            WithRetention = withRetention
+            WithRetention = withRetention,
+            VatSurplus = vatSurplus
         };
 
     private static Customer Create(
@@ -234,6 +236,23 @@ public sealed class CustomerTests
         Assert.True(customer.WithRetention);
     }
 
+    // Mismo criterio que withRetention: bool y no bool?, sin "sin definir".
+    [Fact]
+    public void CommercialInfoDefaultsToNoVatSurplus()
+    {
+        var customer = Create();
+
+        Assert.False(customer.VatSurplus);
+    }
+
+    [Fact]
+    public void CommercialInfoKeepsTheVatSurplusItIsGiven()
+    {
+        var customer = Create(commercial: Commercial(vatSurplus: true));
+
+        Assert.True(customer.VatSurplus);
+    }
+
     // El PUT reemplaza el recurso entero: un campo ausente se **limpia**. Una implementacion que
     // ignore los null "para no pisar" deja campos imborrables y pasa todas las demas pruebas.
     [Fact]
@@ -322,6 +341,16 @@ public sealed class CustomerTests
             Now.AddMinutes(5));
 
         Assert.Equal("MAY08000142", customer.Cuc);
+    }
+
+    // Los mismos ocho caracteres finales que UpdateRewritesOnlyThePrefixWhenTheClassificationChanges
+    // prueba que sobreviven a un cambio de prefijo — la importacion masiva (Fase 8) matchea un
+    // cliente existente por este mismo valor, no por el CUC completo.
+    [Fact]
+    public void StableSuffixOfReturnsTheLastEightCharacters()
+    {
+        Assert.Equal("08000142", Customer.StableSuffixOf("CLI08000142"));
+        Assert.Equal("08000142", Customer.StableSuffixOf("MAY08000142"));
     }
 
     // Elegir de nuevo la misma clasificacion (mismo Id) no reescribe nada, aunque el prefijo que
