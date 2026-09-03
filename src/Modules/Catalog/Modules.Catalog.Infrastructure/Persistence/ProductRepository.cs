@@ -23,6 +23,46 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         return string.IsNullOrEmpty(trimmed) ? null : $"%{EscapeLikeWildcards(trimmed)}%";
     }
 
+    public async Task<IReadOnlyList<Product>> ListForExportAsync(
+        Guid tenantId,
+        string? name,
+        string? code,
+        bool? isActive,
+        CancellationToken cancellationToken)
+    {
+        // Mismo Include que SearchAsync y por el mismo motivo: sin el, las escalas llegan
+        // vacias y el export perderia justamente sus columnas.
+        var query = dbContext.Products
+            .AsNoTracking()
+            .Include(product => product.PriceScales)
+            .Where(product => product.TenantId == tenantId);
+
+        if (isActive is not null)
+        {
+            query = query.Where(product => product.IsActive == isActive);
+        }
+
+        var namePattern = LikePattern(name);
+        if (namePattern is not null)
+        {
+            query = query.Where(product =>
+                EF.Functions.ILike(product.Name, namePattern, LikeEscapeCharacter));
+        }
+
+        var codePattern = LikePattern(code);
+        if (codePattern is not null)
+        {
+            query = query.Where(product =>
+                EF.Functions.ILike(product.Code, codePattern, LikeEscapeCharacter));
+        }
+
+        // Por codigo y no por relevancia: una planilla se lee y se compara en un orden estable,
+        // y el export no tiene un termino de busqueda contra el cual medir relevancia.
+        return await query
+            .OrderBy(product => product.Code)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
         Guid tenantId,
         string? search,

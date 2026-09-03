@@ -19,6 +19,15 @@ public static class ProductEndpoints
             .Produces<ProductsResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // POST y no GET aunque no lleve cuerpo: tiene efecto (sube un archivo, manda un
+        // correo), asi que no es cacheable ni repetible sin consecuencias. Los filtros viajan
+        // por query string igual que en el listado.
+        group.MapPost("/products/export", ExportProductsAsync)
+            .RequireAuthorization(CatalogPermissions.ProductRead)
+            .Produces<ProductExportResponse>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/products/{productId:guid}", GetProductAsync)
             .RequireAuthorization(CatalogPermissions.ProductRead)
             .Produces<ProductResponse>()
@@ -59,6 +68,23 @@ public static class ProductEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         return endpoints;
+    }
+
+    private static async Task<IResult> ExportProductsAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? name = null,
+        string? code = null,
+        bool? isActive = null)
+    {
+        var result = await dispatcher.QueryAsync(
+            new ExportProductsQuery(tenantId, name, code, isActive), cancellationToken);
+
+        // 202 y no 200: lo que se acepto es la exportacion, y el archivo llega despues por
+        // correo. Un 200 prometeria que la respuesta trae el resultado.
+        return Results.Accepted(value: new ProductExportResponse(
+            result.FileName, result.ProductCount, result.ExpiresAt, result.EmailSent));
     }
 
     private static async Task<IResult> ListProductsAsync(

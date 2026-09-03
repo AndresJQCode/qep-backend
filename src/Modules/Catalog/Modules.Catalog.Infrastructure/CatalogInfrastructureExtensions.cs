@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
+using Modules.Catalog.Infrastructure.Excel;
 using Modules.Catalog.Infrastructure.Persistence;
 
 namespace Modules.Catalog.Infrastructure;
@@ -25,6 +26,7 @@ public static class CatalogInfrastructureExtensions
 
         services.AddScoped<IProductRepository, ProductRepository>();
         services.AddScoped<ITaxRateRepository, TaxRateRepository>();
+        services.AddScoped<IProductExportWorkbookBuilder, ClosedXmlProductExportBuilder>();
         services.AddScoped<ICatalogUnitOfWork, CatalogUnitOfWork>();
         services.AddScoped<ICatalogAuditPublisher, CatalogAuditPublisher>();
 

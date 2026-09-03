@@ -23,6 +23,20 @@ public interface IProductRepository
         int pageSize,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Todos los productos que coinciden con el filtro, sin paginar y con sus escalas — para la
+    /// exportacion, que saca el catalogo completo que el filtro deja a la vista y no la pagina
+    /// que se esta mirando. Es una consulta aparte y no <see cref="SearchAsync"/> con un
+    /// pageSize enorme: el listado tiene un tope de pagina a proposito, y estirarlo para que
+    /// sirva de export lo convertiria en un limite que hay que recordar en dos lugares.
+    /// </summary>
+    Task<IReadOnlyList<Product>> ListForExportAsync(
+        Guid tenantId,
+        string? name,
+        string? code,
+        bool? isActive,
+        CancellationToken cancellationToken);
+
     Task<Product?> FindAsync(
         Guid tenantId,
         ProductId productId,
