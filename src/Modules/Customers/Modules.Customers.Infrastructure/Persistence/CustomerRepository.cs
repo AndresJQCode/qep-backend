@@ -38,13 +38,16 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .AsNoTracking()
             .Where(customer => customer.TenantId == tenantId);
 
-        // El criterio combinado original: un solo termino, OR entre los tres campos. Sigue
-        // vivo para el combobox de clientes de quotes, que necesita un unico cuadro de texto.
+        // Criterio combinado de un solo termino: OR entre identificacion (NIT/CC/...) y CUC.
+        // Su unico consumidor es el combobox de clientes de quotes, que necesita un unico
+        // cuadro de texto -- y ahi se busca por identificacion o CUC a proposito: el nombre
+        // quedo afuera porque quien cotiza tiene el NIT o el CUC a mano, y hacerlo coincidir
+        // por nombre traia homonimos que no distinguen a que cliente se le esta cotizando.
+        // Las tres cajas separadas de abajo (incluida Nombre) siguen para el listado.
         var searchPattern = LikePattern(search);
         if (searchPattern is not null)
         {
             query = query.Where(customer =>
-                EF.Functions.ILike(customer.Name, searchPattern, LikeEscapeCharacter) ||
                 EF.Functions.ILike(
                     customer.IdentificationNumber, searchPattern, LikeEscapeCharacter) ||
                 EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter));
@@ -189,6 +192,28 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return identifications
             .Where(ownerByIdentification.ContainsKey)
             .ToDictionary(identification => identification, identification => ownerByIdentification[identification]);
+    }
+
+    public async Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(
+        Guid tenantId,
+        string term,
+        CancellationToken cancellationToken)
+    {
+        var pattern = LikePattern(term);
+        if (pattern is null)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var ids = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer =>
+                customer.TenantId == tenantId &&
+                EF.Functions.ILike(customer.IdentificationNumber, pattern, LikeEscapeCharacter))
+            .Select(customer => customer.Id.Value)
+            .ToListAsync(cancellationToken);
+
+        return ids.ToHashSet();
     }
 
     public async Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(

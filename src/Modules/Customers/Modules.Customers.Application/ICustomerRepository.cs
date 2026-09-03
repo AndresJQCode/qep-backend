@@ -80,5 +80,18 @@ public interface ICustomerRepository
         IReadOnlyCollection<string> suffixes,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Ids de cliente cuyo <c>IdentificationNumber</c> contiene <paramref name="term"/> (ILIKE,
+    /// sin distinguir mayusculas), en una sola consulta sin paginar — la usa el filtro de
+    /// cotizaciones por NIT (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup</c>) para
+    /// resolver texto libre a ids antes de filtrar <c>Quotation.ClientId</c>, que no guarda el
+    /// NIT. Mismo criterio "batch, no una fila a la vez" que
+    /// <see cref="FindExistingIdentificationsAsync"/>.
+    /// </summary>
+    Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(
+        Guid tenantId,
+        string term,
+        CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }
