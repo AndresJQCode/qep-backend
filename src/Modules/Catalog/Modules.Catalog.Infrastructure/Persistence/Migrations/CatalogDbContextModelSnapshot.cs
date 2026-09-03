@@ -169,6 +169,65 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.ToTable("products", "catalog");
                 });
 
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductPriceChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("changed_at");
+
+                    b.Property<Guid>("ChangedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("changed_by");
+
+                    b.Property<string>("Field")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("field");
+
+                    b.Property<decimal?>("NewValue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("new_value");
+
+                    b.Property<decimal?>("PreviousValue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("previous_value");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<int?>("ScaleFromUnit")
+                        .HasColumnType("integer")
+                        .HasColumnName("scale_from_unit");
+
+                    b.Property<int?>("ScaleToUnit")
+                        .HasColumnType("integer")
+                        .HasColumnName("scale_to_unit");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductId");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_product_price_changes_tenant");
+
+                    b.HasIndex("TenantId", "ChangedAt")
+                        .HasDatabaseName("IX_product_price_changes_tenant_changed_at");
+
+                    b.ToTable("product_price_changes", "catalog");
+                });
+
             modelBuilder.Entity("Modules.Catalog.Domain.TaxRate", b =>
                 {
                     b.Property<Guid>("Id")
@@ -281,6 +340,15 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TaxRateId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductPriceChange", b =>
+                {
+                    b.HasOne("Modules.Catalog.Domain.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.Product", b =>

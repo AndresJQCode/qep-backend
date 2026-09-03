@@ -45,6 +45,12 @@
     <ProjectReference Include="..\..\..\src\Modules\Quotations\Modules.Quotations.Infrastructure\Modules.Quotations.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Domain\Modules.Notifications.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
+    <!-- Los cuatro de Reporting: sin el .Application, CompositionRootTests no descubre sus ocho
+         handlers y el modulo entero podria quedar sin registrar sin que nada se ponga rojo. -->
+    <ProjectReference Include="..\..\..\src\Modules\Reporting\Modules.Reporting.Api\Modules.Reporting.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Reporting\Modules.Reporting.Application\Modules.Reporting.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Reporting\Modules.Reporting.Domain\Modules.Reporting.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Reporting\Modules.Reporting.Infrastructure\Modules.Reporting.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Storage\Modules.Storage.Api\Modules.Storage.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Storage\Modules.Storage.Application\Modules.Storage.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Storage\Modules.Storage.Domain\Modules.Storage.Domain.csproj" />

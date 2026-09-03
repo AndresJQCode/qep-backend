@@ -17,6 +17,7 @@ using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Quotations.Api;
 using Modules.Quotations.Infrastructure;
+using Modules.Reporting.Api;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Api;
@@ -103,6 +104,7 @@ app.MapClientClassificationEndpoints();
 app.MapGeographyEndpoints();
 app.MapQuotationEndpoints();
 app.MapSaleEndpoints();
+app.MapReportingEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
