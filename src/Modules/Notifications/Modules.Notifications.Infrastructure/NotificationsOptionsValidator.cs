@@ -14,14 +14,15 @@ internal sealed class NotificationsOptionsValidator : IValidateOptions<Notificat
     {
         var failures = new List<string>();
 
-        // No alcanza con UriKind.Absolute: en Linux, "/login" es una ruta de archivo
-        // absoluta valida y Uri.TryCreate la acepta como file:///login. El esquema tiene
-        // que ser http o https, o una URL de sistema de archivos pasa la validacion.
-        if (string.IsNullOrWhiteSpace(options.LoginUrl)
-            || !Uri.TryCreate(options.LoginUrl, UriKind.Absolute, out var loginUrl)
-            || (loginUrl.Scheme != Uri.UriSchemeHttp && loginUrl.Scheme != Uri.UriSchemeHttps))
+        // No alcanza con UriKind.Absolute: en Linux, "/invitations" es una ruta de archivo
+        // absoluta valida y Uri.TryCreate la acepta como file:///invitations. El esquema
+        // tiene que ser http o https, o una URL de sistema de archivos pasa la validacion.
+        if (string.IsNullOrWhiteSpace(options.InvitationUrl)
+            || !Uri.TryCreate(options.InvitationUrl, UriKind.Absolute, out var invitationUrl)
+            || (invitationUrl.Scheme != Uri.UriSchemeHttp
+                && invitationUrl.Scheme != Uri.UriSchemeHttps))
         {
-            failures.Add("Notifications:LoginUrl must be an absolute URL.");
+            failures.Add("Notifications:InvitationUrl must be an absolute URL.");
         }
 
         if (!KnownProviders.Contains(options.EmailProvider, StringComparer.OrdinalIgnoreCase))

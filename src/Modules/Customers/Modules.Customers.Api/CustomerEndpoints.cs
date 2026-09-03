@@ -104,6 +104,17 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // 202 y no 200 con el archivo: a diferencia de /import/template, la respuesta no lleva el
+        // Excel. El archivo se sube al almacenamiento de objetos durante el request y el enlace
+        // llega por correo, asi que lo que se acepta acá es la solicitud, no la descarga.
+        //
+        // Mismo permiso que el listado: exportar es leer el mismo padron que la grilla ya muestra.
+        group.MapPost("/export", ExportCustomersAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerRead)
+            .Produces<ExportCustomersResponse>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -269,6 +280,25 @@ public static class CustomerEndpoints
             new ExportFailedCustomerRowsQuery(tenantId, request.Rows), cancellationToken);
 
         return Results.File(file.Content, ExcelContentType, file.FileName);
+    }
+
+    // Los filtros son los mismos que el listado y viajan por query string, no en el cuerpo: es un
+    // POST porque tiene efecto (sube un archivo, encola un correo), no porque lleve datos.
+    private static async Task<IResult> ExportCustomersAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? search = null,
+        string? name = null,
+        string? identificationNumber = null,
+        string? cuc = null)
+    {
+        var result = await dispatcher.SendAsync(
+            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc),
+            cancellationToken);
+
+        return Results.Accepted(value: new ExportCustomersResponse(
+            result.FileName, result.CustomerCount, result.ExpiresAt));
     }
 
     private static CustomerResponse ToResponse(CustomerDto customer) => new(

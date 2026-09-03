@@ -33,12 +33,26 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
             .Select(membership => membership.TenantId)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<Membership>> ListByUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken) =>
+        await dbContext.Memberships
+            .Where(membership => membership.UserId == userId)
+            .ToListAsync(cancellationToken);
+
     public Task<Membership?> FindByIdAsync(
         MembershipId id,
         TenantId tenantId,
         CancellationToken cancellationToken) =>
         dbContext.Memberships.SingleOrDefaultAsync(
             membership => membership.Id == id && membership.TenantId == tenantId,
+            cancellationToken);
+
+    public Task<Membership?> FindByInvitationTokenHashAsync(
+        string tokenHash,
+        CancellationToken cancellationToken) =>
+        dbContext.Memberships.SingleOrDefaultAsync(
+            membership => membership.InvitationTokenHash == tokenHash,
             cancellationToken);
 
     public async Task<IReadOnlyList<Membership>> ListByTenantAsync(

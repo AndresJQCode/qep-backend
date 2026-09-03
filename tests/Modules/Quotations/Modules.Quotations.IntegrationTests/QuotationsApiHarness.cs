@@ -466,6 +466,13 @@ internal static class QuotationsApiHarness
             string key, CancellationToken cancellationToken) =>
             Task.FromResult(new Uri($"https://r2.test/{key}"));
 
+        public Task<Uri> CreatePresignedDownloadUrlAsync(
+            string key,
+            TimeSpan expiry,
+            string? downloadFileName,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new Uri($"https://r2.test/{key}"));
+
         public Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken)
         {
             if (!_objects.TryGetValue(key, out var content))

@@ -14,11 +14,25 @@ public interface IMembershipRepository
         TenantId tenantId,
         CancellationToken cancellationToken);
 
+    // Resuelve el hash (SHA-256 hex) de un token de invitación a su membresía. El token
+    // plano nunca se persiste, así que éste es el único camino de un link de email a una
+    // fila; la unicidad la garantiza el índice único de invitation_token_hash.
+    Task<Membership?> FindByInvitationTokenHashAsync(
+        string tokenHash,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<Membership>> ListInvitedByUserAsync(
         Guid userId,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<TenantId>> ListActiveTenantsByUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken);
+
+    // Todas las membresías del usuario en cualquier tenant y en cualquier estado, terminales
+    // incluidas. Es la vista que necesita quien decide si un usuario todavía existe para
+    // Tenancy (MembershipUserReferenceProbe) o quién más lo referencia (IMembershipDirectory).
+    Task<IReadOnlyList<Membership>> ListByUserAsync(
         Guid userId,
         CancellationToken cancellationToken);
 

@@ -32,4 +32,12 @@ public sealed class MembershipDirectory(IMembershipRepository membershipReposito
             ? membership.Id.Value
             : null;
     }
+
+    public async Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var memberships = await membershipRepository.ListByUserAsync(userId, cancellationToken);
+        return memberships.Select(membership => membership.Id.Value).ToList();
+    }
 }

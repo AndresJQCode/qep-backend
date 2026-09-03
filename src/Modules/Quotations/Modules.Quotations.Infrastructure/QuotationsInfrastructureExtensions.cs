@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,6 +33,8 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IQuotationNumberGenerator, QuotationNumberGenerator>();
         services.AddScoped<ISaleRepository, SaleRepository>();
         services.AddScoped<ISaleNumberGenerator, SaleNumberGenerator>();
+        // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
+        services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
 
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();

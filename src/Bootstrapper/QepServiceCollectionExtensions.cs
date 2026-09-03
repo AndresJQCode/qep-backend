@@ -215,6 +215,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ExportFailedCustomerRowsQuery, CustomerImportTemplateFile>,
             ExportFailedCustomerRowsHandler>();
+        // La exportacion del padron sí es un comando aunque no mute clientes: sube un archivo al
+        // almacenamiento de objetos, encola un correo y deja auditoría — tiene efecto commiteado en
+        // una unidad de trabajo, igual que IssueDownloadUrlCommand en Storage.
+        services.AddScoped<
+            ICommandHandler<ExportCustomersCommand, ExportCustomersResult>,
+            ExportCustomersHandler>();
         // El catalogo de clasificaciones de cliente vive en el mismo modulo que Customer pero es
         // un recurso distinto, con sus propios siete handlers — mismo criterio que los cinco de
         // TaxRate frente a Product en Catalog. Registrados a mano, uno por uno: un caso de uso
@@ -316,6 +322,10 @@ public static class QepServiceCollectionExtensions
         // contra los repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICustomerGeographyLookup, CustomerGeographyLookup>();
 
+        // Y el mismo patrón entre `customers` y `storage`, para dejar el Excel exportado en el
+        // bucket y firmar su enlace de descarga.
+        services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
+
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los
         // repositorios que ya registró AddGeographyInfrastructure.
@@ -396,7 +406,7 @@ public static class QepServiceCollectionExtensions
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
-            "Asesora",
+            "Asesor",
             "Gestiona clientes y consulta los datos maestros con los que cotiza.",
             "Tenancy",
             "medium",

@@ -110,6 +110,11 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
 
+                    b.Property<string>("InvitationTokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("invitation_token_hash");
+
                     b.Property<DateTimeOffset>("InvitedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("invited_at");
@@ -149,6 +154,9 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnName("roles");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("InvitationTokenHash")
+                        .IsUnique();
 
                     b.HasIndex("UserId", "TenantId")
                         .IsUnique();

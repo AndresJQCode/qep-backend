@@ -218,7 +218,8 @@ public static class MembershipEndpoints
             membership.InvitedAt,
             membership.AcceptedAt,
             membership.ExpiresAt,
-            membership.Version);
+            membership.Version,
+            membership.IsOwner);
     private static bool TryParseVersion(string? etag, out long version)
     {
         version = 0;
@@ -266,7 +267,8 @@ public sealed record MembershipListItemResponse(
     DateTimeOffset InvitedAt,
     DateTimeOffset? AcceptedAt,
     DateTimeOffset ExpiresAt,
-    long Version);
+    long Version,
+    bool IsOwner);
 
 /// <summary>
 /// El listado y, al lado, cuántos hay de cada estado.

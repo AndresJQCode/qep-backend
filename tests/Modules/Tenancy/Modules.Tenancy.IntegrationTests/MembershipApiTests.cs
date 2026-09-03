@@ -277,6 +277,52 @@ public sealed class MembershipApiTests
         Assert.Equal(list.Items.Count, list.Counts.Total);
     }
 
+    /// <summary>
+    /// Una membresía quitada deja de existir para el roster: no aparece en el listado, no
+    /// entra en los conteos y <c>?state=removed</c> sigue siendo un filtro válido que
+    /// simplemente devuelve vacío. El campo <c>removed</c> se conserva en el contrato porque el
+    /// frontend lo lee, pero ya no cuenta nada.
+    /// </summary>
+    [Fact]
+    public async Task ListExcludesRemovedMembersFromItemsAndCounts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var kept = await InviteAsync(client, TenantId, NewEmail());
+        var removed = await InviteAsync(client, TenantId, NewEmail());
+        var keptMembership = await kept.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        var removedMembership = await removed.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        var removal = await RemoveAsync(client, TenantId, removedMembership!.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships",
+            TestContext.Current.CancellationToken);
+        var filtered = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships?state=removed",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(list);
+        Assert.Contains(list!.Items, item => item.Id == keptMembership!.Id);
+        Assert.DoesNotContain(list.Items, item => item.Id == removedMembership.Id);
+        Assert.Equal(0, list.Counts.Removed);
+        Assert.Equal(1, list.Counts.Pending);
+        Assert.Equal(1, list.Counts.Total);
+
+        Assert.Equal(HttpStatusCode.OK, filtered.StatusCode);
+        var removedList = await filtered.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(removedList);
+        Assert.Empty(removedList!.Items);
+        Assert.Equal(1, removedList.Counts.Total);
+    }
+
     [Fact]
     public async Task ListForAnotherTenantIsForbidden()
     {
@@ -355,15 +401,18 @@ public sealed class MembershipApiTests
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.role_unknown", problem?.Code);
     }
 
     /// <summary>
-    /// El admin no se asigna por invitación por correo — sólo al crear el tenant o por
-    /// traspaso explícito (`UpdateMemberRoles`). Allowlist en `InviteMember.EnsureInvitableRoles`,
-    /// no un blocklist de `admin`: cualquier rol que no sea `advisor`/`billing` cae acá.
+    /// Cualquier rol que exista en el catálogo del tenant es invitable, `admin` incluido. La
+    /// única validación de rol al invitar es que el catálogo lo conozca
+    /// (`IRoleReferenceValidator`); no hay allowlist aparte.
     /// </summary>
     [Fact]
-    public async Task InviteWithAdminRoleIsRejected()
+    public async Task InviteWithAdminRoleIsAccepted()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -371,10 +420,11 @@ public sealed class MembershipApiTests
 
         var response = await InviteAsync(client, TenantId, NewEmail(), AdminRoles);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipPayload>(
             TestContext.Current.CancellationToken);
-        Assert.Equal("tenancy.membership.role_not_invitable", problem?.Code);
+        Assert.NotNull(membership);
+        Assert.Equal(AdminRoles, membership!.Roles);
     }
 
     [Fact]
@@ -716,6 +766,17 @@ public sealed class MembershipApiTests
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/reactivate");
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<HttpResponseMessage> RemoveAsync(
+        HttpClient client,
+        string tenantId,
+        Guid membershipId)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/remove");
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 

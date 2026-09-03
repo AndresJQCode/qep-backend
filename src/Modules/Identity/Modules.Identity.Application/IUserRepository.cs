@@ -15,4 +15,12 @@ public interface IUserRepository
     Task<User?> FindByIdAsync(Guid userId, CancellationToken cancellationToken);
 
     void Add(User user);
+
+    /// <summary>
+    /// Borrado físico. Sólo lo usa <c>OrphanUserCleanupWorker</c>, después de que ningún
+    /// módulo declaró retener al usuario; ningún caso de uso de request lo llama. Los vínculos
+    /// de proveedor y las preferencias caen por cascada; las sesiones no tienen FK y las borra
+    /// el mismo worker.
+    /// </summary>
+    void Remove(User user);
 }

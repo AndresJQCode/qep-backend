@@ -30,4 +30,6 @@ internal sealed class UserRepository(IdentityDbContext dbContext) : IUserReposit
             cancellationToken);
 
     public void Add(User user) => dbContext.Users.Add(user);
+
+    public void Remove(User user) => dbContext.Users.Remove(user);
 }

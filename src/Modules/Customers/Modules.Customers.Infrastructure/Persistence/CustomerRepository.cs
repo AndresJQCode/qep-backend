@@ -23,6 +23,80 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return string.IsNullOrEmpty(trimmed) ? null : $"%{EscapeLikeWildcards(trimmed)}%";
     }
 
+    // Los cuatro filtros del listado, aplicados una sola vez para los dos caminos que los usan
+    // (la pagina del listado y el recorrido de la exportacion). Los bloques van repetidos y no
+    // detras de un helper generico sobre un selector de propiedad: EF Core no traduce
+    // `EF.Functions.ILike` detras de una expresion invocada de forma generica, y forzarlo
+    // terminaria evaluando el filtro en memoria en vez de en la base.
+    private IQueryable<Customer> FilteredQuery(
+        Guid tenantId,
+        string? searchPattern,
+        string? namePattern,
+        string? identificationPattern,
+        string? cucPattern)
+    {
+        var query = dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId);
+
+        // El criterio combinado original: un solo termino, OR entre los tres campos. Sigue
+        // vivo para el combobox de clientes de quotes, que necesita un unico cuadro de texto.
+        if (searchPattern is not null)
+        {
+            query = query.Where(customer =>
+                EF.Functions.ILike(customer.Name, searchPattern, LikeEscapeCharacter) ||
+                EF.Functions.ILike(
+                    customer.IdentificationNumber, searchPattern, LikeEscapeCharacter) ||
+                EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter));
+        }
+
+        // Tres cajas separadas en el listado (CLI-FILTROS-01), cada una filtra su propia columna
+        // y se combinan con AND cuando el llamador manda mas de una.
+        if (namePattern is not null)
+        {
+            query = query.Where(customer =>
+                EF.Functions.ILike(customer.Name, namePattern, LikeEscapeCharacter));
+        }
+
+        if (identificationPattern is not null)
+        {
+            query = query.Where(customer =>
+                EF.Functions.ILike(
+                    customer.IdentificationNumber, identificationPattern, LikeEscapeCharacter));
+        }
+
+        if (cucPattern is not null)
+        {
+            query = query.Where(customer =>
+                EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter));
+        }
+
+        return query;
+    }
+
+    // Orden por CUC y no por relevancia como SearchAsync: el CUC es unico dentro del tenant, asi
+    // que desempata siempre. Recorrer en lotes un orden que empata puede saltear o repetir filas
+    // entre una consulta y la siguiente, y eso en un archivo exportado no lo ve nadie.
+    public async Task<IReadOnlyList<Customer>> ListForExportAsync(
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? identificationNumber,
+        string? cuc,
+        int skip,
+        int take,
+        CancellationToken cancellationToken) =>
+        await FilteredQuery(
+                tenantId,
+                LikePattern(search),
+                LikePattern(name),
+                LikePattern(identificationNumber),
+                LikePattern(cuc))
+            .OrderBy(customer => customer.Cuc)
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
     public async Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
         Guid tenantId,
         string? search,
@@ -34,55 +108,17 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var query = dbContext.Customers
-            .AsNoTracking()
-            .Where(customer => customer.TenantId == tenantId);
-
-        // Criterio combinado de un solo termino: OR entre identificacion (NIT/CC/...) y CUC.
-        // Su unico consumidor es el combobox de clientes de quotes, que necesita un unico
-        // cuadro de texto -- y ahi se busca por identificacion o CUC a proposito: el nombre
-        // quedo afuera porque quien cotiza tiene el NIT o el CUC a mano, y hacerlo coincidir
-        // por nombre traia homonimos que no distinguen a que cliente se le esta cotizando.
-        // Las tres cajas separadas de abajo (incluida Nombre) siguen para el listado.
         var searchPattern = LikePattern(search);
-        if (searchPattern is not null)
-        {
-            query = query.Where(customer =>
-                EF.Functions.ILike(
-                    customer.IdentificationNumber, searchPattern, LikeEscapeCharacter) ||
-                EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter));
-        }
-
-        // Tres cajas separadas en el listado (CLI-FILTROS-01), cada una filtra su propia columna
-        // y se combinan con AND cuando el llamador manda mas de una. Bloques repetidos y no un
-        // helper generico sobre un selector de propiedad: EF Core no traduce
-        // `EF.Functions.ILike` detras de una expresion invocada de forma generica, y forzarlo
-        // terminaria evaluando el filtro en memoria en vez de en la base.
         var namePattern = LikePattern(name);
-        if (namePattern is not null)
-        {
-            query = query.Where(customer =>
-                EF.Functions.ILike(customer.Name, namePattern, LikeEscapeCharacter));
-        }
-
         var identificationPattern = LikePattern(identificationNumber);
-        if (identificationPattern is not null)
-        {
-            query = query.Where(customer =>
-                EF.Functions.ILike(
-                    customer.IdentificationNumber, identificationPattern, LikeEscapeCharacter));
-        }
-
         var cucPattern = LikePattern(cuc);
-        if (cucPattern is not null)
-        {
-            query = query.Where(customer =>
-                EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter));
-        }
+        var query = FilteredQuery(
+            tenantId, searchPattern, namePattern, identificationPattern, cucPattern);
 
         // `null` es "sin filtro"; una coleccion (incluso vacia) filtra por esos ids exactos —
         // Departamento ya se tradujo a ids de ciudad en ListCustomersHandler, asi que aca no hay
-        // nada que resolver, solo aplicar el IN.
+        // nada que resolver, solo aplicar el IN. Va aca y no en FilteredQuery porque la
+        // exportacion no filtra por ciudad.
         if (cityIds is not null)
         {
             query = query.Where(customer => cityIds.Contains(customer.CityId));
@@ -181,7 +217,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 numbers.Contains(customer.IdentificationNumber))
             .Select(customer => new
             {
-                customer.Id, customer.IdentificationType, customer.IdentificationNumber
+                customer.Id,
+                customer.IdentificationType,
+                customer.IdentificationNumber
             })
             .ToListAsync(cancellationToken);
 

@@ -50,6 +50,28 @@ public sealed class StorageOptionsValidatorTests
         Assert.True(result.Failed);
     }
 
+    // El techo de 168 h no es arbitrario: una URL prefirmada con SigV4 no puede vivir más de
+    // 7 días, así que una configuración mayor produciría enlaces que R2 rechaza al usarlos.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(169)]
+    public void ExportUrlHoursOutOfRangeFails(int hours)
+    {
+        var options = new StorageOptions
+        {
+            ExportUrlHours = hours,
+            R2 = new R2Options
+            {
+                AccountId = "acct",
+                AccessKeyId = "key",
+                SecretAccessKey = "secret",
+                Bucket = "qep",
+            },
+        };
+
+        Assert.True(_validator.Validate(name: null, options).Failed);
+    }
+
     [Fact]
     public void PublicBucketAndBaseUrlMustBeConfiguredTogether()
     {

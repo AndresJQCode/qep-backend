@@ -4,6 +4,7 @@ using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Testcontainers.PostgreSql;
 
@@ -308,7 +309,13 @@ internal static class CustomersApiHarness
             : [];
     }
 
-    public sealed class QepApiFactory(string connectionString)
+    /// <param name="configureServices">
+    /// Sustituciones de servicios para la prueba. Corre despues del registro de la aplicacion, asi
+    /// que lo que registre acá gana. Lo usa la exportacion para reemplazar el puerto que sube a R2:
+    /// no hay bucket en las pruebas, y el doble ademas deja capturar los bytes del Excel generado.
+    /// </param>
+    public sealed class QepApiFactory(
+        string connectionString, Action<IServiceCollection>? configureServices = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -324,6 +331,11 @@ internal static class CustomersApiHarness
             // ausentes, NotificationsOptionsValidator falla al arrancar y todas las pruebas de
             // este proyecto mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+
+            if (configureServices is not null)
+            {
+                builder.ConfigureServices(configureServices);
+            }
         }
     }
 }
