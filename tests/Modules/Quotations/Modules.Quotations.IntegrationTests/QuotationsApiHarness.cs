@@ -162,7 +162,11 @@ internal static class QuotationsApiHarness
     /// consume <c>IQuotationCustomerLookup</c>. La identificacion es unica por tenant, asi que
     /// tambien se genera distinta en cada llamada por defecto.</summary>
     public static async Task<Guid> CreateActiveCustomerAsync(
-        HttpClient client, Guid tenantId, string? identificationNumber = null)
+        HttpClient client,
+        Guid tenantId,
+        string? identificationNumber = null,
+        bool withRetention = false,
+        bool vatSurplus = false)
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -177,7 +181,8 @@ internal static class QuotationsApiHarness
                     ?? $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
                 cityId,
                 classificationId,
-                withRetention = false
+                withRetention,
+                vatSurplus
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
@@ -185,6 +190,37 @@ internal static class QuotationsApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(body);
         return body.Id;
+    }
+
+    /// <summary>Prende o apaga retención/excedente de IVA de un cliente ya creado -- para probar
+    /// que una cotización todavía editable (Draft/Sent) se entera del cambio sin haber sido
+    /// creada de nuevo (Quotation.RefreshCustomerTaxProfile). El resto de los campos se repiten
+    /// tal cual porque <c>UpdateCustomerRequest</c> reemplaza el recurso entero.</summary>
+    public static async Task UpdateCustomerRetentionAsync(
+        HttpClient client,
+        Guid tenantId,
+        Guid customerId,
+        string identificationNumber,
+        bool withRetention,
+        bool vatSurplus)
+    {
+        var cityId = await EnsureCityIdAsync(client);
+        var classificationId = await CreateClassificationAsync(client, tenantId);
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers/{customerId}",
+            new
+            {
+                name = "Verde Esencial S.A.S.",
+                identificationType = "NIT",
+                identificationNumber,
+                cityId,
+                classificationId,
+                withRetention,
+                vatSurplus
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
     }
 
     public static async Task DeactivateCustomerAsync(HttpClient client, Guid tenantId, Guid customerId)

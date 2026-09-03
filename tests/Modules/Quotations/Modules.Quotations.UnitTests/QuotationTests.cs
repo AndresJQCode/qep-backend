@@ -10,7 +10,10 @@ public sealed class QuotationTests
     private static readonly DateTimeOffset Now = new(2026, 8, 24, 12, 0, 0, TimeSpan.Zero);
 
     private static Quotation NewQuotation(
-        string? notes = null, QuotationOverrides? overrides = null) =>
+        string? notes = null,
+        QuotationOverrides? overrides = null,
+        bool customerWithRetention = false,
+        bool customerVatSurplus = false) =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -21,6 +24,8 @@ public sealed class QuotationTests
             paymentMethod: "Transferencia bancaria",
             notes,
             overrides ?? QuotationOverrides.Empty,
+            customerWithRetention,
+            customerVatSurplus,
             AdvisorId,
             Now);
 
@@ -51,7 +56,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "  QUO-2026-0001  ", ClientId, AdvisorId,
-            null, null, null, QuotationOverrides.Empty, AdvisorId, Now);
+            null, null, null, QuotationOverrides.Empty, false, false, AdvisorId, Now);
 
         Assert.Equal("QUO-2026-0001", quotation.QuotationNumber);
     }
@@ -64,7 +69,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, number, ClientId, AdvisorId,
-                null, null, null, QuotationOverrides.Empty, AdvisorId, Now));
+                null, null, null, QuotationOverrides.Empty, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_required", error.Code);
     }
@@ -75,7 +80,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, new string('a', 21), ClientId, AdvisorId,
-                null, null, null, QuotationOverrides.Empty, AdvisorId, Now));
+                null, null, null, QuotationOverrides.Empty, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_too_long", error.Code);
     }
@@ -86,7 +91,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, "QUO-2026-0001", Guid.Empty, AdvisorId,
-                null, null, null, QuotationOverrides.Empty, AdvisorId, Now));
+                null, null, null, QuotationOverrides.Empty, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.client_required", error.Code);
     }
@@ -153,6 +158,81 @@ public sealed class QuotationTests
         Assert.Equal(19_000m, quotation.TaxAmount);
         // tasa efectiva: 19_000 / 200_000 * 100 = 9.5
         Assert.Equal(9.5m, quotation.TaxPercentage);
+    }
+
+    [Fact]
+    public void CustomerVatSurplusZeroesOutTheHeaderTaxRegardlessOfLineTaxRates()
+    {
+        var quotation = NewQuotation(customerVatSurplus: true);
+
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        Assert.Equal(100_000m, quotation.Subtotal);
+        Assert.Equal(0m, quotation.TaxAmount);
+        Assert.Equal(0m, quotation.TaxPercentage);
+        Assert.Equal(100_000m, quotation.Total);
+        Assert.Equal(0m, quotation.RetentionAmount);
+        Assert.Equal(100_000m, quotation.NetTotal);
+    }
+
+    [Fact]
+    public void CustomerWithRetentionComputesTwoPointFivePercentOfSubtotalAndSubtractsFromNetTotal()
+    {
+        var quotation = NewQuotation(customerWithRetention: true);
+
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        // subtotal = 100_000; tax = 19_000; total = 119_000; retencion = 100_000 * 0.025 = 2_500
+        Assert.Equal(100_000m, quotation.Subtotal);
+        Assert.Equal(119_000m, quotation.Total);
+        Assert.Equal(2_500m, quotation.RetentionAmount);
+        Assert.Equal(116_500m, quotation.NetTotal);
+    }
+
+    [Fact]
+    public void WithoutRetentionOrVatSurplusNetTotalEqualsTotalAndRetentionIsZero()
+    {
+        var quotation = NewQuotation();
+
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        Assert.Equal(0m, quotation.RetentionAmount);
+        Assert.Equal(quotation.Total, quotation.NetTotal);
+    }
+
+    [Fact]
+    public void RefreshCustomerTaxProfileUpdatesFlagsAndRecalculatesWhileEditable()
+    {
+        var quotation = NewQuotation();
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
+
+        Assert.True(quotation.CustomerWithRetention);
+        Assert.True(quotation.CustomerVatSurplus);
+        Assert.Equal(0m, quotation.TaxAmount);
+        Assert.Equal(2_500m, quotation.RetentionAmount);
+        Assert.Equal(97_500m, quotation.NetTotal);
+    }
+
+    [Fact]
+    public void RefreshCustomerTaxProfileDoesNothingOnceVoided()
+    {
+        var quotation = NewQuotation();
+        quotation.Void(AdvisorId, Now);
+
+        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
+
+        Assert.False(quotation.CustomerWithRetention);
+        Assert.False(quotation.CustomerVatSurplus);
     }
 
     [Fact]
@@ -395,38 +475,30 @@ public sealed class QuotationTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 
+    // No hay un estado "aprobada": convertir a venta deja la cotizacion en Sent (ver
+    // QuotationStatus) -- EnsureConvertibleToSale es solo el guard de precondicion que
+    // ConvertQuotationToSaleHandler llama antes de crear la Sale, no muta nada.
     [Fact]
-    public void ApproveMovesASentQuotationToApproved()
+    public void EnsureConvertibleToSaleDoesNotThrowOrChangeStatusForASentQuotation()
     {
         var quotation = NewQuotation();
         quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+        var versionBeforeConverting = quotation.Version;
 
-        quotation.Approve(AdvisorId, Now);
+        quotation.EnsureConvertibleToSale();
 
-        Assert.Equal(QuotationStatus.Approved, quotation.Status);
-        Assert.Equal(AdvisorId, quotation.UpdatedBy);
+        Assert.Equal(QuotationStatus.Sent, quotation.Status);
+        Assert.Equal(versionBeforeConverting, quotation.Version);
     }
 
     [Fact]
-    public void ApproveRejectsAQuotationThatIsNotSent()
+    public void EnsureConvertibleToSaleRejectsAQuotationThatIsNotSent()
     {
         var quotation = NewQuotation();
 
-        var error = Assert.Throws<QuotationsDomainException>(() => quotation.Approve(AdvisorId, Now));
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => quotation.EnsureConvertibleToSale());
 
         Assert.Equal("quotation.quotation.not_sent", error.Code);
-    }
-
-    [Fact]
-    public void EditingAnApprovedQuotationIsRejected()
-    {
-        var quotation = NewQuotation();
-        quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
-        quotation.Approve(AdvisorId, Now);
-
-        var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now));
-
-        Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 }

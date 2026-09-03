@@ -12,7 +12,7 @@ public sealed class SaleApiTests
         $"{QuotationsUrl(tenantId)}/{quotationId}/sale";
 
     [Fact]
-    public async Task ConvertCreatesTheSaleAndApprovesTheQuotation()
+    public async Task ConvertCreatesTheSaleAndLeavesTheQuotationSent()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -43,10 +43,45 @@ public sealed class SaleApiTests
         Assert.Equal(proofFileId, proof.FileId);
         Assert.Equal(quotation.Total, proof.Amount);
 
+        // No hay estado "aprobada": convertir a venta deja la cotizacion en Sent -- la Sale
+        // creada, referenciando este QuotationId, es la unica senal de que ya se convirtio.
         var fetchedQuotation = await client.GetFromJsonAsync<QuotationResponse>(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
         Assert.NotNull(fetchedQuotation);
-        Assert.Equal("Approved", fetchedQuotation.Status);
+        Assert.Equal("Sent", fetchedQuotation.Status);
+    }
+
+    // Como la cotizacion se queda en Sent despues de convertirse (no hay estado "aprobada" que
+    // bloquee una segunda conversion), la unica red es el indice unico de Sale.QuotationId --
+    // esta prueba confirma que un segundo intento da un 422 legible, no un 500 con el nombre de
+    // la constraint adentro.
+    [Fact]
+    public async Task ConvertingAnAlreadyConvertedQuotationIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var firstProofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        (await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest(
+                "FullPaymentReceived", null, [new SalePaymentProofRequest(firstProofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var secondProofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest(
+                "FullPaymentReceived", null, [new SalePaymentProofRequest(secondProofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("quotation.quotation.already_converted", body, StringComparison.Ordinal);
     }
 
     // US-14: sin comprobantes se permite unicamente cuando el pago queda pendiente.

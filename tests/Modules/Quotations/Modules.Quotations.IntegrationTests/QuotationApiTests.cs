@@ -40,6 +40,67 @@ public sealed class QuotationApiTests
         Assert.Equal(0m, quotation.TaxPercentage);
     }
 
+    // Snapshot al crear (Quotation.CustomerVatSurplus): un cliente con excedente de IVA no paga
+    // IVA en la cotizacion, sea cual sea la tasa de cada linea.
+    [Fact]
+    public async Task AddingAnItemForAVatSurplusCustomerLeavesTheHeaderTaxAtZero()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, vatSurplus: true);
+        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 1m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(updated);
+        Assert.Equal(100_000m, updated.Subtotal);
+        Assert.Equal(0m, updated.TaxAmount);
+        Assert.Equal(0m, updated.TaxPercentage);
+        Assert.Equal(100_000m, updated.Total);
+        Assert.Equal(0m, updated.RetentionAmount);
+        Assert.Equal(100_000m, updated.NetTotal);
+    }
+
+    // Snapshot al crear (Quotation.CustomerWithRetention): 2.5% de lo facturado sin IVA, y resta
+    // del neto a cobrar (no del Total facturado).
+    [Fact]
+    public async Task AddingAnItemForAWithRetentionCustomerComputesRetentionAndNetTotal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, withRetention: true);
+        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 1m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(updated);
+        // subtotal = 100_000; tax = 19_000; total = 119_000; retencion = 100_000 * 0.025 = 2_500
+        Assert.Equal(100_000m, updated.Subtotal);
+        Assert.Equal(119_000m, updated.Total);
+        Assert.Equal(2_500m, updated.RetentionAmount);
+        Assert.Equal(116_500m, updated.NetTotal);
+    }
+
     [Fact]
     public async Task CreateForAnUnknownClientIsUnprocessable()
     {
@@ -136,6 +197,82 @@ public sealed class QuotationApiTests
         Assert.NotNull(fetched);
         Assert.Equal(created.Id, fetched.Id);
         Assert.Equal(created.QuotationNumber, fetched.QuotationNumber);
+    }
+
+    // Regresión: retención/excedente de IVA son hechos del cliente, no una foto congelada al
+    // crear -- si el cliente cambia mientras la cotización sigue editable (Draft/Sent), la
+    // próxima lectura tiene que notarlo (Quotation.RefreshCustomerTaxProfile), no seguir
+    // mostrando el IVA/retención de cuando se creó.
+    [Fact]
+    public async Task GetRefreshesRetentionAndVatSurplusFromTheCurrentCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var identificationNumber = "900.111.222-3";
+        var clientId = await CreateActiveCustomerAsync(
+            client, tenantId, identificationNumber, withRetention: false, vatSurplus: false);
+        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{created.Id}/items",
+            new AddQuotationItemRequest(productId, 1m),
+            TestContext.Current.CancellationToken);
+
+        // El cliente activa retención y excedente de IVA después de creada la cotización.
+        await UpdateCustomerRetentionAsync(
+            client, tenantId, clientId, identificationNumber, withRetention: true, vatSurplus: true);
+
+        var response = await client.GetAsync(
+            $"{QuotationsUrl(tenantId)}/{created.Id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var fetched = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        // subtotal = 100_000; excedente de IVA -> impuesto 0; retencion = 100_000 * 0.025 = 2_500
+        Assert.Equal(100_000m, fetched.Subtotal);
+        Assert.True(fetched.CustomerVatSurplus);
+        Assert.Equal(0m, fetched.TaxAmount);
+        Assert.Equal(100_000m, fetched.Total);
+        Assert.Equal(2_500m, fetched.RetentionAmount);
+        Assert.Equal(97_500m, fetched.NetTotal);
+    }
+
+    // El mismo cambio de cliente, pero después de anular la cotización -- una vez Voided queda
+    // de sólo lectura para siempre (Quotation.RefreshCustomerTaxProfile no toca nada ahí), así
+    // que el resumen histórico no se mueve aunque el cliente cambie después.
+    [Fact]
+    public async Task GetDoesNotRefreshRetentionOrVatSurplusForAVoidedQuotation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var identificationNumber = "900.111.222-4";
+        var clientId = await CreateActiveCustomerAsync(
+            client, tenantId, identificationNumber, withRetention: false, vatSurplus: false);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        await client.PostAsync(
+            $"{QuotationsUrl(tenantId)}/{created.Id}/void",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        await UpdateCustomerRetentionAsync(
+            client, tenantId, clientId, identificationNumber, withRetention: true, vatSurplus: true);
+
+        var response = await client.GetAsync(
+            $"{QuotationsUrl(tenantId)}/{created.Id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var fetched = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.Equal("Voided", fetched.Status);
+        Assert.False(fetched.CustomerVatSurplus);
+        Assert.Equal(0m, fetched.RetentionAmount);
     }
 
     [Fact]

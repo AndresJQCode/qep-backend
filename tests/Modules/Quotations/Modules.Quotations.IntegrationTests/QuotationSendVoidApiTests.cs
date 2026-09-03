@@ -154,7 +154,7 @@ public sealed class QuotationSendVoidApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
-    // US-10: editar en Sent sigue permitido -- sólo Approved/Voided/Expired bloquean.
+    // US-10: editar en Sent sigue permitido -- sólo Voided/Expired bloquean.
     [Fact]
     public async Task AddingAnItemToASentQuotationIsAllowed()
     {
