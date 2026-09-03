@@ -69,6 +69,8 @@ public sealed class CreateQuotationHandler(
             command.PaymentMethod,
             command.Notes,
             command.Overrides.ToDomain(),
+            customer.WithRetention,
+            customer.VatSurplus,
             advisorId,
             now);
 

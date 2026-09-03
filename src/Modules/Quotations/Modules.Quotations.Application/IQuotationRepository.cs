@@ -9,16 +9,25 @@ public interface IQuotationRepository
     Task<Quotation?> FindAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 
-    /// <summary>Una página del listado y el total que la acompaña (US-8), con los cuatro
-    /// filtros combinables de la propuesta. Cada filtro es opcional y sólo se aplica cuando
-    /// llega distinto de null.</summary>
+    /// <summary>Una página del listado y el total que la acompaña (US-8), con los filtros
+    /// combinables de la propuesta. Cada filtro es opcional y sólo se aplica cuando llega
+    /// distinto de null; los que llegan se combinan con AND.
+    ///
+    /// <c>clientIds</c> es el filtro por NIT: <c>Quotation</c> no guarda el NIT del cliente, así
+    /// que <c>ListQuotationsHandler</c> ya lo resolvió a una lista de ids antes de llegar acá
+    /// (mismo criterio que <c>cityIds</c> en <c>ICustomerRepository.SearchAsync</c> con el
+    /// filtro de Departamento). <c>null</c> es "sin filtro"; una colección vacía es "no matchear
+    /// ninguna fila" (el NIT buscado no resolvió a ningún cliente). Independiente de
+    /// <c>clientId</c>, que sigue siendo el filtro puntual por combobox.</summary>
     Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
         DateOnly? createdFrom,
         DateOnly? createdTo,
+        string? quotationNumber,
         int page,
         int pageSize,
         CancellationToken cancellationToken);

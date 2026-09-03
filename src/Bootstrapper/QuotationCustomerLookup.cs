@@ -32,6 +32,12 @@ internal sealed class QuotationCustomerLookup(ICustomerRepository repository)
                 customer.IsActive,
                 customer.Name,
                 customer.Phone,
-                customer.Address);
+                customer.Address,
+                customer.WithRetention,
+                customer.VatSurplus);
     }
+
+    public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(
+        Guid tenantId, string term, CancellationToken cancellationToken) =>
+        repository.SearchIdsByIdentificationNumberAsync(tenantId, term, cancellationToken);
 }

@@ -71,6 +71,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("discount_amount")
             .HasPrecision(14, 2);
         quotation.Property(value => value.Total).HasColumnName("total").HasPrecision(14, 2);
+        quotation.Property(value => value.CustomerWithRetention)
+            .HasColumnName("customer_with_retention");
+        quotation.Property(value => value.CustomerVatSurplus)
+            .HasColumnName("customer_vat_surplus");
+        quotation.Property(value => value.RetentionAmount)
+            .HasColumnName("retention_amount")
+            .HasPrecision(14, 2);
+        quotation.Property(value => value.NetTotal).HasColumnName("net_total").HasPrecision(14, 2);
         quotation.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
         quotation.Property(value => value.BillingNameOverride)
             .HasColumnName("billing_name_override")

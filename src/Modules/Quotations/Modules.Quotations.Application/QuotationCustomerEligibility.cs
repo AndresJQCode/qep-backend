@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -9,7 +10,12 @@ namespace Modules.Quotations.Application;
 /// </summary>
 internal static class QuotationCustomerEligibility
 {
-    public static void Ensure(QuotationCustomerRef? customer, Guid tenantId, Guid clientId)
+    // [NotNull] documenta para el analisis de nulabilidad lo que el metodo ya garantiza en
+    // runtime: si vuelve sin tirar, `customer` no es null — sin esto, cualquier llamador que
+    // lea un campo de `customer` despues de `Ensure` (CreateQuotation.cs necesita
+    // WithRetention/VatSurplus para el snapshot de totales) se topa con CS8602.
+    public static void Ensure(
+        [NotNull] QuotationCustomerRef? customer, Guid tenantId, Guid clientId)
     {
         // Mismo código para "no existe" y "es de otro tenant": distinguirlos le confirmaría al
         // llamador que el id existe en otro tenant, que es justo lo que la frontera esconde.

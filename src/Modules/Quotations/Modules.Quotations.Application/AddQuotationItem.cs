@@ -22,6 +22,7 @@ public sealed class AddQuotationItemHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -39,6 +40,15 @@ public sealed class AddQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+
+        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
+        // — ver Quotation.RefreshCustomerTaxProfile.
+        var customer = await customerLookup.FindAsync(
+            command.TenantId, quotation.ClientId, cancellationToken);
+        if (customer is not null)
+        {
+            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
+        }
 
         // US-3/US-4: precio base, descuento por escala e impuesto del producto, resueltos
         // contra el catálogo del tenant para la cantidad pedida.

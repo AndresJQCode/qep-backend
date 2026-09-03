@@ -72,6 +72,15 @@ public sealed record PriceScaleResponse(
 
 /// <summary>El sobre del listado, con el total que la paginación necesita — mismo criterio que
 /// `CustomersResponse`.</summary>
+/// <summary>
+/// La respuesta del 202 de exportacion. No lleva el enlace a proposito: el archivo llega por
+/// correo, y devolverlo tambien aca duplicaria el canal de entrega.
+/// </summary>
+public sealed record ProductExportResponse(
+    string FileName,
+    int ProductCount,
+    DateTimeOffset ExpiresAt);
+
 public sealed record ProductsResponse(
     IReadOnlyCollection<ProductResponse> Items,
     int Total,

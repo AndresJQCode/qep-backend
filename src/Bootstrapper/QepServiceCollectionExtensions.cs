@@ -114,6 +114,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetProductQuery, ProductDto>,
             GetProductHandler>();
         services.AddScoped<
+            ICommandHandler<ExportProductsCommand, ExportProductsResult>,
+            ExportProductsHandler>();
+        services.AddScoped<
             ICommandHandler<CreateProductCommand, ProductDto>,
             CreateProductHandler>();
         services.AddScoped<
@@ -311,6 +314,7 @@ public static class QepServiceCollectionExtensions
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
         services.AddScoped<IProductImageLookup, ProductImageLookup>();
+        services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
