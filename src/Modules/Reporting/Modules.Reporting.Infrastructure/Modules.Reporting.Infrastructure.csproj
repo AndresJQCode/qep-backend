@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Reporting.Application\Modules.Reporting.Application.csproj" />
+    <ProjectReference Include="..\Modules.Reporting.Domain\Modules.Reporting.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Sin EF Core ni Npgsql, a diferencia de las demas Infrastructure: Reporting no tiene
+         DbContext, ni tablas, ni migraciones. Lo unico que aporta esta capa es el armado del
+         .xlsx; las consultas viven en los adaptadores del composition root. -->
+    <PackageReference Include="ClosedXML" />
+    <!-- Los otros seis modulos las reciben transitivamente por EF Core; este las pide explicitas
+         porque no referencia EF Core. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+</Project>

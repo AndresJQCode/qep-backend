@@ -248,7 +248,6 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
-          "ClosedXML": "[0.105.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.9, )",
           "Modules.Catalog.Application": "[1.0.0, )",
           "Modules.Catalog.Domain": "[1.0.0, )",
@@ -402,6 +401,30 @@
           "Modules.Quotations.Application": "[1.0.0, )",
           "Modules.Quotations.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )"
+        }
+      },
+      "modules.reporting.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Reporting.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.reporting.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.reporting.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
+          "Modules.Reporting.Application": "[1.0.0, )",
+          "Modules.Reporting.Domain": "[1.0.0, )"
         }
       },
       "modules.storage.application": {
