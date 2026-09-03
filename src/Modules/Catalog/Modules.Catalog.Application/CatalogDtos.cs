@@ -73,15 +73,13 @@ public sealed record PriceScaleResponse(
 /// <summary>El sobre del listado, con el total que la paginación necesita — mismo criterio que
 /// `CustomersResponse`.</summary>
 /// <summary>
-/// La respuesta del 202 de exportacion. <c>EmailSent</c> en false significa que el archivo
-/// quedo subido pero quien lo pidio no tiene correo registrado: el frontend lo avisa en vez de
-/// prometer un envio que no va a pasar.
+/// La respuesta del 202 de exportacion. No lleva el enlace a proposito: el archivo llega por
+/// correo, y devolverlo tambien aca duplicaria el canal de entrega.
 /// </summary>
 public sealed record ProductExportResponse(
     string FileName,
     int ProductCount,
-    DateTimeOffset ExpiresAt,
-    bool EmailSent);
+    DateTimeOffset ExpiresAt);
 
 public sealed record ProductsResponse(
     IReadOnlyCollection<ProductResponse> Items,

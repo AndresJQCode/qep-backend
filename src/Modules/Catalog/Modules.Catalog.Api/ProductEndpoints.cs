@@ -78,13 +78,14 @@ public static class ProductEndpoints
         string? code = null,
         bool? isActive = null)
     {
-        var result = await dispatcher.QueryAsync(
-            new ExportProductsQuery(tenantId, name, code, isActive), cancellationToken);
+        var result = await dispatcher.SendAsync(
+            new ExportProductsCommand(tenantId, name, code, isActive), cancellationToken);
 
-        // 202 y no 200: lo que se acepto es la exportacion, y el archivo llega despues por
-        // correo. Un 200 prometeria que la respuesta trae el resultado.
+        // 202 y no 200: lo que se acepto es la exportacion. El archivo se sube durante el
+        // request pero el correo lo manda el worker despues, asi que la respuesta no trae el
+        // resultado final.
         return Results.Accepted(value: new ProductExportResponse(
-            result.FileName, result.ProductCount, result.ExpiresAt, result.EmailSent));
+            result.FileName, result.ProductCount, result.ExpiresAt));
     }
 
     private static async Task<IResult> ListProductsAsync(

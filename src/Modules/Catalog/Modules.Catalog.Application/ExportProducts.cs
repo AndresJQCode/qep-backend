@@ -5,83 +5,141 @@ using Modules.Tenancy.Application;
 namespace Modules.Catalog.Application;
 
 /// <summary>
-/// Exporta el catalogo que dejan los filtros del listado — el conjunto completo que coincide, no
-/// la pagina que se esta mirando. Mismos filtros que <see cref="ListProductsQuery"/> menos
-/// <c>Search</c>: ese existe para el combobox de cotizaciones, no para el listado desde donde se
-/// exporta.
+/// Exporta el catalogo del tenant a un Excel, lo deja en el almacenamiento de objetos y encola el
+/// correo con el enlace de descarga. Gemelo de <c>ExportCustomersCommand</c>, con el mismo flujo.
+///
+/// Los filtros son los mismos que <see cref="ListProductsQuery"/> a proposito: se exporta lo que se
+/// esta viendo en la grilla. Sin ninguno, se exporta el catalogo entero. <c>Search</c> queda afuera:
+/// ese criterio existe para el combobox de cotizaciones, no para el listado desde donde se exporta.
 /// </summary>
-public sealed record ExportProductsQuery(
+public sealed record ExportProductsCommand(
     Guid TenantId,
     string? Name,
     string? Code,
-    bool? IsActive) : IQuery<ProductExportAccepted>;
+    bool? IsActive) : ICommand<ExportProductsResult>;
 
 /// <summary>
-/// Lo que contesta el 202. No trae el enlace a proposito: el archivo viaja por correo, y
-/// devolverlo aca abriria un segundo canal de entrega que invita a saltear el primero — mismo
-/// criterio que la exportacion de clientes del frontend.
+/// Lo que el request devuelve. **No lleva el enlace**: el contrato de esta operacion es que el
+/// archivo llega por correo, y devolverlo tambien aca duplicaria el canal de entrega — el frontend
+/// tomaria el atajo y el camino del correo quedaria sin ejercitar hasta que fallara en produccion.
 /// </summary>
-public sealed record ProductExportAccepted(
+public sealed record ExportProductsResult(
     string FileName,
     int ProductCount,
-    DateTimeOffset ExpiresAt,
-    bool EmailSent);
+    DateTimeOffset ExpiresAt);
 
 public sealed class ExportProductsHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
-    IProductExportWorkbookBuilder workbookBuilder,
-    IProductExportDelivery delivery,
+    IProductExportWorkbookBuilder exportBuilder,
+    IProductExportStorage exportStorage,
+    IProductExportEventPublisher exportEventPublisher,
+    ICatalogAuditPublisher auditPublisher,
+    ICatalogUnitOfWork unitOfWork,
     IExecutionContext executionContext,
     IClock clock)
-    : IQueryHandler<ExportProductsQuery, ProductExportAccepted>
+    : ICommandHandler<ExportProductsCommand, ExportProductsResult>
 {
     /// <summary>
-    /// Tope de filas, mismo criterio que la exportacion de clientes: por encima de esto el Excel
-    /// deja de ser algo que alguien abre y el armado empieza a competir por memoria con el
-    /// resto del proceso. Se corta con un 422 que dice que hay que acotar con los filtros, no
-    /// con un timeout.
+    /// Cuantos productos se traen por consulta. No es el tope de la exportacion: es el tamano del
+    /// lote con el que se recorre, para no pedirle a PostgreSQL el catalogo entero de una.
     /// </summary>
-    private const int MaxRows = 20_000;
+    private const int BatchSize = 500;
 
-    public async Task<ProductExportAccepted> HandleAsync(
-        ExportProductsQuery query,
+    /// <summary>
+    /// Tope duro de filas. El workbook se arma completo en memoria antes de subirse, asi que sin
+    /// limite un tenant grande tumba el proceso en vez de devolver un error. Cuando alguien lo
+    /// alcance, la respuesta correcta no es subirlo sino acotar la exportacion con los filtros.
+    /// </summary>
+    private const int MaxExportRows = 20_000;
+
+    public async Task<ExportProductsResult> HandleAsync(
+        ExportProductsCommand command,
         CancellationToken cancellationToken)
     {
         CatalogAuthorization.EnsureAuthorized(
-            executionContext, query.TenantId, CatalogPermissions.ProductRead);
+            executionContext, command.TenantId, CatalogPermissions.ProductRead);
 
-        var products = await repository.ListForExportAsync(
-            query.TenantId, query.Name, query.Code, query.IsActive, cancellationToken);
-
+        var products = await ReadAllAsync(command, cancellationToken);
         if (products.Count == 0)
         {
+            // Un archivo con solo la cabecera, o un correo con un Excel vacio, es peor que decir
+            // que no habia nada para exportar.
             throw new CatalogDomainException(
                 "catalog.export.empty",
-                "There are no products to export for the given filters.");
+                "There are no products matching the export criteria.");
         }
 
-        if (products.Count > MaxRows)
-        {
-            throw new CatalogDomainException(
-                "catalog.export.too_many_rows",
-                $"The export exceeds the maximum of {MaxRows} products.");
-        }
+        var occurredAt = clock.UtcNow;
 
-        // Las tasas se resuelven de una sola vez para todo el lote: el producto guarda el id y
-        // la planilla muestra el nombre, y pedirla producto por producto seria el N+1 clasico.
-        var taxRates = await taxRateRepository.ListAsync(query.TenantId, cancellationToken);
+        // Las tasas se resuelven de una sola vez para todo el lote: el producto guarda el id y la
+        // planilla muestra el nombre, y pedirla producto por producto seria el N+1 clasico.
+        var taxRates = await taxRateRepository.ListAsync(command.TenantId, cancellationToken);
         var taxRateNames = taxRates.ToDictionary(rate => rate.Id, rate => rate.Name);
 
         var rows = products.Select(product => ToRow(product, taxRateNames)).ToList();
-        var content = workbookBuilder.Build(rows);
-        var fileName = FileNameFor(clock.UtcNow);
+        var fileName = FileNameFor(occurredAt);
+        var content = exportBuilder.Build(rows);
 
-        var delivered = await delivery.DeliverAsync(
-            query.TenantId, fileName, content, cancellationToken);
+        // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
+        // entrada de auditoria. No hay exportacion a medias ni correo con un enlace que no resuelve.
+        var upload = await exportStorage.UploadAsync(
+            command.TenantId, fileName, content, cancellationToken);
 
-        return new ProductExportAccepted(
-            fileName, products.Count, delivered.ExpiresAt, delivered.EmailSent);
+        exportEventPublisher.Publish(
+            command.TenantId,
+            executionContext.SubjectId,
+            upload.DownloadUrl,
+            fileName,
+            rows.Count,
+            upload.ExpiresAt,
+            occurredAt);
+
+        auditPublisher.Publish(
+            command.TenantId,
+            executionContext.SubjectId,
+            "catalog.product.exported",
+            fileName,
+            $"success:{rows.Count}",
+            occurredAt);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return new ExportProductsResult(fileName, rows.Count, upload.ExpiresAt);
+    }
+
+    // Por lotes y no de una: SearchAsync pagina con un tope que existe para proteger la respuesta
+    // HTTP, y este camino no devuelve las filas por HTTP.
+    private async Task<IReadOnlyList<Product>> ReadAllAsync(
+        ExportProductsCommand command,
+        CancellationToken cancellationToken)
+    {
+        var all = new List<Product>();
+        while (true)
+        {
+            var batch = await repository.ListForExportAsync(
+                command.TenantId,
+                command.Name,
+                command.Code,
+                command.IsActive,
+                all.Count,
+                BatchSize,
+                cancellationToken);
+
+            all.AddRange(batch);
+
+            if (all.Count > MaxExportRows)
+            {
+                throw new CatalogDomainException(
+                    "catalog.export.too_many_rows",
+                    $"The export cannot exceed {MaxExportRows} products. Narrow it with filters.");
+            }
+
+            if (batch.Count < BatchSize)
+            {
+                return all;
+            }
+        }
     }
 
     private static ProductExportRow ToRow(

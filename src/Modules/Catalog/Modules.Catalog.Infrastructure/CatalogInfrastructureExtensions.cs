@@ -27,6 +27,7 @@ public static class CatalogInfrastructureExtensions
         services.AddScoped<IProductRepository, ProductRepository>();
         services.AddScoped<ITaxRateRepository, TaxRateRepository>();
         services.AddScoped<IProductExportWorkbookBuilder, ClosedXmlProductExportBuilder>();
+        services.AddScoped<IProductExportEventPublisher, ProductExportEventPublisher>();
         services.AddScoped<ICatalogUnitOfWork, CatalogUnitOfWork>();
         services.AddScoped<ICatalogAuditPublisher, CatalogAuditPublisher>();
 

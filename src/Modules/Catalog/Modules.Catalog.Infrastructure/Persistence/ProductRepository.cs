@@ -28,6 +28,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        int skip,
+        int take,
         CancellationToken cancellationToken)
     {
         // Mismo Include que SearchAsync y por el mismo motivo: sin el, las escalas llegan
@@ -58,8 +60,13 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
 
         // Por codigo y no por relevancia: una planilla se lee y se compara en un orden estable,
         // y el export no tiene un termino de busqueda contra el cual medir relevancia.
+        // Orden estable antes de paginar: sin el, dos lotes consecutivos pueden repetir o
+        // saltear filas. Por codigo y no por relevancia — el export no tiene termino contra el
+        // cual medirla, y una planilla se compara en un orden previsible.
         return await query
             .OrderBy(product => product.Code)
+            .Skip(skip)
+            .Take(take)
             .ToListAsync(cancellationToken);
     }
 
