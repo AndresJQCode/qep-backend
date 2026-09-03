@@ -147,6 +147,12 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
 
     public void Add(Product product) => dbContext.Products.Add(product);
 
+    // AddRange y no un SaveChanges propio: las filas quedan en el change tracker y salen en el
+    // commit de CatalogUnitOfWork, junto al producto que las originó. Una lista vacía —el caso
+    // normal de un PUT que no toca precios— es un no-op de EF, así que no hace falta guardarla.
+    public void AddPriceChanges(IReadOnlyList<ProductPriceChange> changes) =>
+        dbContext.ProductPriceChanges.AddRange(changes);
+
     // AnyAsync y no un Count: la pregunta es si hay al menos uno, y PostgreSQL puede cortar en
     // el primero. AsNoTracking está de más acá porque Any no materializa entidades.
     public Task<bool> AnyWithTaxRateAsync(

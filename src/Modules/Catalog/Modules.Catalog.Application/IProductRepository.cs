@@ -42,6 +42,19 @@ public interface IProductRepository
     void Add(Product product);
 
     /// <summary>
+    /// Suma las filas del histórico de precios al cambio en curso. **No guarda**: como
+    /// <see cref="Add"/>, deja la escritura para el <c>SaveChangesAsync</c> de
+    /// <see cref="ICatalogUnitOfWork"/>, que es lo que las mantiene en la misma transacción que
+    /// el producto que las originó. Un guardado propio acá dejaría histórico de un cambio que
+    /// después falla al commitear.
+    ///
+    /// No lleva <c>tenantId</c> —única excepción entre los métodos de este puerto— porque cada
+    /// <see cref="ProductPriceChange"/> ya trae el suyo, copiado del producto por
+    /// <c>ProductPriceChangeDetector</c>: recibirlo aparte abriría la puerta a que difieran.
+    /// </summary>
+    void AddPriceChanges(IReadOnlyList<ProductPriceChange> changes);
+
+    /// <summary>
     /// Si algún producto del tenant apunta a esa tasa. Lo pregunta `DeleteTaxRate` antes de
     /// borrar, para que el caso normal salga como un 422 que se entiende en vez de una violación
     /// de foreign key traducida.
