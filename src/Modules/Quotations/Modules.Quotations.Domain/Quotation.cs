@@ -6,13 +6,13 @@ namespace Modules.Quotations.Domain;
 /// métodos, que recalculan los totales del encabezado, mismo criterio que
 /// <c>Product</c>/<c>PriceScale</c> en Catalog.
 ///
-/// Cubre el borrador (crear, agregar/editar/quitar líneas, editar encabezado), el envío (US-12)
-/// y la anulación (US-11). La conversión a venta y el vencimiento automático (US-13 a US-19)
-/// llegan en fases posteriores.
+/// Cubre el borrador (crear, agregar/editar/quitar líneas, editar encabezado), el envío (US-12),
+/// la anulación (US-11), la conversión a venta (US-16, vía <see cref="EnsureConvertibleToSale"/>
+/// — no cambia el estado) y el vencimiento automático (US-19).
 ///
 /// Editar (líneas o encabezado) exige <see cref="QuotationStatus.Draft"/> o
 /// <see cref="QuotationStatus.Sent"/> — US-10: "se puede editar en Draft y Sent... se bloquea
-/// una vez Approved". <see cref="Send"/> sólo sale de Draft; <see cref="Void"/> sale de Draft o
+/// una vez convertida a venta, anulada o vencida". <see cref="Send"/> sólo sale de Draft; <see cref="Void"/> sale de Draft o
 /// de Sent.
 /// </summary>
 public sealed class Quotation
@@ -39,6 +39,8 @@ public sealed class Quotation
         string? paymentMethod,
         string? notes,
         QuotationOverrides overrides,
+        bool customerWithRetention,
+        bool customerVatSurplus,
         MemberId createdBy,
         DateTimeOffset occurredAt)
     {
@@ -53,6 +55,8 @@ public sealed class Quotation
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);
         Assign(overrides);
+        CustomerWithRetention = customerWithRetention;
+        CustomerVatSurplus = customerVatSurplus;
         CreatedBy = createdBy;
         UpdatedAt = occurredAt;
         Version = 1;
@@ -101,8 +105,33 @@ public sealed class Quotation
     public decimal DiscountAmount { get; private set; }
 
     /// <summary>Subtotal + TaxAmount. El descuento no se resta de nuevo: contarlo dos veces
-    /// sería el error que §1.6 previene explícitamente.</summary>
+    /// sería el error que §1.6 previene explícitamente. No refleja la retención — sigue siendo
+    /// lo facturado, no lo cobrado en efectivo (ver <see cref="NetTotal"/>).</summary>
     public decimal Total { get; private set; }
+
+    /// <summary>Copia de <c>Customer.WithRetention</c>, resuelta al crear la cotización y
+    /// vuelta a tomar del cliente maestro mientras sigue editable (<see cref="QuotationStatus.Draft"/>/
+    /// <see cref="QuotationStatus.Sent"/>, ver <see cref="RefreshCustomerTaxProfile"/>) — a
+    /// diferencia de los overrides de facturación/entrega de abajo (una decisión manual de
+    /// quien cotiza), esto es un hecho del cliente que puede cambiar, y no un valor a congelar
+    /// a propósito. Se fija tal cual quedó una vez Voided o Expired. La usa
+    /// <see cref="RecalculateTotals"/> para <see cref="RetentionAmount"/>.</summary>
+    public bool CustomerWithRetention { get; private set; }
+
+    /// <summary>Igual criterio que <see cref="CustomerWithRetention"/> pero para
+    /// <c>Customer.VatSurplus</c>. La usa <see cref="RecalculateTotals"/> para eximir de IVA a
+    /// esta cotización entera.</summary>
+    public bool CustomerVatSurplus { get; private set; }
+
+    /// <summary>Retención en la fuente: <c>round(Subtotal * 0.025)</c> cuando
+    /// <see cref="CustomerWithRetention"/>, si no 0. Informativo hacia <see cref="Total"/> (que
+    /// sigue siendo lo facturado) pero resta hacia <see cref="NetTotal"/> — es lo que el cliente
+    /// le retiene al vendedor, no algo que la cotización deje de facturar.</summary>
+    public decimal RetentionAmount { get; private set; }
+
+    /// <summary>Total - RetentionAmount: lo que efectivamente se cobra en efectivo. Igual a
+    /// <see cref="Total"/> cuando no hay retención.</summary>
+    public decimal NetTotal { get; private set; }
 
     public string? Notes { get; private set; }
 
@@ -155,6 +184,8 @@ public sealed class Quotation
         string? paymentMethod,
         string? notes,
         QuotationOverrides overrides,
+        bool customerWithRetention,
+        bool customerVatSurplus,
         MemberId createdBy,
         DateTimeOffset occurredAt) =>
         new(
@@ -167,6 +198,8 @@ public sealed class Quotation
             paymentMethod,
             notes,
             overrides,
+            customerWithRetention,
+            customerVatSurplus,
             createdBy,
             occurredAt);
 
@@ -187,6 +220,17 @@ public sealed class Quotation
         DateTimeOffset occurredAt)
     {
         EnsureEditable();
+
+        // Un producto por cotizacion: dos lineas del mismo producto son la misma linea con la
+        // cantidad partida, y partida ademas rompe el descuento por escala (cada mitad resuelve
+        // su escala por separado y las dos pagan mas caro que la suma junta). Quien quiera mas
+        // unidades cambia la cantidad de la linea que ya existe.
+        if (_items.Any(existing => existing.ProductId == productId))
+        {
+            throw new QuotationsDomainException(
+                "quotation.item.duplicate_product",
+                "The product is already in the quotation.");
+        }
 
         var item = QuotationItem.Create(
             itemId, Id, productId, quantity, unitPrice, discountPercentage, taxPercentage,
@@ -243,7 +287,7 @@ public sealed class Quotation
     /// <summary>US-12: genera el PDF (fuera de este agregado — la aplicación ya lo validó contra
     /// Storage) y marca la cotización como enviada. Sólo desde <see cref="QuotationStatus.Draft"/>:
     /// no tiene sentido volver a "enviar" algo que ya se envió, y el resto de las transiciones
-    /// (Approved, Voided, Expired) tampoco vuelven para atrás a Sent.</summary>
+    /// (Voided, Expired) tampoco vuelven para atrás a Sent.</summary>
     public void Send(Guid pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
     {
         if (Status != QuotationStatus.Draft)
@@ -273,24 +317,41 @@ public sealed class Quotation
         Version++;
     }
 
-    /// <summary>US-16: aprueba la cotización al convertirla en venta. Sólo desde
-    /// <see cref="QuotationStatus.Sent"/> — no se convierte un borrador ni una cotización ya
-    /// aprobada, anulada o vencida. La aplicación llama a este método y crea el
-    /// <see cref="Sale"/> en la misma unidad de trabajo (modelo-datos-cotizaciones.md §3:
-    /// "conviene hacerlo en una misma transacción").</summary>
-    public void Approve(MemberId approvedBy, DateTimeOffset occurredAt)
+    /// <summary>US-16: valida que se pueda convertir en venta. Sólo desde
+    /// <see cref="QuotationStatus.Sent"/> — no se convierte un borrador, ni una ya anulada o
+    /// vencida. No muta nada: a diferencia de la vieja <c>Approve()</c>, convertir a venta ya no
+    /// cambia el estado de la cotización (no existe un estado "aprobada"/"convertida" — ver
+    /// <see cref="QuotationStatus"/>), así que esto es sólo el guard de precondición que
+    /// <c>ConvertQuotationToSaleHandler</c> llama antes de crear el <see cref="Sale"/>.</summary>
+    public void EnsureConvertibleToSale()
     {
         if (Status != QuotationStatus.Sent)
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.not_sent",
-                "Only a sent quotation can be approved.");
+                "Only a sent quotation can be converted to a sale.");
+        }
+    }
+
+    /// <summary>
+    /// Vuelve a tomar del cliente maestro <see cref="CustomerWithRetention"/> y
+    /// <see cref="CustomerVatSurplus"/> mientras la cotización sigue editable (Draft o Sent).
+    /// Silencioso a propósito (no valida ni lanza) para poder llamarse también desde una
+    /// lectura: una vez Voided o Expired la cotización queda tal cual quedó, sin excepción, y
+    /// nada la vuelve a tocar.
+    /// </summary>
+    public void RefreshCustomerTaxProfile(bool customerWithRetention, bool customerVatSurplus)
+    {
+        if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent)) return;
+        if (CustomerWithRetention == customerWithRetention &&
+            CustomerVatSurplus == customerVatSurplus)
+        {
+            return;
         }
 
-        Status = QuotationStatus.Approved;
-        UpdatedBy = approvedBy;
-        UpdatedAt = occurredAt;
-        Version++;
+        CustomerWithRetention = customerWithRetention;
+        CustomerVatSurplus = customerVatSurplus;
+        RecalculateTotals();
     }
 
     /// <summary>US-19: vencimiento automático. Sólo un job programado la llama —qué cotizaciones
@@ -312,9 +373,10 @@ public sealed class Quotation
         Version++;
     }
 
-    // US-10: "se puede editar en Draft y Sent... se bloquea una vez Approved". Cubre también
-    // Voided (US-11: "quedan de sólo lectura") y Expired, aunque esta fase todavía no produzca
-    // ninguna de las dos desde fuera de este agregado salvo Voided.
+    // US-10: "se puede editar en Draft y Sent... se bloquea una vez convertida a venta". Cubre
+    // también Voided (US-11: "quedan de sólo lectura") y Expired — convertir a venta (US-16) no
+    // suma un estado propio, así que lo único que EnsureEditable necesita bloquear además de
+    // Sent/Draft es Voided y Expired.
     private void EnsureEditable()
     {
         if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))
@@ -354,9 +416,21 @@ public sealed class Quotation
     {
         Subtotal = Round(_items.Sum(item => item.Subtotal));
         DiscountAmount = Round(_items.Sum(item => item.DiscountAmount));
-        TaxAmount = Round(_items.Sum(item => item.TaxAmount));
+
+        // Un cliente con excedente de IVA no paga IVA en la cotización, cualquiera sea la tasa
+        // de cada línea — el impuesto de cada QuotationItem queda intacto (sigue reflejando la
+        // tasa real del producto), pero el encabezado lo ignora entero.
+        var rawTaxAmount = Round(_items.Sum(item => item.TaxAmount));
+        TaxAmount = CustomerVatSurplus ? 0m : rawTaxAmount;
         TaxPercentage = Subtotal > 0 ? Round(TaxAmount / Subtotal * 100m) : 0m;
+
         Total = Subtotal + TaxAmount;
+
+        // Retención en la fuente: 2.5% de lo facturado sin IVA. Resta del neto a cobrar, no de
+        // Total — Total sigue siendo lo facturado, RetentionAmount es lo que el cliente le
+        // retiene al vendedor y no paga en efectivo.
+        RetentionAmount = CustomerWithRetention ? Round(Subtotal * 0.025m) : 0m;
+        NetTotal = Total - RetentionAmount;
     }
 
     private static decimal Round(decimal value) =>

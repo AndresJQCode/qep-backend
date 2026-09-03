@@ -28,6 +28,13 @@ public sealed record QuotationDto(
     decimal TaxAmount,
     decimal DiscountAmount,
     decimal Total,
+    // CustomerVatSurplus viaja para que el frontend pueda mostrar "exento por excedente de
+    // IVA" en vez de adivinar por que TaxAmount dio cero. RetentionAmount/NetTotal son el
+    // snapshot de retencion en la fuente (Quotation.RecalculateTotals): NetTotal = Total -
+    // RetentionAmount es lo que efectivamente se cobra en efectivo.
+    bool CustomerVatSurplus,
+    decimal RetentionAmount,
+    decimal NetTotal,
     string? Notes,
     string? BillingNameOverride,
     string? BillingAddressOverride,
@@ -83,6 +90,13 @@ public sealed record QuotationResponse(
     decimal TaxAmount,
     decimal DiscountAmount,
     decimal Total,
+    // CustomerVatSurplus viaja para que el frontend pueda mostrar "exento por excedente de
+    // IVA" en vez de adivinar por que TaxAmount dio cero. RetentionAmount/NetTotal son el
+    // snapshot de retencion en la fuente (Quotation.RecalculateTotals): NetTotal = Total -
+    // RetentionAmount es lo que efectivamente se cobra en efectivo.
+    bool CustomerVatSurplus,
+    decimal RetentionAmount,
+    decimal NetTotal,
     string? Notes,
     string? BillingNameOverride,
     string? BillingAddressOverride,

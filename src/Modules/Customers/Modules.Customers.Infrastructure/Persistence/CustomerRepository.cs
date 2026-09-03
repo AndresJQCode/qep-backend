@@ -232,6 +232,28 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .ToDictionary(identification => identification, identification => ownerByIdentification[identification]);
     }
 
+    public async Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(
+        Guid tenantId,
+        string term,
+        CancellationToken cancellationToken)
+    {
+        var pattern = LikePattern(term);
+        if (pattern is null)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var ids = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer =>
+                customer.TenantId == tenantId &&
+                EF.Functions.ILike(customer.IdentificationNumber, pattern, LikeEscapeCharacter))
+            .Select(customer => customer.Id.Value)
+            .ToListAsync(cancellationToken);
+
+        return ids.ToHashSet();
+    }
+
     public async Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId,
         IReadOnlyCollection<string> suffixes,

@@ -65,6 +65,67 @@ public sealed class QuotationListApiTests
         Assert.Equal(quotationA.Id, item.Id);
     }
 
+    // Quotation no guarda el NIT del cliente -- el handler lo resuelve a ids contra Customers
+    // antes de filtrar (ListQuotationsHandler + IQuotationCustomerLookup.SearchIdsByIdentificationAsync).
+    [Fact]
+    public async Task ListFiltersByPartialClientNit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientA = await CreateActiveCustomerAsync(client, tenantId, "900.111.222-3");
+        var clientB = await CreateActiveCustomerAsync(client, tenantId, "800.999.888-7");
+        var quotationA = await CreateQuotationAsync(client, tenantId, clientA);
+        await CreateQuotationAsync(client, tenantId, clientB);
+
+        var response = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(tenantId)}?clientNit=111.222",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(response);
+        var item = Assert.Single(response.Items);
+        Assert.Equal(quotationA.Id, item.Id);
+    }
+
+    [Fact]
+    public async Task ListWithAClientNitThatMatchesNoCustomerReturnsAnEmptyPage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(tenantId)}?clientNit=no-existe-este-nit",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Items);
+    }
+
+    [Fact]
+    public async Task ListFiltersByPartialQuotationNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var partial = quotation.QuotationNumber[4..];
+
+        var response = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(tenantId)}?quotationNumber={partial}",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(response);
+        var item = Assert.Single(response.Items);
+        Assert.Equal(quotation.Id, item.Id);
+    }
+
     [Fact]
     public async Task ListFiltersByStatus()
     {

@@ -51,6 +51,10 @@ public static class NotificationsInfrastructureExtensions
             sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<ILogger<CustomerExportDeliveryWorker>>()));
 
+        services.AddHostedService(sp => new ProductExportDeliveryWorker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<ProductExportDeliveryWorker>>()));
+
         return services;
     }
 

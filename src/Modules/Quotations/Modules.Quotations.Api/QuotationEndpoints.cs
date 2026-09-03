@@ -101,12 +101,15 @@ public static class QuotationEndpoints
         string? status = null,
         DateOnly? createdFrom = null,
         DateOnly? createdTo = null,
+        string? clientNit = null,
+        string? quotationNumber = null,
         int page = 1,
         int pageSize = QuotationPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
             new ListQuotationsQuery(
-                tenantId, clientId, advisorId, status, createdFrom, createdTo, page, pageSize),
+                tenantId, clientId, advisorId, status, createdFrom, createdTo, clientNit,
+                quotationNumber, page, pageSize),
             cancellationToken);
 
         return Results.Ok(new QuotationsPageResponse(
@@ -264,6 +267,9 @@ public static class QuotationEndpoints
         quotation.TaxAmount,
         quotation.DiscountAmount,
         quotation.Total,
+        quotation.CustomerVatSurplus,
+        quotation.RetentionAmount,
+        quotation.NetTotal,
         quotation.Notes,
         quotation.BillingNameOverride,
         quotation.BillingAddressOverride,

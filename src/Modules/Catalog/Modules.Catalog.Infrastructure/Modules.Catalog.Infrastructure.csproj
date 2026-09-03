@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="ClosedXML" />
     <ProjectReference Include="..\Modules.Catalog.Application\Modules.Catalog.Application.csproj" />
     <ProjectReference Include="..\Modules.Catalog.Domain\Modules.Catalog.Domain.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />

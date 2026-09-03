@@ -11,6 +11,10 @@ public sealed record ListQuotationsQuery(
     string? Status,
     DateOnly? CreatedFrom,
     DateOnly? CreatedTo,
+    /// <summary>Texto libre contra el NIT/numero de identificacion del cliente — Quotation no
+    /// guarda ese dato, asi que el handler lo resuelve a ids contra Customers antes de filtrar.</summary>
+    string? ClientNit,
+    string? QuotationNumber,
     int Page,
     int PageSize) : IQuery<QuotationPage>;
 
@@ -55,6 +59,7 @@ public static class QuotationPaging
 
 public sealed class ListQuotationsHandler(
     IQuotationRepository repository,
+    IQuotationCustomerLookup customerLookup,
     IExecutionContext executionContext)
     : IQueryHandler<ListQuotationsQuery, QuotationPage>
 {
@@ -70,13 +75,27 @@ public sealed class ListQuotationsHandler(
         var status = ParseStatus(query.Status);
         var advisorId = query.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
 
+        // El NIT no vive en Quotation: se resuelve a ids contra Customers antes de filtrar, mismo
+        // criterio que ListCustomersHandler con el filtro de Departamento -> ids de ciudad. Sin
+        // termino, `clientIds` queda null ("sin filtro"); con termino sin match, la busqueda ya
+        // sabe que no hay nada que traer.
+        IReadOnlyCollection<Guid>? clientIds = null;
+        if (!string.IsNullOrWhiteSpace(query.ClientNit))
+        {
+            var matchedIds = await customerLookup.SearchIdsByIdentificationAsync(
+                query.TenantId, query.ClientNit, cancellationToken);
+            clientIds = matchedIds.ToArray();
+        }
+
         var (quotations, total) = await repository.SearchAsync(
             query.TenantId,
             query.ClientId,
+            clientIds,
             advisorId,
             status,
             query.CreatedFrom,
             query.CreatedTo,
+            query.QuotationNumber,
             page,
             pageSize,
             cancellationToken);
