@@ -104,18 +104,20 @@ public sealed class QuotationTests
         var productId = Guid.CreateVersion7();
 
         quotation.AddItem(
-            QuotationItemId.New(), productId, quantity: 10, unitPrice: 100_000m,
+            QuotationItemId.New(), productId, quantity: 10, unitPrice: 119_000m,
             discountPercentage: 5m, taxPercentage: 19, AdvisorId, Now);
 
         var item = Assert.Single(quotation.Items);
         Assert.Equal(productId, item.ProductId);
         Assert.Equal(10m, item.Quantity);
-        Assert.Equal(100_000m, item.UnitPrice);
+        Assert.Equal(119_000m, item.UnitPrice);
         Assert.Equal(5m, item.DiscountPercentage);
-        // gross = 10 * 100_000 = 1_000_000; discount = 5% = 50_000; subtotal = 950_000
-        Assert.Equal(50_000m, item.DiscountAmount);
+        // El precio viene con IVA incluido: 10 * 119_000 = 1_190_000; descuento 5% = 59_500;
+        // cobrado = 1_130_500.
+        Assert.Equal(59_500m, item.DiscountAmount);
+        // El IVA se extrae de lo cobrado (x 19/119 = 180_500), no se suma encima, y el
+        // subtotal es lo que queda de base: 1_130_500 - 180_500 = 950_000.
         Assert.Equal(950_000m, item.Subtotal);
-        // tax = 19% of 950_000 = 180_500
         Assert.Equal(19, item.TaxPercentage);
         Assert.Equal(180_500m, item.TaxAmount);
         Assert.Equal(1, item.Position);
@@ -127,12 +129,12 @@ public sealed class QuotationTests
         var quotation = NewQuotation();
 
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 10, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 10, unitPrice: 119_000m,
             discountPercentage: 5m, taxPercentage: 19, AdvisorId, Now);
 
-        // subtotal = 950_000; tax = 19% of 950_000 = 180_500; total = 1_130_500
+        // cobrado = 1_130_500 con IVA adentro; IVA extraido = 180_500; base = 950_000
         Assert.Equal(950_000m, quotation.Subtotal);
-        Assert.Equal(50_000m, quotation.DiscountAmount);
+        Assert.Equal(59_500m, quotation.DiscountAmount);
         Assert.Equal(180_500m, quotation.TaxAmount);
         Assert.Equal(19m, quotation.TaxPercentage);
         Assert.Equal(1_130_500m, quotation.Total);
@@ -147,13 +149,14 @@ public sealed class QuotationTests
         var quotation = NewQuotation();
 
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
             discountPercentage: 0m, taxPercentage: 0, AdvisorId, Now);
 
-        // línea 1: 19% de 100_000 = 19_000; línea 2: 0% de 100_000 = 0; suma = 19_000
+        // línea 1: 119_000 con 19% adentro -> base 100_000, IVA 19_000; línea 2: sin tasa, su
+        // precio es todo base. Suma de bases = 200_000, suma de IVA = 19_000.
         Assert.Equal(200_000m, quotation.Subtotal);
         Assert.Equal(19_000m, quotation.TaxAmount);
         // tasa efectiva: 19_000 / 200_000 * 100 = 9.5
@@ -166,7 +169,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation(customerVatSurplus: true);
 
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         Assert.Equal(100_000m, quotation.Subtotal);
@@ -183,10 +186,11 @@ public sealed class QuotationTests
         var quotation = NewQuotation(customerWithRetention: true);
 
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        // subtotal = 100_000; tax = 19_000; total = 119_000; retencion = 100_000 * 0.025 = 2_500
+        // 119_000 cobrados con el IVA adentro -> base 100_000 + IVA 19_000; la retención es el
+        // 2.5% de la base: 2_500.
         Assert.Equal(100_000m, quotation.Subtotal);
         Assert.Equal(119_000m, quotation.Total);
         Assert.Equal(2_500m, quotation.RetentionAmount);
@@ -199,7 +203,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation();
 
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         Assert.Equal(0m, quotation.RetentionAmount);
@@ -211,7 +215,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);

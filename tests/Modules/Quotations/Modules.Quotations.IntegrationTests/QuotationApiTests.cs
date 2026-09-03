@@ -51,7 +51,10 @@ public sealed class QuotationApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId, vatSurplus: true);
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
-        var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
+        // 119_000 con el IVA del 19% ya adentro: la base es 100_000 redondo, que es lo que
+        // dejan las aserciones de abajo legibles.
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsJsonAsync(
@@ -82,7 +85,10 @@ public sealed class QuotationApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId, withRetention: true);
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
-        var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
+        // 119_000 con el IVA del 19% ya adentro: la base es 100_000 redondo, que es lo que
+        // dejan las aserciones de abajo legibles.
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsJsonAsync(
@@ -214,7 +220,10 @@ public sealed class QuotationApiTests
         var clientId = await CreateActiveCustomerAsync(
             client, tenantId, identificationNumber, withRetention: false, vatSurplus: false);
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
-        var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
+        // 119_000 con el IVA del 19% ya adentro: la base es 100_000 redondo, que es lo que
+        // dejan las aserciones de abajo legibles.
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
         var created = await CreateQuotationAsync(client, tenantId, clientId);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{created.Id}/items",

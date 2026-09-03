@@ -54,7 +54,9 @@ public sealed class QuotationItem
 
     public decimal DiscountAmount { get; private set; }
 
-    /// <summary>(Quantity × UnitPrice) − DiscountAmount. Ya neto del descuento de la línea.</summary>
+    /// <summary>La base sin IVA de la línea: lo cobrado (Quantity × UnitPrice − DiscountAmount,
+    /// que viene con IVA incluido) menos el <see cref="TaxAmount"/> contenido en ese monto.
+    /// </summary>
     public decimal Subtotal { get; private set; }
 
     /// <summary>Tasa de impuesto del producto (<c>Catalog.TaxRate.Percentage</c>), snapshot al
@@ -63,7 +65,8 @@ public sealed class QuotationItem
     /// después. 0 si el producto no tiene tasa de impuesto asignada.</summary>
     public int TaxPercentage { get; private set; }
 
-    /// <summary>Subtotal × TaxPercentage / 100. El impuesto de la cotización es la suma de este
+    /// <summary>El IVA **contenido** en lo cobrado por la línea, no uno agregado encima: el
+    /// precio del producto ya lo trae. El impuesto de la cotización es la suma de este
     /// campo en todas sus líneas (<see cref="Quotation.RecalculateTotals"/>), no un porcentaje
     /// único aplicado al subtotal completo.</summary>
     public decimal TaxAmount { get; private set; }
@@ -131,10 +134,22 @@ public sealed class QuotationItem
         DiscountPercentage = discountPercentage;
         TaxPercentage = taxPercentage;
 
+        // El precio del producto se carga **con IVA incluido**, asi que aca no se suma impuesto:
+        // se extrae el que ya viene adentro. Antes era al reves (precio base + IVA encima).
         var gross = quantity * unitPrice;
         DiscountAmount = Round(gross * discountPercentage / 100m);
-        Subtotal = Round(gross) - DiscountAmount;
-        TaxAmount = Round(Subtotal * taxPercentage / 100m);
+
+        // Lo que efectivamente se cobra por la linea, IVA adentro.
+        var lineTotal = Round(gross) - DiscountAmount;
+
+        // El IVA contenido en ese total: total x tasa / (100 + tasa), no total x tasa / 100 --
+        // esa segunda formula es la de agregar IVA a una base, y aplicada sobre un precio que ya
+        // lo trae cobraria el impuesto dos veces. Con tasa 0 da 0 y el divisor nunca es 0.
+        TaxAmount = Round(lineTotal * taxPercentage / (100m + taxPercentage));
+
+        // Sigue siendo la base sin IVA: es lo que el encabezado suma como Subtotal y lo que la
+        // retencion en la fuente toma como base, asi que esas formulas no cambian.
+        Subtotal = lineTotal - TaxAmount;
         UpdatedAt = occurredAt;
     }
 

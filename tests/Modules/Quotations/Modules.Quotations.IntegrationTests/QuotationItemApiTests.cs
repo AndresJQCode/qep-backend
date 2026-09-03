@@ -65,8 +65,10 @@ public sealed class QuotationItemApiTests
 
         var ivaGeneral = await CreateTaxRateAsync(client, tenantId, "IVA general", 19);
         var exento = await CreateTaxRateAsync(client, tenantId, "Exento", 0);
+        // 119_000 con el 19% ya adentro -> base 100_000, igual que los dos sin impuesto, que
+        // al no tener tasa son todos base.
         var taxedProductId = await CreateProductWithScalesAsync(
-            client, tenantId, baseCop: 100_000m, taxRateId: ivaGeneral);
+            client, tenantId, baseCop: 119_000m, taxRateId: ivaGeneral);
         var exemptProductId = await CreateProductWithScalesAsync(
             client, tenantId, baseCop: 100_000m, taxRateId: exento);
         var untaxedProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
@@ -84,8 +86,8 @@ public sealed class QuotationItemApiTests
             new AddQuotationItemRequest(untaxedProductId, 1m),
             TestContext.Current.CancellationToken));
 
-        // Tres lineas de 100_000 c/u: subtotal = 300_000. Sólo la primera aporta impuesto:
-        // 19% de 100_000 = 19_000 -- las otras dos aportan 0.
+        // Tres lineas con base 100_000 c/u: subtotal = 300_000. Sólo la primera trae IVA
+        // adentro: 19_000 extraidos de sus 119_000 -- las otras dos aportan 0.
         Assert.Equal(300_000m, final.Subtotal);
         Assert.Equal(19_000m, final.TaxAmount);
         Assert.Equal(319_000m, final.Total);
