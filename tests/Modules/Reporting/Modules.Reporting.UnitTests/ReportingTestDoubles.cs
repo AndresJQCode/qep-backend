@@ -147,3 +147,62 @@ internal sealed class FakeReportExcelBuilder : IReportExcelBuilder
         return new ReportFile([1, 2, 3], "reporte-clientes.xlsx");
     }
 }
+
+/// <summary>
+/// Un origen de cotizaciones que recuerda con que argumentos lo llamaron. El resumen consulta una
+/// o dos veces segun haya periodo anterior, y **cuales opciones llevo cada una** es la mitad de lo
+/// que hay que probar: la segunda no pide ranking ni cola de vencimientos.
+/// </summary>
+internal sealed class FakeQuotationsReportSource : IQuotationsReportSource
+{
+    public QuotationsReportAggregate Aggregate { get; set; } = EmptyAggregate();
+
+    public QuotationsReportAggregate? PrecedingAggregate { get; set; }
+
+    public List<QuotationsReportCriteria> SummarizedCriteria { get; } = [];
+
+    public List<QuotationsSummaryOptions> SummarizedOptions { get; } = [];
+
+    public Task<QuotationsReportAggregate> SummarizeAsync(
+        QuotationsReportCriteria criteria,
+        QuotationsSummaryOptions options,
+        CancellationToken cancellationToken)
+    {
+        var isPreceding = SummarizedCriteria.Count > 0;
+        SummarizedCriteria.Add(criteria);
+        SummarizedOptions.Add(options);
+        return Task.FromResult(isPreceding ? PrecedingAggregate ?? Aggregate : Aggregate);
+    }
+
+    public Task<(IReadOnlyList<QuotationsReportItemDto> Items, int Total)> ListAsync(
+        QuotationsReportCriteria criteria,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(((IReadOnlyList<QuotationsReportItemDto>)[], 0));
+
+    public Task<IReadOnlyList<QuotationsReportItemDto>> ListForExportAsync(
+        QuotationsReportCriteria criteria,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult((IReadOnlyList<QuotationsReportItemDto>)[]);
+
+    public static QuotationsReportAggregate EmptyAggregate(
+        int quotationCount = 0,
+        decimal total = 0m) =>
+        new(
+            quotationCount,
+            total,
+            0m,
+            total,
+            [],
+            [],
+            [],
+            new QuotationValidityDto(
+                new ReportBucketDto(0, 0m),
+                new ReportBucketDto(0, 0m),
+                new ReportBucketDto(0, 0m),
+                new ReportBucketDto(0, 0m),
+                0),
+            []);
+}

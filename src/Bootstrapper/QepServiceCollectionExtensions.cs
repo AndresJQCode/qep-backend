@@ -312,6 +312,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ExportSalesReportQuery, ReportFile>,
             ExportSalesReportHandler>();
         services.AddScoped<
+            IQueryHandler<GetQuotationsReportSummaryQuery, QuotationsReportSummaryDto>,
+            GetQuotationsReportSummaryHandler>();
+        services.AddScoped<
             IQueryHandler<ListQuotationsReportQuery, ReportPage<QuotationsReportItemDto>>,
             ListQuotationsReportHandler>();
         services.AddScoped<

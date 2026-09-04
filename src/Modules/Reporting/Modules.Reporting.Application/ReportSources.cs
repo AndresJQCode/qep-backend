@@ -67,6 +67,22 @@ public interface IQuotationsReportSource
         QuotationsReportCriteria criteria,
         int limit,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
+    /// en la base. Ver <see cref="ISalesReportSource.SummarizeAsync"/>.
+    ///
+    /// <paramref name="options"/> trae los topes y **la fecha de hoy**: los tramos de vigencia y
+    /// la cola de vencimientos dependen del dia, y el origen no consulta ningun reloj — se lo
+    /// pasan, que es lo que permite probarlos con una fecha fija.
+    ///
+    /// Un <c>RankSize</c> o un <c>ExpiringSize</c> en cero significan "no me traigas eso": la
+    /// ventana anterior solo necesita el conteo y el monto.
+    /// </summary>
+    Task<QuotationsReportAggregate> SummarizeAsync(
+        QuotationsReportCriteria criteria,
+        QuotationsSummaryOptions options,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>

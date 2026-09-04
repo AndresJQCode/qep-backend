@@ -32,7 +32,7 @@ public sealed record SalesReportSummaryDto(
 /// **Sólo vienen los meses con ventas.** Rellenar los vacíos con cero es una decisión de
 /// presentación —depende del rango que el eje dibuje— y se toma en el frontend, no acá.
 /// </summary>
-public sealed record ReportMonthlyPointDto(int Year, int Month, int SaleCount, decimal Total);
+public sealed record ReportMonthlyPointDto(int Year, int Month, int Count, decimal Total);
 
 /// <summary>
 /// Una fila del ranking por asesor o por cliente.
@@ -51,12 +51,12 @@ public sealed record ReportRankEntryDto(
     string? Label,
     string? Secondary,
     int EntityCount,
-    int SaleCount,
+    int Count,
     decimal Total);
 
 /// <summary>El mismo cálculo sobre la ventana anterior, recortado a lo que un delta necesita: un
 /// panel compara el total y el conteo, no la serie mensual entera.</summary>
-public sealed record ReportComparisonDto(int SaleCount, decimal Total);
+public sealed record ReportComparisonDto(int Count, decimal Total);
 
 /// <summary>
 /// Lo que devuelve el origen de datos: el resumen de **una** ventana, sin comparación.
@@ -85,6 +85,20 @@ public static class ReportSummaryRules
     /// tarjeta y deja la fila de "Otros" a la vista, que es la que dice cuánto no se está viendo.
     /// </summary>
     public const int RankSize = 5;
+
+    /// <summary>
+    /// Qué tan cerca tiene que estar un vencimiento para entrar en la cola de trabajo del panel
+    /// de cotizaciones.
+    ///
+    /// Siete días y no treinta porque la lista existe para decidir a quién llamar **esta semana**;
+    /// con treinta se vuelve un listado y deja de ser una cola. El horizonte largo se mira en los
+    /// tramos de <see cref="QuotationValidityDto"/>, que sí llegan hasta más de 30 días.
+    /// </summary>
+    public const int ExpiringWithinDays = 7;
+
+    /// <summary>Cuántos vencimientos trae la cola. Mismo criterio de tope que
+    /// <see cref="RankSize"/>: un resumen no devuelve listados.</summary>
+    public const int ExpiringSize = 5;
 }
 
 /// <summary>
