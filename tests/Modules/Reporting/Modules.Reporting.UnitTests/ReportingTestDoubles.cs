@@ -41,6 +41,34 @@ internal sealed class FakeSalesReportSource : ISalesReportSource
 
     public int? LastExportLimit { get; private set; }
 
+    /// <summary>Lo que devuelve el primer <c>SummarizeAsync</c>: el periodo pedido.</summary>
+    public SalesReportAggregate Aggregate { get; set; } = new(0, 0m, 0m, 0m, [], [], []);
+
+    /// <summary>
+    /// Lo que devuelve el segundo: la ventana anterior. Nulo significa que la prueba no espera
+    /// una segunda consulta; si igual llega se devuelve <see cref="Aggregate"/>, porque quien
+    /// delata la consulta de mas es el conteo de <see cref="SummarizedCriteria"/> y no un nulo
+    /// explotando a mitad del handler.
+    /// </summary>
+    public SalesReportAggregate? PrecedingAggregate { get; set; }
+
+    /// <summary>Los criterios de cada <c>SummarizeAsync</c>, en orden: el resumen consulta una o
+    /// dos veces segun haya periodo anterior, y cual es cual importa.</summary>
+    public List<SalesReportCriteria> SummarizedCriteria { get; } = [];
+
+    public int? LastRankSize { get; private set; }
+
+    public Task<SalesReportAggregate> SummarizeAsync(
+        SalesReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken)
+    {
+        var isPreceding = SummarizedCriteria.Count > 0;
+        SummarizedCriteria.Add(criteria);
+        LastRankSize = rankSize;
+        return Task.FromResult(isPreceding ? PrecedingAggregate ?? Aggregate : Aggregate);
+    }
+
     public Task<(IReadOnlyList<SalesReportItemDto> Items, int Total)> ListAsync(
         SalesReportCriteria criteria,
         int page,
