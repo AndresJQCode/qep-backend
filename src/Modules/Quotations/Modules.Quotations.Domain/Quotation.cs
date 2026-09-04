@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Domain;
+﻿namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Una cotización de un tenant (modelo-datos-cotizaciones.md §2.1). Agregado raíz que incluye sus
@@ -295,6 +295,18 @@ public sealed class Quotation
             throw new QuotationsDomainException(
                 "quotation.quotation.not_draft",
                 "Only a draft quotation can be marked as sent.");
+        }
+
+        // Sin vigencia la cotización nunca vence: QuotationExpirationProcessor filtra por
+        // `ValidUntil != null`, así que una Sent sin fecha queda convertible a venta para
+        // siempre, con los precios congelados el día que se envió. Se exige acá, al salir de
+        // Draft, porque es el único punto por el que pasa toda cotización antes de poder
+        // convertirse en venta (EnsureConvertibleToSale sólo admite Sent).
+        if (ValidUntil is null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.valid_until_required",
+                "A quotation must have a validity date before it can be sent.");
         }
 
         PdfFileId = pdfFileId;

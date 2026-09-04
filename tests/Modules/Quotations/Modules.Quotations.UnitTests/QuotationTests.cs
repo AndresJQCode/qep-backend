@@ -1,4 +1,4 @@
-using Modules.Quotations.Domain;
+﻿using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -9,18 +9,21 @@ public sealed class QuotationTests
     private static readonly MemberId AdvisorId = new(Guid.CreateVersion7());
     private static readonly DateTimeOffset Now = new(2026, 8, 24, 12, 0, 0, TimeSpan.Zero);
 
+    private static readonly DateOnly ValidUntil = new(2026, 9, 30);
+
     private static Quotation NewQuotation(
         string? notes = null,
         QuotationOverrides? overrides = null,
         bool customerWithRetention = false,
-        bool customerVatSurplus = false) =>
+        bool customerVatSurplus = false,
+        DateOnly? validUntil = null) =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
             "QUO-2026-0001",
             ClientId,
             AdvisorId,
-            validUntil: null,
+            validUntil ?? ValidUntil,
             paymentMethod: "Transferencia bancaria",
             notes,
             overrides ?? QuotationOverrides.Empty,
@@ -373,6 +376,20 @@ public sealed class QuotationTests
         Assert.Equal(pdfFileId, quotation.PdfFileId);
         Assert.Equal(Now, quotation.SentAt);
         Assert.Equal(2, quotation.Version);
+    }
+
+    [Fact]
+    public void SendRejectsAQuotationWithoutAValidityDate()
+    {
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
+            validUntil: null, null, null, QuotationOverrides.Empty, false, false, AdvisorId, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now));
+
+        Assert.Equal("quotation.quotation.valid_until_required", error.Code);
+        Assert.Equal(QuotationStatus.Draft, quotation.Status);
     }
 
     [Fact]
