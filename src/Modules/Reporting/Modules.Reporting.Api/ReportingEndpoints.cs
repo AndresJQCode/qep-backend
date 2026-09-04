@@ -52,6 +52,12 @@ public static class ReportingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapGet("/quotations/summary", GetQuotationsSummaryAsync)
+            .RequireAuthorization(ReportingPermissions.QuotationRead)
+            .Produces<QuotationsReportSummaryDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/quotations/export", ExportQuotationsAsync)
             .RequireAuthorization(ReportingPermissions.QuotationRead)
             .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
@@ -167,6 +173,26 @@ public static class ReportingEndpoints
             cancellationToken);
 
         return Results.Ok(result);
+    }
+
+    /// <summary>Ver <see cref="GetSalesSummaryAsync"/>: mismos filtros que el listado, sin
+    /// paginacion.</summary>
+    private static async Task<IResult> GetQuotationsSummaryAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        Guid? advisorId = null,
+        Guid? clientId = null,
+        string? status = null)
+    {
+        var summary = await dispatcher.QueryAsync(
+            new GetQuotationsReportSummaryQuery(
+                new QuotationsReportFilter(tenantId, from, to, advisorId, clientId, status)),
+            cancellationToken);
+
+        return Results.Ok(summary);
     }
 
     private static async Task<IResult> ExportQuotationsAsync(

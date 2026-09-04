@@ -84,7 +84,7 @@ internal sealed class SalesReportSource(
             .GroupBy(_ => 1)
             .Select(group => new
             {
-                SaleCount = group.Count(),
+                Count = group.Count(),
                 Subtotal = group.Sum(row => row.quotation.Subtotal),
                 TaxAmount = group.Sum(row => row.quotation.TaxAmount),
                 Total = group.Sum(row => row.quotation.Total),
@@ -93,7 +93,7 @@ internal sealed class SalesReportSource(
 
         // Sin ventas no hay nada que agrupar ni ninguna etiqueta que resolver: cinco consultas
         // menos, y el resto del metodo tendria que tratar el cero como caso especial igual.
-        if (totals is null || totals.SaleCount == 0)
+        if (totals is null || totals.Count == 0)
         {
             return new SalesReportAggregate(0, 0m, 0m, 0m, [], [], []);
         }
@@ -115,7 +115,7 @@ internal sealed class SalesReportSource(
             {
                 group.Key.Year,
                 group.Key.Month,
-                SaleCount = group.Count(),
+                Count = group.Count(),
                 Total = group.Sum(row => row.quotation.Total),
             })
             .OrderBy(point => point.Year)
@@ -124,7 +124,7 @@ internal sealed class SalesReportSource(
 
         var monthly = monthRows
             .Select(point => new ReportMonthlyPointDto(
-                point.Year, point.Month, point.SaleCount, point.Total))
+                point.Year, point.Month, point.Count, point.Total))
             .ToArray();
 
         // Desempate por id en los dos rankings: sin un orden total, dos entidades con el mismo
@@ -134,7 +134,7 @@ internal sealed class SalesReportSource(
             .Select(group => new
             {
                 AdvisorId = group.Key,
-                SaleCount = group.Count(),
+                Count = group.Count(),
                 Total = group.Sum(row => row.quotation.Total),
             })
             .OrderByDescending(entry => entry.Total)
@@ -151,12 +151,12 @@ internal sealed class SalesReportSource(
                 emails.GetValueOrDefault(entry.AdvisorId.Value),
                 Secondary: null,
                 EntityCount: 1,
-                entry.SaleCount,
+                entry.Count,
                 entry.Total))
             .ToList();
 
-        var otherAdvisors = await FoldOthersAsync(
-            byAdvisor, rankSize, totals.SaleCount, totals.Total,
+        var otherAdvisors = await ReportRankFolding.FoldOthersAsync(
+            byAdvisor, rankSize, totals.Count, totals.Total,
             () => joined
                 .Select(row => row.quotation.AdvisorId)
                 .Distinct()
@@ -171,7 +171,7 @@ internal sealed class SalesReportSource(
             .Select(group => new
             {
                 ClientId = group.Key,
-                SaleCount = group.Count(),
+                Count = group.Count(),
                 Total = group.Sum(row => row.quotation.Total),
             })
             .OrderByDescending(entry => entry.Total)
@@ -192,13 +192,13 @@ internal sealed class SalesReportSource(
                     client?.Name,
                     client?.Cuc,
                     EntityCount: 1,
-                    entry.SaleCount,
+                    entry.Count,
                     entry.Total);
             })
             .ToList();
 
-        var otherClients = await FoldOthersAsync(
-            byClient, rankSize, totals.SaleCount, totals.Total,
+        var otherClients = await ReportRankFolding.FoldOthersAsync(
+            byClient, rankSize, totals.Count, totals.Total,
             () => joined
                 .Select(row => row.quotation.ClientId)
                 .Distinct()
@@ -209,47 +209,8 @@ internal sealed class SalesReportSource(
         }
 
         return new SalesReportAggregate(
-            totals.SaleCount, totals.Subtotal, totals.TaxAmount, totals.Total,
+            totals.Count, totals.Subtotal, totals.TaxAmount, totals.Total,
             monthly, byAdvisor, byClient);
-    }
-
-    /// <summary>
-    /// La fila "Otros": lo que quedo fuera del tope, por resta contra el total que ya se calculo.
-    ///
-    /// Restar y no sumar en una tercera consulta es lo que garantiza que las filas del ranking y
-    /// el KPI de arriba cierren exactamente, incluso con importes que no son enteros.
-    ///
-    /// <paramref name="countDistinctAsync"/> se invoca **solo** cuando el tope se lleno: con
-    /// menos entidades que el tope no hay resto posible, y cada ranking se ahorra una consulta —
-    /// que en el caso comun (un tenant chico, o el periodo anterior vacio) son cuatro por
-    /// resumen.
-    /// </summary>
-    private static async Task<ReportRankEntryDto?> FoldOthersAsync(
-        List<ReportRankEntryDto> named,
-        int rankSize,
-        int totalSaleCount,
-        decimal totalAmount,
-        Func<Task<int>> countDistinctAsync)
-    {
-        if (named.Count < rankSize)
-        {
-            return null;
-        }
-
-        var distinct = await countDistinctAsync();
-        var remaining = distinct - named.Count;
-        if (remaining <= 0)
-        {
-            return null;
-        }
-
-        return new ReportRankEntryDto(
-            Id: null,
-            Label: null,
-            Secondary: null,
-            remaining,
-            totalSaleCount - named.Sum(entry => entry.SaleCount),
-            totalAmount - named.Sum(entry => entry.Total));
     }
 
     /// <summary>

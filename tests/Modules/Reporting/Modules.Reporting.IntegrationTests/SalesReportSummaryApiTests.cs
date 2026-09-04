@@ -44,7 +44,7 @@ public sealed class SalesReportSummaryApiTests
 
         // La serie mensual: un solo mes, el de la conversion, y sin rellenar los vacios.
         var month = Assert.Single(summary.Monthly);
-        Assert.Equal(1, month.SaleCount);
+        Assert.Equal(1, month.Count);
         Assert.Equal(quotation.Total, month.Total);
 
         // El ranking por asesor agrupa sobre una propiedad con conversor de valor (MemberId) y
@@ -53,7 +53,7 @@ public sealed class SalesReportSummaryApiTests
         Assert.NotNull(advisor.Id);
         Assert.Equal(tenant.OwnerEmail, advisor.Label);
         Assert.Equal(1, advisor.EntityCount);
-        Assert.Equal(1, advisor.SaleCount);
+        Assert.Equal(1, advisor.Count);
         Assert.Equal(quotation.Total, advisor.Total);
 
         var rankedClient = Assert.Single(summary.ByClient);
@@ -126,7 +126,7 @@ public sealed class SalesReportSummaryApiTests
         Assert.Equal(1, summary.SaleCount);
 
         Assert.NotNull(summary.Previous);
-        Assert.Equal(0, summary.Previous.SaleCount);
+        Assert.Equal(0, summary.Previous.Count);
         Assert.Equal(0m, summary.Previous.Total);
     }
 
