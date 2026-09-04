@@ -33,6 +33,13 @@ public static class ReportingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Mismo permiso que el listado: expone exactamente los mismos datos, sumados.
+        group.MapGet("/sales/summary", GetSalesSummaryAsync)
+            .RequireAuthorization(ReportingPermissions.SalesRead)
+            .Produces<SalesReportSummaryDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/sales/export", ExportSalesAsync)
             .RequireAuthorization(ReportingPermissions.SalesRead)
             .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
@@ -98,6 +105,28 @@ public static class ReportingEndpoints
             cancellationToken);
 
         return Results.Ok(result);
+    }
+
+    /// <summary>
+    /// Los mismos filtros que el listado **menos la paginacion**, igual que la exportacion: un
+    /// resumen de la pagina que se esta mirando no seria un resumen de nada.
+    /// </summary>
+    private static async Task<IResult> GetSalesSummaryAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        Guid? advisorId = null,
+        Guid? clientId = null,
+        string? paymentStatus = null)
+    {
+        var summary = await dispatcher.QueryAsync(
+            new GetSalesReportSummaryQuery(
+                new SalesReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus)),
+            cancellationToken);
+
+        return Results.Ok(summary);
     }
 
     private static async Task<IResult> ExportSalesAsync(

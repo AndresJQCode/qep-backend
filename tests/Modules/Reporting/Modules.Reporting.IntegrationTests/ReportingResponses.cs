@@ -74,3 +74,27 @@ internal sealed record CustomerReportItem(
 /// <summary>El <c>code</c> de un ProblemDetails, que es por lo que el frontend discrimina — no
 /// por el texto ni por el status a secas.</summary>
 internal sealed record ProblemDto(string? Code, string? Title, int? Status);
+
+/// <summary>El resumen agregado de ventas, tal como el contrato lo fija. Redeclarado igual que
+/// el resto — ver la nota del encabezado de este archivo.</summary>
+internal sealed record SalesReportSummary(
+    int SaleCount,
+    decimal Subtotal,
+    decimal TaxAmount,
+    decimal Total,
+    IReadOnlyList<ReportMonthlyPoint> Monthly,
+    IReadOnlyList<ReportRankEntry> ByAdvisor,
+    IReadOnlyList<ReportRankEntry> ByClient,
+    ReportComparison? Previous);
+
+internal sealed record ReportMonthlyPoint(int Year, int Month, int SaleCount, decimal Total);
+
+internal sealed record ReportRankEntry(
+    Guid? Id,
+    string? Label,
+    string? Secondary,
+    int EntityCount,
+    int SaleCount,
+    decimal Total);
+
+internal sealed record ReportComparison(int SaleCount, decimal Total);

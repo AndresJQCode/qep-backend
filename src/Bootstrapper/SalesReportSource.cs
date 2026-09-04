@@ -54,7 +54,215 @@ internal sealed class SalesReportSource(
         return await ToDtosAsync(criteria.TenantId, rows, cancellationToken);
     }
 
-    private IQueryable<SaleRow> BuildQuery(SalesReportCriteria criteria)
+    /// <summary>
+    /// Todo se agrega **en la base**: ningun camino de aca trae filas para sumarlas en memoria,
+    /// que es justo lo que el resumen existe para evitar.
+    ///
+    /// Las cuatro consultas viven en un solo metodo por una razon de EF, no de estilo: se agrega
+    /// sobre el **tipo anonimo del join**, y un tipo anonimo no puede cruzar una frontera de
+    /// metodo. Proyectarlo antes a un record nombrado —que fue el primer intento— hace que EF no
+    /// vea a traves del constructor y falle con "could not be translated" en tiempo de ejecucion.
+    ///
+    /// Son varias consultas y no una porque son agregaciones de distinta granularidad —el total,
+    /// la serie por mes y dos rankings—; una sola que las mezclara necesitaria funciones de
+    /// ventana que EF no arma. Todas atacan el mismo indice.
+    /// </summary>
+    public async Task<SalesReportAggregate> SummarizeAsync(
+        SalesReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken)
+    {
+        var joined = from sale in FilterSales(criteria)
+                     join quotation in FilterQuotations(criteria)
+                         on sale.QuotationId equals quotation.Id
+                     select new { sale, quotation };
+
+        // GroupBy sobre una constante es el "agregar todo el conjunto", que traduce a un SELECT
+        // con agregados y sin GROUP BY. Sobre cero filas no devuelve ninguna, y de ahi el
+        // fallback: un resumen vacio es cero, nunca nulo.
+        var totals = await joined
+            .GroupBy(_ => 1)
+            .Select(group => new
+            {
+                SaleCount = group.Count(),
+                Subtotal = group.Sum(row => row.quotation.Subtotal),
+                TaxAmount = group.Sum(row => row.quotation.TaxAmount),
+                Total = group.Sum(row => row.quotation.Total),
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // Sin ventas no hay nada que agrupar ni ninguna etiqueta que resolver: cinco consultas
+        // menos, y el resto del metodo tendria que tratar el cero como caso especial igual.
+        if (totals is null || totals.SaleCount == 0)
+        {
+            return new SalesReportAggregate(0, 0m, 0m, 0m, [], [], []);
+        }
+
+        // La serie mensual va en **UTC**, el mismo huso en el que ReportDateRange corta el rango.
+        // Agrupar en el huso de la sesion de PostgreSQL pondria una venta del 1 de enero en
+        // diciembre para un tenant en America/Bogota, y ademas haria que el resultado dependiera
+        // de una configuracion de conexion en vez del dato.
+        //
+        // Solo vuelven los meses con ventas: rellenar los huecos con cero depende del rango que
+        // el eje dibuje, asi que es del frontend.
+        var monthRows = await joined
+            .GroupBy(row => new
+            {
+                row.sale.ConvertedAt.UtcDateTime.Year,
+                row.sale.ConvertedAt.UtcDateTime.Month,
+            })
+            .Select(group => new
+            {
+                group.Key.Year,
+                group.Key.Month,
+                SaleCount = group.Count(),
+                Total = group.Sum(row => row.quotation.Total),
+            })
+            .OrderBy(point => point.Year)
+            .ThenBy(point => point.Month)
+            .ToListAsync(cancellationToken);
+
+        var monthly = monthRows
+            .Select(point => new ReportMonthlyPointDto(
+                point.Year, point.Month, point.SaleCount, point.Total))
+            .ToArray();
+
+        // Desempate por id en los dos rankings: sin un orden total, dos entidades con el mismo
+        // monto pueden intercambiarse entre dos llamadas identicas y el ranking "parpadea".
+        var topAdvisors = await joined
+            .GroupBy(row => row.quotation.AdvisorId)
+            .Select(group => new
+            {
+                AdvisorId = group.Key,
+                SaleCount = group.Count(),
+                Total = group.Sum(row => row.quotation.Total),
+            })
+            .OrderByDescending(entry => entry.Total)
+            .ThenBy(entry => entry.AdvisorId)
+            .Take(rankSize)
+            .ToListAsync(cancellationToken);
+
+        var emails = await peopleLookup.EmailsByMembershipIdAsync(
+            topAdvisors.Select(entry => entry.AdvisorId.Value).ToArray(), cancellationToken);
+
+        var byAdvisor = topAdvisors
+            .Select(entry => new ReportRankEntryDto(
+                entry.AdvisorId.Value,
+                emails.GetValueOrDefault(entry.AdvisorId.Value),
+                Secondary: null,
+                EntityCount: 1,
+                entry.SaleCount,
+                entry.Total))
+            .ToList();
+
+        var otherAdvisors = await FoldOthersAsync(
+            byAdvisor, rankSize, totals.SaleCount, totals.Total,
+            () => joined
+                .Select(row => row.quotation.AdvisorId)
+                .Distinct()
+                .CountAsync(cancellationToken));
+        if (otherAdvisors is not null)
+        {
+            byAdvisor.Add(otherAdvisors);
+        }
+
+        var topClients = await joined
+            .GroupBy(row => row.quotation.ClientId)
+            .Select(group => new
+            {
+                ClientId = group.Key,
+                SaleCount = group.Count(),
+                Total = group.Sum(row => row.quotation.Total),
+            })
+            .OrderByDescending(entry => entry.Total)
+            .ThenBy(entry => entry.ClientId)
+            .Take(rankSize)
+            .ToListAsync(cancellationToken);
+
+        var clients = await clientLookup.FindAsync(
+            criteria.TenantId, topClients.Select(entry => entry.ClientId).ToArray(),
+            cancellationToken);
+
+        var byClient = topClients
+            .Select(entry =>
+            {
+                clients.TryGetValue(entry.ClientId, out var client);
+                return new ReportRankEntryDto(
+                    entry.ClientId,
+                    client?.Name,
+                    client?.Cuc,
+                    EntityCount: 1,
+                    entry.SaleCount,
+                    entry.Total);
+            })
+            .ToList();
+
+        var otherClients = await FoldOthersAsync(
+            byClient, rankSize, totals.SaleCount, totals.Total,
+            () => joined
+                .Select(row => row.quotation.ClientId)
+                .Distinct()
+                .CountAsync(cancellationToken));
+        if (otherClients is not null)
+        {
+            byClient.Add(otherClients);
+        }
+
+        return new SalesReportAggregate(
+            totals.SaleCount, totals.Subtotal, totals.TaxAmount, totals.Total,
+            monthly, byAdvisor, byClient);
+    }
+
+    /// <summary>
+    /// La fila "Otros": lo que quedo fuera del tope, por resta contra el total que ya se calculo.
+    ///
+    /// Restar y no sumar en una tercera consulta es lo que garantiza que las filas del ranking y
+    /// el KPI de arriba cierren exactamente, incluso con importes que no son enteros.
+    ///
+    /// <paramref name="countDistinctAsync"/> se invoca **solo** cuando el tope se lleno: con
+    /// menos entidades que el tope no hay resto posible, y cada ranking se ahorra una consulta —
+    /// que en el caso comun (un tenant chico, o el periodo anterior vacio) son cuatro por
+    /// resumen.
+    /// </summary>
+    private static async Task<ReportRankEntryDto?> FoldOthersAsync(
+        List<ReportRankEntryDto> named,
+        int rankSize,
+        int totalSaleCount,
+        decimal totalAmount,
+        Func<Task<int>> countDistinctAsync)
+    {
+        if (named.Count < rankSize)
+        {
+            return null;
+        }
+
+        var distinct = await countDistinctAsync();
+        var remaining = distinct - named.Count;
+        if (remaining <= 0)
+        {
+            return null;
+        }
+
+        return new ReportRankEntryDto(
+            Id: null,
+            Label: null,
+            Secondary: null,
+            remaining,
+            totalSaleCount - named.Sum(entry => entry.SaleCount),
+            totalAmount - named.Sum(entry => entry.Total));
+    }
+
+    /// <summary>
+    /// Las ventas filtradas por lo que es propio de la venta: tenant, rango de conversion y
+    /// estado de pago.
+    ///
+    /// Separado de <see cref="FilterQuotations"/> porque los filtros del criterio caen sobre dos
+    /// tablas distintas, y porque el join tiene que armarse **dentro** de cada metodo que
+    /// consulta: EF no traduce un agregado sobre una proyeccion a un record —no ve a traves del
+    /// constructor y falla con "could not be translated"—, asi que el resumen agrupa sobre el
+    /// tipo anonimo del join y no sobre <see cref="SaleRow"/>.
+    /// </summary>
+    private IQueryable<Sale> FilterSales(SalesReportCriteria criteria)
     {
         var sales = quotations.Sales
             .AsNoTracking()
@@ -78,26 +286,49 @@ internal sealed class SalesReportSource(
             sales = sales.Where(sale => sale.PaymentStatus == mapped);
         }
 
-        var joined = from sale in sales
-                     join quotation in quotations.Quotations.AsNoTracking()
-                         on sale.QuotationId equals quotation.Id
-                     select new { sale, quotation };
+        return sales;
+    }
+
+    /// <summary>
+    /// Las cotizaciones filtradas por lo que es propio de la cotizacion: asesor y cliente.
+    ///
+    /// **Sin filtro de tenant a proposito.** Lo aporta el join contra
+    /// <see cref="FilterSales"/>, que si lo tiene: una cotizacion solo entra si hay una venta de
+    /// este tenant que la apunte.
+    /// </summary>
+    private IQueryable<Quotation> FilterQuotations(SalesReportCriteria criteria)
+    {
+        var candidates = quotations.Quotations.AsNoTracking();
 
         if (criteria.AdvisorId is { } advisorId)
         {
             var advisor = new MemberId(advisorId);
-            joined = joined.Where(row => row.quotation.AdvisorId == advisor);
+            candidates = candidates.Where(quotation => quotation.AdvisorId == advisor);
         }
 
         if (criteria.ClientId is { } clientId)
         {
-            joined = joined.Where(row => row.quotation.ClientId == clientId);
+            candidates = candidates.Where(quotation => quotation.ClientId == clientId);
         }
 
-        // Orden explicito y total: sin el, dos paginas consecutivas pueden repetir u omitir
-        // filas, porque PostgreSQL no garantiza ningun orden sin ORDER BY. Lo mas nuevo primero,
-        // que es como se lee un reporte de ventas, y el numero de venta como desempate porque es
-        // unico por tenant.
+        return candidates;
+    }
+
+    /// <summary>
+    /// El conjunto ya ordenado, que es lo que necesitan el listado y la exportacion.
+    ///
+    /// Orden explicito y total: sin el, dos paginas consecutivas pueden repetir u omitir filas,
+    /// porque PostgreSQL no garantiza ningun orden sin <c>ORDER BY</c>. Lo mas nuevo primero, que
+    /// es como se lee un reporte de ventas, y el numero de venta como desempate porque es unico
+    /// por tenant.
+    /// </summary>
+    private IQueryable<SaleRow> BuildQuery(SalesReportCriteria criteria)
+    {
+        var joined = from sale in FilterSales(criteria)
+                     join quotation in FilterQuotations(criteria)
+                         on sale.QuotationId equals quotation.Id
+                     select new { sale, quotation };
+
         return joined
             .OrderByDescending(row => row.sale.ConvertedAt)
             .ThenBy(row => row.sale.SaleNumber)
