@@ -15,6 +15,13 @@ namespace Modules.Quotations.UnitTests;
 /// </summary>
 public sealed class ZenviaWhatsAppSenderTests
 {
+    // Deliberadamente ficticios: lo que esta prueba verifica es que sale lo que se configuro,
+    // no cual es la plantilla vigente. Poner acá el id real de `Quotations:WhatsApp:TemplateId`
+    // obligaria a tocar el test cada vez que se aprueba una plantilla nueva -- que es siempre,
+    // porque Meta no deja editar una aprobada.
+    private const string TemplateId = "plantilla-de-prueba";
+    private const string FromNumber = "570000000000";
+
     private static readonly WhatsAppQuotationMessage Message = new(
         ToPhone: "3001234567",
         FullName: "Juan Pérez",
@@ -70,10 +77,9 @@ public sealed class ZenviaWhatsAppSenderTests
         await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
 
         var body = capture.Body();
-        Assert.Equal("573009999999", body.GetProperty("from").GetString());
+        Assert.Equal(FromNumber, body.GetProperty("from").GetString());
         Assert.Equal(
-            "72695acd-639b-49b4-8d6f-ad2ce3ad01a3",
-            body.GetProperty("contents")[0].GetProperty("templateId").GetString());
+            TemplateId, body.GetProperty("contents")[0].GetProperty("templateId").GetString());
         Assert.Equal("token-de-prueba", capture.ApiToken);
     }
 
@@ -124,8 +130,8 @@ public sealed class ZenviaWhatsAppSenderTests
             WhatsApp = new WhatsAppOptions
             {
                 ApiToken = "token-de-prueba",
-                FromNumber = "573009999999",
-                TemplateId = "72695acd-639b-49b4-8d6f-ad2ce3ad01a3",
+                FromNumber = FromNumber,
+                TemplateId = TemplateId,
                 BaseUrl = "https://api.zenvia.com",
             },
         });
