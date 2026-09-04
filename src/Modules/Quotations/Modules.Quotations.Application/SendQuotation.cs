@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -30,8 +30,24 @@ public sealed class SendQuotationHandler(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
 
+        // Antes de cualquier efecto externo: firmar la URL del PDF y entregarle el mensaje a
+        // WhatsApp no se deshacen, y una cotización que no puede pasar a Sent no puede haberle
+        // llegado al cliente. `Send` vuelve a comprobarlo al final — este llamado es para el
+        // orden, no para reemplazar la invariante del agregado.
+        quotation.EnsureSendable();
+
         await QuotationPdfResolver.ResolveAsync(
             pdfLookup, command.TenantId, command.PdfFileId, cancellationToken);
+
+        // WhatsApp no descarga el PDF con la sesión de nadie: lo baja Meta, desde sus propios
+        // servidores, y el bucket es privado. Por eso se firma una URL de vida corta en vez de
+        // publicar el archivo — publicarlo lo dejaría accesible para siempre y sin dueño que lo
+        // despublique.
+        var documentUrl = await pdfLookup.CreateDownloadUrlAsync(
+            command.TenantId,
+            command.PdfFileId,
+            $"Cotizacion-{quotation.QuotationNumber}.pdf",
+            cancellationToken);
 
         var customer = await customerLookup.FindAsync(
             command.TenantId, quotation.ClientId, cancellationToken);
@@ -49,9 +65,10 @@ public sealed class SendQuotationHandler(
             new WhatsAppQuotationMessage(
                 ToPhone: customer!.Phone,
                 FullName: customer.Name,
-                Address: customer.Address ?? string.Empty,
                 OrderNumber: quotation.QuotationNumber,
-                OrderId: quotation.Id.ToString()),
+                Total: quotation.Total,
+                ValidUntil: quotation.ValidUntil!.Value,
+                DocumentUrl: documentUrl),
             cancellationToken);
 
         var now = clock.UtcNow;

@@ -1,3 +1,4 @@
+﻿using System.Globalization;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
@@ -19,6 +20,10 @@ internal sealed class ZenviaWhatsAppSender(
     HttpClient httpClient, IOptions<QuotationsOptions> options)
     : IWhatsAppSender
 {
+    // El formato con el que el cliente ve el monto y la vigencia lo fija el locale de la
+    // plantilla (`es` en Zenvia), no el contrato de Application — por eso se arma acá.
+    private static readonly CultureInfo Colombia = CultureInfo.GetCultureInfo("es-CO");
+
     private readonly WhatsAppOptions settings = options.Value.WhatsApp;
 
     public async Task SendQuotationAsync(
@@ -45,9 +50,14 @@ internal sealed class ZenviaWhatsAppSender(
                     fields = new
                     {
                         fullname = message.FullName,
-                        address = message.Address,
                         order_number = message.OrderNumber,
-                        orderId = message.OrderId,
+                        total = message.Total.ToString("C0", Colombia),
+                        valid_until = message.ValidUntil.ToString(
+                            "d 'de' MMMM 'de' yyyy", Colombia),
+                        // La clave se llama `documentUrl` porque así la nombra Zenvia para los
+                        // templates con media (`imageUrl`/`videoUrl` para los otros): no hay un
+                        // contenido aparte de tipo `file`, el adjunto es una variable más.
+                        documentUrl = message.DocumentUrl,
                     },
                 },
             },
