@@ -861,6 +861,26 @@ causas verificadas de este proyecto fueron el `$` en `examples.total` y el `Cont
 Alternativa: la consola en `app.zenvia.com/home/templates` valida el nombre y sube el archivo de
 ejemplo por su cuenta, así que sortea los tres últimos puntos.
 
+#### En producción
+
+Las tres claves se inyectan por entorno y se resuelven desde el variable group
+`Backend-<env>` de Azure DevOps:
+
+| Clave | Manifiesto | Token del pipeline |
+| --- | --- | --- |
+| `Quotations__WhatsApp__TemplateId` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_WHATSAPP_TEMPLATE_ID` |
+| `Quotations__WhatsApp__ApiToken` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_API_TOKEN` |
+| `Quotations__WhatsApp__FromNumber` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_FROM_NUMBER` |
+
+El `TemplateId` va al ConfigMap aunque repita el valor por defecto de la imagen: cambiar el
+texto del mensaje no toca código, pero exige una plantilla nueva —Meta no permite editar una
+aprobada— y sin esta clave ese cambio obligaría a reconstruir y desplegar la imagen.
+
+**Si el token o el número faltan, no hay error.** `AddWhatsAppSender` registra
+`LogWhatsAppSender`, el endpoint responde 200, la cotización queda `Sent` y el cliente no recibe
+nada. Es el mismo criterio que `Notifications:EmailProvider` con Infobip, y el precio de que las
+pruebas de integración no necesiten credenciales.
+
 ## Verificación
 
 ```powershell
