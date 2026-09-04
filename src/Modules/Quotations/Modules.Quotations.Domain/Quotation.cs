@@ -290,24 +290,7 @@ public sealed class Quotation
     /// (Voided, Expired) tampoco vuelven para atrás a Sent.</summary>
     public void Send(Guid pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
     {
-        if (Status != QuotationStatus.Draft)
-        {
-            throw new QuotationsDomainException(
-                "quotation.quotation.not_draft",
-                "Only a draft quotation can be marked as sent.");
-        }
-
-        // Sin vigencia la cotización nunca vence: QuotationExpirationProcessor filtra por
-        // `ValidUntil != null`, así que una Sent sin fecha queda convertible a venta para
-        // siempre, con los precios congelados el día que se envió. Se exige acá, al salir de
-        // Draft, porque es el único punto por el que pasa toda cotización antes de poder
-        // convertirse en venta (EnsureConvertibleToSale sólo admite Sent).
-        if (ValidUntil is null)
-        {
-            throw new QuotationsDomainException(
-                "quotation.quotation.valid_until_required",
-                "A quotation must have a validity date before it can be sent.");
-        }
+        EnsureSendable();
 
         PdfFileId = pdfFileId;
         SentAt = occurredAt;
@@ -327,6 +310,36 @@ public sealed class Quotation
         UpdatedBy = voidedBy;
         UpdatedAt = occurredAt;
         Version++;
+    }
+
+    /// <summary>
+    /// Precondiciones de <see cref="Send"/>, sin mutar nada — mismo criterio que
+    /// <see cref="EnsureConvertibleToSale"/>. Existe aparte para que el caso de uso pueda
+    /// comprobarlas **antes** de firmar la URL del PDF y de entregarle el mensaje a WhatsApp:
+    /// esos dos son efectos externos que no se deshacen, y una cotización que no puede pasar a
+    /// Sent no puede haberle llegado al cliente.
+    ///
+    /// Sin vigencia la cotización nunca vence: <c>QuotationExpirationProcessor</c> filtra por
+    /// <see cref="ValidUntil"/> no nulo, así que una Sent sin fecha quedaría convertible a venta
+    /// para siempre, con los precios congelados el día que se envió. Se exige al salir de Draft
+    /// porque es el único punto por el que pasa toda cotización antes de
+    /// <see cref="EnsureConvertibleToSale"/>.
+    /// </summary>
+    public void EnsureSendable()
+    {
+        if (Status != QuotationStatus.Draft)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.not_draft",
+                "Only a draft quotation can be marked as sent.");
+        }
+
+        if (ValidUntil is null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.valid_until_required",
+                "A quotation must have a validity date before it can be sent.");
+        }
     }
 
     /// <summary>US-16: valida que se pueda convertir en venta. Sólo desde

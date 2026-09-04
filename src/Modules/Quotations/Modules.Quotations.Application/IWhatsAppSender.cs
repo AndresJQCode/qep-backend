@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Application;
+﻿namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Envía la cotización al cliente por WhatsApp — plantilla de Zenvia, pedida por el owner con
@@ -14,14 +14,19 @@ public interface IWhatsAppSender
 }
 
 /// <summary>
-/// Los campos que la plantilla de Zenvia necesita — deliberadamente sólo los básicos del
-/// cliente y de la cotización (nombre, dirección, número y id de la cotización). El `curl`
-/// original también traía `shippingValue`: se dejó afuera a pedido del owner, porque acá no
-/// hay ningún concepto de flete en el dominio de Quotations todavía.
+/// Los campos que la plantilla de Zenvia necesita. El PDF viaja como
+/// <see cref="DocumentUrl"/>: en la API de Zenvia un template con documento no lleva un
+/// contenido aparte de tipo <c>file</c> — la URL entra como una clave más de <c>fields</c>,
+/// llamada exactamente <c>documentUrl</c>.
+///
+/// <see cref="Total"/> y <see cref="ValidUntil"/> viajan crudos, sin formatear: cómo se le
+/// muestran a la persona depende del locale de la plantilla, que es configuración del canal —
+/// así que el formato es del adaptador, no de este contrato.
 /// </summary>
 public sealed record WhatsAppQuotationMessage(
     string? ToPhone,
     string FullName,
-    string Address,
     string OrderNumber,
-    string OrderId);
+    decimal Total,
+    DateOnly ValidUntil,
+    string DocumentUrl);
