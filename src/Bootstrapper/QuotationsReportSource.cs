@@ -138,7 +138,6 @@ internal sealed class QuotationsReportSource(
     {
         QuotationStatusFilter.Draft => QuotationStatus.Draft,
         QuotationStatusFilter.Sent => QuotationStatus.Sent,
-        QuotationStatusFilter.Approved => QuotationStatus.Approved,
         QuotationStatusFilter.Expired => QuotationStatus.Expired,
         QuotationStatusFilter.Voided => QuotationStatus.Voided,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown status.")

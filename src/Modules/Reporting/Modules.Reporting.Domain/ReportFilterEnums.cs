@@ -13,13 +13,19 @@ public enum SalePaymentStatusFilter
     PaymentPending
 }
 
-/// <summary>Los cinco estados de <c>QuotationStatus</c>. Ver <see cref="SalePaymentStatusFilter"/>
-/// sobre por qué se redeclaran.</summary>
+/// <summary>
+/// Los cuatro estados de <c>QuotationStatus</c>. Ver <see cref="SalePaymentStatusFilter"/> sobre
+/// por qué se redeclaran.
+///
+/// **No hay "Approved"**: convertir una cotización en venta la deja en <see cref="Sent"/>, y la
+/// única señal de que se convirtió es que exista una <c>Sale</c> apuntándola 1:1. Para "las
+/// cotizaciones que terminaron en venta" el reporte a usar es el de ventas, no un filtro de
+/// estado acá.
+/// </summary>
 public enum QuotationStatusFilter
 {
     Draft,
     Sent,
-    Approved,
     Expired,
     Voided
 }
