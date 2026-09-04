@@ -12,6 +12,13 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     internal DbSet<PriceScale> PriceScales => Set<PriceScale>();
 
+    /// <summary>
+    /// Público, a diferencia de <see cref="PriceScales"/>: el histórico de precios no se lee a
+    /// través del agregado <c>Product</c> —no es parte de él— y el reporte que lo consume vive
+    /// fuera de este módulo, así que necesita un adaptador que pueda consultarlo.
+    /// </summary>
+    public DbSet<ProductPriceChange> ProductPriceChanges => Set<ProductPriceChange>();
+
     internal DbSet<CatalogOutboxMessage> Outbox => Set<CatalogOutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -19,6 +26,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         ConfigureProduct(modelBuilder);
         ConfigureTaxRate(modelBuilder);
         ConfigurePriceScale(modelBuilder);
+        ConfigureProductPriceChange(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -164,6 +172,57 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany(product => product.PriceScales)
             .HasForeignKey(value => value.ProductId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureProductPriceChange(ModelBuilder modelBuilder)
+    {
+        var change = modelBuilder.Entity<ProductPriceChange>();
+        change.ToTable("product_price_changes", "catalog");
+        change.HasKey(value => value.Id);
+        change.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new ProductPriceChangeId(value))
+            .ValueGeneratedNever();
+        change.Property(value => value.TenantId).HasColumnName("tenant_id");
+        change.Property(value => value.ProductId)
+            .HasColumnName("product_id")
+            .HasConversion(id => id.Value, value => new ProductId(value));
+        // Como texto, mismo criterio que PriceScale.Restriction: una fila del histórico se lee a
+        // mano cuando alguien discute un precio, y "ScaleDiscount" se entiende donde un 2 no.
+        change.Property(value => value.Field)
+            .HasColumnName("field")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        // Nullable de verdad: sólo las filas de ScaleDiscount los llenan. Ver
+        // ProductPriceChange.ScaleFromUnit.
+        change.Property(value => value.ScaleFromUnit).HasColumnName("scale_from_unit");
+        change.Property(value => value.ScaleToUnit).HasColumnName("scale_to_unit");
+        // La misma precisión que price_base_usd/cop: el histórico tiene que poder guardar
+        // cualquier valor que la columna de origen aceptó, o redondearía la evidencia.
+        change.Property(value => value.PreviousValue)
+            .HasColumnName("previous_value")
+            .HasPrecision(18, 2);
+        change.Property(value => value.NewValue)
+            .HasColumnName("new_value")
+            .HasPrecision(18, 2);
+        change.Property(value => value.ChangedBy).HasColumnName("changed_by");
+        change.Property(value => value.ChangedAt).HasColumnName("changed_at");
+
+        // CASCADE, igual que product_price_scales y a diferencia de la FK de TaxRate: el
+        // histórico de precios de un producto que ya no existe no tiene a quién describir, y
+        // dejarlo con RESTRICT haría que ningún producto se pueda borrar nunca.
+        change.HasOne<Product>()
+            .WithMany()
+            .HasForeignKey(value => value.ProductId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        change.HasIndex(value => value.TenantId)
+            .HasDatabaseName("IX_product_price_changes_tenant");
+        // El reporte pregunta "qué cambió en este tenant entre estas dos fechas", y ése es un
+        // recorrido de rango sobre changed_at dentro de un tenant. Con sólo el índice de arriba
+        // la consulta trae todo el histórico del tenant y filtra la fecha en memoria.
+        change.HasIndex(value => new { value.TenantId, value.ChangedAt })
+            .HasDatabaseName("IX_product_price_changes_tenant_changed_at");
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

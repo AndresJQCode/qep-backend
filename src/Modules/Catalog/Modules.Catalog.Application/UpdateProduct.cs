@@ -61,6 +61,14 @@ public sealed class UpdateProductHandler(
 
         var now = clock.UtcNow;
 
+        // Antes del Update, no después: Product.ApplyPricing pisa PriceBaseUsd, PriceBaseCop y
+        // la colección de escalas, así que una vez aplicado el valor viejo no existe en ningún
+        // lado desde donde recuperarlo. Las filas se suman al change tracker y viajan en el
+        // mismo SaveChangesAsync de más abajo — el histórico y el producto se guardan juntos o
+        // no se guarda ninguno.
+        repository.AddPriceChanges(ProductPriceChangeDetector.Detect(
+            product, pricing, executionContext.SubjectId, now));
+
         // Los tres campos se mandan siempre, incluidos los null: el PUT reemplaza el recurso
         // entero, así que un campo ausente se limpia. Es lo que verifica CA-CAT-04-03.
         product.Update(

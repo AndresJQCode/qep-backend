@@ -19,6 +19,8 @@
     <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Quotations\Modules.Quotations.Application\Modules.Quotations.Application.csproj" />
     <ProjectReference Include="..\Modules\Quotations\Modules.Quotations.Infrastructure\Modules.Quotations.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Reporting\Modules.Reporting.Application\Modules.Reporting.Application.csproj" />
+    <ProjectReference Include="..\Modules\Reporting\Modules.Reporting.Infrastructure\Modules.Reporting.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Storage\Modules.Storage.Application\Modules.Storage.Application.csproj" />
     <ProjectReference Include="..\Modules\Storage\Modules.Storage.Infrastructure\Modules.Storage.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Tenancy\Modules.Tenancy.Api\Modules.Tenancy.Api.csproj" />

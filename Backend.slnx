@@ -66,6 +66,12 @@
     <Project Path="src/Modules/Quotations/Modules.Quotations.Domain/Modules.Quotations.Domain.csproj" />
     <Project Path="src/Modules/Quotations/Modules.Quotations.Infrastructure/Modules.Quotations.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Reporting/">
+    <Project Path="src/Modules/Reporting/Modules.Reporting.Api/Modules.Reporting.Api.csproj" />
+    <Project Path="src/Modules/Reporting/Modules.Reporting.Application/Modules.Reporting.Application.csproj" />
+    <Project Path="src/Modules/Reporting/Modules.Reporting.Domain/Modules.Reporting.Domain.csproj" />
+    <Project Path="src/Modules/Reporting/Modules.Reporting.Infrastructure/Modules.Reporting.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Tenancy/">
     <Project Path="src/Modules/Tenancy/Modules.Tenancy.Api/Modules.Tenancy.Api.csproj" />
     <Project Path="src/Modules/Tenancy/Modules.Tenancy.Application/Modules.Tenancy.Application.csproj" />
@@ -115,6 +121,10 @@
   <Folder Name="/tests/Modules/Quotations/">
     <Project Path="tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj" />
     <Project Path="tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Reporting/">
+    <Project Path="tests/Modules/Reporting/Modules.Reporting.UnitTests/Modules.Reporting.UnitTests.csproj" />
+    <Project Path="tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Tenancy/">
     <Project Path="tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/Modules.Tenancy.IntegrationTests.csproj" />
