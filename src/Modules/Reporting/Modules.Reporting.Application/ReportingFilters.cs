@@ -157,7 +157,7 @@ public sealed class QuotationsReportFilterValidator : AbstractValidator<Quotatio
         RuleFor(filter => filter.Status)
             .Must(value => ReportFilterParser.TryParseQuotationStatus(value, out _))
             .When(filter => !string.IsNullOrWhiteSpace(filter.Status))
-            .WithMessage("status must be one of Draft, Sent, Approved, Expired, Voided.");
+            .WithMessage("status must be one of Draft, Sent, Expired, Voided.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)
