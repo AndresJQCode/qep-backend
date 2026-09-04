@@ -1,4 +1,4 @@
-apiVersion: v1
+﻿apiVersion: v1
 kind: ConfigMap
 metadata:
   name: qep-backend-config
@@ -44,3 +44,9 @@ data:
   Storage__R2__PublicBucket: "#{STORAGE_R2_PUBLIC_BUCKET}#"
   Storage__R2__PublicBaseUrl: "#{STORAGE_R2_PUBLIC_BASE_URL}#"
   Storage__R2__Endpoint: "#{STORAGE_R2_ENDPOINT}#"
+  # Id de la plantilla de WhatsApp aprobada por Meta. Repite el valor por defecto de la imagen
+  # y aun así va acá: cambiar el texto del mensaje es una decisión de negocio que no toca una
+  # línea de código, pero Meta no permite editar una plantilla aprobada — hay que crear otra y
+  # apuntar a su id. Sin esta clave, ese cambio exigiría reconstruir y desplegar la imagen.
+  # El token y el número emisor son credenciales y viven en prod-secret.yaml.
+  Quotations__WhatsApp__TemplateId: "#{QUOTATIONS_WHATSAPP_TEMPLATE_ID}#"

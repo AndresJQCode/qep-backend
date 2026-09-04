@@ -1,4 +1,4 @@
-# `qep-backend` — reglas del repositorio
+﻿# `qep-backend` — reglas del repositorio
 
 Monolito modular .NET 10. Este archivo es **prescriptivo**: reglas, precedentes y gotchas
 que **no** se deducen leyendo el código. Lo descriptivo —qué existe, cómo se corre, los
@@ -150,6 +150,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   deja el usuario en `identity.users` **sin membresía**. `RegistrationEndpoints.cs:90-105`
   aprovisiona antes de crear el tenant, en módulos con unidades de trabajo distintas y sin
   compensación.
+- **Una plantilla de WhatsApp rechazada con "An error occurred while sending the template for
+  approval" no la rechazó Meta:** es Zenvia que no logró enviarla. El contenido, el tono y la
+  categoría nunca se revisaron, así que cambiarlos no sirve — mirá el `name` (sólo minúsculas,
+  dígitos y guiones bajos), el `examples` (sin `$`, `#`, `%`) y el `Content-Type` del PDF de
+  ejemplo. Costó cuatro intentos el 2026-09-04. El procedimiento entero está en
+  [README § Plantilla de WhatsApp](README.md#plantilla-de-whatsapp-zenvia).
+- **El texto de la plantilla no se edita: se crea otra.** Meta no permite modificar una plantilla
+  aprobada, así que cambiar una coma implica plantilla nueva, aprobación nueva y apuntar
+  `Quotations:WhatsApp:TemplateId` al `id` nuevo. Si además cambian las variables, se toca
+  `WhatsAppQuotationMessage` y `ZenviaWhatsAppSender` — y el `TemplateId` viaja en **el mismo
+  commit** que ese código: apuntar a una plantilla cuyas variables no coinciden con las que el
+  backend manda rompe el envío en producción sin error de compilación.
 - **`Conversations` y `Reporting` no existen**, aunque los requisitos las supongan. Los
   módulos construidos son Audit, Authorization, Catalog, Identity, Notifications, Storage y
   Tenancy.

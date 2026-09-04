@@ -1,4 +1,4 @@
-# QEP Backend
+﻿# QEP Backend
 
 Backend de **QCode Enterprise Platform (QEP)** implementado como monolito
 modular sobre .NET 10.
@@ -783,6 +783,103 @@ El análisis antimalware usa el protocolo `INSTREAM` de ClamAV. En producción
 configura `Storage:ClamAv:Enabled=true`, junto con `Host`, `Port` y
 `TimeoutSeconds`. Si ClamAV no responde, el archivo no se promociona. El modo
 deshabilitado existe únicamente para desarrollo local y pruebas.
+
+### Plantilla de WhatsApp (Zenvia)
+
+Enviar una cotización (`POST /quotations/{id}/send`) manda un WhatsApp al cliente con el PDF
+adjunto, a través de una plantilla aprobada por Meta. Cuál es la plantilla vigente lo dice
+`Quotations:WhatsApp:TemplateId` en [`appsettings.json`](src/Api/appsettings.json) — acá no se
+repite, para que no haya dos versiones de la verdad. Sus variables son las que
+`ZenviaWhatsAppSender` completa en runtime:
+
+| Variable | De dónde sale |
+| --- | --- |
+| `documentUrl` | URL prefirmada del PDF, emitida por `IQuotationFileLookup.CreateDownloadUrlAsync` |
+| `fullname` | `Customer.Name` |
+| `order_number` | `Quotation.QuotationNumber` |
+| `total` | `Quotation.Total`, formateado `C0` en `es-CO` |
+| `valid_until` | `Quotation.ValidUntil`, formateado `d 'de' MMMM 'de' yyyy` en `es-CO` |
+
+**Cambiar el texto de la plantilla no se hace acá: se crea una plantilla nueva en Zenvia y se
+apunta `Quotations:WhatsApp:TemplateId` al `id` que devuelva.** Meta no permite editar una
+plantilla aprobada. Si además cambian las variables, hay que tocar
+`WhatsAppQuotationMessage` y `ZenviaWhatsAppSender`.
+
+#### Crear una plantilla nueva
+
+```bash
+curl --location 'https://api.zenvia.com/v2/templates' --header 'X-API-TOKEN: <zenvia-api-token>' --header 'Content-Type: application/json' --data-raw '{
+  "channel": "WHATSAPP",
+  "name": "cotizacion_pdf_cliente",
+  "locale": "es",
+  "senderId": "<el mismo valor de Quotations:WhatsApp:FromNumber>",
+  "category": "UTILITY",
+  "components": {
+    "header": { "type": "MEDIA_DOCUMENT" },
+    "body": {
+      "type": "TEXT_TEMPLATE",
+      "text": "¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*."
+    },
+    "footer": { "type": "TEXT_FIXED", "text": "Este mensaje fue generado automáticamente." }
+  },
+  "examples": {
+    "documentUrl": "https://pdfobject.com/pdf/sample.pdf",
+    "fullname": "Juan Perez",
+    "order_number": "COT-000123",
+    "total": "2.450.000 COP",
+    "valid_until": "30 de septiembre de 2026"
+  }
+}'
+```
+
+Devuelve el `id` de la plantilla y `status: "WAITING_REVIEW"`. Meta responde en minutos; el
+estado se consulta con `GET /v2/templates/{id}`, y un `REJECTED` trae el motivo en `comments`.
+
+Reglas que no se deducen del schema y que rebotan la plantilla:
+
+- **El PDF viaja como `documentUrl` dentro de `fields`**, no como un contenido aparte de tipo
+  `file`. La misma clave se usa en `examples` (`imageUrl`/`videoUrl` para los otros medios).
+- **`senderId` es el número emisor**, el mismo valor que `Quotations:WhatsApp:FromNumber`. El
+  ejemplo con forma de UUID que trae la referencia de Zenvia es del parámetro genérico de
+  filtrado, compartido por todos los canales. No existe un endpoint `/senders`: para leerlo,
+  `GET /v2/templates/{id}` de una plantilla existente.
+- **`name` sólo admite minúsculas, dígitos y guiones bajos.** Un espacio o una mayúscula rompen
+  el envío a Meta. No se puede reusar el nombre de una plantilla existente, ni siquiera
+  rechazada.
+- **`examples` es obligatorio para WhatsApp**, con una clave por variable y ninguna vacía. Evitar
+  `$`, `#` y `%` en los valores: Zenvia los lista como causa frecuente de rechazo. Sólo afecta a
+  la revisión de Meta — el mensaje real se formatea en runtime y sí lleva el `$`.
+- **El PDF de ejemplo debe responder `application/pdf` limpio.** Zenvia lo descarga para subirlo
+  a Meta antes de mandar la plantilla a revisión. Con `application/pdf; qs=0.001` —lo que
+  devuelve `w3.org`, por su negociación de contenido— el envío falla.
+
+Un rechazo con el comentario `"An error occurred while sending the template for approval on
+WhatsApp"` **no es un veredicto de Meta**: es Zenvia que no logró siquiera enviarla. Descarta
+categoría, tono y contenido, y apunta al nombre, al `examples` o al archivo de ejemplo. Las
+causas verificadas de este proyecto fueron el `$` en `examples.total` y el `Content-Type` del PDF.
+
+Alternativa: la consola en `app.zenvia.com/home/templates` valida el nombre y sube el archivo de
+ejemplo por su cuenta, así que sortea los tres últimos puntos.
+
+#### En producción
+
+Las tres claves se inyectan por entorno y se resuelven desde el variable group
+`Backend-<env>` de Azure DevOps:
+
+| Clave | Manifiesto | Token del pipeline |
+| --- | --- | --- |
+| `Quotations__WhatsApp__TemplateId` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_WHATSAPP_TEMPLATE_ID` |
+| `Quotations__WhatsApp__ApiToken` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_API_TOKEN` |
+| `Quotations__WhatsApp__FromNumber` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_FROM_NUMBER` |
+
+El `TemplateId` va al ConfigMap aunque repita el valor por defecto de la imagen: cambiar el
+texto del mensaje no toca código, pero exige una plantilla nueva —Meta no permite editar una
+aprobada— y sin esta clave ese cambio obligaría a reconstruir y desplegar la imagen.
+
+**Si el token o el número faltan, no hay error.** `AddWhatsAppSender` registra
+`LogWhatsAppSender`, el endpoint responde 200, la cotización queda `Sent` y el cliente no recibe
+nada. Es el mismo criterio que `Notifications:EmailProvider` con Infobip, y el precio de que las
+pruebas de integración no necesiten credenciales.
 
 ## Verificación
 
