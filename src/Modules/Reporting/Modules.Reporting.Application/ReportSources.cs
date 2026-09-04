@@ -36,6 +36,22 @@ public interface ISalesReportSource
         SalesReportCriteria criteria,
         int limit,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
+    /// **en la base**: sumar en memoria exigiria traerse el periodo entero, que es justamente lo
+    /// que el resumen existe para evitar.
+    ///
+    /// <paramref name="rankSize"/> es cuantas entidades nombradas trae cada ranking; todo lo que
+    /// queda afuera va plegado en una fila con <c>Id</c> nulo. El tope lo elige el handler.
+    ///
+    /// Resume la ventana que le pasan y nada mas: si hay un periodo anterior contra el cual
+    /// comparar, y cual es, lo decide el handler.
+    /// </summary>
+    Task<SalesReportAggregate> SummarizeAsync(
+        SalesReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>Ver <see cref="ISalesReportSource"/>.</summary>
