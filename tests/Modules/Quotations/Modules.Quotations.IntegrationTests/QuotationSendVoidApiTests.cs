@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -32,6 +32,39 @@ public sealed class QuotationSendVoidApiTests
         Assert.Equal("Sent", sent.Status);
         Assert.Equal(pdfFileId, sent.PdfFileId);
         Assert.NotNull(sent.SentAt);
+    }
+
+    // Sin vigencia la cotización nunca vencería (QuotationExpirationProcessor filtra por
+    // ValidUntil != null) y quedaría convertible a venta para siempre. El dominio lo corta al
+    // salir de Draft; acá se verifica que ese código llega al cliente como 422 y no como 500.
+    [Fact]
+    public async Task SendWithoutAValidityDateIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await client.PostAsJsonAsync(
+            QuotationsUrl(tenantId),
+            new CreateQuotationRequest(clientId, null, null, null, null),
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(quotation);
+        var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(pdfFileId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.quotation.valid_until_required", problem.Code);
     }
 
     [Fact]
@@ -200,4 +233,8 @@ public sealed class QuotationSendVoidApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    /// <summary>Las extensiones de ProblemDetails llegan aplanadas en la raíz
+    /// (ApiExceptionHandler).</summary>
+    private sealed record ProblemPayload(string Code);
 }

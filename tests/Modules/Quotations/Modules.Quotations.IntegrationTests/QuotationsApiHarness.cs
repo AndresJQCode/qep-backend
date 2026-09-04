@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -394,12 +394,22 @@ internal static class QuotationsApiHarness
         return sent;
     }
 
+    /// <summary>Nace con vigencia porque <c>Quotation.Send</c> la exige: sin
+    /// <c>ValidUntil</c> la cotización nunca vencería y quedaría convertible a venta para
+    /// siempre. Las pruebas que necesitan otra fecha (el barrido de vencimiento) la
+    /// sobrescriben después con <c>UpdateQuotationRequest</c>, que sigue disponible en
+    /// <c>Sent</c>.</summary>
     public static async Task<QuotationResponse> CreateQuotationAsync(
-        HttpClient client, Guid tenantId, Guid clientId)
+        HttpClient client, Guid tenantId, Guid clientId, DateOnly? validUntil = null)
     {
         var response = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
-            new CreateQuotationRequest(clientId, null, null, null, null),
+            new CreateQuotationRequest(
+                clientId,
+                validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30),
+                null,
+                null,
+                null),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<QuotationResponse>(

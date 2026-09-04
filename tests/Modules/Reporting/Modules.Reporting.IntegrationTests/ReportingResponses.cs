@@ -87,14 +87,49 @@ internal sealed record SalesReportSummary(
     IReadOnlyList<ReportRankEntry> ByClient,
     ReportComparison? Previous);
 
-internal sealed record ReportMonthlyPoint(int Year, int Month, int SaleCount, decimal Total);
+internal sealed record ReportMonthlyPoint(int Year, int Month, int Count, decimal Total);
 
 internal sealed record ReportRankEntry(
     Guid? Id,
     string? Label,
     string? Secondary,
     int EntityCount,
-    int SaleCount,
+    int Count,
     decimal Total);
 
-internal sealed record ReportComparison(int SaleCount, decimal Total);
+internal sealed record ReportComparison(int Count, decimal Total);
+
+/// <summary>El resumen agregado de cotizaciones, tal como el contrato lo fija. Redeclarado igual
+/// que el resto — ver la nota del encabezado.</summary>
+internal sealed record QuotationsReportSummary(
+    int QuotationCount,
+    decimal Subtotal,
+    decimal TaxAmount,
+    decimal Total,
+    IReadOnlyList<ReportMonthlyPoint> Monthly,
+    IReadOnlyList<ReportStatusSlice> ByStatus,
+    IReadOnlyList<ReportRankEntry> ByAdvisor,
+    QuotationValidity Validity,
+    IReadOnlyList<QuotationExpiring> Expiring,
+    ReportComparison? Previous);
+
+internal sealed record ReportStatusSlice(string Status, int Count, decimal Total);
+
+internal sealed record QuotationValidity(
+    ReportBucket Expired,
+    ReportBucket WithinSevenDays,
+    ReportBucket WithinThirtyDays,
+    ReportBucket Beyond,
+    int WithoutExpiry);
+
+internal sealed record ReportBucket(int Count, decimal Total);
+
+internal sealed record QuotationExpiring(
+    Guid QuotationId,
+    string QuotationNumber,
+    DateOnly ValidUntil,
+    int DaysLeft,
+    string? ClientName,
+    string? ClientCuc,
+    string? AdvisorName,
+    decimal Total);

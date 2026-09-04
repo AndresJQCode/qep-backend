@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Infrastructure;
+﻿namespace Modules.Quotations.Infrastructure;
 
 // Binding fuertemente tipado de la sección "Quotations" de appsettings, mismo criterio que
 // StorageOptions.
@@ -30,6 +30,15 @@ public sealed class WhatsAppOptions
     public string ApiToken { get; init; } = string.Empty;
 
     public string FromNumber { get; init; } = string.Empty;
+
+    /// <summary>Vida del enlace del PDF que se le entrega a WhatsApp. Propia, y en horas y no
+    /// en los minutos de <c>Storage:PresignedUrlMinutes</c>, por el mismo motivo que
+    /// <c>Storage:ExportUrlHours</c>: aquellas URLs las consume un navegador que ya está en
+    /// pantalla, y ésta la descarga Meta cuando le toca entregar el mensaje, que puede quedar
+    /// encolado. Una vez descargado, Meta cachea el documento y el cliente lo sigue viendo en el
+    /// chat aunque el enlace ya haya vencido. El techo lo pone SigV4, que no firma más de 7
+    /// días.</summary>
+    public int DocumentUrlHours { get; init; } = 24;
 
     /// <summary>Id de la plantilla en Zenvia. No es un secreto — es un id de configuración,
     /// mismo criterio que `Infobip:SenderEmail` — así que vive en `appsettings.json` en vez de

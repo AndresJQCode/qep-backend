@@ -130,7 +130,7 @@ public sealed class SalesReportSummaryHandlerTests
         Assert.Equal(new DateOnly(2025, 12, 31), preceding.To);
 
         Assert.NotNull(summary.Previous);
-        Assert.Equal(20, summary.Previous.SaleCount);
+        Assert.Equal(20, summary.Previous.Count);
         Assert.Equal(2_500m, summary.Previous.Total);
     }
 
