@@ -73,6 +73,22 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
     }
 }
 
+internal sealed class StubQuotationAdvisorLookup(string? email = null)
+    : IQuotationAdvisorLookup
+{
+    public int FindEmailsCalls { get; private set; }
+
+    public Task<IReadOnlyDictionary<Guid, string?>> FindEmailsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> membershipIds,
+        CancellationToken cancellationToken)
+    {
+        FindEmailsCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, string?>>(
+            membershipIds.Distinct().ToDictionary(id => id, _ => email));
+    }
+}
+
 internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationRepository
 {
     public Task<Quotation?> FindAsync(

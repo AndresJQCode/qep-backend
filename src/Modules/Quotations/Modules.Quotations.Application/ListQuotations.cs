@@ -30,6 +30,10 @@ public sealed record QuotationListItemDto(
     /// resuelve, la fila viaja igual y quien la muestra elige el respaldo.</summary>
     string? ClientName,
     Guid AdvisorId,
+    /// <summary>Correo de la asesora, resuelto contra Tenancy/Identity para toda la página de
+    /// una vez. Nullable por la misma razón que <c>ClientName</c>: es una referencia blanda
+    /// entre módulos.</summary>
+    string? AdvisorEmail,
     string Status,
     DateTimeOffset CreatedAt,
     decimal Total);
@@ -64,6 +68,7 @@ public static class QuotationPaging
 public sealed class ListQuotationsHandler(
     IQuotationRepository repository,
     IQuotationCustomerLookup customerLookup,
+    IQuotationAdvisorLookup advisorLookup,
     IExecutionContext executionContext)
     : IQueryHandler<ListQuotationsQuery, QuotationPage>
 {
@@ -115,9 +120,20 @@ public sealed class ListQuotationsHandler(
                 quotations.Select(quotation => quotation.ClientId).Distinct().ToArray(),
                 cancellationToken);
 
+        // Misma idea que los nombres de cliente: una ida por página, con los ids sin repetir.
+        // Antes el frontend se traía el padrón de miembros entero para poner un correo en cada
+        // fila.
+        var advisorEmails = quotations.Count == 0
+            ? new Dictionary<Guid, string?>()
+            : await advisorLookup.FindEmailsAsync(
+                query.TenantId,
+                quotations.Select(quotation => quotation.AdvisorId.Value).Distinct().ToArray(),
+                cancellationToken);
+
         var items = quotations
             .Select(quotation => quotation.ToListItemDto(
-                clientNames.GetValueOrDefault(quotation.ClientId)))
+                clientNames.GetValueOrDefault(quotation.ClientId),
+                advisorEmails.GetValueOrDefault(quotation.AdvisorId.Value)))
             .ToArray();
         return new QuotationPage(items, total, page, pageSize);
     }
