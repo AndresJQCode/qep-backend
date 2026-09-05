@@ -80,6 +80,23 @@ outbox/inbox, repositorio + unit of work, concurrencia optimista— está en
 
 Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hecho:
 
+- **Las APIs se construyen como backend for frontend, no como REST genérica.** El consumidor
+  es `qep-frontend` y ninguno más, así que la forma de cada respuesta se decide por lo que la
+  pantalla necesita dibujar, no por la pureza del recurso. Ante una decisión discutible gana la
+  que le ahorra lógica al cliente, **y el motivo se escribe en el DTO**: desde el backend no se
+  ve la pantalla que lo obligó, y sin esa nota el siguiente lo "simplifica".
+- **Qué significa eso en concreto, con los precedentes ya escritos.** Un agregado que la
+  pantalla no puede calcular es un endpoint, no un problema del cliente:
+  `/reports/sales/summary` existe porque sumar páginas de 50 filas del lado del cliente da un
+  total que depende de la página que se esté mirando, y `MaxPageSize` impide pedir el período
+  entero. Las colecciones de tamaño fijo viajan **completas, incluso en cero**
+  (`ReportStatusSliceDto`, `PriceChangeFieldSliceDto`): un elemento que desaparece obliga a la
+  pantalla a conocer el enum del backend para dibujar el que falta. Un total que no cierra se
+  explica con un campo y no con una omisión (`QuotationValidityDto.WithoutExpiry`). Los enums
+  viajan con su nombre (`Sent`, `PriceBaseUsd`) porque el diccionario lo tiene el frontend. El
+  422 de validación lleva el mapa `errors` (`ApiExceptionHandler.cs:51`), el único 422 que el
+  formulario sabe leer para marcar el input. Y una colección que se edita vuelve entera y en
+  orden, que es lo que el formulario repinta.
 - **Aislamiento de tenant, doble capa.** La ruta lleva `{tenantId:guid}` y la política exige
   el permiso; **además** el handler revalida tenant y permiso antes de tocar el repositorio
   (`CatalogAuthorization`, `StorageAuthorization`). Devuelve **403, nunca 404**: un 404
