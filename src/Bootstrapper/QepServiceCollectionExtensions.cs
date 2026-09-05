@@ -324,6 +324,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListPriceChangeReportQuery, ReportPage<PriceChangeReportItemDto>>,
             ListPriceChangeReportHandler>();
         services.AddScoped<
+            IQueryHandler<GetPriceChangeReportSummaryQuery, PriceChangeReportSummaryDto>,
+            GetPriceChangeReportSummaryHandler>();
+        services.AddScoped<
             IQueryHandler<ExportPriceChangeReportQuery, ReportFile>,
             ExportPriceChangeReportHandler>();
         services.AddScoped<
