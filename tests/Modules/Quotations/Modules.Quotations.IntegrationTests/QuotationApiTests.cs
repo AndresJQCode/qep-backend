@@ -317,7 +317,10 @@ public sealed class QuotationApiTests
                 validUntil,
                 "Efectivo",
                 "Nota de prueba",
-                new QuotationOverridesRequest("Nombre alterno", null, null, "Bogotá")),
+                new QuotationPartiesRequest(
+                    new QuotationPartyRequest(
+                        "Nombre alterno", null, null, null, null, null),
+                    Shipping: null)),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -327,8 +330,9 @@ public sealed class QuotationApiTests
         Assert.Equal(validUntil, updated.ValidUntil);
         Assert.Equal("Efectivo", updated.PaymentMethod);
         Assert.Equal("Nota de prueba", updated.Notes);
-        Assert.Equal("Nombre alterno", updated.BillingNameOverride);
-        Assert.Equal("Bogotá", updated.DeliveryCityOverride);
+        var billing = Assert.Single(updated.Parties);
+        Assert.Equal("Billing", billing.Role);
+        Assert.Equal("Nombre alterno", billing.Name);
         Assert.NotEqual(created.UpdatedAt, updated.UpdatedAt);
     }
 }

@@ -288,5 +288,25 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return result;
     }
 
+    public async Task<IReadOnlyDictionary<CustomerId, string>> FindNamesByIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<CustomerId> customerIds,
+        CancellationToken cancellationToken)
+    {
+        if (customerIds.Count == 0)
+        {
+            return new Dictionary<CustomerId, string>();
+        }
+
+        var rows = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer =>
+                customer.TenantId == tenantId && customerIds.Contains(customer.Id))
+            .Select(customer => new { customer.Id, customer.Name })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(row => row.Id, row => row.Name);
+    }
+
     public void Add(Customer customer) => dbContext.Customers.Add(customer);
 }

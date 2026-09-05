@@ -45,6 +45,27 @@ public sealed class QuotationListApiTests
         Assert.Contains(response.Items, item => item.Id == second.Id);
     }
 
+    // El nombre viaja en la fila: la tabla del listado muestra el cliente, y resolverlo del lado
+    // del frontend seria un GET a /customers/{id} por fila de la pagina.
+    [Fact]
+    public async Task ListReturnsTheCustomerNameOnEachRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            QuotationsUrl(tenantId), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(response);
+        var item = Assert.Single(response.Items);
+        Assert.Equal(clientId, item.ClientId);
+        Assert.Equal("Verde Esencial S.A.S.", item.ClientName);
+    }
+
     [Fact]
     public async Task ListFiltersByClientId()
     {

@@ -22,6 +22,19 @@ public interface IQuotationCustomerLookup
     /// </summary>
     Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(
         Guid tenantId, string term, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El nombre de cada uno de estos clientes, en una sola consulta batch — lo usa el listado
+    /// (ListQuotations.cs) para que cada fila viaje con el nombre del cliente ya resuelto. Sin
+    /// esto, quien pinta la tabla tiene que pedir un cliente por fila: N+1 contra Customers por
+    /// cada página del listado.
+    ///
+    /// Devuelve <c>QuotationCustomerRef</c> no, sólo el nombre: el listado no necesita CUC,
+    /// teléfono ni el perfil de impuestos, y traerlos sería exponer datos del cliente que esa
+    /// pantalla no muestra. Un id sin match simplemente no aparece en el resultado.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken);
 }
 
 // Name/Phone/Address se agregaron para el envío por WhatsApp (SendQuotation.cs): son los

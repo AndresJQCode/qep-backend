@@ -88,7 +88,7 @@ public sealed class SendQuotationHandlerTests
             withValidUntil ? ValidUntil : null,
             paymentMethod: "Transferencia bancaria",
             notes: null,
-            QuotationOverrides.Empty,
+            QuotationParties.Empty,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

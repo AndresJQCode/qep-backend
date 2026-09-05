@@ -11,7 +11,7 @@ public sealed record CreateQuotationCommand(
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
-    QuotationOverridesRequest? Overrides) : ICommand<QuotationDto>;
+    QuotationPartiesRequest? Parties) : ICommand<QuotationDto>;
 
 public sealed class CreateQuotationValidator : AbstractValidator<CreateQuotationCommand>
 {
@@ -68,7 +68,7 @@ public sealed class CreateQuotationHandler(
             command.ValidUntil,
             command.PaymentMethod,
             command.Notes,
-            command.Overrides.ToDomain(),
+            command.Parties.ToDomain(),
             customer.WithRetention,
             customer.VatSurplus,
             advisorId,

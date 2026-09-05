@@ -36,10 +36,9 @@ public sealed record QuotationDto(
     decimal RetentionAmount,
     decimal NetTotal,
     string? Notes,
-    string? BillingNameOverride,
-    string? BillingAddressOverride,
-    string? DeliveryAddressOverride,
-    string? DeliveryCityOverride,
+    /// <summary>Sólo las partes que difieren del cliente. Una cotización que factura y entrega
+    /// a los datos del cliente llega con la lista vacía.</summary>
+    IReadOnlyCollection<QuotationPartyDto> Parties,
     Guid CreatedBy,
     Guid? UpdatedBy,
     DateTimeOffset UpdatedAt,
@@ -47,26 +46,48 @@ public sealed record QuotationDto(
     Guid? PdfFileId,
     IReadOnlyCollection<QuotationItemDto> Items);
 
-/// <summary>Sobrescrituras de facturación/entrega tal como viajan en el request (US-6). Null =
-/// no se toca / usa el dato del cliente maestro.</summary>
-public sealed record QuotationOverridesRequest(
-    string? BillingName,
-    string? BillingAddress,
-    string? DeliveryAddress,
-    string? DeliveryCity);
+/// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto
+/// y no el enum del dominio, mismo criterio que Status.</summary>
+public sealed record QuotationPartyDto(
+    Guid Id,
+    string Role,
+    string? Name,
+    string? Phone,
+    string? Email,
+    string? Address,
+    Guid? DepartmentId,
+    Guid? CityId);
+
+/// <summary>Los datos de una parte tal como viajan en el request (US-6). Cada campo null es
+/// "para éste, el del cliente".</summary>
+public sealed record QuotationPartyRequest(
+    string? Name,
+    string? Phone,
+    string? Email,
+    string? Address,
+    Guid? DepartmentId,
+    Guid? CityId);
+
+/// <summary>Las dos partes de la cotización en el request. <b>Null es el caso normal</b>: "factura
+/// (o entrega) a los datos del cliente" — el switch prendido de la UI. Como
+/// <c>UpdateQuotationRequest</c> reemplaza el recurso entero, mandar null en una parte que tenía
+/// datos propios los borra y vuelve a los del cliente.</summary>
+public sealed record QuotationPartiesRequest(
+    QuotationPartyRequest? Billing,
+    QuotationPartyRequest? Shipping);
 
 public sealed record CreateQuotationRequest(
     Guid ClientId,
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
-    QuotationOverridesRequest? Overrides);
+    QuotationPartiesRequest? Parties);
 
 public sealed record UpdateQuotationRequest(
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
-    QuotationOverridesRequest? Overrides);
+    QuotationPartiesRequest? Parties);
 
 public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
@@ -98,10 +119,7 @@ public sealed record QuotationResponse(
     decimal RetentionAmount,
     decimal NetTotal,
     string? Notes,
-    string? BillingNameOverride,
-    string? BillingAddressOverride,
-    string? DeliveryAddressOverride,
-    string? DeliveryCityOverride,
+    IReadOnlyCollection<QuotationPartyResponse> Parties,
     Guid CreatedBy,
     Guid? UpdatedBy,
     DateTimeOffset UpdatedAt,
@@ -109,10 +127,21 @@ public sealed record QuotationResponse(
     Guid? PdfFileId,
     IReadOnlyCollection<QuotationItemResponse> Items);
 
+public sealed record QuotationPartyResponse(
+    Guid Id,
+    string Role,
+    string? Name,
+    string? Phone,
+    string? Email,
+    string? Address,
+    Guid? DepartmentId,
+    Guid? CityId);
+
 public sealed record QuotationListItemResponse(
     Guid Id,
     string QuotationNumber,
     Guid ClientId,
+    string? ClientName,
     Guid AdvisorId,
     string Status,
     DateTimeOffset CreatedAt,
