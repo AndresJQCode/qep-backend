@@ -96,5 +96,6 @@ public sealed class ListQuotationsHandlerTests
         StubQuotationCustomerLookup customers, params Quotation[] quotations) =>
         new(new StubQuotationListRepository(quotations),
             customers,
+            new StubQuotationAdvisorLookup(),
             new StubExecutionContext(SubjectId, TenantId));
 }

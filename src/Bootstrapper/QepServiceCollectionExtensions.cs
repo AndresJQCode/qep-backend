@@ -382,6 +382,7 @@ public static class QepServiceCollectionExtensions
         // `quotations` contra los repositorios que ya registraron AddCustomersInfrastructure y
         // AddCatalogInfrastructure.
         services.AddScoped<IQuotationCustomerLookup, QuotationCustomerLookup>();
+        services.AddScoped<IQuotationAdvisorLookup, QuotationAdvisorLookup>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
 
