@@ -112,5 +112,17 @@ public interface ICustomerRepository
         string term,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// El nombre de cada uno de estos clientes, en una sola consulta batch — la usa el listado de
+    /// cotizaciones (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup.FindNamesAsync</c>)
+    /// para que cada fila lleve el nombre del cliente sin pedir un cliente por fila. Un id que no
+    /// existe en el tenant simplemente no aparece en el resultado. Mismo criterio "batch, no una
+    /// fila a la vez" que <see cref="FindIdsByCucSuffixAsync"/>.
+    /// </summary>
+    Task<IReadOnlyDictionary<CustomerId, string>> FindNamesByIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<CustomerId> customerIds,
+        CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }

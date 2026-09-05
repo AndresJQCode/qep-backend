@@ -9,12 +9,14 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
     // Con tracking a proposito: los llamadores mutan el agregado y dependen de la unidad de
     // trabajo para persistirlo. El Include es obligatorio por dos razones, no solo una: sin el,
     // Items llega vacio en cada lectura, y sin las lineas viejas en el change tracker un
-    // RemoveItem no las ve borradas. Mismo criterio que ProductRepository.FindAsync con
+    // RemoveItem no las ve borradas. Lo mismo vale para Parties: sin la fila vieja trackeada,
+    // volver a prender el switch ("usa los datos del cliente") no borraria nada. Mismo criterio que ProductRepository.FindAsync con
     // PriceScales.
     public Task<Quotation?> FindAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         dbContext.Quotations
             .Include(quotation => quotation.Items)
+            .Include(quotation => quotation.Parties)
             .SingleOrDefaultAsync(
                 quotation => quotation.TenantId == tenantId && quotation.Id == quotationId,
                 cancellationToken);

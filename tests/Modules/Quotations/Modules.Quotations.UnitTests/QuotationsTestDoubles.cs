@@ -41,6 +41,17 @@ internal sealed class StubQuotationFileLookup(string downloadUrl) : IQuotationFi
 internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
     : IQuotationCustomerLookup
 {
+    /// <summary>Los nombres que resuelve <see cref="FindNamesAsync"/>. Arranca con el cliente
+    /// base; una prueba agrega los otros clientes que su listado necesita, y deja afuera al que
+    /// quiere ver como "no encontrado".</summary>
+    public Dictionary<Guid, string> Names { get; } = new() { [customer.Id] = customer.Name };
+
+    /// <summary>Cuantas veces se pidieron nombres. La razon de ser del puerto batch es que el
+    /// listado resuelva todas sus filas en una sola ida, asi que el conteo es la asercion.</summary>
+    public int FindNamesCalls { get; private set; }
+
+    public IReadOnlyCollection<Guid> LastRequestedIds { get; private set; } = [];
+
     public Task<QuotationCustomerRef?> FindAsync(
         Guid tenantId, Guid clientId, CancellationToken cancellationToken) =>
         Task.FromResult<QuotationCustomerRef?>(customer);
@@ -48,6 +59,18 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(
         Guid tenantId, string term, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid>());
+
+    public Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
+    {
+        FindNamesCalls++;
+        LastRequestedIds = clientIds;
+        return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            clientIds
+                .Where(Names.ContainsKey)
+                .Distinct()
+                .ToDictionary(id => id, id => Names[id]));
+    }
 }
 
 internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationRepository
@@ -120,4 +143,37 @@ internal sealed class StubExecutionContext(Guid subjectId, Guid tenantId) : IExe
 internal sealed class FixedClock(DateTimeOffset now) : IClock
 {
     public DateTimeOffset UtcNow { get; } = now;
+}
+
+/// <summary>Varias cotizaciones para el listado — <see cref="StubQuotationRepository"/> devuelve
+/// siempre una sola, y lo que verifica <c>ListQuotationsHandlerTests</c> es justamente cómo se
+/// resuelven los nombres de varias filas (y de filas que repiten cliente) de una sola vez.</summary>
+internal sealed class StubQuotationListRepository(params Quotation[] quotations)
+    : IQuotationRepository
+{
+    public Task<Quotation?> FindAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<Quotation?>(quotations.FirstOrDefault());
+
+    public Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<(IReadOnlyList<Quotation>, int)>((quotations, quotations.Length));
+
+    public void Add(Quotation quotation)
+    {
+    }
+
+    public void AddHistoryEntry(QuotationHistoryEntry entry)
+    {
+    }
 }

@@ -144,7 +144,7 @@ public static class QuotationEndpoints
                 request.ValidUntil,
                 request.PaymentMethod,
                 request.Notes,
-                request.Overrides),
+                request.Parties),
             cancellationToken);
 
         return Results.Created(
@@ -166,7 +166,7 @@ public static class QuotationEndpoints
                 request.ValidUntil,
                 request.PaymentMethod,
                 request.Notes,
-                request.Overrides),
+                request.Parties),
             cancellationToken);
 
         return Results.Ok(ToResponse(quotation));
@@ -248,10 +248,21 @@ public static class QuotationEndpoints
         quotation.Id,
         quotation.QuotationNumber,
         quotation.ClientId,
+        quotation.ClientName,
         quotation.AdvisorId,
         quotation.Status,
         quotation.CreatedAt,
         quotation.Total);
+
+    private static QuotationPartyResponse ToResponse(QuotationPartyDto party) => new(
+        party.Id,
+        party.Role,
+        party.Name,
+        party.Phone,
+        party.Email,
+        party.Address,
+        party.DepartmentId,
+        party.CityId);
 
     private static QuotationResponse ToResponse(QuotationDto quotation) => new(
         quotation.Id,
@@ -271,10 +282,7 @@ public static class QuotationEndpoints
         quotation.RetentionAmount,
         quotation.NetTotal,
         quotation.Notes,
-        quotation.BillingNameOverride,
-        quotation.BillingAddressOverride,
-        quotation.DeliveryAddressOverride,
-        quotation.DeliveryCityOverride,
+        quotation.Parties.Select(ToResponse).ToArray(),
         quotation.CreatedBy,
         quotation.UpdatedBy,
         quotation.UpdatedAt,

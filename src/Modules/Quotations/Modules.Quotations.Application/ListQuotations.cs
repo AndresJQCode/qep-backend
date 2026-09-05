@@ -25,6 +25,10 @@ public sealed record QuotationListItemDto(
     Guid Id,
     string QuotationNumber,
     Guid ClientId,
+    /// <summary>Nombre del cliente, resuelto contra Customers para toda la página de una sola
+    /// vez. Nullable porque <c>ClientId</c> es una referencia blanda entre módulos: si no
+    /// resuelve, la fila viaja igual y quien la muestra elige el respaldo.</summary>
+    string? ClientName,
     Guid AdvisorId,
     string Status,
     DateTimeOffset CreatedAt,
@@ -100,7 +104,21 @@ public sealed class ListQuotationsHandler(
             pageSize,
             cancellationToken);
 
-        var items = quotations.Select(quotation => quotation.ToListItemDto()).ToArray();
+        // Los nombres de cliente de toda la pagina en una sola consulta: la tabla muestra el
+        // nombre, no el id, y resolverlo del lado del que consume el listado es un GET por fila
+        // contra Customers. Los ids van sin repetir -- varias cotizaciones del mismo cliente son
+        // lo normal en una pagina.
+        var clientNames = quotations.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await customerLookup.FindNamesAsync(
+                query.TenantId,
+                quotations.Select(quotation => quotation.ClientId).Distinct().ToArray(),
+                cancellationToken);
+
+        var items = quotations
+            .Select(quotation => quotation.ToListItemDto(
+                clientNames.GetValueOrDefault(quotation.ClientId)))
+            .ToArray();
         return new QuotationPage(items, total, page, pageSize);
     }
 

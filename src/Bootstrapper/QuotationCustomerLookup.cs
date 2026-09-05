@@ -40,4 +40,15 @@ internal sealed class QuotationCustomerLookup(ICustomerRepository repository)
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(
         Guid tenantId, string term, CancellationToken cancellationToken) =>
         repository.SearchIdsByIdentificationNumberAsync(tenantId, term, cancellationToken);
+
+    public async Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
+    {
+        var names = await repository.FindNamesByIdsAsync(
+            tenantId,
+            clientIds.Select(id => new CustomerId(id)).ToArray(),
+            cancellationToken);
+
+        return names.ToDictionary(entry => entry.Key.Value, entry => entry.Value);
+    }
 }
