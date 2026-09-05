@@ -22,10 +22,7 @@ internal static class QuotationMapping
         quotation.RetentionAmount,
         quotation.NetTotal,
         quotation.Notes,
-        quotation.BillingNameOverride,
-        quotation.BillingAddressOverride,
-        quotation.DeliveryAddressOverride,
-        quotation.DeliveryCityOverride,
+        quotation.Parties.Select(ToDto).ToArray(),
         quotation.CreatedBy.Value,
         quotation.UpdatedBy?.Value,
         quotation.UpdatedAt,
@@ -33,10 +30,22 @@ internal static class QuotationMapping
         quotation.PdfFileId,
         quotation.Items.Select(ToDto).ToArray());
 
-    public static QuotationListItemDto ToListItemDto(this Quotation quotation) => new(
+    private static QuotationPartyDto ToDto(QuotationParty party) => new(
+        party.Id.Value,
+        party.Role.ToString(),
+        party.Name,
+        party.Phone,
+        party.Email,
+        party.Address,
+        party.DepartmentId,
+        party.CityId);
+
+    public static QuotationListItemDto ToListItemDto(
+        this Quotation quotation, string? clientName) => new(
         quotation.Id.Value,
         quotation.QuotationNumber,
         quotation.ClientId,
+        clientName,
         quotation.AdvisorId.Value,
         quotation.Status.ToString(),
         quotation.CreatedAt,
@@ -54,14 +63,21 @@ internal static class QuotationMapping
         item.TaxAmount,
         item.Position);
 
-    public static QuotationOverrides ToDomain(this QuotationOverridesRequest? request) =>
+    public static QuotationParties ToDomain(this QuotationPartiesRequest? request) =>
         request is null
-            ? QuotationOverrides.Empty
-            : new QuotationOverrides
+            ? QuotationParties.Empty
+            : new QuotationParties(request.Billing.ToDomain(), request.Shipping.ToDomain());
+
+    private static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
+        request is null
+            ? null
+            : new QuotationPartyDetails
             {
-                BillingName = request.BillingName,
-                BillingAddress = request.BillingAddress,
-                DeliveryAddress = request.DeliveryAddress,
-                DeliveryCity = request.DeliveryCity
+                Name = request.Name,
+                Phone = request.Phone,
+                Email = request.Email,
+                Address = request.Address,
+                DepartmentId = request.DepartmentId,
+                CityId = request.CityId
             };
 }

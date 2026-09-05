@@ -22,6 +22,8 @@ public sealed class Quotation
 
     private readonly List<QuotationItem> _items = [];
 
+    private readonly List<QuotationParty> _parties = [];
+
     // EF Core materializa por acá. El código nunca construye el agregado así:
     // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
     private Quotation()
@@ -38,7 +40,7 @@ public sealed class Quotation
         DateOnly? validUntil,
         string? paymentMethod,
         string? notes,
-        QuotationOverrides overrides,
+        QuotationParties parties,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -54,7 +56,7 @@ public sealed class Quotation
         ValidUntil = validUntil;
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);
-        Assign(overrides);
+        Assign(parties);
         CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
         CreatedBy = createdBy;
@@ -135,19 +137,6 @@ public sealed class Quotation
 
     public string? Notes { get; private set; }
 
-    /// <summary>Sobrescrituras de facturación/entrega para esta cotización (US-6). Null = usa el
-    /// dato del cliente maestro. Flat en vez de un solo <c>QuotationOverrides</c> expuesto —
-    /// mismo criterio que <c>Customer.Phone/Email/Address</c> frente a
-    /// <c>CustomerContactInfo</c>: el value object es sólo la forma de entrada de
-    /// <see cref="Create"/>/<see cref="UpdateDetails"/>.</summary>
-    public string? BillingNameOverride { get; private set; }
-
-    public string? BillingAddressOverride { get; private set; }
-
-    public string? DeliveryAddressOverride { get; private set; }
-
-    public string? DeliveryCityOverride { get; private set; }
-
     public MemberId CreatedBy { get; private set; }
 
     public MemberId? UpdatedBy { get; private set; }
@@ -174,6 +163,15 @@ public sealed class Quotation
 
     public IReadOnlyCollection<QuotationItem> Items => _items;
 
+    /// <summary>A quién se le factura y a quién se le entrega, **sólo cuando no son los datos del
+    /// cliente** (US-6): una parte ausente es "usá los del cliente". Ver
+    /// <see cref="QuotationParty"/>.</summary>
+    public IReadOnlyCollection<QuotationParty> Parties => _parties;
+
+    public QuotationParty? Billing => FindParty(QuotationPartyRole.Billing);
+
+    public QuotationParty? Shipping => FindParty(QuotationPartyRole.Shipping);
+
     public static Quotation Create(
         QuotationId id,
         Guid tenantId,
@@ -183,7 +181,7 @@ public sealed class Quotation
         DateOnly? validUntil,
         string? paymentMethod,
         string? notes,
-        QuotationOverrides overrides,
+        QuotationParties parties,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -197,7 +195,7 @@ public sealed class Quotation
             validUntil,
             paymentMethod,
             notes,
-            overrides,
+            parties,
             customerWithRetention,
             customerVatSurplus,
             createdBy,
@@ -263,15 +261,15 @@ public sealed class Quotation
         Touch(updatedBy, occurredAt);
     }
 
-    /// <summary>Edita el encabezado (US-6, US-10): forma de pago, vigencia, notas y
-    /// sobrescrituras de facturación/entrega. La tasa de impuesto no se edita acá — la trae
+    /// <summary>Edita el encabezado (US-6, US-10): forma de pago, vigencia, notas y los datos de
+    /// facturación/entrega. La tasa de impuesto no se edita acá — la trae
     /// cada línea desde su producto (RN-013). Reemplaza el recurso entero, mismo criterio que
     /// <c>Product.Update</c>: lo que no viene se limpia.</summary>
     public void UpdateDetails(
         DateOnly? validUntil,
         string? paymentMethod,
         string? notes,
-        QuotationOverrides overrides,
+        QuotationParties parties,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
@@ -280,7 +278,7 @@ public sealed class Quotation
         ValidUntil = validUntil;
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);
-        Assign(overrides);
+        Assign(parties);
         Touch(updatedBy, occurredAt);
     }
 
@@ -412,16 +410,40 @@ public sealed class Quotation
         }
     }
 
-    // Asigna las cuatro siempre, incluidas las null. Se puede **limpiar** una sobrescritura, no
-    // sólo setearla: mismo criterio que Product.Apply/Customer.Assign.
-    private void Assign(QuotationOverrides overrides)
+    // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
+    // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es
+    // exactamente "volvé a usar los datos del cliente" (el switch prendido de nuevo).
+    private void Assign(QuotationParties parties)
     {
-        var normalized = overrides.Normalized();
-        BillingNameOverride = normalized.BillingName;
-        BillingAddressOverride = normalized.BillingAddress;
-        DeliveryAddressOverride = normalized.DeliveryAddress;
-        DeliveryCityOverride = normalized.DeliveryCity;
+        Assign(QuotationPartyRole.Billing, parties.Billing);
+        Assign(QuotationPartyRole.Shipping, parties.Shipping);
     }
+
+    private void Assign(QuotationPartyRole role, QuotationPartyDetails? details)
+    {
+        var existing = FindParty(role);
+
+        if (details is null)
+        {
+            if (existing is not null)
+            {
+                _parties.Remove(existing);
+            }
+
+            return;
+        }
+
+        if (existing is null)
+        {
+            _parties.Add(QuotationParty.Create(Id, role, details));
+            return;
+        }
+
+        existing.Apply(details);
+    }
+
+    private QuotationParty? FindParty(QuotationPartyRole role) =>
+        _parties.FirstOrDefault(party => party.Role == role);
 
     private QuotationItem FindItem(QuotationItemId itemId) =>
         _items.FirstOrDefault(item => item.Id == itemId)

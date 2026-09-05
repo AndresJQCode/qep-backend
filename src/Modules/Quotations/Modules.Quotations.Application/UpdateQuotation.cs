@@ -11,7 +11,7 @@ public sealed record UpdateQuotationCommand(
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
-    QuotationOverridesRequest? Overrides) : ICommand<QuotationDto>;
+    QuotationPartiesRequest? Parties) : ICommand<QuotationDto>;
 
 public sealed class UpdateQuotationValidator : AbstractValidator<UpdateQuotationCommand>
 {
@@ -63,7 +63,7 @@ public sealed class UpdateQuotationHandler(
             command.ValidUntil,
             command.PaymentMethod,
             command.Notes,
-            command.Overrides.ToDomain(),
+            command.Parties.ToDomain(),
             updatedBy,
             now);
 

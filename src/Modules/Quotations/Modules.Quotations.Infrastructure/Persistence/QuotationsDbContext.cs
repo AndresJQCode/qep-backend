@@ -12,6 +12,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<QuotationItem> QuotationItems => Set<QuotationItem>();
 
+    internal DbSet<QuotationParty> QuotationParties => Set<QuotationParty>();
+
     internal DbSet<QuotationNumberCounter> QuotationNumberCounters => Set<QuotationNumberCounter>();
 
     public DbSet<Sale> Sales => Set<Sale>();
@@ -26,6 +28,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     {
         ConfigureQuotation(modelBuilder);
         ConfigureQuotationItem(modelBuilder);
+        ConfigureQuotationParty(modelBuilder);
         ConfigureQuotationHistoryEntry(modelBuilder);
         ConfigureQuotationNumberCounter(modelBuilder);
         ConfigureSale(modelBuilder);
@@ -80,18 +83,6 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasPrecision(14, 2);
         quotation.Property(value => value.NetTotal).HasColumnName("net_total").HasPrecision(14, 2);
         quotation.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
-        quotation.Property(value => value.BillingNameOverride)
-            .HasColumnName("billing_name_override")
-            .HasMaxLength(QuotationOverrides.BillingNameMaxLength);
-        quotation.Property(value => value.BillingAddressOverride)
-            .HasColumnName("billing_address_override")
-            .HasMaxLength(QuotationOverrides.BillingAddressMaxLength);
-        quotation.Property(value => value.DeliveryAddressOverride)
-            .HasColumnName("delivery_address_override")
-            .HasMaxLength(QuotationOverrides.DeliveryAddressMaxLength);
-        quotation.Property(value => value.DeliveryCityOverride)
-            .HasColumnName("delivery_city_override")
-            .HasMaxLength(QuotationOverrides.DeliveryCityMaxLength);
         quotation.Property(value => value.CreatedBy)
             .HasColumnName("created_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
@@ -108,6 +99,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .IsConcurrencyToken();
 
         quotation.Navigation(value => value.Items)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+        quotation.Navigation(value => value.Parties)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         quotation.HasIndex(value => value.TenantId).HasDatabaseName("IX_quotations_tenant");
@@ -156,6 +149,51 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // parte del mismo agregado. Mismo criterio que PriceScale -> Product en Catalog.
         item.HasOne<Quotation>()
             .WithMany(quotation => quotation.Items)
+            .HasForeignKey(value => value.QuotationId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureQuotationParty(ModelBuilder modelBuilder)
+    {
+        var party = modelBuilder.Entity<QuotationParty>();
+        party.ToTable("quotation_parties", "quotations");
+        party.HasKey(value => value.Id);
+        party.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new QuotationPartyId(value))
+            .ValueGeneratedNever();
+        party.Property(value => value.QuotationId)
+            .HasColumnName("quotation_id")
+            .HasConversion(id => id.Value, value => new QuotationId(value));
+        party.Property(value => value.Role)
+            .HasColumnName("role")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        party.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(QuotationPartyDetails.NameMaxLength);
+        party.Property(value => value.Phone)
+            .HasColumnName("phone")
+            .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);
+        party.Property(value => value.Email)
+            .HasColumnName("email")
+            .HasMaxLength(QuotationPartyDetails.EmailMaxLength);
+        party.Property(value => value.Address)
+            .HasColumnName("address")
+            .HasMaxLength(QuotationPartyDetails.AddressMaxLength);
+        party.Property(value => value.DepartmentId).HasColumnName("department_id");
+        party.Property(value => value.CityId).HasColumnName("city_id");
+
+        // Una parte por rol y por cotizacion: es lo que hace que "sin fila = usa los datos del
+        // cliente" sea una regla y no una convencion. Nombrado, como el numero de cotizacion:
+        // la infraestructura discrimina la violacion de unicidad por nombre de indice.
+        party.HasIndex(value => new { value.QuotationId, value.Role })
+            .IsUnique()
+            .HasDatabaseName("IX_quotation_parties_quotation_role");
+
+        // CASCADE: una parte no tiene sentido sin su cotizacion -- mismo criterio que la linea.
+        party.HasOne<Quotation>()
+            .WithMany(quotation => quotation.Parties)
             .HasForeignKey(value => value.QuotationId)
             .OnDelete(DeleteBehavior.Cascade);
     }
