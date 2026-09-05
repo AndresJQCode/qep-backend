@@ -2,8 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(dotnet build *)",
-      "Bash(export DOTNET_ROOT=\"/c/Users/DANILO/AppData/Local/dotnet-sdks/10.0.301\")",
-      "Bash(/c/Users/DANILO/AppData/Local/dotnet-sdks/10.0.301/dotnet.exe build *)",
+      "Bash(export DOTNET_ROOT=\"/c/Users/DANILO/AppData/Local/dotnet-sdks/*\")",
+      "Bash(/c/Users/DANILO/AppData/Local/dotnet-sdks/*/dotnet.exe build *)",
       "Bash(ls \"c:/Users/DANILO/Documents/proyectos/qcode/qep-frontend/src/routes/_authenticated/quotes/\\\\$quoteId/\")",
       "Read(//c/Users/DANILO/Documents/proyectos/qcode/qep-frontend/src/routes/_authenticated/quotes/\\\\$quoteId//**)",
       "Bash(bun run *)",
