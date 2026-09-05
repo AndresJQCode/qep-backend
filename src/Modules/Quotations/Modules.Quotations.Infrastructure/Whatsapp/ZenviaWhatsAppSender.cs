@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;

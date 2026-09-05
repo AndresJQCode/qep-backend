@@ -347,7 +347,8 @@ public sealed class InvitationServiceTests
     private sealed class Audit : IAuditRecorder
     {
         public List<(Guid? TenantId, Guid ActorId, string Action, string ResourceId, string Outcome)>
-            Entries { get; } = [];
+            Entries
+        { get; } = [];
 
         public void Record(
             Guid? tenantId,

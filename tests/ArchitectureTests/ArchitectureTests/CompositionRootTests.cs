@@ -1,11 +1,11 @@
 using System.Reflection;
 using Bootstrapper;
-using Modules.Authorization.Application;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Modules.Authorization.Application;
 
 namespace ArchitectureTests;
 

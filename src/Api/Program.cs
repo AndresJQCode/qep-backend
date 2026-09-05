@@ -5,6 +5,7 @@ using Bootstrapper.Authentication;
 using Bootstrapper.Csrf;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
+using Modules.Authorization.Infrastructure;
 using Modules.Catalog.Api;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Api;
@@ -21,7 +22,6 @@ using Modules.Reporting.Api;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Api;
-using Modules.Authorization.Infrastructure;
 using Modules.Tenancy.Infrastructure;
 using Scalar.AspNetCore;
 

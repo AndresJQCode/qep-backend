@@ -83,6 +83,7 @@ public sealed class CompanyActivationApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
         var created = await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123");
         (await DeactivateAsync(client, created.Id)).EnsureSuccessStatusCode();
 
@@ -92,7 +93,8 @@ public sealed class CompanyActivationApiTests
             {
                 name = "Andes Logistica S.A.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                cityId,
             },
             TestContext.Current.CancellationToken);
 
@@ -112,6 +114,7 @@ public sealed class CompanyActivationApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
         var created = await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123");
         (await DeactivateAsync(client, created.Id)).EnsureSuccessStatusCode();
 
@@ -121,7 +124,8 @@ public sealed class CompanyActivationApiTests
             {
                 name = "Otra Empresa S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
-                taxId = "830.222.333-4"
+                taxId = "830.222.333-4",
+                cityId,
             },
             TestContext.Current.CancellationToken);
 

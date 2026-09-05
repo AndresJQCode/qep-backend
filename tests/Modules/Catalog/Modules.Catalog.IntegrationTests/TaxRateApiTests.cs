@@ -265,7 +265,11 @@ public sealed class TaxRateApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        // Unica prueba del archivo que ademas crea un producto —es como se pone la tasa "en uso"—,
+        // asi que suma ProductManage a los permisos de tasas. Sin el, el POST de producto responde
+        // 403 y el 422 que se esta buscando nunca llega a evaluarse.
+        using var client = CreateClient(
+            factory, SubjectId, TenantId, [.. ManagePermissions, CatalogPermissions.ProductManage]);
 
         var taxRateId = (await ReadTaxRateAsync(
             await CreateTaxRateAsync(client, TenantId, "IVA en uso", 19))).Id;

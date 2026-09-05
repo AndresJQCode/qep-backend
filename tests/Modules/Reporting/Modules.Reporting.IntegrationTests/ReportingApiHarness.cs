@@ -256,12 +256,33 @@ internal static class ReportingApiHarness
         response.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// Siembra una cotización enviada. La vigencia es obligatoria para enviar desde
+    /// "feat(quotations): exigir vigencia antes de enviar una cotización": sin
+    /// <c>ValidUntil</c>, <c>Quotation.Send</c> corta con 422
+    /// <c>quotation.quotation.valid_until_required</c> y la siembra nunca llega al reporte.
+    ///
+    /// El default cae holgadamente dentro del tramo "más allá de 30 días", lejos de los cortes
+    /// de 7 y 30: ninguna prueba de reportes afirma en qué tramo cae lo sembrado, y separarlo de
+    /// los bordes evita que una corrida cerca de medianoche lo mueva de tramo. Quien necesite un
+    /// tramo puntual lo pide por parámetro.
+    /// </summary>
     public static async Task<QuotationResponse> CreateSentQuotationAsync(
-        HttpClient client, QepApiFactory factory, Guid tenantId, Guid clientId, Guid productId)
+        HttpClient client,
+        QepApiFactory factory,
+        Guid tenantId,
+        Guid clientId,
+        Guid productId,
+        DateOnly? validUntil = null)
     {
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations",
-            new CreateQuotationRequest(clientId, null, null, null, null),
+            new CreateQuotationRequest(
+                clientId,
+                validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(45),
+                null,
+                null,
+                null),
             TestContext.Current.CancellationToken);
         created.EnsureSuccessStatusCode();
         var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(

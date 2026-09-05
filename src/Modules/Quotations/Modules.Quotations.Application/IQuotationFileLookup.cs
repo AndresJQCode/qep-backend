@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Puerto hacia el módulo Storage. Sirve dos usos del mismo módulo: el PDF de la cotización

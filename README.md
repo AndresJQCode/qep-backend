@@ -27,7 +27,7 @@ El alcance ejecutable actual incluye:
 
 ## Requisitos
 
-- .NET SDK `10.0.301` o un parche posterior compatible con `global.json`;
+- .NET SDK `10.0.400` o un parche posterior compatible con `global.json`;
 - Docker con Docker Compose.
 
 Las pruebas de integración también requieren Docker, ya que crean una instancia
