@@ -114,6 +114,23 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   dotnet ef migrations add <Nombre> --project src/Modules/<Modulo>/Modules.<Modulo>.Infrastructure --context <Modulo>DbContext -o Persistence/Migrations
   ```
 
+- **Subir de banda el SDK toca tres archivos, y `rollForward` no ayuda.** `global.json` pide
+  `latestPatch`, que sólo rueda **dentro** de la misma banda de feature: de `10.0.4xx` a
+  `10.0.4xx` sí, de `4xx` a `5xx` no. Se mueven juntos `global.json`, el tag del `FROM` del
+  `Dockerfile` —clavado a la banda, nunca al flotante `10.0`— y el requisito del README. CI
+  no, que usa `global-json-file`. Si el `Dockerfile` queda atrás, el `docker build` muere con
+  `SDK not found` y exit 155 sin que nadie haya tocado el repositorio. Las rutas de SDK del
+  allowlist en `.claude/settings.json` llevan comodín a propósito, para que no sean un cuarto
+  lugar que se olvida.
+- **Cambiar `Directory.Packages.props` sin regenerar los lock files no rompe tu máquina: rompe
+  CI y el `docker build`.** Los 74 `packages.lock.json` —uno por `.csproj`, activados por
+  `RestorePackagesWithLockFile` en `Directory.Build.props`— se regeneran con
+  `dotnet restore --force-evaluate` y se commitean **junto** con el props. En local un `restore`
+  normal los actualiza solo y no protesta; CI y el `Dockerfile` corren `--locked-mode`, donde
+  NuGet no resuelve nada sino que exige que el grafo coincida exacto, y fallan con `NU1004`. El
+  diff de los locks es además el único lugar donde se ve el arrastre transitivo: el parche de
+  .NET del 2026-09-05 movió `Microsoft.IdentityModel.*` de `8.0.1` a `8.19.2`, que no está
+  declarado en el props y por lo tanto no aparece en su diff.
 - **Las factories de integración deben fijar `Notifications:EmailProvider`.** Sin eso heredan
   lo que diga `appsettings.json`; con `infobip` y las claves ausentes,
   `NotificationsOptionsValidator` falla al arrancar y **todas** las pruebas del archivo mueren
@@ -124,10 +141,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Probar auth en local tiene dos trampas.** El interruptor y los dos modos están en
   [README § Activar y desactivar el modo de desarrollo](README.md#activar-y-desactivar-el-modo-de-desarrollo-auth).
   Lo que ahí no se dice: (1) `UseDevelopmentStub` es `true` por defecto en `Development`
-  (`QepAuthenticationMode.cs:16`), pero **los dos perfiles de `launchSettings.json` lo fijan en
+  (`QepAuthenticationMode.cs:15`), pero **los dos perfiles de `launchSettings.json` lo fijan en
   `false`**, así que un `dotnet run` normal corre con auth real; para usar los headers `X-*` hay
   que pedir el stub con `$env:Authentication__UseDevelopmentStub = "true"`. (2) En modo stub
-  **no se registra el middleware de CSRF** (`Program.cs:61-65`), así que un `POST` sin
+  **no se registra el middleware de CSRF** (`Program.cs:64-67`), así que un `POST` sin
   `X-Qep-Client: web` pasa; ese header sólo se puede probar con el stub apagado.
 - **Los user-secrets se cargan en `Development` sin ayuda de nadie.** Los agrega
   `WebApplication.CreateBuilder`, que es comportamiento del framework. El
@@ -143,11 +160,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   [README § Ejecución local](README.md#ejecución-local)); en k8s la fija `prod-secret.yaml`
   como `ConnectionStrings__QepDatabase` — **no** el ConfigMap, que es texto plano para
   cualquiera con `get` sobre ConfigMaps en el namespace.
-- **Defecto conocido sin cerrar:** 5 pruebas de `RealAuthenticationApiTests` fallan con
-  `Expected: Created / Actual: Unauthorized`. Son preexistentes: al medir regresión hay que
-  verificarlas **por nombre**, no por conteo.
+- **Endurecer una regla de dominio rompe las pruebas de integración que arman el cuerpo a
+  mano, y el síntoma no se parece a la causa.** El handler devuelve `422 validation.failed`
+  donde la prueba esperaba `Created`, o —peor— un 422 que la prueba sí esperaba pero por
+  otro motivo. Pasó dos veces en una semana y costó 23 de 24 fallas el 2026-09-05: `CityId`
+  pasó a obligatorio en `CreateCompanyRequest` (`613912a`, 2026-08-31) y once pruebas de
+  Companies seguían posteando sin él; `ValidUntil` pasó a obligatorio para enviar (`86efda1`,
+  2026-09-04) y `ReportingApiHarness.CreateSentQuotationAsync` —de un día antes— tumbó las
+  doce de Reporting desde una sola línea. **Al agregar un campo requerido o una precondición,
+  hay que barrer las pruebas de integración por cuerpos crudos**, no sólo los harness: las que
+  usan el harness se arreglan solas y esconden el problema.
 - **Defecto conocido sin cerrar:** un registro de tenant que falla después de aprovisionar
-  deja el usuario en `identity.users` **sin membresía**. `RegistrationEndpoints.cs:90-105`
+  deja el usuario en `identity.users` **sin membresía**. `RegistrationEndpoints.cs:89-104`
   aprovisiona antes de crear el tenant, en módulos con unidades de trabajo distintas y sin
   compensación.
 - **Una plantilla de WhatsApp rechazada con "An error occurred while sending the template for
@@ -162,9 +186,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `WhatsAppQuotationMessage` y `ZenviaWhatsAppSender` — y el `TemplateId` viaja en **el mismo
   commit** que ese código: apuntar a una plantilla cuyas variables no coinciden con las que el
   backend manda rompe el envío en producción sin error de compilación.
-- **`Conversations` y `Reporting` no existen**, aunque los requisitos las supongan. Los
-  módulos construidos son Audit, Authorization, Catalog, Identity, Notifications, Storage y
-  Tenancy.
+- **`Conversations` no existe**, aunque los requisitos la supongan. Los doce módulos
+  construidos son Audit, Authorization, Catalog, Companies, Customers, Geography, Identity,
+  Notifications, Quotations, Reporting, Storage y Tenancy — cada uno con su
+  `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`.
 
 ## Verificación
 
