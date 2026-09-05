@@ -41,12 +41,13 @@ internal static class QuotationMapping
         party.CityId);
 
     public static QuotationListItemDto ToListItemDto(
-        this Quotation quotation, string? clientName) => new(
+        this Quotation quotation, string? clientName, string? advisorEmail) => new(
         quotation.Id.Value,
         quotation.QuotationNumber,
         quotation.ClientId,
         clientName,
         quotation.AdvisorId.Value,
+        advisorEmail,
         quotation.Status.ToString(),
         quotation.CreatedAt,
         quotation.Total);

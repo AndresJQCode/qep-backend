@@ -133,3 +133,33 @@ internal sealed record QuotationExpiring(
     string? ClientCuc,
     string? AdvisorName,
     decimal Total);
+
+/// <summary>
+/// El resumen agregado de cambios de precio, tal como el contrato lo fija. Redeclarado igual que
+/// el resto — ver la nota del encabezado.
+///
+/// **Sin ningun agregado de monto**: los valores del historico conviven en dolares, pesos y puntos
+/// de descuento, asi que lo unico que se puede sumar sin mentir son filas.
+/// </summary>
+internal sealed record PriceChangeReportSummary(
+    int ChangeCount,
+    int ProductCount,
+    int IncreaseCount,
+    int DecreaseCount,
+    IReadOnlyList<ReportCountPoint> Monthly,
+    IReadOnlyList<PriceChangeFieldSlice> ByField,
+    IReadOnlyList<PriceChangeProductEntry> ByProduct,
+    PriceChangeComparison? Previous);
+
+internal sealed record ReportCountPoint(int Year, int Month, int Count);
+
+internal sealed record PriceChangeFieldSlice(string Field, int Count);
+
+internal sealed record PriceChangeProductEntry(
+    Guid? ProductId,
+    string? ProductName,
+    string? ProductCode,
+    int EntityCount,
+    int Count);
+
+internal sealed record PriceChangeComparison(int ChangeCount);

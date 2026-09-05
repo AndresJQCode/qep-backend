@@ -324,6 +324,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListPriceChangeReportQuery, ReportPage<PriceChangeReportItemDto>>,
             ListPriceChangeReportHandler>();
         services.AddScoped<
+            IQueryHandler<GetPriceChangeReportSummaryQuery, PriceChangeReportSummaryDto>,
+            GetPriceChangeReportSummaryHandler>();
+        services.AddScoped<
             IQueryHandler<ExportPriceChangeReportQuery, ReportFile>,
             ExportPriceChangeReportHandler>();
         services.AddScoped<
@@ -379,6 +382,7 @@ public static class QepServiceCollectionExtensions
         // `quotations` contra los repositorios que ya registraron AddCustomersInfrastructure y
         // AddCatalogInfrastructure.
         services.AddScoped<IQuotationCustomerLookup, QuotationCustomerLookup>();
+        services.AddScoped<IQuotationAdvisorLookup, QuotationAdvisorLookup>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
 

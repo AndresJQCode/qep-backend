@@ -143,6 +143,7 @@ public sealed record QuotationListItemResponse(
     Guid ClientId,
     string? ClientName,
     Guid AdvisorId,
+    string? AdvisorEmail,
     string Status,
     DateTimeOffset CreatedAt,
     decimal Total);

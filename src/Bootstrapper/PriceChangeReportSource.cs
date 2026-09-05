@@ -48,7 +48,207 @@ internal sealed class PriceChangeReportSource(
         return await ResolveAuthorsAsync(rows, cancellationToken);
     }
 
+    public async Task<PriceChangeReportAggregate> SummarizeAsync(
+        PriceChangeReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken)
+    {
+        var changes = FilterChanges(criteria);
+
+        // GroupBy sobre una constante es el "agregar todo el conjunto", que traduce a un SELECT
+        // con agregados y sin GROUP BY. Sobre cero filas no devuelve ninguna, y de ahi el
+        // fallback: un resumen vacio es cero, nunca nulo.
+        //
+        // La direccion se cuenta con la misma regla que PriceChangeDifference —un lado nulo vale
+        // cero—, escrita como expresion porque un metodo de dominio no lo traduce EF. Contarla en
+        // memoria exigiria traerse el periodo entero, que es lo que este resumen evita.
+        var totals = await changes
+            .GroupBy(_ => 1)
+            .Select(group => new
+            {
+                Count = group.Count(),
+                Increase = group.Count(change =>
+                    (change.NewValue ?? 0m) - (change.PreviousValue ?? 0m) > 0m),
+                Decrease = group.Count(change =>
+                    (change.NewValue ?? 0m) - (change.PreviousValue ?? 0m) < 0m),
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (totals is null || totals.Count == 0)
+        {
+            return new PriceChangeReportAggregate(0, 0, 0, 0, [], EmptyFieldSlices(), []);
+        }
+
+        // Los productos distintos tocados: el denominador que le falta al conteo de cambios para
+        // saber si fueron muchos sobre pocos productos o al reves. Sirve ademas como el "cuantas
+        // entidades hay" del plegado de "Otros", asi que se pide una sola vez.
+        var productCount = await changes
+            .Select(change => change.ProductId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+
+        var monthly = await SummarizeByMonthAsync(changes, cancellationToken);
+        var byField = await SummarizeByFieldAsync(changes, cancellationToken);
+        var byProduct = await RankProductsAsync(
+            changes, rankSize, totals.Count, productCount, cancellationToken);
+
+        return new PriceChangeReportAggregate(
+            totals.Count, productCount, totals.Increase, totals.Decrease,
+            monthly, byField, byProduct);
+    }
+
+    /// <summary>
+    /// La serie mensual por fecha del cambio, en **UTC** — el mismo huso en el que
+    /// <c>ReportDateRange</c> corta el rango. Agrupar en el huso de la sesion de PostgreSQL
+    /// pondria un cambio del 1 de enero en diciembre para un tenant en America/Bogota.
+    ///
+    /// Es un conteo y no un monto: ver <c>PriceChangeReportSummaryDto</c>.
+    /// </summary>
+    private static async Task<IReadOnlyList<ReportCountPointDto>> SummarizeByMonthAsync(
+        IQueryable<ProductPriceChange> changes,
+        CancellationToken cancellationToken)
+    {
+        var months = await changes
+            .GroupBy(change => new
+            {
+                change.ChangedAt.UtcDateTime.Year,
+                change.ChangedAt.UtcDateTime.Month,
+            })
+            .Select(group => new
+            {
+                group.Key.Year,
+                group.Key.Month,
+                Count = group.Count(),
+            })
+            .OrderBy(point => point.Year)
+            .ThenBy(point => point.Month)
+            .ToListAsync(cancellationToken);
+
+        return months
+            .Select(point => new ReportCountPointDto(point.Year, point.Month, point.Count))
+            .ToArray();
+    }
+
+    /// <summary>Los tres campos, siempre, incluso en cero: ver
+    /// <c>PriceChangeFieldSliceDto</c>.</summary>
+    private static async Task<IReadOnlyList<PriceChangeFieldSliceDto>> SummarizeByFieldAsync(
+        IQueryable<ProductPriceChange> changes,
+        CancellationToken cancellationToken)
+    {
+        var slices = await changes
+            .GroupBy(change => change.Field)
+            .Select(group => new { Field = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+
+        var found = slices.ToDictionary(slice => slice.Field, slice => slice.Count);
+
+        return Enum.GetValues<ProductPriceField>()
+            .Select(field => new PriceChangeFieldSliceDto(
+                MapField(field).ToString(),
+                found.GetValueOrDefault(field)))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Los productos mas retocados, con el resto plegado en una fila "Otros".
+    ///
+    /// Desempate por id: sin un orden total, dos productos con la misma cantidad de cambios pueden
+    /// intercambiarse entre dos llamadas identicas y el ranking "parpadea".
+    ///
+    /// El plegado no reusa <c>ReportRankFolding</c> porque esa fila lleva un <c>Total</c> de
+    /// dinero que este reporte no puede sumar; la regla que si se copia es la que importa: el
+    /// resto sale **por resta contra el total ya calculado**, no con una consulta mas.
+    /// </summary>
+    private async Task<IReadOnlyList<PriceChangeProductEntryDto>> RankProductsAsync(
+        IQueryable<ProductPriceChange> changes,
+        int rankSize,
+        int totalCount,
+        int productCount,
+        CancellationToken cancellationToken)
+    {
+        if (rankSize <= 0)
+        {
+            return [];
+        }
+
+        var top = await changes
+            .GroupBy(change => change.ProductId)
+            .Select(group => new { ProductId = group.Key, Count = group.Count() })
+            .OrderByDescending(entry => entry.Count)
+            .ThenBy(entry => entry.ProductId)
+            .Take(rankSize)
+            .ToListAsync(cancellationToken);
+
+        var ids = top.Select(entry => entry.ProductId).ToArray();
+        // Una consulta de nombres para el ranking entero, no una por fila.
+        var products = await catalog.Products
+            .AsNoTracking()
+            .Where(product => ids.Contains(product.Id))
+            .Select(product => new { product.Id, product.Name, product.Code })
+            .ToDictionaryAsync(product => product.Id, cancellationToken);
+
+        var ranked = top
+            .Select(entry => new PriceChangeProductEntryDto(
+                entry.ProductId.Value,
+                products.GetValueOrDefault(entry.ProductId)?.Name,
+                products.GetValueOrDefault(entry.ProductId)?.Code,
+                EntityCount: 1,
+                entry.Count))
+            .ToList();
+
+        var remaining = productCount - ranked.Count;
+        if (ranked.Count == rankSize && remaining > 0)
+        {
+            ranked.Add(new PriceChangeProductEntryDto(
+                ProductId: null,
+                ProductName: null,
+                ProductCode: null,
+                remaining,
+                totalCount - ranked.Sum(entry => entry.Count)));
+        }
+
+        return ranked;
+    }
+
+    private static PriceChangeFieldSliceDto[] EmptyFieldSlices() =>
+        Enum.GetValues<ProductPriceField>()
+            .Select(field => new PriceChangeFieldSliceDto(MapField(field).ToString(), 0))
+            .ToArray();
+
     private IQueryable<ChangeRow> BuildQuery(PriceChangeReportCriteria criteria)
+    {
+        var changes = FilterChanges(criteria);
+
+        // Join interno y no izquierdo: la FK product_id -> catalog.products es real y en cascada,
+        // asi que una fila del historico sin su producto no existe.
+        var joined = from change in changes
+                     join product in catalog.Products.AsNoTracking()
+                         on change.ProductId equals product.Id
+                     select new { change, product };
+
+        // Ver SalesReportSource sobre el orden total.
+        return joined
+            .OrderByDescending(row => row.change.ChangedAt)
+            .ThenBy(row => row.change.Id)
+            .Select(row => new ChangeRow(
+                row.change.Id,
+                row.change.ProductId,
+                row.product.Code,
+                row.product.Name,
+                row.change.Field,
+                row.change.ScaleFromUnit,
+                row.change.ScaleToUnit,
+                row.change.PreviousValue,
+                row.change.NewValue,
+                row.change.ChangedBy,
+                row.change.ChangedAt));
+    }
+
+    /// <summary>
+    /// Los filtros del reporte, compartidos por el listado y el resumen: que los dos salgan de
+    /// aca es lo que hace imposible que el panel y la tabla hablen de conjuntos distintos.
+    /// </summary>
+    private IQueryable<ProductPriceChange> FilterChanges(PriceChangeReportCriteria criteria)
     {
         var changes = catalog.ProductPriceChanges
             .AsNoTracking()
@@ -83,29 +283,7 @@ internal sealed class PriceChangeReportSource(
             changes = changes.Where(change => change.Field == mapped);
         }
 
-        // Join interno y no izquierdo: la FK product_id -> catalog.products es real y en cascada,
-        // asi que una fila del historico sin su producto no existe.
-        var joined = from change in changes
-                     join product in catalog.Products.AsNoTracking()
-                         on change.ProductId equals product.Id
-                     select new { change, product };
-
-        // Ver SalesReportSource sobre el orden total.
-        return joined
-            .OrderByDescending(row => row.change.ChangedAt)
-            .ThenBy(row => row.change.Id)
-            .Select(row => new ChangeRow(
-                row.change.Id,
-                row.change.ProductId,
-                row.product.Code,
-                row.product.Name,
-                row.change.Field,
-                row.change.ScaleFromUnit,
-                row.change.ScaleToUnit,
-                row.change.PreviousValue,
-                row.change.NewValue,
-                row.change.ChangedBy,
-                row.change.ChangedAt));
+        return changes;
     }
 
     // Una consulta de emails para toda la pagina, no una por fila.
