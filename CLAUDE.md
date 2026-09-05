@@ -49,8 +49,14 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
   el código. Lo que falte se registra explícitamente como decisión pendiente, no se asume.
 - **La autoridad es el código.** Ante discrepancia entre el código y un documento, gana el
   código y el documento se corrige.
-- **Commits:** conventional commits. **Sin atribución de IA.** Si la rama actual es la por
-  defecto (`main`), se crea rama antes de commitear.
+- **Commits:** conventional commits. **Sin atribución de IA.**
+- **Antes de commitear se comprueba la rama, y si es la por defecto (`main`) se crea una
+  primero.** La comprobación es `git branch --show-current` **en ese momento**, no lo que se
+  haya leído al abrir la sesión: el 2026-09-05 el snapshot del arranque decía `main` mientras
+  el repo estaba en `develop`, y se le informó al developer la rama equivocada. La rama es un
+  **estado** y cambia entre comandos —mismo criterio que con el checkout de `qep-frontend`—,
+  así que ni el contexto inicial ni un `git status` de hace diez minutos son autoridad sobre
+  ella.
 
 ## Entorno de desarrollo
 
