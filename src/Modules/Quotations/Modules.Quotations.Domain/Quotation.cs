@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Domain;
+namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Una cotización de un tenant (modelo-datos-cotizaciones.md §2.1). Agregado raíz que incluye sus

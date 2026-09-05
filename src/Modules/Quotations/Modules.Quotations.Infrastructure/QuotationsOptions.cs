@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Infrastructure;
+namespace Modules.Quotations.Infrastructure;
 
 // Binding fuertemente tipado de la sección "Quotations" de appsettings, mismo criterio que
 // StorageOptions.

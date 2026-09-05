@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Envía la cotización al cliente por WhatsApp — plantilla de Zenvia, pedida por el owner con
