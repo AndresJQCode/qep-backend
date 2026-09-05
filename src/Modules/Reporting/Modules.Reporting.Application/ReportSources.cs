@@ -105,6 +105,24 @@ public interface IPriceChangeReportSource
         PriceChangeReportCriteria criteria,
         int limit,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
+    /// en la base. Ver <see cref="ISalesReportSource.SummarizeAsync"/>.
+    ///
+    /// **Este si devuelve el resumen ya armado**, a diferencia de <see cref="ListAsync"/>: un
+    /// agregado no tiene ninguna regla que calcular fila por fila. La direccion del cambio —que es
+    /// lo unico derivado— se resuelve en la consulta con la misma regla que
+    /// <c>PriceChangeDifference</c>, porque contarla en memoria exigiria traerse el periodo
+    /// entero, que es justamente lo que el resumen existe para evitar.
+    ///
+    /// Un <paramref name="rankSize"/> en cero significa "no me traigas el ranking": la ventana
+    /// anterior solo necesita el conteo.
+    /// </summary>
+    Task<PriceChangeReportAggregate> SummarizeAsync(
+        PriceChangeReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>Una fila del historico tal como esta guardada, sin la diferencia calculada.</summary>

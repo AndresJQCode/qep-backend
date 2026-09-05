@@ -70,6 +70,12 @@ public static class ReportingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapGet("/price-changes/summary", GetPriceChangesSummaryAsync)
+            .RequireAuthorization(ReportingPermissions.PriceChangeRead)
+            .Produces<PriceChangeReportSummaryDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/price-changes/export", ExportPriceChangesAsync)
             .RequireAuthorization(ReportingPermissions.PriceChangeRead)
             .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
@@ -233,6 +239,26 @@ public static class ReportingEndpoints
             cancellationToken);
 
         return Results.Ok(result);
+    }
+
+    /// <summary>Ver <see cref="GetSalesSummaryAsync"/>: mismos filtros que el listado, sin
+    /// paginacion.</summary>
+    private static async Task<IResult> GetPriceChangesSummaryAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        Guid? productId = null,
+        Guid? changedBy = null,
+        string? field = null)
+    {
+        var summary = await dispatcher.QueryAsync(
+            new GetPriceChangeReportSummaryQuery(
+                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field)),
+            cancellationToken);
+
+        return Results.Ok(summary);
     }
 
     private static async Task<IResult> ExportPriceChangesAsync(

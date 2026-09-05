@@ -206,3 +206,50 @@ internal sealed class FakeQuotationsReportSource : IQuotationsReportSource
                 0),
             []);
 }
+
+/// <summary>
+/// Un origen de cambios de precio que recuerda con qué criterio y con qué tope lo llamaron. Igual
+/// que el de cotizaciones, el resumen lo consulta una o dos veces según haya periodo anterior, y
+/// **con qué tope lo llamó cada vez** es la mitad de lo que hay que probar: de la ventana anterior
+/// sólo se lee el conteo, así que no lleva ranking.
+/// </summary>
+internal sealed class FakePriceChangeReportSource : IPriceChangeReportSource
+{
+    public PriceChangeReportAggregate Aggregate { get; set; } = EmptyAggregate();
+
+    public PriceChangeReportAggregate? PrecedingAggregate { get; set; }
+
+    public List<PriceChangeReportCriteria> SummarizedCriteria { get; } = [];
+
+    public List<int> SummarizedRankSizes { get; } = [];
+
+    public Task<PriceChangeReportAggregate> SummarizeAsync(
+        PriceChangeReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken)
+    {
+        var isPreceding = SummarizedCriteria.Count > 0;
+        SummarizedCriteria.Add(criteria);
+        SummarizedRankSizes.Add(rankSize);
+        return Task.FromResult(isPreceding ? PrecedingAggregate ?? Aggregate : Aggregate);
+    }
+
+    public Task<(IReadOnlyList<PriceChangeReportRow> Rows, int Total)> ListAsync(
+        PriceChangeReportCriteria criteria,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(((IReadOnlyList<PriceChangeReportRow>)[], 0));
+
+    public Task<IReadOnlyList<PriceChangeReportRow>> ListForExportAsync(
+        PriceChangeReportCriteria criteria,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult((IReadOnlyList<PriceChangeReportRow>)[]);
+
+    public static PriceChangeReportAggregate EmptyAggregate(
+        int changeCount = 0,
+        int increaseCount = 0,
+        int decreaseCount = 0) =>
+        new(changeCount, 0, increaseCount, decreaseCount, [], [], []);
+}
