@@ -1,5 +1,6 @@
 using Bootstrapper.Authentication;
 using Bootstrapper.Messaging;
+using Bootstrapper.Seeding;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
@@ -11,6 +12,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
@@ -415,6 +417,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationsReportSource, QuotationsReportSource>();
         services.AddScoped<IPriceChangeReportSource, PriceChangeReportSource>();
         services.AddScoped<ICustomerReportSource, CustomerReportSource>();
+
+        // La semilla de arranque del ambiente desplegado (ver SeedOptions): apagada por
+        // defecto, y ValidateOnStart la revisa antes de aceptar tráfico, mismo criterio que el
+        // resto de las opciones que fallan rápido al arrancar.
+        services.AddOptions<SeedOptions>()
+            .Bind(configuration.GetSection(SeedOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SeedOptions>, SeedOptionsValidator>();
 
         AddAuthorizationCapability(services, configuration);
         services.AddQepObservability(configuration, environment);
