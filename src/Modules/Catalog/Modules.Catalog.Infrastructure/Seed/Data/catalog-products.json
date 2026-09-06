@@ -1,0 +1,299 @@
+{
+  "_note": [
+    "Semilla de catálogo para desarrollo. La carga CatalogSeeder al arrancar la aplicación,",
+    "construyendo los agregados del dominio directamente — no pasa por la API.",
+    "",
+    "priceCop y priceUsd van tal cual a Product.PriceBaseCop y PriceBaseUsd. Ambos vienen CON",
+    "IVA INCLUIDO: QuotationItem lo extrae de adentro con total × tasa / (100 + tasa), no lo",
+    "suma encima. Por eso acá no viaja priceWithoutTax de las listas de origen: es derivado.",
+    "",
+    "Los 19 llevan la tasa de `taxRate`. La lista de origen en USD marcaba 14 de ellos como",
+    "isTaxable:false —y sus precios USD, en efecto, no contienen el 19%—, pero Product.TaxRateId",
+    "es un solo campo para las dos monedas, así que 'gravado en COP y exento en USD' no se puede",
+    "modelar. Decisión del owner el 2026-09-05: gana la lista COP. notSeeded.usdIsTaxable guarda",
+    "lo que decía la otra, para que la discrepancia no se pierda.",
+    "",
+    "Los tres KIT KERATINA (7701, 7702, 7703) tienen una tasa de cambio implícita de 3800 COP/USD",
+    "contra los 3600 de los otros dieciséis, o sea ~5,2% más baratos en dólares de lo que su",
+    "precio en pesos implica. NO es un error de conversión: el owner confirmó el 2026-09-05 que",
+    "los precios en USD están bien. Se anota porque la diferencia no se ve mirando producto por",
+    "producto —cada precio es razonable por separado— y aparece recién al cruzar las dos monedas.",
+    "",
+    "notSeeded son los campos de las listas de origen que el dominio NO tiene. Se conservan como",
+    "referencia y no se envían: sourceId (ProductId es Guid v7), image (ImageFileId es un Guid de",
+    "Storage, no una ruta), y packagingUnit/netWeight/grossWeight, que no existen en Product ni",
+    "en ProductDetails. Agregarlos es otro trabajo, con migración."
+  ],
+  "taxRate": {
+    "name": "IVA 19%",
+    "percentage": 19
+  },
+  "products": [
+    {
+      "sku": "7416",
+      "name": "BRONCEADOR RITUAL DEL SOL",
+      "priceCop": 35900,
+      "priceUsd": 9.97,
+      "notSeeded": {
+        "sourceId": 16,
+        "usdIsTaxable": false,
+        "image": "/images/products/7007.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.48,
+        "grossWeight": 0.53
+      }
+    },
+    {
+      "sku": "3095",
+      "name": "COMBO JALEA REAL 3",
+      "priceCop": 114700,
+      "priceUsd": 31.86,
+      "notSeeded": {
+        "sourceId": 26,
+        "usdIsTaxable": true,
+        "image": "/images/products/3013.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.096,
+        "grossWeight": 0.1
+      }
+    },
+    {
+      "sku": "3001",
+      "name": "COMBO ROSADO RITUAL DE SEDUCCIÓN",
+      "priceCop": 46900,
+      "priceUsd": 13.03,
+      "notSeeded": {
+        "sourceId": 1,
+        "usdIsTaxable": false,
+        "image": "/images/products/3001.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.31,
+        "grossWeight": 0.5
+      }
+    },
+    {
+      "sku": "3012",
+      "name": "DÚO MINI PERFUME CON PROTECCIÓN TÉRMICA",
+      "priceCop": 16900,
+      "priceUsd": 4.69,
+      "notSeeded": {
+        "sourceId": 14,
+        "usdIsTaxable": true,
+        "image": "/images/products/3013.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.096,
+        "grossWeight": 0.1
+      }
+    },
+    {
+      "sku": "3005",
+      "name": "DÚO ROSADO Y AZUL PERFUME TERMOPROTECTOR",
+      "priceCop": 41900,
+      "priceUsd": 11.64,
+      "notSeeded": {
+        "sourceId": 2,
+        "usdIsTaxable": false,
+        "image": "/images/products/3005.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.32,
+        "grossWeight": 0.35
+      }
+    },
+    {
+      "sku": "7701",
+      "name": "KIT KERATINA 1000ML + BIOSERUM",
+      "priceCop": 150000,
+      "priceUsd": 39.47,
+      "notSeeded": {
+        "sourceId": 9,
+        "usdIsTaxable": false,
+        "image": "/images/products/7701.jpg",
+        "packagingUnit": null,
+        "netWeight": 1.47,
+        "grossWeight": 1.52
+      }
+    },
+    {
+      "sku": "7703",
+      "name": "KIT KERATINA 120 ML + BIOSERUM",
+      "priceCop": 35000,
+      "priceUsd": 9.21,
+      "notSeeded": {
+        "sourceId": 11,
+        "usdIsTaxable": false,
+        "image": "/images/products/7703.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.21,
+        "grossWeight": 0.26
+      }
+    },
+    {
+      "sku": "7702",
+      "name": "KIT KERATINA 250 ML + BIOSERUM",
+      "priceCop": 60000,
+      "priceUsd": 15.79,
+      "notSeeded": {
+        "sourceId": 10,
+        "usdIsTaxable": false,
+        "image": "/images/products/7702.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.39,
+        "grossWeight": 0.44
+      }
+    },
+    {
+      "sku": "7101",
+      "name": "MANTEQUILLA PERFUMADA RITUAL DE SEDUCCIÓN",
+      "priceCop": 26900,
+      "priceUsd": 7.47,
+      "notSeeded": {
+        "sourceId": 6,
+        "usdIsTaxable": false,
+        "image": "/images/products/7101.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.26,
+        "grossWeight": 0.28
+      }
+    },
+    {
+      "sku": "7299",
+      "name": "MASCARILLA BOMBA BOTÁNICA SOS",
+      "priceCop": 36900,
+      "priceUsd": 10.25,
+      "notSeeded": {
+        "sourceId": 8,
+        "usdIsTaxable": false,
+        "image": "/images/products/7299.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.46,
+        "grossWeight": 0.51
+      }
+    },
+    {
+      "sku": "7278",
+      "name": "MASCARILLA JALEA REAL",
+      "priceCop": 39900,
+      "priceUsd": 11.08,
+      "notSeeded": {
+        "sourceId": 23,
+        "usdIsTaxable": true,
+        "image": "/images/products/3013.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.096,
+        "grossWeight": 0.1
+      }
+    },
+    {
+      "sku": "7957",
+      "name": "PERFUME TERMOPROTECTOR AZUL RITUAL DE TENTACIÓN",
+      "priceCop": 22900,
+      "priceUsd": 6.36,
+      "notSeeded": {
+        "sourceId": 13,
+        "usdIsTaxable": false,
+        "image": "/images/products/7957.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.16,
+        "grossWeight": 0.18
+      }
+    },
+    {
+      "sku": "7901",
+      "name": "PERFUME TERMOPROTECTOR ROSADO RITUAL DE SEDUCCIÓN",
+      "priceCop": 22900,
+      "priceUsd": 6.36,
+      "notSeeded": {
+        "sourceId": 12,
+        "usdIsTaxable": false,
+        "image": "/images/products/7901.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.16,
+        "grossWeight": 0.18
+      }
+    },
+    {
+      "sku": "7009",
+      "name": "SHAMPOO DE AJÍ CONTROL CASPA",
+      "priceCop": 34900,
+      "priceUsd": 9.69,
+      "notSeeded": {
+        "sourceId": 5,
+        "usdIsTaxable": false,
+        "image": "/images/products/7009.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.47,
+        "grossWeight": 0.52
+      }
+    },
+    {
+      "sku": "7007",
+      "name": "SHAMPOO DE CEBOLLA SOS",
+      "priceCop": 34900,
+      "priceUsd": 9.69,
+      "notSeeded": {
+        "sourceId": 3,
+        "usdIsTaxable": false,
+        "image": "/images/products/7007.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.48,
+        "grossWeight": 0.53
+      }
+    },
+    {
+      "sku": "7008",
+      "name": "SHAMPOO DE ROMERO CONTROL GRASA",
+      "priceCop": 34900,
+      "priceUsd": 9.69,
+      "notSeeded": {
+        "sourceId": 4,
+        "usdIsTaxable": false,
+        "image": "/images/products/7008.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.47,
+        "grossWeight": 0.52
+      }
+    },
+    {
+      "sku": "7077",
+      "name": "SHAMPOO JALEA REAL",
+      "priceCop": 37900,
+      "priceUsd": 10.53,
+      "notSeeded": {
+        "sourceId": 25,
+        "usdIsTaxable": true,
+        "image": "/images/products/3013.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.096,
+        "grossWeight": 0.1
+      }
+    },
+    {
+      "sku": "7210",
+      "name": "TRATAMIENTO INTENSIVO PLEX DE AGUACATE",
+      "priceCop": 34900,
+      "priceUsd": 9.69,
+      "notSeeded": {
+        "sourceId": 7,
+        "usdIsTaxable": false,
+        "image": "/images/products/7210.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.44,
+        "grossWeight": 0.49
+      }
+    },
+    {
+      "sku": "7214",
+      "name": "TRATAMIENTO JALEA REAL",
+      "priceCop": 36900,
+      "priceUsd": 10.25,
+      "notSeeded": {
+        "sourceId": 24,
+        "usdIsTaxable": true,
+        "image": "/images/products/3013.jpg",
+        "packagingUnit": null,
+        "netWeight": 0.096,
+        "grossWeight": 0.1
+      }
+    }
+  ]
+}

@@ -3,6 +3,7 @@ using Api;
 using Bootstrapper;
 using Bootstrapper.Authentication;
 using Bootstrapper.Csrf;
+using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
@@ -140,6 +141,11 @@ await app.Services.InitializeCompaniesDatabaseAsync(
 // grupo de modulos de negocio por consistencia con el resto de este archivo.
 await app.Services.InitializeQuotationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
+
+// Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
+// necesita que existan. Apagada por defecto — ver SeedOptions.
+await app.Services.RunQepSeedAsync(app.Lifetime.ApplicationStopping);
+
 await app.RunAsync();
 
 public partial class Program;

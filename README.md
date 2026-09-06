@@ -59,9 +59,9 @@ tenant de demostración.
 
 | Recurso                              | Dirección                               |
 | ------------------------------------ | --------------------------------------- |
-| API                                  | `http://localhost:5100`                 |
-| Health check                         | `http://localhost:5100/health/live`     |
-| Documento OpenAPI (solo Development) | `http://localhost:5100/openapi/v1.json` |
+| API                                  | `http://localhost:5000`                 |
+| Health check                         | `http://localhost:5000/health/live`     |
+| Documento OpenAPI (solo Development) | `http://localhost:5000/openapi/v1.json` |
 | PostgreSQL                           | `localhost:5432`                        |
 | OTLP gRPC / HTTP                     | `localhost:4317` / `localhost:4318`     |
 | Métricas del collector               | `http://localhost:8889/metrics`         |
@@ -292,6 +292,50 @@ dotnet run --project src/Api --launch-profile http
 > claims `sub`, `tenant_id` y `permission`; los encabezados `X-*` del stub se
 > ignoran.
 
+## Semilla de arranque
+
+Con `Seed:Enabled` en `true`, la aplicación deja el ambiente utilizable al arrancar:
+crea el tenant **Origen botánico**, el usuario que lo administra, su membresía y el
+catálogo de diecinueve productos con la tasa `IVA 19%`. Pensada para el ambiente
+desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
+de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
+
+| Clave              | Por defecto | Qué hace                                              |
+| ------------------ | ----------- | ----------------------------------------------------- |
+| `Seed__Enabled`    | `false`     | Interruptor único. Apagado, no se siembra nada        |
+| `Seed__OwnerEmail` | sin valor   | Email que recibe la membresía con rol `admin`         |
+
+El usuario se siembra **sólo con su email**, sin proveedor vinculado: el primer login
+con Google lo vincula solo, porque `ProviderLinkingService` busca por email verificado.
+No hace falta invitación ni registrar un tenant.
+
+> [!WARNING]
+> La semilla **crea un tenant y otorga el rol `admin`**. Es un mecanismo que concede
+> privilegios, y a diferencia del stub de autenticación no puede negarse a arrancar
+> fuera de `Development`, porque el ambiente desplegado corre como `Production`. Su
+> única defensa es que nace apagada. **Al entregar el ambiente al cliente hay que
+> borrar las dos claves del ConfigMap.**
+
+Es idempotente: el tenant por id, el usuario por email, la membresía por el par
+usuario-tenant y los productos por código. Correrla muchas veces —cada reinicio de pod
+lo hace— no duplica nada. Tampoco actualiza: cambiar un precio ya sembrado es un `PUT`,
+no una segunda corrida.
+
+Tres campos del archivo de origen no se cargan porque el dominio no los tiene: peso
+neto, peso bruto y unidad de empaque. La imagen tampoco: en el origen es una ruta, y
+`Product.ImageFileId` es un archivo de la [biblioteca](#biblioteca-de-archivos-cloudflare-r2),
+que se sube aparte. Los cuatro quedan en
+[`catalog-products.json`](src/Modules/Catalog/Modules.Catalog.Infrastructure/Seed/Data/catalog-products.json)
+bajo `notSeeded`, como referencia.
+
+Para levantarla en local:
+
+```powershell
+$env:Seed__Enabled = "true"
+$env:Seed__OwnerEmail = "<tu-email>"
+dotnet run --project src/Api --launch-profile http
+```
+
 ## API implementada
 
 Inventario completo de la superficie HTTP. Las secciones siguientes desarrollan
@@ -350,7 +394,7 @@ $headers = @{
 }
 
 $settings = Invoke-WebRequest `
-  -Uri "http://localhost:5100/api/v1/tenants/$tenantId/settings" `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/settings" `
   -Headers $headers
 
 $settings.Content
@@ -365,7 +409,7 @@ $body = @{
 
 Invoke-RestMethod `
   -Method Patch `
-  -Uri "http://localhost:5100/api/v1/tenants/$tenantId/settings" `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/settings" `
   -Headers $headers `
   -ContentType "application/json" `
   -Body $body
@@ -413,7 +457,7 @@ $body = @{
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:5100/api/v1/tenants/$tenantId/memberships" `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/memberships" `
   -Headers $headers `
   -ContentType "application/json" `
   -Body $body

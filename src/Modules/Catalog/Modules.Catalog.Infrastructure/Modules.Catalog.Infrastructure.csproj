@@ -14,4 +14,10 @@
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Modules.Catalog.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Seed\Data\*.json" />
+  </ItemGroup>
 </Project>
