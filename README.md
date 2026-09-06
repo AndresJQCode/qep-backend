@@ -292,64 +292,49 @@ dotnet run --project src/Api --launch-profile http
 > claims `sub`, `tenant_id` y `permission`; los encabezados `X-*` del stub se
 > ignoran.
 
-## Semilla de catálogo
+## Semilla de arranque
 
-[`ops/seed/`](ops/seed/) carga un catálogo de diecinueve productos reales en un
-tenant, para tener con qué trabajar en local sin darlos de alta a mano.
+Con `Seed:Enabled` en `true`, la aplicación deja el ambiente utilizable al arrancar:
+crea el tenant **Origen botánico**, el usuario que lo administra, su membresía y el
+catálogo de diecinueve productos con la tasa `IVA 19%`. Pensada para el ambiente
+desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
+de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
 
-| Archivo                                                              | Qué es                                                                     |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`catalog-products.json`](ops/seed/catalog-products.json)            | Los datos: SKU, nombre, precio en COP y en USD, y la tasa de impuesto      |
-| [`Seed-CatalogProducts.ps1`](ops/seed/Seed-CatalogProducts.ps1)      | El cargador                                                                |
+| Clave              | Por defecto | Qué hace                                              |
+| ------------------ | ----------- | ----------------------------------------------------- |
+| `Seed__Enabled`    | `false`     | Interruptor único. Apagado, no se siembra nada        |
+| `Seed__OwnerEmail` | sin valor   | Email que recibe la membresía con rol `admin`         |
 
-A diferencia de la semilla de DIVIPOLA —que corre dentro de la aplicación desde
-`GeographySeeder`— ésta es un script externo que llama a la **API**, no a la base.
-Los productos son por tenant, así que no hay un destino que la aplicación pueda
-elegir sola al arrancar; y pasando por la API, la semilla no puede crear datos que
-los validadores, el aislamiento por tenant o los invariantes del dominio
-rechazarían.
+El usuario se siembra **sólo con su email**, sin proveedor vinculado: el primer login
+con Google lo vincula solo, porque `ProviderLinkingService` busca por email verificado.
+No hace falta invitación ni registrar un tenant.
 
-Requiere la API arriba **con el stub de autenticación**, que no es lo que
-`dotnet run` hace por defecto (ver
-[Volver al stub por encabezados](#volver-al-stub-por-encabezados-para-depurar-sin-google)):
+> [!WARNING]
+> La semilla **crea un tenant y otorga el rol `admin`**. Es un mecanismo que concede
+> privilegios, y a diferencia del stub de autenticación no puede negarse a arrancar
+> fuera de `Development`, porque el ambiente desplegado corre como `Production`. Su
+> única defensa es que nace apagada. **Al entregar el ambiente al cliente hay que
+> borrar las dos claves del ConfigMap.**
+
+Es idempotente: el tenant por id, el usuario por email, la membresía por el par
+usuario-tenant y los productos por código. Correrla muchas veces —cada reinicio de pod
+lo hace— no duplica nada. Tampoco actualiza: cambiar un precio ya sembrado es un `PUT`,
+no una segunda corrida.
+
+Tres campos del archivo de origen no se cargan porque el dominio no los tiene: peso
+neto, peso bruto y unidad de empaque. La imagen tampoco: en el origen es una ruta, y
+`Product.ImageFileId` es un archivo de la [biblioteca](#biblioteca-de-archivos-cloudflare-r2),
+que se sube aparte. Los cuatro quedan en
+[`catalog-products.json`](src/Modules/Catalog/Modules.Catalog.Infrastructure/Seed/Data/catalog-products.json)
+bajo `notSeeded`, como referencia.
+
+Para levantarla en local:
 
 ```powershell
-$env:Authentication__UseDevelopmentStub = "true"
+$env:Seed__Enabled = "true"
+$env:Seed__OwnerEmail = "<tu-email>"
 dotnet run --project src/Api --launch-profile http
 ```
-
-En otra consola, contra el tenant de demostración de
-[Identidad local](#identidad-local):
-
-```powershell
-# Ensayo: valida el archivo e imprime los cuerpos, sin llamar a la API.
-.\ops\seed\Seed-CatalogProducts.ps1 -TenantId 01900000-0000-7000-8000-000000000001 -DryRun
-
-# Carga.
-.\ops\seed\Seed-CatalogProducts.ps1 -TenantId 01900000-0000-7000-8000-000000000001
-```
-
-| Parámetro            | Por defecto                              | Para qué                                          |
-| -------------------- | ---------------------------------------- | ------------------------------------------------- |
-| `-TenantId`          | **requerido**                            | Tenant destino                                    |
-| `-SubjectId`         | `01900000-0000-7000-8000-000000000002`   | Autor en la auditoría de cada alta                |
-| `-BaseUrl`           | `http://localhost:5000`                  | Raíz de la API                                    |
-| `-DataPath`          | `ops/seed/catalog-products.json`         | Otro archivo de datos                             |
-| `-DryRun`            | —                                        | Valida e imprime, sin tocar la API                |
-
-El script crea la tasa `IVA 19%` si el tenant no la tiene, y **es idempotente por
-código de producto**: lista lo que ya existe y saltea esos SKU, así que correrlo
-dos veces no duplica nada. Tampoco actualiza: cambiar un precio ya cargado es un
-`PUT`, no una segunda corrida.
-
-Los precios viajan **con IVA incluido**, que es como el dominio los espera —
-`QuotationItem` lo extrae de adentro del precio en vez de sumarlo encima.
-
-Tres campos del archivo de origen no se cargan porque el dominio no los tiene:
-peso neto, peso bruto y unidad de empaque. La imagen tampoco: en el origen es una
-ruta, y `Product.ImageFileId` es un archivo de la
-[biblioteca](#biblioteca-de-archivos-cloudflare-r2), que se sube aparte. Los
-cuatro quedan igual en el JSON, bajo `notSeeded`, como referencia.
 
 ## API implementada
 

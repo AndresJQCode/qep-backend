@@ -1,7 +1,7 @@
 {
   "_note": [
-    "Semilla de catálogo para desarrollo. La carga Seed-CatalogProducts.ps1, que hace POST",
-    "contra /api/v1/tenants/{tenantId}/catalog — no escribe en la base directamente.",
+    "Semilla de catálogo para desarrollo. La carga CatalogSeeder al arrancar la aplicación,",
+    "construyendo los agregados del dominio directamente — no pasa por la API.",
     "",
     "priceCop y priceUsd van tal cual a Product.PriceBaseCop y PriceBaseUsd. Ambos vienen CON",
     "IVA INCLUIDO: QuotationItem lo extrae de adentro con total × tasa / (100 + tasa), no lo",

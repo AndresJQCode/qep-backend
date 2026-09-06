@@ -50,3 +50,8 @@ data:
   # apuntar a su id. Sin esta clave, ese cambio exigiría reconstruir y desplegar la imagen.
   # El token y el número emisor son credenciales y viven en prod-secret.yaml.
   Quotations__WhatsApp__TemplateId: "#{QUOTATIONS_WHATSAPP_TEMPLATE_ID}#"
+  # Semilla del ambiente de desarrollo: crea el tenant "Origen botánico", su usuario owner y el
+  # catálogo. Concede el rol admin, así que ESTAS DOS CLAVES SE BORRAN al entregar el ambiente
+  # al cliente. Sin ellas la semilla no corre.
+  Seed__Enabled: "true"
+  Seed__OwnerEmail: "#{SEED_OWNER_EMAIL}#"
