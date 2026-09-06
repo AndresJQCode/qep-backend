@@ -140,12 +140,9 @@ public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
-/// <summary>
-/// US-12. <c>PdfFileId</c> es opcional: si viene, es un archivo ya subido a Storage (flujo de
-/// carga firmada ya existente) y la cotización se le entrega al cliente por WhatsApp. Si no
-/// viene, sólo se marca como enviada — que es lo que habilita convertirla en venta.
-/// </summary>
-public sealed record SendQuotationRequest(Guid? PdfFileId);
+/// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
+/// esta llamada; acá sólo se referencia el archivo resultante.</summary>
+public sealed record SendQuotationRequest(Guid PdfFileId);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a

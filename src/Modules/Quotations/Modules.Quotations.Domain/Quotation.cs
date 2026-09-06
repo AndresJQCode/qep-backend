@@ -415,9 +415,7 @@ public sealed class Quotation
     /// Storage) y marca la cotización como enviada. Sólo desde <see cref="QuotationStatus.Draft"/>:
     /// no tiene sentido volver a "enviar" algo que ya se envió, y el resto de las transiciones
     /// (Voided, Expired) tampoco vuelven para atrás a Sent.</summary>
-    /// <param name="pdfFileId">El PDF que se le mandó al cliente, si hubo uno. Null es un envío
-    /// sin documento: la cotización pasa a Sent igual. Ver <c>SendQuotationHandler</c>.</param>
-    public void Send(Guid? pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
+    public void Send(Guid pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
     {
         EnsureSendable();
 

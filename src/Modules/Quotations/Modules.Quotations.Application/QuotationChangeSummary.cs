@@ -49,11 +49,6 @@ public static class QuotationChangeSummary
 
     public static string Sent() => "Enviada al cliente con su PDF.";
 
-    /// <summary>Sin documento: la cotización quedó marcada como enviada y nada salió hacia el
-    /// cliente. Se dice, para que nadie lea "Enviada" como "la recibió".</summary>
-    public static string SentWithoutDocument() =>
-        "Marcada como enviada, sin documento ni mensaje al cliente.";
-
     public static string Voided() => "Anulada.";
 
     public static string Expired() => "Vencida automáticamente al pasar su vigencia.";

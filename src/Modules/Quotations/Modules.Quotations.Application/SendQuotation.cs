@@ -1,17 +1,11 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <param name="PdfFileId">
-/// El PDF ya subido a Storage, si hay uno. <b>Null es un envío sin documento</b>: la cotización
-/// pasa a <c>Sent</c> y no se manda ningún WhatsApp. Es el camino que usa hoy el botón "Enviar" —
-/// marcar la cotización como enviada es lo que habilita convertirla en venta, y el documento y su
-/// entrega son un paso aparte que no tiene por qué bloquear ese flujo.
-/// </param>
 public sealed record SendQuotationCommand(
-    Guid TenantId, Guid QuotationId, Guid? PdfFileId) : ICommand<QuotationDto>;
+    Guid TenantId, Guid QuotationId, Guid PdfFileId) : ICommand<QuotationDto>;
 
 public sealed class SendQuotationHandler(
     IQuotationRepository repository,
@@ -42,16 +36,40 @@ public sealed class SendQuotationHandler(
         // orden, no para reemplazar la invariante del agregado.
         quotation.EnsureSendable();
 
+        await QuotationPdfResolver.ResolveAsync(
+            pdfLookup, command.TenantId, command.PdfFileId, cancellationToken);
+
+        // WhatsApp no descarga el PDF con la sesión de nadie: lo baja Meta, desde sus propios
+        // servidores, y el bucket es privado. Por eso se firma una URL de vida corta en vez de
+        // publicar el archivo — publicarlo lo dejaría accesible para siempre y sin dueño que lo
+        // despublique.
+        var documentUrl = await pdfLookup.CreateDownloadUrlAsync(
+            command.TenantId,
+            command.PdfFileId,
+            $"Cotizacion-{quotation.QuotationNumber}.pdf",
+            cancellationToken);
+
+        var customer = await customerLookup.FindAsync(
+            command.TenantId, quotation.ClientId, cancellationToken);
+        QuotationCustomerEligibility.Ensure(customer, command.TenantId, quotation.ClientId);
+
         var sentBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
-        // Sin PDF no hay nada que entregar, así que tampoco hay WhatsApp: la cotización queda
-        // marcada como enviada y nada más. El bloque de abajo es el envío completo —documento
-        // firmado y mensaje— y sigue disponible para quien mande un `pdfFileId`.
-        if (command.PdfFileId is { } pdfFileId)
-        {
-            await DeliverAsync(command.TenantId, pdfFileId, quotation, cancellationToken);
-        }
+        // El WhatsApp se manda antes de tocar el agregado y a propósito: si Zenvia falla, la
+        // cotización tiene que seguir en borrador — "Enviar" significa que de verdad llegó, no
+        // que quedó marcada como enviada sin que nadie la haya recibido. Así la persona
+        // simplemente reintenta el mismo botón en vez de quedar en un estado a medio camino
+        // que ningún otro flujo sabe destrabar.
+        await whatsAppSender.SendQuotationAsync(
+            new WhatsAppQuotationMessage(
+                ToPhone: customer!.Phone,
+                FullName: customer.Name,
+                OrderNumber: quotation.QuotationNumber,
+                Total: quotation.Total,
+                ValidUntil: quotation.ValidUntil!.Value,
+                DocumentUrl: documentUrl),
+            cancellationToken);
 
         var now = clock.UtcNow;
         quotation.Send(command.PdfFileId, sentBy, now);
@@ -61,9 +79,7 @@ public sealed class SendQuotationHandler(
             quotation.Id,
             QuotationHistoryEventType.Sent,
             sentBy,
-            command.PdfFileId is null
-                ? QuotationChangeSummary.SentWithoutDocument()
-                : QuotationChangeSummary.Sent(),
+            QuotationChangeSummary.Sent(),
             now));
         auditPublisher.Publish(
             command.TenantId,
@@ -75,48 +91,5 @@ public sealed class SendQuotationHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();
-    }
-
-    /// <summary>
-    /// El envío con documento: valida el PDF contra Storage, firma su URL y le entrega el mensaje
-    /// a WhatsApp.
-    ///
-    /// Todo esto pasa **antes** de tocar el agregado y a propósito: si Zenvia falla, la cotización
-    /// tiene que seguir en borrador — con documento de por medio, "Enviar" significa que de verdad
-    /// llegó, no que quedó marcada como enviada sin que nadie la haya recibido. Así la persona
-    /// reintenta el mismo botón en vez de quedar en un estado a medio camino.
-    /// </summary>
-    private async Task DeliverAsync(
-        Guid tenantId,
-        Guid pdfFileId,
-        Quotation quotation,
-        CancellationToken cancellationToken)
-    {
-        await QuotationPdfResolver.ResolveAsync(
-            pdfLookup, tenantId, pdfFileId, cancellationToken);
-
-        // WhatsApp no descarga el PDF con la sesión de nadie: lo baja Meta, desde sus propios
-        // servidores, y el bucket es privado. Por eso se firma una URL de vida corta en vez de
-        // publicar el archivo — publicarlo lo dejaría accesible para siempre y sin dueño que lo
-        // despublique.
-        var documentUrl = await pdfLookup.CreateDownloadUrlAsync(
-            tenantId,
-            pdfFileId,
-            $"Cotizacion-{quotation.QuotationNumber}.pdf",
-            cancellationToken);
-
-        var customer = await customerLookup.FindAsync(
-            tenantId, quotation.ClientId, cancellationToken);
-        QuotationCustomerEligibility.Ensure(customer, tenantId, quotation.ClientId);
-
-        await whatsAppSender.SendQuotationAsync(
-            new WhatsAppQuotationMessage(
-                ToPhone: customer.Phone,
-                FullName: customer.Name,
-                OrderNumber: quotation.QuotationNumber,
-                Total: quotation.Total,
-                ValidUntil: quotation.ValidUntil!.Value,
-                DocumentUrl: documentUrl),
-            cancellationToken);
     }
 }
