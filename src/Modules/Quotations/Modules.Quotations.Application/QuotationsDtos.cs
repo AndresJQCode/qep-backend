@@ -51,6 +51,12 @@ public sealed record QuotationDto(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? SentAt,
     Guid? PdfFileId,
+    /// <summary>Si tiene sentido ofrecer "enviar" ahora: un borrador siempre, y una enviada
+    /// sólo si volvió a cambiar desde entonces.</summary>
+    bool CanBeSent,
+    /// <summary>Si convertir en venta es posible: enviada, con productos, vigencia, forma de
+    /// pago y cuenta de cobro.</summary>
+    bool CanBeConvertedToSale,
     IReadOnlyCollection<QuotationItemDto> Items);
 
 /// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto
@@ -134,9 +140,12 @@ public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
-/// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
-/// esta llamada; acá sólo se referencia el archivo resultante.</summary>
-public sealed record SendQuotationRequest(Guid PdfFileId);
+/// <summary>
+/// US-12. <c>PdfFileId</c> es opcional: si viene, es un archivo ya subido a Storage (flujo de
+/// carga firmada ya existente) y la cotización se le entrega al cliente por WhatsApp. Si no
+/// viene, sólo se marca como enviada — que es lo que habilita convertirla en venta.
+/// </summary>
+public sealed record SendQuotationRequest(Guid? PdfFileId);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a
@@ -213,6 +222,8 @@ public sealed record QuotationResponse(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? SentAt,
     Guid? PdfFileId,
+    bool CanBeSent,
+    bool CanBeConvertedToSale,
     IReadOnlyCollection<QuotationItemResponse> Items);
 
 /// <summary>

@@ -203,6 +203,21 @@ public sealed class Quotation
     /// </summary>
     public bool BillingUsesBusinessName { get; private set; }
 
+    /// <summary>
+    /// Si la cotización se editó desde la última vez que se envió. <see cref="Send"/> deja
+    /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> en el mismo instante, y toda edición mueve
+    /// el segundo — así que uno mayor que el otro es exactamente "cambió después de enviarse".
+    /// </summary>
+    public bool HasChangesSinceSent => SentAt is { } sentAt && UpdatedAt > sentAt;
+
+    /// <summary>
+    /// Si el botón de enviar tiene sentido ahora. La regla vive acá y no en la pantalla para que
+    /// las dos no puedan discrepar: un borrador siempre, y una enviada sólo si volvió a cambiar.
+    /// </summary>
+    public bool CanBeSent =>
+        Status == QuotationStatus.Draft
+        || (Status == QuotationStatus.Sent && HasChangesSinceSent);
+
     public QuotationParty? Billing => FindParty(QuotationPartyRole.Billing);
 
     public QuotationParty? Shipping => FindParty(QuotationPartyRole.Shipping);
@@ -400,7 +415,9 @@ public sealed class Quotation
     /// Storage) y marca la cotización como enviada. Sólo desde <see cref="QuotationStatus.Draft"/>:
     /// no tiene sentido volver a "enviar" algo que ya se envió, y el resto de las transiciones
     /// (Voided, Expired) tampoco vuelven para atrás a Sent.</summary>
-    public void Send(Guid pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
+    /// <param name="pdfFileId">El PDF que se le mandó al cliente, si hubo uno. Null es un envío
+    /// sin documento: la cotización pasa a Sent igual. Ver <c>SendQuotationHandler</c>.</param>
+    public void Send(Guid? pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
     {
         EnsureSendable();
 
@@ -439,11 +456,20 @@ public sealed class Quotation
     /// </summary>
     public void EnsureSendable()
     {
-        if (Status != QuotationStatus.Draft)
+        // Una Sent que no cambió desde que se envió no se vuelve a enviar: no hay nada nuevo que
+        // mandar, y marcarla otra vez sólo ensucia el historial con un envío que no ocurrió.
+        if (Status == QuotationStatus.Sent && !HasChangesSinceSent)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.already_sent",
+                "The quotation has not changed since it was sent.");
+        }
+
+        if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.not_draft",
-                "Only a draft quotation can be marked as sent.");
+                "Only a draft or sent quotation can be marked as sent.");
         }
 
         if (ValidUntil is null)
@@ -468,7 +494,52 @@ public sealed class Quotation
                 "quotation.quotation.not_sent",
                 "Only a sent quotation can be converted to a sale.");
         }
+
+        // Lo que una venta necesita para existir y que la cotizacion puede no tener todavia. Se
+        // comprueba aca y no en la pantalla porque es la condicion del negocio, no del formulario:
+        // la venta se crea desde este agregado y estos cuatro datos son los que hereda.
+        if (_items.Count == 0)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.items_required",
+                "A quotation without products cannot be converted to a sale.");
+        }
+
+        if (ValidUntil is null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.valid_until_required",
+                "A quotation must have a validity date before it can be converted to a sale.");
+        }
+
+        if (string.IsNullOrWhiteSpace(PaymentMethod))
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.payment_method_required",
+                "A quotation must have a payment method before it can be converted to a sale.");
+        }
+
+        // Sin cuenta de cobro la venta no sabe a donde se paga, que es justo lo que una venta
+        // tiene que decir.
+        if (BillingAccount is null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.account_required",
+                "A quotation must have a billing account before it can be converted to a sale.");
+        }
     }
+
+    /// <summary>
+    /// Si convertir en venta es posible ahora. Misma regla que
+    /// <see cref="EnsureConvertibleToSale"/>, en forma de pregunta: la pantalla la usa para
+    /// habilitar el boton en vez de reimplementar las condiciones.
+    /// </summary>
+    public bool CanBeConvertedToSale =>
+        Status == QuotationStatus.Sent
+        && _items.Count > 0
+        && ValidUntil is not null
+        && !string.IsNullOrWhiteSpace(PaymentMethod)
+        && BillingAccount is not null;
 
     /// <summary>
     /// Vuelve a tomar del cliente maestro <see cref="CustomerWithRetention"/> y

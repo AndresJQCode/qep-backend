@@ -31,6 +31,8 @@ internal static class QuotationMapping
         quotation.UpdatedAt,
         quotation.SentAt,
         quotation.PdfFileId,
+        quotation.CanBeSent,
+        quotation.CanBeConvertedToSale,
         quotation.Items.Select(ToDto).ToArray());
 
     private static QuotationBillingAccountDto? ToDto(QuotationBillingAccount? account) =>
