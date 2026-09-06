@@ -233,6 +233,197 @@ public sealed class QuotationItemApiTests
         Assert.Empty(fetched.Items);
     }
 
+    // CAT-09: la escala que cubre la cantidad decide que cantidades son pedibles. El multiplo se
+    // cuenta desde FromUnit -- una escala 5-48 de a 3 admite 5, 8, 11..., y 7 no.
+    [Fact]
+    public async Task AddItemWithAQuantityOffTheScaleMultipleIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 100_000m, scales: MultipleOfThreeFromFive(100_000m));
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 7m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.item.quantity_not_multiple", problem.Code);
+    }
+
+    [Fact]
+    public async Task AddItemOnTheScaleMultipleIsAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 100_000m, scales: MultipleOfThreeFromFive(100_000m));
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 8m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(created);
+        Assert.Equal(8m, Assert.Single(created.Items).Quantity);
+    }
+
+    // La cantidad que no cae en ninguna escala sigue sin descuento y sin bloqueo (decision
+    // confirmada): 2 esta por debajo del 5 donde arranca la unica escala del producto.
+    [Fact]
+    public async Task AddItemBelowEveryScaleIsNotRestricted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 100_000m, scales: MultipleOfThreeFromFive(100_000m));
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 2m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(created);
+        Assert.Equal(0m, Assert.Single(created.Items).DiscountPercentage);
+    }
+
+    // El endpoint que pidio el developer: la cantidad nueva se valida contra la escala en la que
+    // cae, y la linea guardada no se toca cuando no cumple.
+    [Fact]
+    public async Task UpdateItemWithAQuantityOffTheScaleMultipleIsUnprocessableAndKeepsTheLine()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 100_000m, scales: MultipleOfThreeFromFive(100_000m));
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var withItem = await ReadQuotationAsync(await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 8m),
+            TestContext.Current.CancellationToken));
+        var itemId = Assert.Single(withItem.Items).Id;
+
+        var response = await client.PutAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
+            new UpdateQuotationItemRequest(7m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.item.quantity_not_multiple", problem.Code);
+
+        // Releido desde la base: el 422 no puede haber dejado la cantidad a medio escribir.
+        var fetched = await ReadQuotationAsync(await client.GetAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken));
+        Assert.Equal(8m, Assert.Single(fetched.Items).Quantity);
+    }
+
+    // La otra restriccion se cuenta sobre la cantidad cruda: empaques enteros de 12.
+    [Fact]
+    public async Task UpdateItemWithAPartialPackageIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 100_000m, scales: PackagesOfTwelve(100_000m));
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var withItem = await ReadQuotationAsync(await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 24m),
+            TestContext.Current.CancellationToken));
+        var itemId = Assert.Single(withItem.Items).Id;
+
+        var response = await client.PutAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
+            new UpdateQuotationItemRequest(20m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.item.quantity_not_packaging_unit", problem.Code);
+    }
+
+    // BFF: sin la restriccion en la respuesta, la pantalla no tiene con que evitar el 422 antes
+    // de enviar -- solo con que reaccionar despues.
+    [Fact]
+    public async Task ItemPriceScalesCarryTheirRestrictionToTheClient()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 100_000m, scales: MultipleOfThreeFromFive(100_000m));
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var created = await ReadQuotationAsync(await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 8m),
+            TestContext.Current.CancellationToken));
+
+        var scale = Assert.Single(Assert.Single(created.Items).PriceScales);
+        Assert.Equal("multiple", scale.Restriction);
+        Assert.Equal(3, scale.Multiple);
+        Assert.Null(scale.PackagingUnit);
+    }
+
+    /// <summary>Una sola escala 5-48 al 5%, de a 3 desde 5.</summary>
+    private static object[] MultipleOfThreeFromFive(decimal baseCop) =>
+    [
+        new
+        {
+            fromUnit = 5, toUnit = 48, discount = 5m,
+            restriction = "multiple", multiple = 3, finalCop = baseCop * 0.95m
+        }
+    ];
+
+    /// <summary>Una sola escala 1-999 sin descuento, solo por empaques de 12.</summary>
+    private static object[] PackagesOfTwelve(decimal baseCop) =>
+    [
+        new
+        {
+            fromUnit = 1, toUnit = 999, discount = 0m,
+            restriction = "packaging_unit", packagingUnit = 12, finalCop = baseCop
+        }
+    ];
+
+    /// <summary>Las extensiones de ProblemDetails llegan aplanadas en la raiz
+    /// (ApiExceptionHandler).</summary>
+    private sealed record ProblemPayload(string Code);
+
     private static async Task<QuotationResponse> ReadQuotationAsync(HttpResponseMessage response)
     {
         response.EnsureSuccessStatusCode();

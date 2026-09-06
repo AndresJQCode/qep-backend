@@ -274,6 +274,7 @@ public sealed class CustomerWriteApiTests
                 name = "Persona Natural",
                 identificationType = "CC",
                 identificationNumber = "900.123.456-1",
+                address = "Calle 10 # 45-12",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = false
@@ -319,8 +320,42 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("ClassificationId", fields);
     }
 
+    // La direccion dejo de ser un campo opcional del cliente cuando nacio la libreta (028afe2):
+    // el alta crea la principal --su ciudad emite el CUC y la cotizacion la propone por
+    // defecto-- y una direccion sin calle no es una direccion. El rechazo tiene que llegar como
+    // validation.failed con el mapa errors, no como el 422 pelado del dominio: es el unico que
+    // el formulario sabe leer para marcar el input.
+    [Fact]
+    public async Task CreateWithoutAnAddressMarksTheAddressField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Verde Esencial S.A.S.",
+                identificationType = "NIT",
+                identificationNumber = "900.123.456-1",
+                address = "",
+                cityId = city.CityId,
+                classificationId = classification.Id,
+                withRetention = false
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("Address", await ValidationFieldsAsync(response));
+    }
+
     // Vacio es ausente para un campo opcional: el formulario manda "" cuando el usuario borra el
     // input, y rechazarlo bloquearia el alta de un cliente que legitimamente no tiene correo.
+    // `address` ya no esta en esta bolsa: la libreta (028afe2) la volvio obligatoria, y su caso
+    // lo cubre CreateWithoutAnAddressMarksTheAddressField.
     [Fact]
     public async Task CreateAcceptsBlankOptionalFieldsAndStoresThemAsNull()
     {
@@ -339,7 +374,7 @@ public sealed class CustomerWriteApiTests
                 identificationNumber = "900.123.456-1",
                 phone = "",
                 email = "",
-                address = "",
+                address = "Calle 10 # 45-12",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = false
@@ -352,7 +387,7 @@ public sealed class CustomerWriteApiTests
         Assert.NotNull(customer);
         Assert.Null(customer.Phone);
         Assert.Null(customer.Email);
-        Assert.Null(customer.Address);
+        Assert.Equal("Calle 10 # 45-12", customer.Address);
     }
 
     [Fact]
@@ -448,7 +483,9 @@ public sealed class CustomerWriteApiTests
         Assert.NotNull(updated);
         Assert.Null(updated.Phone);
         Assert.Null(updated.Email);
-        Assert.Null(updated.Address);
+        // `address` ya no se limpia: la libreta (028afe2) la volvio obligatoria, asi que el PUT
+        // la reemplaza por la que trae el cuerpo en vez de dejarla en null.
+        Assert.Equal("Calle 10 # 45-12", updated.Address);
         Assert.False(updated.WithRetention);
     }
 
@@ -504,6 +541,7 @@ public sealed class CustomerWriteApiTests
                 identificationType = "NIT",
                 identificationNumber = "900.123.456-1",
                 cuc = "CUC-999999",
+                address = "Calle 10 # 45-12",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = false

@@ -180,6 +180,7 @@ internal static class ReportingApiHarness
                 identificationType = "NIT",
                 identificationNumber =
                     $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
+                address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
                 withRetention = false

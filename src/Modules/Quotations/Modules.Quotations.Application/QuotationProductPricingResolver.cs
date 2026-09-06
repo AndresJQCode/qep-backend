@@ -42,7 +42,16 @@ internal static class QuotationProductPricingResolver
                 "The product does not have a price in COP.");
         }
 
-        var discountPercentage = QuotationDiscountResolver.Resolve(product.Scales, quantity);
-        return (unitPrice, discountPercentage, product.TaxPercentage ?? 0);
+        var scale = QuotationDiscountResolver.Resolve(product.Scales, quantity);
+
+        // La escala que cubre la cantidad no sólo le pone el descuento: también decide qué
+        // cantidades son pedibles. Va acá y no en los handlers para que valga igual al agregar y
+        // al editar una línea — los dos pasan por este método.
+        if (scale is not null)
+        {
+            QuotationScaleRestrictionRule.EnsureSatisfied(scale, quantity);
+        }
+
+        return (unitPrice, scale?.Discount ?? 0m, product.TaxPercentage ?? 0);
     }
 }

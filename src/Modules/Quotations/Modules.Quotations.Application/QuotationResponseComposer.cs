@@ -122,7 +122,12 @@ public sealed class QuotationResponseComposer(
             product?.ImageUrl,
             (product?.Scales ?? [])
                 .Select(scale => new QuotationItemPriceScaleResponse(
-                    scale.FromUnit, scale.ToUnit, scale.Discount))
+                    scale.FromUnit,
+                    scale.ToUnit,
+                    scale.Discount,
+                    ToWireValue(scale.Restriction),
+                    scale.Multiple,
+                    scale.PackagingUnit))
                 .ToArray(),
             item.Quantity,
             item.UnitPrice,
@@ -143,4 +148,13 @@ public sealed class QuotationResponseComposer(
         party.Address,
         party.DepartmentId,
         party.CityId);
+
+    // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
+    // tiene el frontend y tiene que ser uno solo para los dos módulos.
+    private static string ToWireValue(QuotationPriceScaleRestriction restriction) => restriction switch
+    {
+        QuotationPriceScaleRestriction.Multiple => "multiple",
+        QuotationPriceScaleRestriction.PackagingUnit => "packaging_unit",
+        _ => throw new ArgumentOutOfRangeException(nameof(restriction))
+    };
 }
