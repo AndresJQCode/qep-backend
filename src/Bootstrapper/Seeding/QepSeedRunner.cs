@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Modules.Identity.Infrastructure.Seed;
 using Modules.Tenancy.Infrastructure.Seed;
 
 namespace Bootstrapper.Seeding;
@@ -37,5 +38,9 @@ public static class QepSeedRunner
         LogSeedEnabled(logger, "origen-botanico", options.OwnerEmail!, null);
 
         await services.SeedTenantAsync(cancellationToken);
+
+        // El id se descarta acá a propósito: todavía no hay a quién dárselo. La Task 4 lo
+        // toma para crear la membresía admin sobre el tenant recién sembrado.
+        _ = await services.SeedUserAsync(options.OwnerEmail!, cancellationToken);
     }
 }

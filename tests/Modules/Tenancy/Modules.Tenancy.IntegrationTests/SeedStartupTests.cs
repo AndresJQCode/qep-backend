@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Modules.Identity.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Seed;
@@ -69,6 +70,26 @@ public sealed class SeedStartupTests
         Assert.NotNull(tenant);
         Assert.Equal("origen-botanico", tenant.Slug);
         Assert.Equal("Origen botánico", tenant.DisplayName);
+    }
+
+    // El usuario nace sin proveedor vinculado a propósito: ProviderLinkingService lo vincula
+    // solo en el primer login con Google, buscándolo por email verificado. Sembrarlo Invited
+    // es exactamente lo que esa ruta espera encontrar.
+    [Fact]
+    public async Task SeedCreatesTheOwnerUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(), seedEnabled: true, ownerEmail: "Semilla@QCode.CO");
+        using var client = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        var user = await dbContext.Users.SingleOrDefaultAsync(
+            candidate => candidate.Email == "semilla@qcode.co",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(user);
     }
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()
