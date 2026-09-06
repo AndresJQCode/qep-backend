@@ -59,9 +59,9 @@ tenant de demostración.
 
 | Recurso                              | Dirección                               |
 | ------------------------------------ | --------------------------------------- |
-| API                                  | `http://localhost:5100`                 |
-| Health check                         | `http://localhost:5100/health/live`     |
-| Documento OpenAPI (solo Development) | `http://localhost:5100/openapi/v1.json` |
+| API                                  | `http://localhost:5000`                 |
+| Health check                         | `http://localhost:5000/health/live`     |
+| Documento OpenAPI (solo Development) | `http://localhost:5000/openapi/v1.json` |
 | PostgreSQL                           | `localhost:5432`                        |
 | OTLP gRPC / HTTP                     | `localhost:4317` / `localhost:4318`     |
 | Métricas del collector               | `http://localhost:8889/metrics`         |
@@ -292,6 +292,65 @@ dotnet run --project src/Api --launch-profile http
 > claims `sub`, `tenant_id` y `permission`; los encabezados `X-*` del stub se
 > ignoran.
 
+## Semilla de catálogo
+
+[`ops/seed/`](ops/seed/) carga un catálogo de diecinueve productos reales en un
+tenant, para tener con qué trabajar en local sin darlos de alta a mano.
+
+| Archivo                                                              | Qué es                                                                     |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [`catalog-products.json`](ops/seed/catalog-products.json)            | Los datos: SKU, nombre, precio en COP y en USD, y la tasa de impuesto      |
+| [`Seed-CatalogProducts.ps1`](ops/seed/Seed-CatalogProducts.ps1)      | El cargador                                                                |
+
+A diferencia de la semilla de DIVIPOLA —que corre dentro de la aplicación desde
+`GeographySeeder`— ésta es un script externo que llama a la **API**, no a la base.
+Los productos son por tenant, así que no hay un destino que la aplicación pueda
+elegir sola al arrancar; y pasando por la API, la semilla no puede crear datos que
+los validadores, el aislamiento por tenant o los invariantes del dominio
+rechazarían.
+
+Requiere la API arriba **con el stub de autenticación**, que no es lo que
+`dotnet run` hace por defecto (ver
+[Volver al stub por encabezados](#volver-al-stub-por-encabezados-para-depurar-sin-google)):
+
+```powershell
+$env:Authentication__UseDevelopmentStub = "true"
+dotnet run --project src/Api --launch-profile http
+```
+
+En otra consola, contra el tenant de demostración de
+[Identidad local](#identidad-local):
+
+```powershell
+# Ensayo: valida el archivo e imprime los cuerpos, sin llamar a la API.
+.\ops\seed\Seed-CatalogProducts.ps1 -TenantId 01900000-0000-7000-8000-000000000001 -DryRun
+
+# Carga.
+.\ops\seed\Seed-CatalogProducts.ps1 -TenantId 01900000-0000-7000-8000-000000000001
+```
+
+| Parámetro            | Por defecto                              | Para qué                                          |
+| -------------------- | ---------------------------------------- | ------------------------------------------------- |
+| `-TenantId`          | **requerido**                            | Tenant destino                                    |
+| `-SubjectId`         | `01900000-0000-7000-8000-000000000002`   | Autor en la auditoría de cada alta                |
+| `-BaseUrl`           | `http://localhost:5000`                  | Raíz de la API                                    |
+| `-DataPath`          | `ops/seed/catalog-products.json`         | Otro archivo de datos                             |
+| `-DryRun`            | —                                        | Valida e imprime, sin tocar la API                |
+
+El script crea la tasa `IVA 19%` si el tenant no la tiene, y **es idempotente por
+código de producto**: lista lo que ya existe y saltea esos SKU, así que correrlo
+dos veces no duplica nada. Tampoco actualiza: cambiar un precio ya cargado es un
+`PUT`, no una segunda corrida.
+
+Los precios viajan **con IVA incluido**, que es como el dominio los espera —
+`QuotationItem` lo extrae de adentro del precio en vez de sumarlo encima.
+
+Tres campos del archivo de origen no se cargan porque el dominio no los tiene:
+peso neto, peso bruto y unidad de empaque. La imagen tampoco: en el origen es una
+ruta, y `Product.ImageFileId` es un archivo de la
+[biblioteca](#biblioteca-de-archivos-cloudflare-r2), que se sube aparte. Los
+cuatro quedan igual en el JSON, bajo `notSeeded`, como referencia.
+
 ## API implementada
 
 Inventario completo de la superficie HTTP. Las secciones siguientes desarrollan
@@ -350,7 +409,7 @@ $headers = @{
 }
 
 $settings = Invoke-WebRequest `
-  -Uri "http://localhost:5100/api/v1/tenants/$tenantId/settings" `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/settings" `
   -Headers $headers
 
 $settings.Content
@@ -365,7 +424,7 @@ $body = @{
 
 Invoke-RestMethod `
   -Method Patch `
-  -Uri "http://localhost:5100/api/v1/tenants/$tenantId/settings" `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/settings" `
   -Headers $headers `
   -ContentType "application/json" `
   -Body $body
@@ -413,7 +472,7 @@ $body = @{
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:5100/api/v1/tenants/$tenantId/memberships" `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/memberships" `
   -Headers $headers `
   -ContentType "application/json" `
   -Body $body
