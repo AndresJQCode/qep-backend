@@ -24,7 +24,8 @@ public sealed class PriceScale
         int? multiple,
         int? packagingUnit,
         decimal? finalUsd,
-        decimal? finalCop)
+        decimal? finalCop,
+        bool allowGrouping)
     {
         Id = id;
         ProductId = productId;
@@ -37,6 +38,7 @@ public sealed class PriceScale
         PackagingUnit = packagingUnit;
         FinalUsd = finalUsd;
         FinalCop = finalCop;
+        AllowGrouping = allowGrouping;
     }
 
     public PriceScaleId Id { get; private set; }
@@ -64,6 +66,12 @@ public sealed class PriceScale
     public decimal? FinalUsd { get; private set; }
 
     public decimal? FinalCop { get; private set; }
+
+    /// <summary>Si esta escala permite que las cantidades de varias líneas de una cotización
+    /// se sumen para validar el múltiplo. Siempre <c>false</c> cuando
+    /// <see cref="Restriction"/> es <c>PackagingUnit</c> — lo hace cumplir
+    /// <see cref="Create"/>.</summary>
+    public bool AllowGrouping { get; private set; }
 
     /// <param name="productBaseUsd">
     /// El precio base USD del producto dueño, para validar <see cref="FinalUsd"/> contra
@@ -130,6 +138,13 @@ public sealed class PriceScale
         }
         else
         {
+            if (input.AllowGrouping)
+            {
+                throw new CatalogDomainException(
+                    "catalog.product.price_scale.grouping_not_allowed",
+                    "Grouping is only available when the restriction is 'multiple'.");
+            }
+
             if (input.PackagingUnit is not (> 0))
             {
                 throw new CatalogDomainException(
@@ -181,7 +196,8 @@ public sealed class PriceScale
             multiple,
             packagingUnit,
             input.FinalUsd,
-            input.FinalCop);
+            input.FinalCop,
+            input.AllowGrouping);
     }
 
     /// <summary>
