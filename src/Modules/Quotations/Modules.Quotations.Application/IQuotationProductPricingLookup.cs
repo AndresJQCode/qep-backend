@@ -26,4 +26,25 @@ public sealed record QuotationProductPricingRef(
     IReadOnlyCollection<QuotationPriceScaleRef> Scales,
     int? TaxPercentage);
 
-public sealed record QuotationPriceScaleRef(int FromUnit, int ToUnit, decimal Discount);
+/// <summary>
+/// Espeja a <c>Catalog.Domain.PriceScaleRestriction</c> sin referenciarlo: este assembly no
+/// puede depender de <c>Catalog</c> —lo verifica <c>QuotationsLayerTests</c>— y el adaptador de
+/// <c>Bootstrapper</c> es el único que traduce entre los dos. Si allá se agrega un caso, acá
+/// hay que agregarlo a mano.
+/// </summary>
+public enum QuotationPriceScaleRestriction
+{
+    Multiple,
+    PackagingUnit
+}
+
+/// <param name="Multiple">Poblado sólo cuando <paramref name="Restriction"/> es
+/// <c>Multiple</c>; el dominio de Catalog garantiza la exclusión mutua con
+/// <paramref name="PackagingUnit"/>.</param>
+public sealed record QuotationPriceScaleRef(
+    int FromUnit,
+    int ToUnit,
+    decimal Discount,
+    QuotationPriceScaleRestriction Restriction,
+    int? Multiple,
+    int? PackagingUnit);
