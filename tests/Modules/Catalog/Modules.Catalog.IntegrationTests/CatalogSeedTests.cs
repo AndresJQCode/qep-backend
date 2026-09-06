@@ -1,8 +1,13 @@
+using Bootstrapper.Seeding;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Infrastructure.Persistence;
+using Modules.Identity.Infrastructure.Persistence;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
+using Modules.Tenancy.Infrastructure.Seed;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Catalog.IntegrationTests;
@@ -38,6 +43,36 @@ public sealed class CatalogSeedTests
         Assert.Equal(
             "COMBO ROSADO RITUAL DE SEDUCCIÓN",
             products.Single(product => product.Code == "3001").Name);
+    }
+
+    // La app reinicia sola en k8s, así que la semilla corre muchas veces sobre la misma base.
+    // Se llama al orquestador de nuevo sobre la misma base en vez de levantar una segunda
+    // factory: eso es exactamente lo que hace un reinicio de pod.
+    [Fact]
+    public async Task SeedingTwiceLeavesTheSameState()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var client = factory.CreateClient();
+
+        await factory.Services.RunQepSeedAsync(TestContext.Current.CancellationToken);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+
+        Assert.Equal(19, await catalog.Products.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1, await catalog.TaxRates.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(
+            1,
+            await tenancy.Memberships.CountAsync(
+                membership => membership.TenantId == new TenantId(TenancySeeder.SeedTenantId),
+                TestContext.Current.CancellationToken));
+        Assert.Equal(
+            1,
+            await identity.Users.CountAsync(
+                user => user.Email == "semilla@qcode.co", TestContext.Current.CancellationToken));
     }
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()
