@@ -92,6 +92,26 @@ public sealed class SeedStartupTests
         Assert.NotNull(user);
     }
 
+    // Sin membresía activa el tenant es invisible: ExternalClaimsTransformation resuelve los
+    // permisos desde la membresía, así que un tenant sembrado sin ella devuelve 403 en todo.
+    [Fact]
+    public async Task SeedCreatesAnActiveAdminMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var client = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var membership = await dbContext.Memberships.SingleOrDefaultAsync(
+            candidate => candidate.TenantId == new TenantId(TenancySeeder.SeedTenantId),
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(membership);
+        Assert.Equal(MembershipState.Active, membership.State);
+        Assert.Contains("admin", membership.Roles);
+    }
+
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
         var database = new PostgreSqlBuilder("postgres:18-alpine")

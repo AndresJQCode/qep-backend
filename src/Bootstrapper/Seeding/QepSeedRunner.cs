@@ -39,8 +39,9 @@ public static class QepSeedRunner
 
         await services.SeedTenantAsync(cancellationToken);
 
-        // El id se descarta acá a propósito: todavía no hay a quién dárselo. La Task 4 lo
-        // toma para crear la membresía admin sobre el tenant recién sembrado.
-        _ = await services.SeedUserAsync(options.OwnerEmail!, cancellationToken);
+        var ownerUserId = await services.SeedUserAsync(options.OwnerEmail!, cancellationToken);
+        // Sin esta membresía el tenant sembrado queda invisible: los permisos se resuelven
+        // desde ella, así que sin admin activo cualquier request devolvería 403.
+        await services.SeedOwnerMembershipAsync(ownerUserId, cancellationToken);
     }
 }

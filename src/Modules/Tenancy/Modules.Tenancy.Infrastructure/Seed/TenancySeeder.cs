@@ -45,4 +45,38 @@ public static class TenancySeeder
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Crea la membresía del owner, ya en <c>Active</c>. Usa
+    /// <see cref="Membership.RegistrationOrigin"/> y no un origen propio porque esta membresía
+    /// **es** la del owner del tenant, el mismo caso que <c>TenantRegistrationService</c>: así
+    /// hereda la protección del agregado, que impide suspenderla, quitarla o dejarla sin el rol
+    /// admin. La contrapartida es que tampoco se puede quitar por la API — correcto para un
+    /// tenant cuya única salida es borrar la base y volver a sembrarlo.
+    /// </summary>
+    public static async Task SeedOwnerMembershipAsync(
+        this IServiceProvider services,
+        Guid ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+
+        var tenantId = new TenantId(SeedTenantId);
+        if (await dbContext.Memberships.AnyAsync(
+            membership => membership.TenantId == tenantId && membership.UserId == ownerUserId,
+            cancellationToken))
+        {
+            return;
+        }
+
+        dbContext.Memberships.Add(Membership.CreateActive(
+            MembershipId.New(),
+            ownerUserId,
+            tenantId,
+            ["admin"],
+            Membership.RegistrationOrigin,
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
 }
