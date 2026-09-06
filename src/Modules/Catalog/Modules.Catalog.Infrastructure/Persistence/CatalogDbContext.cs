@@ -161,6 +161,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasMaxLength(20);
         scale.Property(value => value.Multiple).HasColumnName("multiple");
         scale.Property(value => value.PackagingUnit).HasColumnName("packaging_unit");
+        scale.Property(value => value.AllowGrouping).HasColumnName("allow_grouping");
         scale.Property(value => value.FinalUsd).HasColumnName("final_usd").HasPrecision(18, 2);
         scale.Property(value => value.FinalCop).HasColumnName("final_cop").HasPrecision(18, 2);
         scale.HasIndex(value => value.ProductId).HasDatabaseName("IX_product_price_scales_product");
