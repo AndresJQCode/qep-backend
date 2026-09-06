@@ -82,6 +82,29 @@ valida la línea que se agrega o se edita, y así sigue. El recalculador, que ah
 no aborta la operación. Lo contrario haría que quitar una línea sana fallara con el 422 de otra
 línea, un error que además nadie puede corregir desde la cotización.
 
+### D8 — La agrupación rescata, nunca hunde
+
+Añadida el 2026-09-06, después de implementar la Task 4. Resuelve la tensión que el requisito
+dejaba abierta entre su sección 5 ("una línea que cumple no debe invalidarse porque otra no
+cumpla") y su Caso 2, que sumaba 6 + 10 = 16 y hacía caer a las dos.
+
+**Gana la sección 5.** Una línea que cumple el múltiplo por su propia cantidad conserva su
+escala aunque el total del grupo falle, y ni siquiera queda marcada como agrupada. Sólo las que
+no cumplen solas se juegan al total.
+
+No le cambia el veredicto a ninguna otra línea, y eso es aritmética, no criterio: con el
+múltiplo contado sobre la cantidad cruda (D4), una línea que cumple es congruente con 0 módulo
+el paso, así que entra o sale de la suma sin mover el resto. El caso estrella del requisito
+—10 + 8 + 12 = 30— sigue dando descuento a las tres; lo único que cambia es que la de 12, que
+cumplía sola, llega por su cuenta y no por el grupo.
+
+**El total sí sigue sumando todas las líneas del grupo**, incluidas las que cumplen: es el
+número que la pantalla muestra para explicar el faltante, y es como lo cuenta el requisito.
+
+Lo que esta decisión descarta es el otro modelo defendible: que la restricción represente un
+lote de producción y que, si el total no cierra, nadie del grupo reciba el precio de escala.
+Decisión explícita del developer.
+
 ### D6 — Quitar una línea también recalcula
 
 El requisito nombra agregar y actualizar. Quitar cambia el total del grupo igual: borrar B de

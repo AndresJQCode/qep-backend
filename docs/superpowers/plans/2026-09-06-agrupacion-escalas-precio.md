@@ -15,7 +15,7 @@
 **Rama:** `feature/agrupacion-escala-precio`. Comprobar con `git branch --show-current` antes de
 commitear: el snapshot del arranque de sesión miente, dijo `main` estando acá.
 
-**Hecho — Tasks 1, 2 y 3.** Sus pasos quedan marcados abajo. Commits, del más viejo al más nuevo:
+**Hecho — Tasks 1 a 4.** Sus pasos quedan marcados abajo. Commits, del más viejo al más nuevo:
 
 | Commit | Qué |
 | --- | --- |
@@ -24,15 +24,30 @@ commitear: el snapshot del arranque de sesión miente, dijo `main` estando acá.
 | `bfe5832` + `77c5b5d` | Task 1 — `AllowGrouping` en `PriceScale`, con su rechazo en `PackagingUnit` |
 | `b4b9062` + `b2641cd` | Task 2 — columna, migración `20260906194946_AddPriceScaleAllowGrouping` y contrato HTTP |
 | `d99c0c1` | Task 3 — `Multiple` cuenta crudo, `Evaluate` reemplaza al `EnsureSatisfied` que lanzaba |
+| `9057637` | Task 4 — `QuotationScaleGroupPricing`, el agrupador |
+| `608d28b` | Merge de `origin`, que trajo `develop`: moneda, cuenta de cobro, aprobación de venta e historial |
 
-**Siguiente paso: Task 4**, sin arrancar — `QuotationScaleGroupPricing.cs` todavía no existe. Es
-un servicio puro, sin E/S, y no se cablea en esa tarea: se prueba solo. Las tres que siguen
-(agregado, cableado, respuesta) dependen de ella.
+**Task 4 quedó ajustada por D8**, agregada a la spec después de implementarla: una línea que
+cumple el múltiplo sola conserva su escala aunque el total del grupo falle. Cambió
+`ToPricing` y se reescribieron dos de sus pruebas (`GroupedLinesSatisfyTheMultipleTogether`
+afirma ahora línea por línea; `GroupedLinesThatMissTheMultipleLoseTheScale` pasó a 10 + 13 = 23,
+donde ninguna de las dos cumple sola).
 
-**Verificación al cerrar el checkpoint.** Unitarias verdes: `Modules.Quotations.UnitTests` 83/83
-y `Modules.Catalog.UnitTests` 94/94. **Las de integración no se corrieron** — piden Docker por
-Testcontainers. Task 3 tocó `QuotationItemApiTests`, así que ese archivo está sin verificar y hay
-que correrlo antes de seguir.
+**Siguiente paso: Task 5** — `Quotation.ApplyItemDiscounts`, el método del agregado que aplica
+los descuentos que devuelve el agrupador y recalcula los totales. Después van Task 6 (cablear
+agregar, editar y quitar) y Task 7 (el estado de la restricción en la respuesta).
+
+**Ojo al empezar Task 5:** el merge de `develop` cambió `Quotation` a fondo —moneda
+(`QuotationCurrency`), cuenta de cobro (`QuotationBillingAccount`), historial con
+`QuotationChangeSummary`— y `QuotationProductPricingResolver.ResolveAsync` ahora recibe la
+moneda y devuelve un objeto con `.Pricing` y `.Name`. El plan se escribió contra el código
+anterior: hay que releer el agregado antes de seguirlo al pie de la letra.
+
+**Verificación al cerrar el checkpoint.** Compila sin errores. Unitarias verdes después del
+merge y de D8: `Modules.Quotations.UnitTests` 102/102 y `Modules.Catalog.UnitTests` 94/94.
+**Las de integración no se corrieron** — piden Docker por Testcontainers. Task 3 tocó
+`QuotationItemApiTests` y el merge de `develop` tocó varios harness más, así que toda la
+integración de Quotations está sin verificar y hay que correrla antes de seguir.
 
 **Ojo con el entorno:** este tramo se trabajó en macOS con zsh, no en el Windows del developer.
 Los comandos que queden en el plan siguen siendo PowerShell, que es lo que el `CLAUDE.md` exige
@@ -40,8 +55,9 @@ para todo lo que se le entregue a él.
 
 **Las ambigüedades del requisito ya están resueltas en la spec**, no se vuelven a discutir: D1
 (incumplir no bloquea, la escala simplemente no aplica), D2 (agrupan escalas idénticas aunque
-sean de productos distintos), D4 (múltiplo sobre la cantidad cruda) y D5 (`PackagingUnit`
-intacto, incluido su 422).
+sean de productos distintos), D4 (múltiplo sobre la cantidad cruda), D5 (`PackagingUnit`
+intacto, incluido su 422) y D8 (la agrupación rescata a las que no cumplen, nunca hunde a las
+que sí).
 
 ---
 
@@ -688,7 +704,7 @@ Servicio puro, sin dependencias ni E/S. No se cablea todavía: se prueba solo.
   - `public sealed record QuotationLinePricing(Guid ItemId, decimal DiscountPercentage, QuotationPriceScaleRef? Scale, QuotationScaleRestrictionResult? Restriction, bool Grouped)`
   - `QuotationScaleGroupPricing.Resolve(IReadOnlyCollection<QuotationPricingLine> lines, IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct)` → `IReadOnlyList<QuotationLinePricing>`
 
-- [ ] **Step 1: Escribir las pruebas que fallan**
+- [x] **Step 1: Escribir las pruebas que fallan**
 
 Crear `QuotationScaleGroupPricingTests.cs`:
 
@@ -909,7 +925,7 @@ public sealed class QuotationScaleGroupPricingTests
 }
 ```
 
-- [ ] **Step 2: Correr y verificar que fallan**
+- [x] **Step 2: Correr y verificar que fallan**
 
 ```powershell
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~QuotationScaleGroupPricingTests"
@@ -917,7 +933,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "Full
 
 Esperado: no compila — `QuotationScaleGroupPricing` no existe. Pegar la salida.
 
-- [ ] **Step 3: Implementar el servicio**
+- [x] **Step 3: Implementar el servicio**
 
 Crear `QuotationScaleGroupPricing.cs`:
 
@@ -1013,7 +1029,7 @@ internal static class QuotationScaleGroupPricing
 }
 ```
 
-- [ ] **Step 4: Correr y verificar que pasan**
+- [x] **Step 4: Correr y verificar que pasan**
 
 ```powershell
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests
@@ -1021,7 +1037,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests
 
 Esperado: PASS, las diez nuevas y todas las anteriores. Pegar la salida.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git branch --show-current
