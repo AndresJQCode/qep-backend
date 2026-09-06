@@ -82,4 +82,17 @@ public sealed class QuotationScaleRestrictionRuleTests
 
         Assert.Equal("quotation.item.quantity_not_packaging_unit", exception.Code);
     }
+
+    // Catalog exige un empaque > 0, pero si una fila lo desmiente el guard tiene que sostener el
+    // caso desde EnsurePackagingUnit, que es el unico camino que la produccion llama: el % de
+    // decimal por cero lanza, y una linea no se bloquea con un dato que nadie corrige desde la
+    // cotizacion.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-12)]
+    public void PackagingUnitWithoutAUsableSizeDoesNotBlock(int packagingUnit)
+    {
+        QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(packagingUnit), 7m);
+        Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(packagingUnit), 7m).IsSatisfied);
+    }
 }
