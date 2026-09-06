@@ -506,15 +506,26 @@ public sealed class ImportCustomersHandler(
                     continue;
                 }
 
+                var principal = customer.RequirePrincipalAddress();
+                customer.UpdateAddress(
+                    principal.Id,
+                    new CustomerAddressDetails
+                    {
+                        Name = principal.Name,
+                        Address = candidate.Address ?? string.Empty,
+                        CityId = candidate.City.CityId,
+                        Phone = candidate.Phone
+                    },
+                    isPrincipal: true,
+                    now);
+
                 customer.Update(
                     candidate.Name,
-                    candidate.City.CityId,
                     new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
                     new CustomerContactInfo
                     {
                         Phone = candidate.Phone,
-                        Email = candidate.Email,
-                        Address = candidate.Address
+                        Email = candidate.Email
                     },
                     new CustomerCommercialInfo
                     {
@@ -539,13 +550,18 @@ public sealed class ImportCustomersHandler(
                 tenantId,
                 cuc,
                 candidate.Name,
-                candidate.City.CityId,
+                new CustomerAddressDetails
+                {
+                    Name = candidate.Name,
+                    Address = candidate.Address ?? string.Empty,
+                    CityId = candidate.City.CityId,
+                    Phone = candidate.Phone
+                },
                 new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
                 new CustomerContactInfo
                 {
                     Phone = candidate.Phone,
-                    Email = candidate.Email,
-                    Address = candidate.Address
+                    Email = candidate.Email
                 },
                 new CustomerCommercialInfo
                 {

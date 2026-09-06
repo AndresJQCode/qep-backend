@@ -54,4 +54,27 @@ public sealed record QuotationCustomerRef(
     string? Phone,
     string? Address,
     bool WithRetention,
-    bool VatSurplus);
+    bool VatSurplus,
+    // Lo que sigue no lo usa ninguna regla del modulo: es lo que la pantalla de la cotizacion
+    // muestra del cliente. Viaja aca para que el detalle no tenga que pedir la ficha completa a
+    // Customers en una segunda consulta.
+    string? Email = null,
+    Guid? CityId = null,
+    string? CityName = null,
+    Guid? DepartmentId = null,
+    string? DepartmentName = null,
+    IReadOnlyCollection<QuotationCustomerAddressRef>? Addresses = null,
+    DateTimeOffset? UpdatedAt = null);
+
+/// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
+/// cotizacion.</summary>
+public sealed record QuotationCustomerAddressRef(
+    Guid Id,
+    string Name,
+    string Address,
+    string? Phone,
+    Guid CityId,
+    string CityName,
+    Guid DepartmentId,
+    string DepartmentName,
+    bool IsPrincipal);

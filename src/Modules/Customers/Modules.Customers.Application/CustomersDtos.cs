@@ -10,6 +10,30 @@ public sealed record CustomerCityDto(Guid Id, string DivipolaCode, string Name);
 /// <summary>La contraparte de <see cref="CustomerCityDto"/> para el departamento.</summary>
 public sealed record CustomerDepartmentDto(Guid Id, string DivipolaCode, string Name);
 
+
+/// <summary>Una direccion del cliente. `Address` es la calle; `Name` es a quien pertenece
+/// ("Bodega Norte"). El departamento no viaja: es el de la ciudad, y el frontend ya lo resuelve
+/// contra `geography` para filtrar el combobox.</summary>
+public sealed record CustomerAddressDto(
+    Guid Id,
+    string Name,
+    string Address,
+    string? Phone,
+    Guid CityId,
+    string CityName,
+    /// <summary>El departamento **no** se guarda —es el de la ciudad— pero sí viaja: el
+    /// formulario lo necesita para filtrar el combobox de ciudad al editar la dirección.</summary>
+    Guid DepartmentId,
+    string DepartmentName,
+    bool IsPrincipal);
+
+public sealed record CustomerAddressRequest(
+    string Name,
+    string Address,
+    Guid CityId,
+    string? Phone,
+    bool IsPrincipal);
+
 public sealed record CustomerDto(
     Guid Id,
     string Cuc,
@@ -18,10 +42,14 @@ public sealed record CustomerDto(
     string IdentificationNumber,
     string? Phone,
     string? Email,
+    /// <summary>La calle de la direccion **principal**. Se conserva plano —y no solo dentro de
+    /// `Addresses`— porque es lo que la cotizacion y el PDF muestran como domicilio del
+    /// cliente.</summary>
     string? Address,
     CustomerCityDto City,
     CustomerDepartmentDto Department,
     ClientClassificationDto Classification,
+    IReadOnlyCollection<CustomerAddressDto> Addresses,
     bool WithRetention,
     bool VatSurplus,
     bool IsActive,
@@ -40,6 +68,7 @@ public sealed record CustomerResponse(
     CustomerCityDto City,
     CustomerDepartmentDto Department,
     ClientClassificationDto Classification,
+    IReadOnlyCollection<CustomerAddressDto> Addresses,
     bool WithRetention,
     bool VatSurplus,
     bool IsActive,

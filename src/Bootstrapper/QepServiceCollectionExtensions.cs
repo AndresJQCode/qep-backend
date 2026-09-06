@@ -199,6 +199,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateCustomerCommand, CustomerDto>,
             UpdateCustomerHandler>();
+        // La libreta de direcciones (CLI-DIR-01): cuatro comandos, uno por operacion.
+        services.AddScoped<
+            ICommandHandler<AddCustomerAddressCommand, CustomerDto>,
+            AddCustomerAddressHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCustomerAddressCommand, CustomerDto>,
+            UpdateCustomerAddressHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveCustomerAddressCommand, CustomerDto>,
+            RemoveCustomerAddressHandler>();
+        services.AddScoped<
+            ICommandHandler<MakeCustomerAddressPrincipalCommand, CustomerDto>,
+            MakeCustomerAddressPrincipalHandler>();
         services.AddScoped<
             ICommandHandler<DeactivateCustomerCommand, CustomerDto>,
             DeactivateCustomerHandler>();
@@ -380,6 +393,10 @@ public static class QepServiceCollectionExtensions
         // AddCatalogInfrastructure.
         services.AddScoped<IQuotationCustomerLookup, QuotationCustomerLookup>();
         services.AddScoped<IQuotationAdvisorLookup, QuotationAdvisorLookup>();
+        services.AddScoped<IQuotationProductLookup, QuotationProductLookup>();
+        // Arma la respuesta de una cotizacion con todo lo que su pantalla muestra, para que el
+        // navegador no tenga que pedir cliente, miembros y catalogo por separado.
+        services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
 

@@ -123,18 +123,20 @@ public static class QuotationEndpoints
         Guid tenantId,
         Guid quotationId,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.QueryAsync(
             new GetQuotationQuery(tenantId, quotationId), cancellationToken);
 
-        return Results.Ok(ToResponse(quotation));
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> CreateQuotationAsync(
         Guid tenantId,
         CreateQuotationRequest request,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
@@ -149,7 +151,7 @@ public static class QuotationEndpoints
 
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}",
-            ToResponse(quotation));
+            await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> UpdateQuotationAsync(
@@ -157,6 +159,7 @@ public static class QuotationEndpoints
         Guid quotationId,
         UpdateQuotationRequest request,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
@@ -169,7 +172,7 @@ public static class QuotationEndpoints
                 request.Parties),
             cancellationToken);
 
-        return Results.Ok(ToResponse(quotation));
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> AddQuotationItemAsync(
@@ -177,6 +180,7 @@ public static class QuotationEndpoints
         Guid quotationId,
         AddQuotationItemRequest request,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
@@ -185,7 +189,7 @@ public static class QuotationEndpoints
 
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/quotations/{quotationId}",
-            ToResponse(quotation));
+            await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> UpdateQuotationItemAsync(
@@ -194,13 +198,14 @@ public static class QuotationEndpoints
         Guid itemId,
         UpdateQuotationItemRequest request,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
             new UpdateQuotationItemCommand(tenantId, quotationId, itemId, request.Quantity),
             cancellationToken);
 
-        return Results.Ok(ToResponse(quotation));
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> RemoveQuotationItemAsync(
@@ -208,13 +213,14 @@ public static class QuotationEndpoints
         Guid quotationId,
         Guid itemId,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
             new RemoveQuotationItemCommand(tenantId, quotationId, itemId),
             cancellationToken);
 
-        return Results.Ok(ToResponse(quotation));
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> SendQuotationAsync(
@@ -222,26 +228,28 @@ public static class QuotationEndpoints
         Guid quotationId,
         SendQuotationRequest request,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
             new SendQuotationCommand(tenantId, quotationId, request.PdfFileId),
             cancellationToken);
 
-        return Results.Ok(ToResponse(quotation));
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> VoidQuotationAsync(
         Guid tenantId,
         Guid quotationId,
         IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
             new VoidQuotationCommand(tenantId, quotationId),
             cancellationToken);
 
-        return Results.Ok(ToResponse(quotation));
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static QuotationListItemResponse ToListItemResponse(QuotationListItemDto quotation) => new(
@@ -255,51 +263,4 @@ public static class QuotationEndpoints
         quotation.CreatedAt,
         quotation.Total);
 
-    private static QuotationPartyResponse ToResponse(QuotationPartyDto party) => new(
-        party.Id,
-        party.Role,
-        party.Name,
-        party.Phone,
-        party.Email,
-        party.Address,
-        party.DepartmentId,
-        party.CityId);
-
-    private static QuotationResponse ToResponse(QuotationDto quotation) => new(
-        quotation.Id,
-        quotation.QuotationNumber,
-        quotation.ClientId,
-        quotation.AdvisorId,
-        quotation.Status,
-        quotation.CreatedAt,
-        quotation.ValidUntil,
-        quotation.PaymentMethod,
-        quotation.Subtotal,
-        quotation.TaxPercentage,
-        quotation.TaxAmount,
-        quotation.DiscountAmount,
-        quotation.Total,
-        quotation.CustomerVatSurplus,
-        quotation.RetentionAmount,
-        quotation.NetTotal,
-        quotation.Notes,
-        quotation.Parties.Select(ToResponse).ToArray(),
-        quotation.CreatedBy,
-        quotation.UpdatedBy,
-        quotation.UpdatedAt,
-        quotation.SentAt,
-        quotation.PdfFileId,
-        quotation.Items
-            .Select(item => new QuotationItemResponse(
-                item.Id,
-                item.ProductId,
-                item.Quantity,
-                item.UnitPrice,
-                item.DiscountPercentage,
-                item.DiscountAmount,
-                item.Subtotal,
-                item.TaxPercentage,
-                item.TaxAmount,
-                item.Position))
-            .ToArray());
 }

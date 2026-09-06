@@ -11,6 +11,8 @@ namespace Modules.Customers.Domain;
 /// </summary>
 public sealed class Customer
 {
+    private readonly List<CustomerAddress> _addresses = [];
+
     // Espejan los anchos de columna de customers.customers. Guardar aca significa que un valor
     // demasiado largo falla como 422 con codigo de dominio en vez de llegar a PostgreSQL y volver
     // como 500 server.unexpected. Salen del schema del formulario que ya existe en el frontend
@@ -36,7 +38,7 @@ public sealed class Customer
         Guid tenantId,
         string cuc,
         string name,
-        Guid cityId,
+        CustomerAddressDetails principalAddress,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -46,7 +48,11 @@ public sealed class Customer
         TenantId = tenantId;
         Cuc = cuc;
         Name = name;
-        CityId = EnsureValidCityId(cityId);
+        // La primera direccion nace principal: un cliente sin direccion principal deja a la
+        // cotizacion sin saber a donde entregar, y su ciudad es la que ya emitio el CUC.
+        var first = CustomerAddress.Create(id, principalAddress, occurredAt);
+        first.MarkPrincipal(true, occurredAt);
+        _addresses.Add(first);
         // Directo y no por Assign: el analisis de flujo del compilador no atraviesa metodos, asi
         // que asignar IdentificationNumber alla deja el constructor con un CS8618.
         IdentificationType = identification.Type;
@@ -79,18 +85,26 @@ public sealed class Customer
     public string Name { get; private set; }
 
     /// <summary>
-    /// La ciudad del cliente, FK al modulo <c>Geography</c>. Es estructural y obligatoria — no es
-    /// "info de contacto libre" como lo era el texto plano anterior, asi que vive de primer nivel
-    /// en el agregado y no dentro de <see cref="CustomerContactInfo"/>. Es tambien la mitad del
-    /// departamento que arma el CUC: <c>CreateCustomerHandler</c> resuelve el departamento de esta
-    /// ciudad antes de emitir el codigo.
-    ///
-    /// Tipada como <see cref="Guid"/> y no con un id fuertemente tipado de
-    /// <c>Modules.Geography.Domain</c>: ningun modulo de dominio de este repo referencia el
-    /// dominio de otro (ni siquiera Catalog hacia Storage), y esta es la primera FK real entre
-    /// modulos de negocio — cambiar ese precedente ahora acoplaria los dos ensamblados de dominio.
+    /// Las direcciones del cliente (CLI-DIR-01). Siempre hay al menos una mientras el cliente
+    /// existe: la principal se crea junto con el, porque su ciudad es la que emitio el CUC.
     /// </summary>
-    public Guid CityId { get; private set; }
+    public IReadOnlyCollection<CustomerAddress> Addresses => _addresses;
+
+    /// <summary>La direccion que la cotizacion propone por defecto. Nunca es null en un cliente
+    /// creado por <see cref="Create"/>; el tipo lo admite solo porque EF materializa el agregado
+    /// sin sus hijos cuando la consulta no los incluye.</summary>
+    public CustomerAddress? PrincipalAddress =>
+        _addresses.FirstOrDefault(address => address.IsPrincipal);
+
+    /// <summary>La principal, o una excepcion clara si la consulta no incluyo las direcciones.
+    /// Todo cliente creado tiene una; que falte solo puede ser un <c>Include</c> olvidado en el
+    /// repositorio, y ese error conviene leerlo asi y no como un NullReference tres capas mas
+    /// arriba.</summary>
+    public CustomerAddress RequirePrincipalAddress() =>
+        PrincipalAddress
+            ?? throw new InvalidOperationException(
+                $"Customer '{Id}' has no principal address loaded. The query must include "
+                + "Addresses.");
 
     /// <summary>
     /// El tipo de documento. Junto con <see cref="IdentificationNumber"/> forma la clave unica del
@@ -117,8 +131,6 @@ public sealed class Customer
     public string? Phone { get; private set; }
 
     public string? Email { get; private set; }
-
-    public string? Address { get; private set; }
 
     /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
@@ -153,7 +165,7 @@ public sealed class Customer
         Guid tenantId,
         string cuc,
         string name,
-        Guid cityId,
+        CustomerAddressDetails principalAddress,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -163,11 +175,104 @@ public sealed class Customer
             tenantId,
             NormalizeCuc(cuc),
             NormalizeName(name),
-            cityId,
+            principalAddress,
             identification.Normalized(),
             contact,
             commercial,
             occurredAt);
+
+    /// <summary>Agrega una direccion. La primera de un cliente —o una marcada como principal—
+    /// desplaza a la que lo era: el agregado no admite dos.</summary>
+    public CustomerAddress AddAddress(
+        CustomerAddressDetails details, bool isPrincipal, DateTimeOffset occurredAt)
+    {
+        EnsureActive();
+
+        var address = CustomerAddress.Create(Id, details, occurredAt);
+        _addresses.Add(address);
+        ApplyPrincipal(address, isPrincipal || _addresses.Count == 1, occurredAt);
+        Touch(occurredAt);
+        return address;
+    }
+
+    /// <summary>Reemplaza los datos de una direccion. Reemplaza el recurso entero, mismo criterio
+    /// que <see cref="Update"/>.</summary>
+    public CustomerAddress UpdateAddress(
+        CustomerAddressId addressId,
+        CustomerAddressDetails details,
+        bool isPrincipal,
+        DateTimeOffset occurredAt)
+    {
+        EnsureActive();
+
+        var address = FindAddress(addressId);
+        address.Apply(details, occurredAt);
+        // Desmarcarla no se acepta por esta via: dejaria al cliente sin principal. Se cambia
+        // marcando otra, que es lo que MakeAddressPrincipal hace.
+        if (isPrincipal)
+        {
+            ApplyPrincipal(address, true, occurredAt);
+        }
+
+        Touch(occurredAt);
+        return address;
+    }
+
+    public void MakeAddressPrincipal(CustomerAddressId addressId, DateTimeOffset occurredAt)
+    {
+        EnsureActive();
+
+        ApplyPrincipal(FindAddress(addressId), true, occurredAt);
+        Touch(occurredAt);
+    }
+
+    /// <summary>
+    /// Quita una direccion. La principal no se puede quitar: primero hay que nombrar otra. Es la
+    /// misma regla que hace que el cliente siempre tenga a donde entregar —y la que evita que
+    /// quitar la ultima deje al agregado sin ciudad, que es la del CUC.
+    /// </summary>
+    public void RemoveAddress(CustomerAddressId addressId, DateTimeOffset occurredAt)
+    {
+        EnsureActive();
+
+        var address = FindAddress(addressId);
+        if (address.IsPrincipal)
+        {
+            throw new CustomersDomainException(
+                "customers.address.principal_not_removable",
+                "The principal address cannot be removed. Mark another one as principal first.");
+        }
+
+        _addresses.Remove(address);
+        Touch(occurredAt);
+    }
+
+    private void ApplyPrincipal(
+        CustomerAddress address, bool isPrincipal, DateTimeOffset occurredAt)
+    {
+        if (!isPrincipal)
+        {
+            return;
+        }
+
+        foreach (var other in _addresses)
+        {
+            other.MarkPrincipal(other == address, occurredAt);
+        }
+    }
+
+    // Una direccion nueva o cambiada es un cambio del cliente: mueve su version optimista igual
+    // que editar su nombre, asi que dos pestañas que lo editan a la vez chocan como corresponde.
+    private void Touch(DateTimeOffset occurredAt)
+    {
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
+    private CustomerAddress FindAddress(CustomerAddressId addressId) =>
+        _addresses.FirstOrDefault(address => address.Id == addressId)
+            ?? throw new CustomersDomainException(
+                "customers.address.not_found", "The customer address was not found.");
 
     /// <summary>
     /// Reemplaza el recurso entero: lo que no viene en el cuerpo se **limpia**. El CUC no viaja en
@@ -182,7 +287,6 @@ public sealed class Customer
     /// </summary>
     public void Update(
         string name,
-        Guid cityId,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -199,14 +303,12 @@ public sealed class Customer
         // se valida aca tambien (no solo dentro de Assign) porque hace falta **antes** de tocar el
         // CUC, y ese cambio tiene que quedar cubierto por la misma garantia de todo-o-nada.
         var normalizedName = NormalizeName(name);
-        var normalizedCityId = EnsureValidCityId(cityId);
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         var normalizedClassificationPrefix = NormalizeClassificationPrefix(classificationPrefix);
 
         Name = normalizedName;
-        CityId = normalizedCityId;
         Assign(normalizedIdentification);
         Assign(normalizedContact);
 
@@ -237,7 +339,6 @@ public sealed class Customer
 
         Phone = normalized.Phone;
         Email = normalized.Email;
-        Address = normalized.Address;
     }
 
     private void Assign(CustomerCommercialInfo commercial)

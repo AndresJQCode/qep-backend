@@ -43,6 +43,16 @@ public interface IProductRepository
         int take,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Los productos de un lote de ids, en una sola consulta. La usa el detalle de una cotizacion
+    /// (via <c>IQuotationProductLookup</c>) para poner nombre, portada y escalas en cada linea sin
+    /// pedir el catalogo entero. Un id que no existe simplemente no aparece.
+    /// </summary>
+    Task<IReadOnlyList<Product>> ListByIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken);
+
     Task<Product?> FindAsync(
         Guid tenantId,
         ProductId productId,
