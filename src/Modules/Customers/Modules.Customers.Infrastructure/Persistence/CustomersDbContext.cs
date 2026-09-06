@@ -8,6 +8,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 {
     public DbSet<Customer> Customers => Set<Customer>();
 
+    internal DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
+
     public DbSet<ClientClassification> ClientClassifications => Set<ClientClassification>();
 
     internal DbSet<CustomerCucCounter> CucCounters => Set<CustomerCucCounter>();
@@ -17,6 +19,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureCustomer(modelBuilder);
+        ConfigureCustomerAddress(modelBuilder);
         ConfigureClientClassification(modelBuilder);
         ConfigureCucCounter(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
@@ -61,20 +64,6 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.Email)
             .HasColumnName("email")
             .HasMaxLength(CustomerContactInfo.EmailMaxLength);
-        customer.Property(value => value.Address)
-            .HasColumnName("address")
-            .HasMaxLength(CustomerContactInfo.AddressMaxLength);
-
-        // La ciudad, FK al modulo Geography. Sin navegacion EF (HasOne<City>()) a proposito:
-        // City vive en GeographyDbContext, un modelo distinto, y EF Core no modela relaciones
-        // hacia una entidad que no esta en el mismo ModelBuilder. La restriccion real
-        // (FK a geography.cities(id), ON DELETE RESTRICT) la agrega a mano la migracion que
-        // introduce esta columna, con migrationBuilder.AddForeignKey — Postgres la impone igual,
-        // EF simplemente no la "ve" en su modelo ni en el snapshot. Ver esa migracion para el
-        // detalle.
-        customer.Property(value => value.CityId).HasColumnName("city_id");
-        customer.HasIndex(value => value.CityId).HasDatabaseName("IX_customers_city");
-
         // La clasificacion, FK compuesta (tenant_id, classification_id) a
         // customers.client_classifications(tenant_id, id) — compuesta y no simple sobre id, para
         // que un cliente no pueda referenciar la clasificacion de otro tenant. A diferencia de la
@@ -99,6 +88,11 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .IsConcurrencyToken();
         customer.Property(value => value.CreatedAt).HasColumnName("created_at");
         customer.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        // La coleccion se lee por el campo de respaldo: el agregado la expone como
+        // IReadOnlyCollection y EF no puede escribir en ella.
+        customer.Navigation(value => value.Addresses)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         customer.HasIndex(value => value.TenantId).HasDatabaseName("IX_customers_tenant");
 
@@ -137,6 +131,54 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasDatabaseName("IX_customers_name_trgm")
             .HasMethod("gin")
             .HasOperators("gin_trgm_ops");
+    }
+
+    private static void ConfigureCustomerAddress(ModelBuilder modelBuilder)
+    {
+        var address = modelBuilder.Entity<CustomerAddress>();
+        address.ToTable("customer_addresses", "customers");
+        address.HasKey(value => value.Id);
+        address.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new CustomerAddressId(value))
+            .ValueGeneratedNever();
+        address.Property(value => value.CustomerId)
+            .HasColumnName("customer_id")
+            .HasConversion(id => id.Value, value => new CustomerId(value));
+        address.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(CustomerAddress.NameMaxLength);
+        address.Property(value => value.Address)
+            .HasColumnName("address")
+            .HasMaxLength(CustomerAddress.AddressMaxLength);
+        address.Property(value => value.Phone)
+            .HasColumnName("phone")
+            .HasMaxLength(CustomerAddress.PhoneMaxLength);
+        // La ciudad, FK al modulo Geography. Sin navegacion EF (HasOne<City>()) a proposito:
+        // City vive en GeographyDbContext, un modelo distinto, y EF Core no modela relaciones
+        // hacia una entidad que no esta en el mismo ModelBuilder. La restriccion real
+        // (FK a geography.cities(id), ON DELETE RESTRICT) la agrega a mano la migracion, con
+        // migrationBuilder.AddForeignKey — Postgres la impone igual, EF simplemente no la "ve".
+        address.Property(value => value.CityId).HasColumnName("city_id");
+        address.Property(value => value.IsPrincipal).HasColumnName("is_principal");
+        address.Property(value => value.CreatedAt).HasColumnName("created_at");
+        address.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        address.HasIndex(value => value.CustomerId)
+            .HasDatabaseName("IX_customer_addresses_customer");
+        address.HasIndex(value => value.CityId).HasDatabaseName("IX_customer_addresses_city");
+        // Buscar la principal de un cliente es la lectura mas frecuente (la cotizacion la
+        // propone por defecto). No es unico a proposito: ver el comentario largo en la migracion
+        // AddCustomerAddresses — un unico parcial rechaza el cambio de principal, que es una
+        // operacion legitima. El invariante vive en Customer.ApplyPrincipal.
+        address.HasIndex(value => new { value.CustomerId, value.IsPrincipal })
+            .HasDatabaseName("IX_customer_addresses_principal");
+
+        // CASCADE: una direccion no tiene sentido sin su cliente, es parte del mismo agregado.
+        address.HasOne<Customer>()
+            .WithMany(customer => customer.Addresses)
+            .HasForeignKey(value => value.CustomerId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureClientClassification(ModelBuilder modelBuilder)

@@ -97,11 +97,53 @@ public sealed record UpdateQuotationItemRequest(decimal Quantity);
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
 public sealed record SendQuotationRequest(Guid PdfFileId);
 
+/// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
+/// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a
+/// Customers en una segunda consulta.</summary>
+public sealed record QuotationClientResponse(
+    Guid Id,
+    string Cuc,
+    string Name,
+    string? Phone,
+    string? Email,
+    string? Address,
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    bool WithRetention,
+    bool VatSurplus,
+    bool IsActive,
+    /// <summary>Última edición de la ficha. La pantalla la usa para decir desde cuándo un
+    /// cliente está inactivo.</summary>
+    DateTimeOffset UpdatedAt,
+    IReadOnlyCollection<QuotationClientAddressResponse> Addresses);
+
+public sealed record QuotationClientAddressResponse(
+    Guid Id,
+    string Name,
+    string Address,
+    string? Phone,
+    Guid CityId,
+    string CityName,
+    Guid DepartmentId,
+    string DepartmentName,
+    bool IsPrincipal);
+
+public sealed record QuotationItemPriceScaleResponse(
+    int FromUnit,
+    int ToUnit,
+    decimal Discount);
+
 public sealed record QuotationResponse(
     Guid Id,
     string QuotationNumber,
     Guid ClientId,
+    /// <summary>Null sólo si el cliente ya no existe: `ClientId` es una referencia blanda entre
+    /// módulos y una cotización histórica tiene que poder leerse igual.</summary>
+    QuotationClientResponse? Client,
     Guid AdvisorId,
+    string? AdvisorEmail,
     string Status,
     DateTimeOffset CreatedAt,
     DateOnly? ValidUntil,
@@ -157,6 +199,13 @@ public sealed record QuotationsPageResponse(
 public sealed record QuotationItemResponse(
     Guid Id,
     Guid ProductId,
+    /// <summary>Nombre, código, portada y escalas del producto, resueltos por el backend. Sin
+    /// esto la pantalla tenía que traerse el catálogo entero para poner un nombre en cada
+    /// línea. Vacíos si el producto ya no existe.</summary>
+    string ProductName,
+    string ProductCode,
+    string? ProductImageUrl,
+    IReadOnlyCollection<QuotationItemPriceScaleResponse> PriceScales,
     decimal Quantity,
     decimal UnitPrice,
     decimal DiscountPercentage,

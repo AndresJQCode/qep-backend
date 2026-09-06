@@ -37,6 +37,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     {
         var query = dbContext.Customers
             .AsNoTracking()
+            .Include(customer => customer.Addresses)
             .Where(customer => customer.TenantId == tenantId);
 
         // El criterio combinado original: un solo termino, OR entre los tres campos. Sigue
@@ -121,7 +122,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // exportacion no filtra por ciudad.
         if (cityIds is not null)
         {
-            query = query.Where(customer => cityIds.Contains(customer.CityId));
+            query = query.Where(customer =>
+                customer.Addresses.Any(address =>
+                    address.IsPrincipal && cityIds.Contains(address.CityId)));
         }
 
         // El total se cuenta sobre la consulta **ya filtrada** y antes de paginar: es cuantos
@@ -174,9 +177,14 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         Guid tenantId,
         CustomerId customerId,
         CancellationToken cancellationToken) =>
-        dbContext.Customers.SingleOrDefaultAsync(
-            customer => customer.TenantId == tenantId && customer.Id == customerId,
-            cancellationToken);
+        dbContext.Customers
+            // Con las direcciones: los llamadores editan la principal (UpdateCustomerHandler) o
+            // la libreta entera, y sin las filas viejas en el change tracker un borrado no se
+            // veria. Mismo criterio que QuotationRepository con Items.
+            .Include(customer => customer.Addresses)
+            .SingleOrDefaultAsync(
+                customer => customer.TenantId == tenantId && customer.Id == customerId,
+                cancellationToken);
 
     public Task<bool> AnyWithClassificationAsync(
         Guid tenantId,

@@ -144,7 +144,10 @@ public sealed class ExportCustomersHandler(
         IReadOnlyList<Customer> customers,
         CancellationToken cancellationToken)
     {
-        var cityIds = customers.Select(customer => customer.CityId).Distinct().ToArray();
+        var cityIds = customers
+            .SelectMany(customer => customer.Addresses.Select(address => address.CityId))
+            .Distinct()
+            .ToArray();
         var classificationIds = customers
             .Select(customer => customer.ClassificationId)
             .Distinct()
@@ -161,10 +164,10 @@ public sealed class ExportCustomersHandler(
         {
             // La FK de base garantiza las dos referencias: un miss aca es corrupcion de datos, no
             // entrada de usuario invalida. Mismo criterio que ListCustomersHandler.
-            var city = citiesById.TryGetValue(customer.CityId, out var cityRef)
+            var city = citiesById.TryGetValue(customer.RequirePrincipalAddress().CityId, out var cityRef)
                 ? cityRef
                 : throw new InvalidOperationException(
-                    $"City '{customer.CityId}' referenced by customer '{customer.Id}' " +
+                    $"City '{customer.RequirePrincipalAddress().CityId}' referenced by customer '{customer.Id}' " +
                     "was not found.");
             var classification = classificationsById.TryGetValue(
                 customer.ClassificationId, out var classificationValue)
@@ -173,7 +176,7 @@ public sealed class ExportCustomersHandler(
                     $"Classification '{customer.ClassificationId}' referenced by customer " +
                     $"'{customer.Id}' was not found.");
 
-            items.Add(customer.ToDto(city, classification));
+            items.Add(customer.ToDto(city, classification, citiesById));
         }
 
         return items;
