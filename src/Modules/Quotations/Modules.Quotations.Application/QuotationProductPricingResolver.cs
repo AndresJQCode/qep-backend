@@ -44,14 +44,20 @@ internal static class QuotationProductPricingResolver
 
         var scale = QuotationDiscountResolver.Resolve(product.Scales, quantity);
 
-        // La escala que cubre la cantidad no sólo le pone el descuento: también decide qué
-        // cantidades son pedibles. Va acá y no en los handlers para que valga igual al agregar y
-        // al editar una línea — los dos pasan por este método.
+        // PackagingUnit conserva su 422, y sólo sobre la línea que el comando toca: es el
+        // comportamiento que ya existía y que esta funcionalidad no debe alterar.
         if (scale is not null)
         {
-            QuotationScaleRestrictionRule.EnsureSatisfied(scale, quantity);
+            QuotationScaleRestrictionRule.EnsurePackagingUnit(scale, quantity);
         }
 
-        return (unitPrice, scale?.Discount ?? 0m, product.TaxPercentage ?? 0);
+        // Multiple ya no bloquea: si no cumple, la escala no aplica. Todavía sin agrupar — eso
+        // lo agrega QuotationScaleGroupPricing, que recalcula todas las líneas juntas.
+        var discount = scale is not null
+            && QuotationScaleRestrictionRule.Evaluate(scale, quantity).IsSatisfied
+                ? scale.Discount
+                : 0m;
+
+        return (unitPrice, discount, product.TaxPercentage ?? 0);
     }
 }
