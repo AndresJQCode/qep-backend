@@ -315,6 +315,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetSaleQuery, SaleDto>,
             GetSaleHandler>();
         services.AddScoped<
+            ICommandHandler<ApproveSaleCommand, SaleDto>,
+            ApproveSaleHandler>();
+        services.AddScoped<
             ICommandHandler<ConvertQuotationToSaleCommand, SaleDto>,
             ConvertQuotationToSaleHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por

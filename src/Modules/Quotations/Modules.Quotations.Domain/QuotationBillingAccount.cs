@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Domain;
+﻿namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// La empresa y la cuenta con la que se factura esta cotización, congeladas al guardarla.
@@ -14,8 +14,8 @@ namespace Modules.Quotations.Domain;
 /// referencia entre módulos.
 ///
 /// Nulo es válido y es el estado inicial: una cotización en borrador todavía no eligió con qué
-/// cuenta se cobra. <c>EnsureSendable</c> no lo exige a propósito — quien lo exija, si algún día
-/// se exige, es una regla de negocio que hoy nadie escribió.
+/// cuenta se cobra, y <c>EnsureSendable</c> no lo exige a propósito. Quien sí lo exige es
+/// <c>EnsureConvertibleToSale</c>: una venta tiene que decir a dónde se paga.
 /// </summary>
 public sealed record QuotationBillingAccount
 {
