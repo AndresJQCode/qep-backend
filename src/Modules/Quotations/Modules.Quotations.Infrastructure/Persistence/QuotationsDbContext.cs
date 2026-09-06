@@ -309,6 +309,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         sale.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
+        sale.Property(value => value.ApprovedAt).HasColumnName("approved_at");
+        sale.Property(value => value.ApprovedBy)
+            .HasColumnName("approved_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
         sale.Property(value => value.RitualCollectionSyncId)
             .HasColumnName("ritual_collection_sync_id")
             .HasMaxLength(100);
