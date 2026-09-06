@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(QuotationsDbContext))]
-    partial class QuotationsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906024624_AddQuotationBillingAccount")]
+    partial class AddQuotationBillingAccount
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -32,10 +35,6 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("advisor_id");
 
-                    b.Property<bool>("BillingUsesBusinessName")
-                        .HasColumnType("boolean")
-                        .HasColumnName("billing_uses_business_name");
-
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
@@ -47,12 +46,6 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("CreatedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)")
-                        .HasColumnName("currency");
 
                     b.Property<bool>("CustomerVatSurplus")
                         .HasColumnType("boolean")

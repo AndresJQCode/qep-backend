@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using BuildingBlocks.Application;
@@ -354,6 +354,7 @@ public sealed class OrphanUserCleanupTests
             paymentMethod: null,
             notes: null,
             QuotationParties.Empty,
+            billingAccount: null,
             // El cliente de esta cotizacion de prueba no aplica retencion ni excedente de IVA:
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
             customerWithRetention: false,

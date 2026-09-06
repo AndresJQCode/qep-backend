@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -36,6 +36,9 @@ public sealed record QuotationListItemDto(
     string? AdvisorEmail,
     string Status,
     DateTimeOffset CreatedAt,
+    /// <summary>La moneda de <c>Total</c>: la grilla mezcla cotizaciones en pesos y en dolares
+    /// y una columna de importes sin moneda seria ilegible.</summary>
+    string Currency,
     decimal Total);
 
 /// <summary>Una página del listado y el total que la UI necesita para paginar. Mismo criterio

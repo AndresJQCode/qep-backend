@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -261,7 +261,7 @@ internal static class ReportingApiHarness
     {
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations",
-            new CreateQuotationRequest(clientId, null, null, null, null),
+            new CreateQuotationRequest(clientId, null, null, null, null, null),
             TestContext.Current.CancellationToken);
         created.EnsureSuccessStatusCode();
         var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(

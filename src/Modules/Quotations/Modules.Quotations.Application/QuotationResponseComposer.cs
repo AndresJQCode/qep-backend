@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Application;
+﻿namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Arma la respuesta HTTP de una cotización con **todo lo que su pantalla muestra**: el cliente
@@ -25,7 +25,8 @@ public interface IQuotationResponseComposer
 public sealed class QuotationResponseComposer(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
-    IQuotationProductLookup productLookup)
+    IQuotationProductLookup productLookup,
+    IQuotationCompanyLookup companyLookup)
     : IQuotationResponseComposer
 {
     public async Task<QuotationResponse> ComposeAsync(
@@ -36,6 +37,12 @@ public sealed class QuotationResponseComposer(
 
         var advisorEmails = await advisorLookup.FindEmailsAsync(
             tenantId, [quotation.AdvisorId], cancellationToken);
+
+        // Sólo cuando la cotización eligió cuenta: una consulta más por pantalla, y ninguna en
+        // el caso normal de un borrador recién creado.
+        var company = quotation.BillingAccount is { } billing
+            ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
+            : null;
 
         var products = await productLookup.FindManyAsync(
             tenantId,
@@ -53,6 +60,7 @@ public sealed class QuotationResponseComposer(
             quotation.CreatedAt,
             quotation.ValidUntil,
             quotation.PaymentMethod,
+            quotation.Currency,
             quotation.Subtotal,
             quotation.TaxPercentage,
             quotation.TaxAmount,
@@ -63,6 +71,8 @@ public sealed class QuotationResponseComposer(
             quotation.NetTotal,
             quotation.Notes,
             quotation.Parties.Select(ToPartyResponse).ToArray(),
+            quotation.BillingUsesBusinessName,
+            ToBillingResponse(quotation.BillingAccount, company),
             quotation.CreatedBy,
             quotation.UpdatedBy,
             quotation.UpdatedAt,
@@ -88,6 +98,7 @@ public sealed class QuotationResponseComposer(
                 customer.CityName,
                 customer.DepartmentId,
                 customer.DepartmentName,
+                customer.BusinessName,
                 customer.WithRetention,
                 customer.VatSurplus,
                 customer.IsActive,
@@ -133,6 +144,21 @@ public sealed class QuotationResponseComposer(
             item.TaxAmount,
             item.Position);
     }
+
+    // La empresa que no resuelve deja el bloque con la cuenta guardada y sin razón social, por
+    // el mismo motivo que el cliente: la cotización es histórica y tiene que poder leerse aunque
+    // la empresa se haya borrado. Lo que se muestra es lo que se congeló, no lo que hay hoy.
+    private static QuotationBillingResponse? ToBillingResponse(
+        QuotationBillingAccountDto? account, QuotationCompanyRef? company) =>
+        account is null
+            ? null
+            : new QuotationBillingResponse(
+                account.CompanyId,
+                company?.Name,
+                company?.TaxId,
+                account.BankName,
+                account.AccountNumber,
+                account.Currency);
 
     private static QuotationPartyResponse ToPartyResponse(QuotationPartyDto party) => new(
         party.Id,

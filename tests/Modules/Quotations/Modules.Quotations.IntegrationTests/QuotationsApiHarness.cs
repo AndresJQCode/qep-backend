@@ -409,6 +409,7 @@ internal static class QuotationsApiHarness
                 validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30),
                 null,
                 null,
+                null,
                 null),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();

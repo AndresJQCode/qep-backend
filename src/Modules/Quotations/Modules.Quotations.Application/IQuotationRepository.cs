@@ -1,4 +1,4 @@
-using Modules.Quotations.Domain;
+﻿using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -40,4 +40,12 @@ public interface IQuotationRepository
     /// <see cref="Quotation"/>, en la misma unidad de trabajo.
     /// </summary>
     void AddHistoryEntry(QuotationHistoryEntry entry);
+
+    /// <summary>
+    /// La línea de tiempo completa de una cotización, de lo más nuevo a lo más viejo. Sin paginar
+    /// a propósito: una cotización acumula decenas de entradas, no miles, y la pantalla las
+    /// muestra todas — paginar acá sería complejidad sin caso de uso detrás.
+    /// </summary>
+    Task<IReadOnlyList<QuotationHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 }

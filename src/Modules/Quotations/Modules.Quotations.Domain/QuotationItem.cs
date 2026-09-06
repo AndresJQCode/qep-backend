@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Domain;
+﻿namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Una línea de producto de una cotización (modelo-datos-cotizaciones.md §2.2). Entidad hija de
@@ -93,6 +93,18 @@ public sealed class QuotationItem
     internal void UpdateQuantity(
         decimal quantity, decimal discountPercentage, int taxPercentage, DateTimeOffset occurredAt) =>
         Apply(quantity, UnitPrice, discountPercentage, taxPercentage, occurredAt);
+
+    /// <summary>Vuelve a nacer con el precio del producto en otra moneda, sin tocar la
+    /// cantidad. El descuento y el impuesto también se rehacen: la escala de cantidad y la
+    /// tasa se resuelven contra el catálogo junto con el precio, y conservar los viejos
+    /// mezclaría dos monedas dentro de una misma línea.</summary>
+    internal void Reprice(QuotationItemPricing pricing, DateTimeOffset occurredAt) =>
+        Apply(
+            Quantity,
+            pricing.UnitPrice,
+            pricing.DiscountPercentage,
+            pricing.TaxPercentage,
+            occurredAt);
 
     private void Apply(
         decimal quantity,
