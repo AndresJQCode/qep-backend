@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
+using Modules.Tenancy.Infrastructure.Seed;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
@@ -49,6 +51,24 @@ public sealed class SeedStartupTests
         }
 
         Assert.Contains(messages, message => message.Contains("Seed:OwnerEmail", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SeedCreatesTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var client = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenant = await dbContext.Tenants.SingleOrDefaultAsync(
+            candidate => candidate.Id == new TenantId(TenancySeeder.SeedTenantId),
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(tenant);
+        Assert.Equal("origen-botanico", tenant.Slug);
+        Assert.Equal("Origen botánico", tenant.DisplayName);
     }
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()

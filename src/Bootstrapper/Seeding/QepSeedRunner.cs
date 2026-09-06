@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Modules.Tenancy.Infrastructure.Seed;
 
 namespace Bootstrapper.Seeding;
 
@@ -35,6 +36,6 @@ public static class QepSeedRunner
             .CreateLogger(typeof(QepSeedRunner).FullName!);
         LogSeedEnabled(logger, "origen-botanico", options.OwnerEmail!, null);
 
-        // Las tareas 2 a 5 agregan los pasos acá.
+        await services.SeedTenantAsync(cancellationToken);
     }
 }
