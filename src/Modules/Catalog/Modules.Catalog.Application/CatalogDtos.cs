@@ -49,6 +49,8 @@ public sealed record ProductPricingRequest(
 /// expone <c>PriceScaleRestriction</c> directamente, mismo criterio que
 /// <c>MembershipListItemResponse.State</c>.
 /// </summary>
+/// <param name="AllowGrouping">Nullable y último: los cuerpos que no lo mandan mantienen el
+/// comportamiento de siempre, que es no agrupar.</param>
 public sealed record PriceScaleRequest(
     int FromUnit,
     int ToUnit,
@@ -57,7 +59,8 @@ public sealed record PriceScaleRequest(
     int? Multiple,
     int? PackagingUnit,
     decimal? FinalUsd,
-    decimal? FinalCop);
+    decimal? FinalCop,
+    bool? AllowGrouping);
 
 public sealed record PriceScaleResponse(
     Guid Id,
@@ -68,7 +71,8 @@ public sealed record PriceScaleResponse(
     int? Multiple,
     int? PackagingUnit,
     decimal? FinalUsd,
-    decimal? FinalCop);
+    decimal? FinalCop,
+    bool AllowGrouping);
 
 /// <summary>El sobre del listado, con el total que la paginación necesita — mismo criterio que
 /// `CustomersResponse`.</summary>

@@ -20,6 +20,10 @@ public sealed record ProductPricing
 /// nuevo a cada una — el mismo criterio que ya usa <c>ProductDetails</c> para sus cinco
 /// opcionales.
 /// </summary>
+/// <param name="AllowGrouping">Si las cantidades de varias líneas de una cotización que caen en
+/// esta misma escala se suman para validar el múltiplo. Exclusivo de
+/// <see cref="PriceScaleRestriction.Multiple"/>. Último y con default a propósito: las escalas
+/// que ya existen no agrupan, y las construcciones posicionales existentes no se tocan.</param>
 public sealed record PriceScaleInput(
     int FromUnit,
     int ToUnit,
@@ -28,4 +32,5 @@ public sealed record PriceScaleInput(
     int? Multiple,
     int? PackagingUnit,
     decimal? FinalUsd,
-    decimal? FinalCop);
+    decimal? FinalCop,
+    bool AllowGrouping = false);

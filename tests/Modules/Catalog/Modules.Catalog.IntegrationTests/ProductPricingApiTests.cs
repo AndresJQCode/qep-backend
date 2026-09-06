@@ -180,6 +180,72 @@ public sealed class ProductPricingApiTests
         Assert.Equal(1, count);
     }
 
+    // El flag viaja de ida y de vuelta: sin el de vuelta, la pantalla de producto no puede
+    // dibujar el switch en el estado en que quedó guardado.
+    [Fact]
+    public async Task CreateProductRoundTripsTheGroupingFlagOnAMultipleScale()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-AGR-001",
+            pricing = new
+            {
+                baseCop = 100_000m,
+                scales = new object[]
+                {
+                    new
+                    {
+                        fromUnit = 5, toUnit = 48, discount = 5m,
+                        restriction = "multiple", multiple = 3,
+                        finalCop = 95_000m, allowGrouping = true
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await ReadProductAsync(response);
+        Assert.True(Assert.Single(created.PriceScales).AllowGrouping);
+    }
+
+    [Fact]
+    public async Task CreateProductRejectsGroupingOnAPackagingUnitScale()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-AGR-002",
+            pricing = new
+            {
+                baseCop = 100_000m,
+                scales = new object[]
+                {
+                    new
+                    {
+                        fromUnit = 1, toUnit = 999, discount = 0m,
+                        restriction = "packaging_unit", packagingUnit = 12,
+                        finalCop = 100_000m, allowGrouping = true
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("catalog.product.price_scale.grouping_not_allowed", problem.Code);
+    }
+
     private static Task<HttpResponseMessage> CreateProductAsync(
         HttpClient client,
         string tenantId,
@@ -245,4 +311,8 @@ public sealed class ProductPricingApiTests
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }
+
+    /// <summary>Las extensiones de ProblemDetails llegan aplanadas en la raiz
+    /// (ApiExceptionHandler).</summary>
+    private sealed record ProblemPayload(string Code);
 }

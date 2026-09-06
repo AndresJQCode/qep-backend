@@ -503,6 +503,66 @@ public sealed class ProductTests
         Assert.Equal("catalog.product.price_scale.packaging_unit_not_allowed", error.Code);
     }
 
+    // La agrupación es exclusiva de la restricción Multiple: un empaque no se parte entre
+    // productos distintos, así que sumar cajas de A con cajas de B no significa nada.
+    [Fact]
+    public void CreateRejectsGroupingOnAPackagingUnitRestriction()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+                new ProductPricing
+                {
+                    BaseUsd = 10m,
+                    Scales =
+                    [
+                        new PriceScaleInput(
+                            1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 12, 10m, null,
+                            AllowGrouping: true)
+                    ]
+                },
+                Now));
+
+        Assert.Equal("catalog.product.price_scale.grouping_not_allowed", error.Code);
+    }
+
+    [Fact]
+    public void CreateKeepsGroupingOnAMultipleRestriction()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            new ProductPricing
+            {
+                BaseUsd = 10m,
+                Scales =
+                [
+                    new PriceScaleInput(
+                        5, 48, 0m, PriceScaleRestriction.Multiple, 3, null, 10m, null,
+                        AllowGrouping: true)
+                ]
+            },
+            Now);
+
+        Assert.True(Assert.Single(product.PriceScales).AllowGrouping);
+    }
+
+    // Sin el flag explícito, una escala no agrupa: es el comportamiento de todas las que ya
+    // están guardadas.
+    [Fact]
+    public void CreateDefaultsGroupingToDisabled()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            new ProductPricing
+            {
+                BaseUsd = 10m,
+                Scales = [new PriceScaleInput(5, 48, 0m, PriceScaleRestriction.Multiple, 3, null, 10m, null)]
+            },
+            Now);
+
+        Assert.False(Assert.Single(product.PriceScales).AllowGrouping);
+    }
+
     [Fact]
     public void CreateRejectsAPackagingUnitRestrictionWithoutAPackagingUnit()
     {

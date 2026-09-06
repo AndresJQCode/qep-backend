@@ -55,10 +55,14 @@ public enum QuotationPriceScaleRestriction
 /// <param name="Multiple">Poblado sólo cuando <paramref name="Restriction"/> es
 /// <c>Multiple</c>; el dominio de Catalog garantiza la exclusión mutua con
 /// <paramref name="PackagingUnit"/>.</param>
+/// <param name="AllowGrouping">Si las cantidades de varias líneas que caen en esta misma escala
+/// se suman para validar el múltiplo. Siempre <c>false</c> con <c>PackagingUnit</c>: lo hace
+/// cumplir Catalog. Último y con default para no tocar las construcciones que ya existen.</param>
 public sealed record QuotationPriceScaleRef(
     int FromUnit,
     int ToUnit,
     decimal Discount,
     QuotationPriceScaleRestriction Restriction,
     int? Multiple,
-    int? PackagingUnit);
+    int? PackagingUnit,
+    bool AllowGrouping = false);
