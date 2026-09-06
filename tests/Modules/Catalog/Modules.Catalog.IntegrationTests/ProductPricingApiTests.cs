@@ -240,6 +240,10 @@ public sealed class ProductPricingApiTests
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("catalog.product.price_scale.grouping_not_allowed", problem.Code);
     }
 
     private static Task<HttpResponseMessage> CreateProductAsync(
@@ -307,4 +311,8 @@ public sealed class ProductPricingApiTests
             builder.UseSetting("Notifications:EmailProvider", "log");
         }
     }
+
+    /// <summary>Las extensiones de ProblemDetails llegan aplanadas en la raiz
+    /// (ApiExceptionHandler).</summary>
+    private sealed record ProblemPayload(string Code);
 }
