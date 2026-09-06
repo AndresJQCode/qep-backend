@@ -56,6 +56,40 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // La libreta de direcciones como sub-recurso: cada operacion tiene su propia regla y
+        // dos personas editando el mismo cliente no se pisan la lista entera.
+        group.MapPost("/{customerId:guid}/addresses", AddCustomerAddressAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Accepts<CustomerAddressRequest>("application/json")
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/{customerId:guid}/addresses/{addressId:guid}", UpdateCustomerAddressAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Accepts<CustomerAddressRequest>("application/json")
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/{customerId:guid}/addresses/{addressId:guid}", RemoveCustomerAddressAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost(
+                "/{customerId:guid}/addresses/{addressId:guid}/principal",
+                MakeCustomerAddressPrincipalAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/{customerId:guid}/deactivate", DeactivateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Produces<CustomerResponse>()
@@ -301,6 +335,78 @@ public static class CustomerEndpoints
             result.FileName, result.CustomerCount, result.ExpiresAt));
     }
 
+    private static async Task<IResult> AddCustomerAddressAsync(
+        Guid tenantId,
+        Guid customerId,
+        CustomerAddressRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new AddCustomerAddressCommand(
+                tenantId,
+                customerId,
+                request.Name,
+                request.Address,
+                request.CityId,
+                request.Phone,
+                request.IsPrincipal),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> UpdateCustomerAddressAsync(
+        Guid tenantId,
+        Guid customerId,
+        Guid addressId,
+        CustomerAddressRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new UpdateCustomerAddressCommand(
+                tenantId,
+                customerId,
+                addressId,
+                request.Name,
+                request.Address,
+                request.CityId,
+                request.Phone,
+                request.IsPrincipal),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> RemoveCustomerAddressAsync(
+        Guid tenantId,
+        Guid customerId,
+        Guid addressId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new RemoveCustomerAddressCommand(tenantId, customerId, addressId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> MakeCustomerAddressPrincipalAsync(
+        Guid tenantId,
+        Guid customerId,
+        Guid addressId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new MakeCustomerAddressPrincipalCommand(tenantId, customerId, addressId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
     private static CustomerResponse ToResponse(CustomerDto customer) => new(
         customer.Id,
         customer.Cuc,
@@ -313,6 +419,7 @@ public static class CustomerEndpoints
         customer.City,
         customer.Department,
         customer.Classification,
+        customer.Addresses,
         customer.WithRetention,
         customer.VatSurplus,
         customer.IsActive,

@@ -132,7 +132,10 @@ public sealed class ListCustomersHandler(
             return [];
         }
 
-        var cityIds = customers.Select(customer => customer.CityId).Distinct().ToArray();
+        var cityIds = customers
+            .SelectMany(customer => customer.Addresses.Select(address => address.CityId))
+            .Distinct()
+            .ToArray();
         var classificationIds = customers
             .Select(customer => customer.ClassificationId)
             .Distinct()
@@ -149,10 +152,10 @@ public sealed class ListCustomersHandler(
         {
             // La FK de base garantiza que las dos referencias existan: un miss aca es corrupcion
             // de datos, no una entrada de usuario invalida. Ver CustomerMapping.ToDtoAsync.
-            var city = citiesById.TryGetValue(customer.CityId, out var cityRef)
+            var city = citiesById.TryGetValue(customer.RequirePrincipalAddress().CityId, out var cityRef)
                 ? cityRef
                 : throw new InvalidOperationException(
-                    $"City '{customer.CityId}' referenced by customer '{customer.Id}' " +
+                    $"City '{customer.RequirePrincipalAddress().CityId}' referenced by customer '{customer.Id}' " +
                     "was not found.");
             var classification = classificationsById.TryGetValue(
                 customer.ClassificationId, out var classificationValue)
@@ -161,7 +164,7 @@ public sealed class ListCustomersHandler(
                     $"Classification '{customer.ClassificationId}' referenced by customer " +
                     $"'{customer.Id}' was not found.");
 
-            items.Add(customer.ToDto(city, classification));
+            items.Add(customer.ToDto(city, classification, citiesById));
         }
 
         return items;

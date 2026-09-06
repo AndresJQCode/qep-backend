@@ -54,7 +54,12 @@ public sealed class CustomerTests
             TenantId,
             cuc,
             name,
-            cityId ?? CityId,
+            new CustomerAddressDetails
+            {
+                Name = name,
+                Address = "Calle 10 # 45-12",
+                CityId = cityId ?? CityId
+            },
             identification ?? Identification(),
             contact ?? CustomerContactInfo.Empty,
             commercial ?? Commercial(),
@@ -147,7 +152,7 @@ public sealed class CustomerTests
         var exception = Assert.Throws<CustomersDomainException>(
             () => Create(cityId: Guid.Empty));
 
-        Assert.Equal("customers.customer.city_required", exception.Code);
+        Assert.Equal("customers.address.city_required", exception.Code);
     }
 
     // Misma razon que la ciudad: la clasificacion es una FK obligatoria (Fase 3), no el viejo enum
@@ -167,13 +172,11 @@ public sealed class CustomerTests
         var customer = Create(contact: new CustomerContactInfo
         {
             Phone = "  310 935 2187  ",
-            Email = "   ",
-            Address = ""
+            Email = "   "
         });
 
         Assert.Equal("310 935 2187", customer.Phone);
         Assert.Null(customer.Email);
-        Assert.Null(customer.Address);
     }
 
     // Mismo criterio que CompanyContactInfo: "Compras@Verde.CO" y "compras@verde.co" son la misma
@@ -261,13 +264,11 @@ public sealed class CustomerTests
         var customer = Create(contact: new CustomerContactInfo
         {
             Phone = "310 935 2187",
-            Email = "compras@verde.co",
-            Address = "Calle 10 # 45-12"
+            Email = "compras@verde.co"
         });
 
         customer.Update(
             "Verde Esencial S.A.S.",
-            CityId,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -276,28 +277,24 @@ public sealed class CustomerTests
 
         Assert.Null(customer.Phone);
         Assert.Null(customer.Email);
-        Assert.Null(customer.Address);
     }
 
-    // La ciudad y la clasificacion se pueden reemplazar en el Update: un cliente se puede mudar de
-    // ciudad o cambiar de categoria comercial.
+    // La clasificacion se puede reemplazar en el Update: un cliente puede cambiar de categoria
+    // comercial. La ciudad ya no viaja aca — es la de su direccion principal (CLI-DIR-01).
     [Fact]
-    public void UpdateReplacesTheCityAndTheClassification()
+    public void UpdateReplacesTheClassification()
     {
         var customer = Create();
-        var newCityId = Guid.CreateVersion7();
         var newClassificationId = new ClientClassificationId(Guid.CreateVersion7());
 
         customer.Update(
             customer.Name,
-            newCityId,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(classificationId: newClassificationId),
             "MAY",
             Now.AddMinutes(5));
 
-        Assert.Equal(newCityId, customer.CityId);
         Assert.Equal(newClassificationId, customer.ClassificationId);
     }
 
@@ -311,7 +308,6 @@ public sealed class CustomerTests
 
         customer.Update(
             "Otro Nombre",
-            CityId,
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -333,7 +329,6 @@ public sealed class CustomerTests
 
         customer.Update(
             customer.Name,
-            CityId,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(classificationId: newClassificationId),
@@ -363,7 +358,6 @@ public sealed class CustomerTests
 
         customer.Update(
             customer.Name,
-            CityId,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -385,7 +379,6 @@ public sealed class CustomerTests
 
         var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
             customer.Name,
-            CityId,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -403,7 +396,6 @@ public sealed class CustomerTests
 
         customer.Update(
             "Otro",
-            CityId,
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -426,7 +418,6 @@ public sealed class CustomerTests
 
         Assert.Throws<CustomersDomainException>(() => customer.Update(
             "Nombre nuevo",
-            CityId,
             Identification(number: "   "),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -445,7 +436,6 @@ public sealed class CustomerTests
 
         var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
             "Otro",
-            CityId,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -493,7 +483,6 @@ public sealed class CustomerTests
         customer.Activate(Now.AddMinutes(1));
         customer.Update(
             "Otro",
-            CityId,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),

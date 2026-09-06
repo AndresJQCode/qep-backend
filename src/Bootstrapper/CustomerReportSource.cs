@@ -73,7 +73,11 @@ internal sealed class CustomerReportSource(
                 [departmentId], cancellationToken);
             // Un departamento sin ciudades no puede tener clientes: la lista vacia hace que el
             // Contains no matchee nada, que es la respuesta correcta y no "todos".
-            query = query.Where(customer => cityIds.Contains(customer.CityId));
+            // La ciudad del cliente es la de su direccion principal (CLI-DIR-01): el reporte
+            // agrupa por donde esta el cliente, no por cada bodega que tenga.
+            query = query.Where(customer =>
+                customer.Addresses.Any(address =>
+                    address.IsPrincipal && cityIds.Contains(address.CityId)));
         }
 
         var joined = from customer in query
@@ -97,7 +101,10 @@ internal sealed class CustomerReportSource(
                 row.customer.IdentificationNumber,
                 row.customer.ClassificationId,
                 row.classification == null ? null : row.classification.Name,
-                row.customer.CityId,
+                row.customer.Addresses
+                    .Where(address => address.IsPrincipal)
+                    .Select(address => address.CityId)
+                    .FirstOrDefault(),
                 row.customer.IsActive,
                 row.customer.CreatedAt));
     }

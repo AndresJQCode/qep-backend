@@ -76,14 +76,21 @@ public sealed class CreateCustomerHandler(
             command.TenantId,
             cuc,
             command.Name,
-            command.CityId,
+            // La primera direccion nace con el request de alta: su ciudad es la que acaba de
+            // emitir el CUC, y sin ella el cliente quedaria sin destino por defecto.
+            new CustomerAddressDetails
+            {
+                Name = command.Name,
+                Address = command.Address ?? string.Empty,
+                CityId = command.CityId,
+                Phone = command.Phone
+            },
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
             new CustomerContactInfo
             {
                 Phone = command.Phone,
-                Email = command.Email,
-                Address = command.Address
+                Email = command.Email
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),
@@ -104,6 +111,7 @@ public sealed class CreateCustomerHandler(
         // CustomersUnitOfWork traduce sus violaciones.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return customer.ToDto(city, classification);
+        return await customer.ToDtoAsync(
+            geographyLookup, classificationRepository, cancellationToken);
     }
 }
