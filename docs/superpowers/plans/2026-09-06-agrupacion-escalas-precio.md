@@ -10,6 +10,41 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-06-agrupacion-escalas-precio-design.md` — leerla antes de la primera tarea. Este plan argumenta desde ella.
 
+## Checkpoint — 2026-09-06
+
+**Rama:** `feature/agrupacion-escala-precio`. Comprobar con `git branch --show-current` antes de
+commitear: el snapshot del arranque de sesión miente, dijo `main` estando acá.
+
+**Hecho — Tasks 1, 2 y 3.** Sus pasos quedan marcados abajo. Commits, del más viejo al más nuevo:
+
+| Commit | Qué |
+| --- | --- |
+| `3ff40c3` | La spec |
+| `0deabaa` | Este plan |
+| `bfe5832` + `77c5b5d` | Task 1 — `AllowGrouping` en `PriceScale`, con su rechazo en `PackagingUnit` |
+| `b4b9062` + `b2641cd` | Task 2 — columna, migración `20260906194946_AddPriceScaleAllowGrouping` y contrato HTTP |
+| `d99c0c1` | Task 3 — `Multiple` cuenta crudo, `Evaluate` reemplaza al `EnsureSatisfied` que lanzaba |
+
+**Siguiente paso: Task 4**, sin arrancar — `QuotationScaleGroupPricing.cs` todavía no existe. Es
+un servicio puro, sin E/S, y no se cablea en esa tarea: se prueba solo. Las tres que siguen
+(agregado, cableado, respuesta) dependen de ella.
+
+**Verificación al cerrar el checkpoint.** Unitarias verdes: `Modules.Quotations.UnitTests` 83/83
+y `Modules.Catalog.UnitTests` 94/94. **Las de integración no se corrieron** — piden Docker por
+Testcontainers. Task 3 tocó `QuotationItemApiTests`, así que ese archivo está sin verificar y hay
+que correrlo antes de seguir.
+
+**Ojo con el entorno:** este tramo se trabajó en macOS con zsh, no en el Windows del developer.
+Los comandos que queden en el plan siguen siendo PowerShell, que es lo que el `CLAUDE.md` exige
+para todo lo que se le entregue a él.
+
+**Las ambigüedades del requisito ya están resueltas en la spec**, no se vuelven a discutir: D1
+(incumplir no bloquea, la escala simplemente no aplica), D2 (agrupan escalas idénticas aunque
+sean de productos distintos), D4 (múltiplo sobre la cantidad cruda) y D5 (`PackagingUnit`
+intacto, incluido su 422).
+
+---
+
 ## Global Constraints
 
 - **TDD obligatorio.** RED antes que GREEN, con evidencia literal de la salida de ambos. Sin excepción.
@@ -40,7 +75,7 @@
   - `PriceScaleInput(int FromUnit, int ToUnit, decimal Discount, PriceScaleRestriction? Restriction, int? Multiple, int? PackagingUnit, decimal? FinalUsd, decimal? FinalCop, bool AllowGrouping = false)` — el parámetro nuevo va **último y con default**, para que las decenas de construcciones posicionales existentes sigan compilando.
   - Código de error `catalog.product.price_scale.grouping_not_allowed`.
 
-- [ ] **Step 1: Escribir las dos pruebas que fallan**
+- [x] **Step 1: Escribir las dos pruebas que fallan**
 
 En `ProductTests.cs`, junto a `CreateRejectsAMultipleRestrictionWithAPackagingUnit`:
 
@@ -106,7 +141,7 @@ En `ProductTests.cs`, junto a `CreateRejectsAMultipleRestrictionWithAPackagingUn
     }
 ```
 
-- [ ] **Step 2: Correr y verificar que fallan**
+- [x] **Step 2: Correr y verificar que fallan**
 
 ```powershell
 dotnet test tests/Modules/Catalog/Modules.Catalog.UnitTests --filter "FullyQualifiedName~ProductTests"
@@ -114,7 +149,7 @@ dotnet test tests/Modules/Catalog/Modules.Catalog.UnitTests --filter "FullyQuali
 
 Esperado: no compila — `PriceScaleInput` no tiene `AllowGrouping` y `PriceScale` no tiene la propiedad. **Un fallo de compilación es un RED válido acá**: es la ausencia del miembro, que es exactamente lo que la prueba afirma. Pegar la salida.
 
-- [ ] **Step 3: Agregar el campo al input**
+- [x] **Step 3: Agregar el campo al input**
 
 En `ProductPricing.cs`, `PriceScaleInput` pasa a:
 
@@ -135,7 +170,7 @@ public sealed record PriceScaleInput(
     bool AllowGrouping = false);
 ```
 
-- [ ] **Step 4: Agregar la propiedad y la validación en `PriceScale`**
+- [x] **Step 4: Agregar la propiedad y la validación en `PriceScale`**
 
 Agregar el parámetro `bool allowGrouping` al constructor privado (último), asignarlo, y declarar:
 
@@ -160,7 +195,7 @@ En `Create`, dentro de la rama `Multiple`, nada que agregar. En la rama `else` (
 
 Y pasar `input.AllowGrouping` como último argumento del `new PriceScale(...)` final.
 
-- [ ] **Step 5: Correr y verificar que pasan**
+- [x] **Step 5: Correr y verificar que pasan**
 
 ```powershell
 dotnet test tests/Modules/Catalog/Modules.Catalog.UnitTests --filter "FullyQualifiedName~ProductTests"
@@ -168,7 +203,7 @@ dotnet test tests/Modules/Catalog/Modules.Catalog.UnitTests --filter "FullyQuali
 
 Esperado: PASS, incluidas las pruebas de escalas que ya existían. Pegar la salida.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git branch --show-current
@@ -197,7 +232,7 @@ git commit -m "feat(catalog): permitir marcar una escala de multiplo como agrupa
 
 **Nota:** `Seed/Data/catalog-products.json` **no se toca**. Verificado: `CatalogSeeder.cs:66` construye `ProductPricing` sólo con `BaseUsd`/`BaseCop` y no crea escalas.
 
-- [ ] **Step 1: Escribir la prueba de integración que falla**
+- [x] **Step 1: Escribir la prueba de integración que falla**
 
 En `ProductPricingApiTests.cs`:
 
@@ -277,7 +312,7 @@ En `ProductPricingApiTests.cs`:
 
 Si el `ProductResponseDto` local del archivo de pruebas no expone `PriceScales` con `AllowGrouping`, agregarle el campo a ese record de prueba — es un DTO de lectura propio del archivo, no el de producción.
 
-- [ ] **Step 2: Correr y verificar que fallan**
+- [x] **Step 2: Correr y verificar que fallan**
 
 ```powershell
 dotnet test tests/Modules/Catalog/Modules.Catalog.IntegrationTests --filter "FullyQualifiedName~ProductPricingApiTests"
@@ -285,7 +320,7 @@ dotnet test tests/Modules/Catalog/Modules.Catalog.IntegrationTests --filter "Ful
 
 Esperado: FAIL. La primera por `allowGrouping` ausente en la respuesta; la segunda con `Created` en vez de `UnprocessableEntity`. Pegar la salida.
 
-- [ ] **Step 3: Contrato HTTP y mapeos**
+- [x] **Step 3: Contrato HTTP y mapeos**
 
 `CatalogDtos.cs` — agregar a `PriceScaleRequest` como último parámetro:
 
@@ -309,7 +344,7 @@ Y a `PriceScaleResponse` como último parámetro: `bool AllowGrouping);`
         scale.AllowGrouping);
 ```
 
-- [ ] **Step 4: Persistencia**
+- [x] **Step 4: Persistencia**
 
 En `CatalogDbContext.ConfigurePriceScale`, junto a `PackagingUnit`:
 
@@ -317,7 +352,7 @@ En `CatalogDbContext.ConfigurePriceScale`, junto a `PackagingUnit`:
         scale.Property(value => value.AllowGrouping).HasColumnName("allow_grouping");
 ```
 
-- [ ] **Step 5: Generar la migración**
+- [x] **Step 5: Generar la migración**
 
 Detener `Api.exe` si está corriendo, y:
 
@@ -327,7 +362,7 @@ dotnet ef migrations add AddPriceScaleAllowGrouping --project src/Modules/Catalo
 
 Abrir el archivo generado y **verificar que la columna lleva default**: EF genera `nullable: false` con `defaultValue: false`, que es lo que hace falta para las filas existentes. Si no lo puso, agregarlo a mano en el `AddColumn<bool>`.
 
-- [ ] **Step 6: Correr y verificar que pasan**
+- [x] **Step 6: Correr y verificar que pasan**
 
 ```powershell
 dotnet test tests/Modules/Catalog/Modules.Catalog.IntegrationTests --filter "FullyQualifiedName~ProductPricingApiTests"
@@ -335,7 +370,7 @@ dotnet test tests/Modules/Catalog/Modules.Catalog.IntegrationTests --filter "Ful
 
 Esperado: PASS, y **todas** las demás pruebas del archivo también — es el barrido de cuerpos crudos que exige el `CLAUDE.md`. Pegar la salida completa del archivo, no sólo la de las dos nuevas.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git branch --show-current
@@ -365,7 +400,7 @@ Esta tarea trae el flag al puerto y cambia la semántica de la regla para **una*
   - `QuotationScaleRestrictionRule.Evaluate(QuotationPriceScaleRef scale, decimal quantity)` → `QuotationScaleRestrictionResult`. **Nunca lanza.**
   - `QuotationScaleRestrictionRule.EnsurePackagingUnit(QuotationPriceScaleRef scale, decimal quantity)` → `void`. Lanza `QuotationsDomainException` con `quotation.item.quantity_not_packaging_unit`.
 
-- [ ] **Step 1: Reescribir las pruebas unitarias de la regla**
+- [x] **Step 1: Reescribir las pruebas unitarias de la regla**
 
 Reemplazar el cuerpo de `QuotationScaleRestrictionRuleTests.cs` por:
 
@@ -457,7 +492,7 @@ public sealed class QuotationScaleRestrictionRuleTests
 }
 ```
 
-- [ ] **Step 2: Correr y verificar que fallan**
+- [x] **Step 2: Correr y verificar que fallan**
 
 ```powershell
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~QuotationScaleRestrictionRuleTests"
@@ -465,7 +500,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "Full
 
 Esperado: no compila — no existen `Evaluate` ni `QuotationScaleRestrictionResult`. Pegar la salida.
 
-- [ ] **Step 3: Llevar el flag al puerto y al adaptador**
+- [x] **Step 3: Llevar el flag al puerto y al adaptador**
 
 `IQuotationProductPricingLookup.cs` — `QuotationPriceScaleRef` pasa a:
 
@@ -485,7 +520,7 @@ public sealed record QuotationPriceScaleRef(
 
 `QuotationPriceScaleMapping.cs` — agregar `scale.AllowGrouping` como último argumento del `new(...)`.
 
-- [ ] **Step 4: Reescribir la regla**
+- [x] **Step 4: Reescribir la regla**
 
 Reemplazar `QuotationScaleRestrictionRule.cs` por:
 
@@ -579,7 +614,7 @@ internal static class QuotationScaleRestrictionRule
 }
 ```
 
-- [ ] **Step 5: Ajustar el resolver por línea**
+- [x] **Step 5: Ajustar el resolver por línea**
 
 En `QuotationProductPricingResolver.cs`, reemplazar el bloque que hoy llama a `EnsureSatisfied` y el `return`:
 
@@ -603,7 +638,7 @@ En `QuotationProductPricingResolver.cs`, reemplazar el bloque que hoy llama a `E
         return (unitPrice, discount, product.TaxPercentage ?? 0);
 ```
 
-- [ ] **Step 6: Correr las unitarias y verificar que pasan**
+- [x] **Step 6: Correr las unitarias y verificar que pasan**
 
 ```powershell
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests
@@ -611,7 +646,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests
 
 Esperado: PASS, incluidas `QuotationDiscountResolverTests` sin tocarlas. Pegar la salida.
 
-- [ ] **Step 7: Reescribir las pruebas de integración que afirman el 422 de múltiplo**
+- [x] **Step 7: Reescribir las pruebas de integración que afirman el 422 de múltiplo**
 
 En `QuotationItemApiTests.cs`:
 
@@ -620,7 +655,7 @@ En `QuotationItemApiTests.cs`:
 - La prueba de `UpdateQuotationItem` en la línea ~320 que espera 422 al pasar de 8 a 7 → esperar `HttpStatusCode.OK` y descuento 0. Su `AddQuotationItemRequest(productId, 8m)` inicial pasa a `9m`.
 - La prueba de empaque de la línea ~358 (`quantity_not_packaging_unit`) → **no se toca**. Es la prueba que garantiza que el empaque sigue bloqueando.
 
-- [ ] **Step 8: Correr las de integración y verificar que pasan**
+- [x] **Step 8: Correr las de integración y verificar que pasan**
 
 ```powershell
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --filter "FullyQualifiedName~QuotationItemApiTests"
@@ -628,7 +663,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --filte
 
 Esperado: PASS el archivo entero. Pegar la salida.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```powershell
 git branch --show-current
