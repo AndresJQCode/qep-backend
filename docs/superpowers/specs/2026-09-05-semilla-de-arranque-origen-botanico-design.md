@@ -163,16 +163,26 @@ de su aserción.
 
 ## Qué pasa con el script de PowerShell
 
-`ops/seed/Seed-CatalogProducts.ps1` **se queda**. Cubre un caso que la semilla de arranque no:
-cargar el catálogo en un tenant arbitrario, contra un ambiente donde no se quiere prender una
-clave de configuración ni reiniciar nada. El JSON pasa a estar en dos lugares, y eso hay que
-resolverlo: o el script lee el archivo del módulo, o se acepta la copia y se anota en los dos.
-**Decisión pendiente.**
+**Se elimina.** Decidido por el owner el 2026-09-05: la semilla de arranque lo reemplaza y no se
+mantienen los dos.
+
+El argumento para conservarlo era que cubría un caso que la de arranque no —cargar el catálogo
+en un tenant arbitrario sin prender una clave ni reiniciar—, pero ese caso no se está usando, y
+el costo de tenerlo es real: el JSON quedaría duplicado entre `ops/seed/` y el módulo, con dos
+copias que se desincronizan en silencio. Para desarrollo local la semilla de arranque sirve
+igual, prendiendo `Seed__Enabled`.
+
+**El borrado va en el mismo cambio que implementa la semilla, no antes.** `ops/seed/` es hoy el
+único mecanismo que existe y la única copia de los datos; eliminarlo mientras el reemplazo no
+esté deja el repositorio sin ninguno de los dos. La secuencia es: mover
+`ops/seed/catalog-products.json` a `Modules.Catalog.Infrastructure/Seed/Data/`, implementar los
+cuatro seeders, verificar, y recién entonces borrar `ops/seed/Seed-CatalogProducts.ps1`.
 
 ## Decisiones pendientes
 
 1. **El slug `origen-botanico`** — asumido por slugificación del nombre. Falta confirmarlo.
-2. **La duplicación del JSON** entre `ops/seed/` y el módulo (ver arriba).
+2. ~~La duplicación del JSON entre `ops/seed/` y el módulo.~~ **Resuelta el 2026-09-05:** el
+   script se elimina y el JSON se muda al módulo. Ver "Qué pasa con el script de PowerShell".
 3. **El precio USD y el IVA.** Decisión ya tomada el 2026-09-05: los 19 llevan `IVA 19%`, gana la
    lista COP. En este ambiente eso deja de ser dato de prueba: los 14 productos cuyo precio USD no
    contiene el 19% van a cotizar en USD con un impuesto extraído que no está en el precio. No
