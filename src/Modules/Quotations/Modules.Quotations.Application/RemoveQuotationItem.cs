@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -12,6 +12,7 @@ public sealed class RemoveQuotationItemHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
+    IQuotationProductLookup productLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -40,6 +41,18 @@ public sealed class RemoveQuotationItemHandler(
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
+        // Para el resumen del historial: el nombre se resuelve **antes** de quitar la línea,
+        // que es lo único que sabe a qué producto apuntaba.
+        var removed = quotation.Items.FirstOrDefault(item => item.Id.Value == command.ItemId);
+        var products = removed is null
+            ? new Dictionary<Guid, QuotationProductRef>()
+            : await productLookup.FindManyAsync(
+                command.TenantId, [removed.ProductId], cancellationToken);
+        var productName = removed is not null
+            && products.TryGetValue(removed.ProductId, out var product)
+                ? product.Name
+                : "un producto";
+
         var now = clock.UtcNow;
         // El propio agregado traduce un itemId desconocido a quotation.item.not_found.
         quotation.RemoveItem(new QuotationItemId(command.ItemId), updatedBy, now);
@@ -49,7 +62,7 @@ public sealed class RemoveQuotationItemHandler(
             quotation.Id,
             QuotationHistoryEventType.Edited,
             updatedBy,
-            details: null,
+            QuotationChangeSummary.ItemRemoved(productName),
             now));
         auditPublisher.Publish(
             command.TenantId,

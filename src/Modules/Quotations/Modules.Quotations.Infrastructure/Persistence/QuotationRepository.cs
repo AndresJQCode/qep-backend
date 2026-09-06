@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -115,4 +115,18 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
 
     public void AddHistoryEntry(QuotationHistoryEntry entry) =>
         dbContext.QuotationHistoryEntries.Add(entry);
+
+    // El filtro de tenant va por la cotizacion y no por la entrada: quotation_history no lleva
+    // tenant_id propio -- es hija de una cotizacion que si lo lleva. Sin este join, un id de otro
+    // tenant devolveria su historial.
+    public async Task<IReadOnlyList<QuotationHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        await dbContext.QuotationHistoryEntries
+            .AsNoTracking()
+            .Where(entry => entry.QuotationId == quotationId
+                && dbContext.Quotations.Any(quotation =>
+                    quotation.Id == quotationId && quotation.TenantId == tenantId))
+            .OrderByDescending(entry => entry.EventAt)
+            .ThenByDescending(entry => entry.CreatedAt)
+            .ToListAsync(cancellationToken);
 }

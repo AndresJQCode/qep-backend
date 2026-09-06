@@ -1,4 +1,4 @@
-using Modules.Customers.Domain;
+﻿using Modules.Customers.Domain;
 
 namespace Modules.Customers.UnitTests;
 
@@ -45,6 +45,7 @@ public sealed class CustomerTests
     private static Customer Create(
         string cuc = "CLI08000142",
         string name = "Verde Esencial S.A.S.",
+        string? businessName = null,
         Guid? cityId = null,
         CustomerIdentification? identification = null,
         CustomerContactInfo? contact = null,
@@ -54,6 +55,7 @@ public sealed class CustomerTests
             TenantId,
             cuc,
             name,
+            businessName,
             new CustomerAddressDetails
             {
                 Name = name,
@@ -269,6 +271,7 @@ public sealed class CustomerTests
 
         customer.Update(
             "Verde Esencial S.A.S.",
+            businessName: null,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -289,6 +292,7 @@ public sealed class CustomerTests
 
         customer.Update(
             customer.Name,
+            businessName: null,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(classificationId: newClassificationId),
@@ -308,6 +312,7 @@ public sealed class CustomerTests
 
         customer.Update(
             "Otro Nombre",
+            businessName: null,
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -329,6 +334,7 @@ public sealed class CustomerTests
 
         customer.Update(
             customer.Name,
+            businessName: null,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(classificationId: newClassificationId),
@@ -358,6 +364,7 @@ public sealed class CustomerTests
 
         customer.Update(
             customer.Name,
+            businessName: null,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -379,6 +386,7 @@ public sealed class CustomerTests
 
         var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
             customer.Name,
+            businessName: null,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -396,6 +404,7 @@ public sealed class CustomerTests
 
         customer.Update(
             "Otro",
+            businessName: null,
             Identification(number: "830-9"),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -418,6 +427,7 @@ public sealed class CustomerTests
 
         Assert.Throws<CustomersDomainException>(() => customer.Update(
             "Nombre nuevo",
+            businessName: null,
             Identification(number: "   "),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -436,6 +446,7 @@ public sealed class CustomerTests
 
         var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
             "Otro",
+            businessName: null,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),
@@ -483,6 +494,7 @@ public sealed class CustomerTests
         customer.Activate(Now.AddMinutes(1));
         customer.Update(
             "Otro",
+            businessName: null,
             Identification(),
             CustomerContactInfo.Empty,
             Commercial(),

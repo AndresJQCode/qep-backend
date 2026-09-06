@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -116,6 +116,10 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
     public void AddHistoryEntry(QuotationHistoryEntry entry)
     {
     }
+
+    public Task<IReadOnlyList<QuotationHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<QuotationHistoryEntry>>([]);
 }
 
 internal sealed class NoOpQuotationsUnitOfWork : IQuotationsUnitOfWork
@@ -192,4 +196,8 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
     public void AddHistoryEntry(QuotationHistoryEntry entry)
     {
     }
+
+    public Task<IReadOnlyList<QuotationHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<QuotationHistoryEntry>>([]);
 }

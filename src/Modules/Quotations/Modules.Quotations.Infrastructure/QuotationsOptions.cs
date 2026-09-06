@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Infrastructure;
+﻿namespace Modules.Quotations.Infrastructure;
 
 // Binding fuertemente tipado de la sección "Quotations" de appsettings, mismo criterio que
 // StorageOptions.
@@ -18,12 +18,16 @@ public sealed class QuotationsOptions
 
 /// <summary>
 /// Credenciales de Zenvia (envío de la cotización por WhatsApp, ver `ZenviaWhatsAppSender`).
-/// A diferencia de `ExpirationSweepMinutes`, deliberadamente **no** se valida con
-/// `ValidateOnStart`: `QuotationsInfrastructureExtensions.AddWhatsAppSender` registra
-/// `ZenviaWhatsAppSender` sólo cuando las tres están presentes y cae a `LogWhatsAppSender`
-/// (no-op) en su ausencia, mismo criterio que `Notifications:EmailProvider` con Infobip — así
-/// ningún `WebApplicationFactory` de las pruebas de integración necesita configurar esto para
-/// que "Enviar" les siga funcionando. "De momento" a pedido del owner, se ajusta más adelante.
+/// `QuotationsInfrastructureExtensions.AddWhatsAppSender` registra `ZenviaWhatsAppSender` sólo
+/// cuando las tres están presentes y cae a `LogWhatsAppSender` (no-op) en su ausencia, mismo
+/// criterio que `Notifications:EmailProvider` con Infobip — así ningún `WebApplicationFactory`
+/// de las pruebas de integración necesita configurar esto para que "Enviar" les siga
+/// funcionando.
+///
+/// Ese fallback vale en cualquier ambiente **menos** en producción, donde
+/// `QuotationsOptionsValidator` exige las tres con `ValidateOnStart`: ahí el no-op no se
+/// distingue de un envío real —200, cotización en `Sent`, ningún error— y el mensaje que el
+/// cliente esperaba no sale nunca.
 /// </summary>
 public sealed class WhatsAppOptions
 {

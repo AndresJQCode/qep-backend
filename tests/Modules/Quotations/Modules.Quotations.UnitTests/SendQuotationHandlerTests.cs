@@ -89,6 +89,7 @@ public sealed class SendQuotationHandlerTests
             paymentMethod: "Transferencia bancaria",
             notes: null,
             QuotationParties.Empty,
+            billingAccount: null,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

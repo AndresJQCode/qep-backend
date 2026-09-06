@@ -1,4 +1,4 @@
-namespace Modules.Customers.Application;
+﻿namespace Modules.Customers.Application;
 
 /// <summary>
 /// La ciudad de un cliente, resuelta. Tipo propio de <c>Customers</c> y no el <c>CityDto</c> de
@@ -37,7 +37,10 @@ public sealed record CustomerAddressRequest(
 public sealed record CustomerDto(
     Guid Id,
     string Cuc,
+    /// <summary>El nombre de la persona de contacto.</summary>
     string Name,
+    /// <summary>La razon social, cuando el cliente es una empresa. Null si no lo es.</summary>
+    string? BusinessName,
     string IdentificationType,
     string IdentificationNumber,
     string? Phone,
@@ -60,6 +63,7 @@ public sealed record CustomerResponse(
     Guid Id,
     string Cuc,
     string Name,
+    string? BusinessName,
     string IdentificationType,
     string IdentificationNumber,
     string? Phone,
@@ -125,6 +129,9 @@ public sealed record CustomersResponse(
 // primer nivel, ya no texto libre opcional.
 public sealed record CreateCustomerRequest(
     string Name,
+    /// <summary>Opcional: solo los clientes que son empresas la tienen. Vacio y ausente son lo
+    /// mismo.</summary>
+    string? BusinessName,
     string IdentificationType,
     string IdentificationNumber,
     string? Phone,
@@ -137,6 +144,7 @@ public sealed record CreateCustomerRequest(
 
 public sealed record UpdateCustomerRequest(
     string Name,
+    string? BusinessName,
     string IdentificationType,
     string IdentificationNumber,
     string? Phone,
@@ -171,6 +179,7 @@ public sealed record ImportedCustomerRow(int RowNumber, string Cuc, string Name,
 public sealed record CustomerImportRowData(
     string? Cuc,
     string Name,
+    string? BusinessName,
     string IdentificationType,
     string IdentificationNumber,
     string? Phone,
@@ -179,7 +188,8 @@ public sealed record CustomerImportRowData(
     string Department,
     string City,
     string Classification,
-    string? WithRetention);
+    string? WithRetention,
+    string? VatSurplus);
 
 /// <summary>
 /// Una fila que NO se importo, con lo que la persona que subio el archivo necesita para

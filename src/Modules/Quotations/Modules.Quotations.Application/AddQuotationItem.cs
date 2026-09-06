@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -51,10 +51,15 @@ public sealed class AddQuotationItemHandler(
         }
 
         // US-3/US-4: precio base, descuento por escala e impuesto del producto, resueltos
-        // contra el catálogo del tenant para la cantidad pedida.
-        var (unitPrice, discountPercentage, taxPercentage) =
-            await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, command.TenantId, command.ProductId, command.Quantity, cancellationToken);
+        // contra el catálogo del tenant para la cantidad pedida — y en la moneda de la
+        // cotización, que fija su cuenta de cobro.
+        var pricing = await QuotationProductPricingResolver.ResolveAsync(
+            pricingLookup,
+            command.TenantId,
+            command.ProductId,
+            command.Quantity,
+            quotation.Currency,
+            cancellationToken);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
@@ -64,9 +69,9 @@ public sealed class AddQuotationItemHandler(
             QuotationItemId.New(),
             command.ProductId,
             command.Quantity,
-            unitPrice,
-            discountPercentage,
-            taxPercentage,
+            pricing.Pricing.UnitPrice,
+            pricing.Pricing.DiscountPercentage,
+            pricing.Pricing.TaxPercentage,
             updatedBy,
             now);
 
@@ -75,7 +80,7 @@ public sealed class AddQuotationItemHandler(
             quotation.Id,
             QuotationHistoryEventType.Edited,
             updatedBy,
-            details: null,
+            QuotationChangeSummary.ItemAdded(pricing.Name, command.Quantity),
             now));
         auditPublisher.Publish(
             command.TenantId,

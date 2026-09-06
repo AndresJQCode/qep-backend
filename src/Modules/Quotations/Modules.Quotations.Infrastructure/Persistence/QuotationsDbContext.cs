@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Infrastructure.Persistence;
@@ -62,6 +62,15 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(20);
         quotation.Property(value => value.CreatedAt).HasColumnName("created_at");
         quotation.Property(value => value.ValidUntil).HasColumnName("valid_until");
+        // El codigo ISO y no el nombre del miembro del enum: la columna dice COP/USD, que es lo
+        // que dice la cuenta bancaria de la empresa de la que sale y lo que espera cualquiera que
+        // lea la tabla a mano. Texto y no entero, mismo criterio que Status.
+        quotation.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasConversion(
+                currency => currency.ToCode(),
+                code => QuotationCurrencies.FromCode(code))
+            .HasMaxLength(3);
         quotation.Property(value => value.PaymentMethod)
             .HasColumnName("payment_method")
             .HasMaxLength(Quotation.PaymentMethodMaxLength);
@@ -74,6 +83,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("discount_amount")
             .HasPrecision(14, 2);
         quotation.Property(value => value.Total).HasColumnName("total").HasPrecision(14, 2);
+        quotation.Property(value => value.BillingUsesBusinessName)
+            .HasColumnName("billing_uses_business_name");
         quotation.Property(value => value.CustomerWithRetention)
             .HasColumnName("customer_with_retention");
         quotation.Property(value => value.CustomerVatSurplus)
@@ -97,6 +108,25 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
+
+        // Owned y no tabla aparte: es a lo sumo una cuenta por cotizacion, y una tabla hija con
+        // una fila como maximo solo agrega un JOIN. Las cuatro columnas viven en `quotations`.
+        // IsRequired(false) en el owned entero: null es "todavia no eligio con que cuenta cobra",
+        // el estado en que nace un borrador.
+        quotation.OwnsOne(value => value.BillingAccount, billing =>
+        {
+            billing.Property(value => value.CompanyId).HasColumnName("billing_company_id");
+            billing.Property(value => value.BankName)
+                .HasColumnName("billing_bank_name")
+                .HasMaxLength(QuotationBillingAccount.BankNameMaxLength);
+            billing.Property(value => value.AccountNumber)
+                .HasColumnName("billing_account_number")
+                .HasMaxLength(QuotationBillingAccount.AccountNumberMaxLength);
+            billing.Property(value => value.Currency)
+                .HasColumnName("billing_account_currency")
+                .HasMaxLength(QuotationBillingAccount.CurrencyLength);
+        });
+        quotation.Navigation(value => value.BillingAccount).IsRequired(false);
 
         quotation.Navigation(value => value.Items)
             .UsePropertyAccessMode(PropertyAccessMode.Field);

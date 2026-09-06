@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -55,26 +55,39 @@ public sealed class UpdateQuotationItemHandler(
         var item = quotation.Items.FirstOrDefault(item => item.Id.Value == command.ItemId)
             ?? throw new QuotationsDomainException(
                 "quotation.item.not_found", "The quotation item was not found.");
+        // Antes de que UpdateItemQuantity la pise: el historial dice de cuánto a cuánto.
+        var previousQuantity = item.Quantity;
 
         // US-4: la cantidad nueva puede caer en otra escala del mismo producto, así que el
         // descuento se vuelve a resolver — nunca se conserva el anterior. El impuesto también:
         // la tasa del producto pudo cambiar desde que se agregó la línea.
-        var (_, discountPercentage, taxPercentage) = await QuotationProductPricingResolver.ResolveAsync(
-            pricingLookup, command.TenantId, item.ProductId, command.Quantity, cancellationToken);
+        var pricing = await QuotationProductPricingResolver.ResolveAsync(
+            pricingLookup,
+            command.TenantId,
+            item.ProductId,
+            command.Quantity,
+            quotation.Currency,
+            cancellationToken);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
         var now = clock.UtcNow;
         quotation.UpdateItemQuantity(
-            item.Id, command.Quantity, discountPercentage, taxPercentage, updatedBy, now);
+            item.Id,
+            command.Quantity,
+            pricing.Pricing.DiscountPercentage,
+            pricing.Pricing.TaxPercentage,
+            updatedBy,
+            now);
 
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(
             QuotationHistoryEntryId.New(),
             quotation.Id,
             QuotationHistoryEventType.Edited,
             updatedBy,
-            details: null,
+            QuotationChangeSummary.ItemQuantityChanged(
+                pricing.Name, previousQuantity, command.Quantity),
             now));
         auditPublisher.Publish(
             command.TenantId,

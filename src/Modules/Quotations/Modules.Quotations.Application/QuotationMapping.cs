@@ -1,4 +1,4 @@
-using Modules.Quotations.Domain;
+﻿using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -13,6 +13,7 @@ internal static class QuotationMapping
         quotation.CreatedAt,
         quotation.ValidUntil,
         quotation.PaymentMethod,
+        quotation.Currency.ToCode(),
         quotation.Subtotal,
         quotation.TaxPercentage,
         quotation.TaxAmount,
@@ -23,12 +24,20 @@ internal static class QuotationMapping
         quotation.NetTotal,
         quotation.Notes,
         quotation.Parties.Select(ToDto).ToArray(),
+        quotation.BillingUsesBusinessName,
+        ToDto(quotation.BillingAccount),
         quotation.CreatedBy.Value,
         quotation.UpdatedBy?.Value,
         quotation.UpdatedAt,
         quotation.SentAt,
         quotation.PdfFileId,
         quotation.Items.Select(ToDto).ToArray());
+
+    private static QuotationBillingAccountDto? ToDto(QuotationBillingAccount? account) =>
+        account is null
+            ? null
+            : new QuotationBillingAccountDto(
+                account.CompanyId, account.BankName, account.AccountNumber, account.Currency);
 
     private static QuotationPartyDto ToDto(QuotationParty party) => new(
         party.Id.Value,
@@ -50,6 +59,7 @@ internal static class QuotationMapping
         advisorEmail,
         quotation.Status.ToString(),
         quotation.CreatedAt,
+        quotation.Currency.ToCode(),
         quotation.Total);
 
     private static QuotationItemDto ToDto(QuotationItem item) => new(
@@ -67,7 +77,10 @@ internal static class QuotationMapping
     public static QuotationParties ToDomain(this QuotationPartiesRequest? request) =>
         request is null
             ? QuotationParties.Empty
-            : new QuotationParties(request.Billing.ToDomain(), request.Shipping.ToDomain());
+            : new QuotationParties(
+                request.Billing.ToDomain(),
+                request.Shipping.ToDomain(),
+                request.BillingUsesBusinessName);
 
     private static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null

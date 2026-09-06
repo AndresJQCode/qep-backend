@@ -1,4 +1,4 @@
-using Bootstrapper.Authentication;
+﻿using Bootstrapper.Authentication;
 using Bootstrapper.Messaging;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Application;
@@ -288,8 +288,14 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListQuotationsQuery, QuotationPage>,
             ListQuotationsHandler>();
         services.AddScoped<
+            IQueryHandler<ListQuotationHistoryQuery, IReadOnlyList<QuotationHistoryEntryDto>>,
+            ListQuotationHistoryHandler>();
+        services.AddScoped<
             ICommandHandler<UpdateQuotationCommand, QuotationDto>,
             UpdateQuotationHandler>();
+        services.AddScoped<
+            ICommandHandler<ChangeQuotationClientCommand, QuotationDto>,
+            ChangeQuotationClientHandler>();
         services.AddScoped<
             ICommandHandler<AddQuotationItemCommand, QuotationDto>,
             AddQuotationItemHandler>();
@@ -399,6 +405,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationCustomerLookup, QuotationCustomerLookup>();
         services.AddScoped<IQuotationAdvisorLookup, QuotationAdvisorLookup>();
         services.AddScoped<IQuotationProductLookup, QuotationProductLookup>();
+        services.AddScoped<IQuotationCompanyLookup, QuotationCompanyLookup>();
         // Arma la respuesta de una cotizacion con todo lo que su pantalla muestra, para que el
         // navegador no tenga que pedir cliente, miembros y catalogo por separado.
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
