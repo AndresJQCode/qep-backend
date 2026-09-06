@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Domain;
+﻿namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Una venta, creada al convertir una cotización aprobada (US-13 a US-17,
@@ -37,7 +37,7 @@ public sealed class Sale
         TenantId = tenantId;
         SaleNumber = NormalizeSaleNumber(saleNumber);
         QuotationId = quotationId;
-        Status = SaleStatus.Approved;
+        Status = SaleStatus.Pending;
         PaymentStatus = paymentStatus;
         Notes = NormalizeNotes(notes);
         ConvertedAt = occurredAt;
@@ -71,6 +71,14 @@ public sealed class Sale
 
     public MemberId ConvertedBy { get; private set; }
 
+    /// <summary>Cuándo se aprobó, y quién. Null mientras la venta sigue pendiente de revisión.
+    /// Se guardan aparte de <see cref="ConvertedAt"/>/<see cref="ConvertedBy"/> justamente porque
+    /// no son la misma persona ni el mismo momento — esa es toda la razón de que el estado
+    /// exista.</summary>
+    public DateTimeOffset? ApprovedAt { get; private set; }
+
+    public MemberId? ApprovedBy { get; private set; }
+
     /// <summary>Vacío hasta que se sincronice — placeholder para la integración futura con
     /// Ritual Collection (modelo-datos-cotizaciones.md §2.4). Esta fase no la implementa.</summary>
     public string? RitualCollectionSyncId { get; private set; }
@@ -94,6 +102,26 @@ public sealed class Sale
         IReadOnlyCollection<SalePaymentProofInput> proofs,
         DateTimeOffset occurredAt) =>
         new(id, tenantId, saleNumber, quotationId, paymentStatus, notes, convertedBy, proofs, occurredAt);
+
+    /// <summary>
+    /// El visto bueno de quien revisa. Sólo desde <see cref="SaleStatus.Pending"/>: aprobar dos
+    /// veces reescribiría quién y cuándo revisó, y no hay nada que volver a revisar.
+    /// </summary>
+    public void Approve(MemberId approvedBy, DateTimeOffset occurredAt)
+    {
+        if (Status != SaleStatus.Pending)
+        {
+            throw new QuotationsDomainException(
+                "sale.sale.not_pending",
+                "Only a pending sale can be approved.");
+        }
+
+        Status = SaleStatus.Approved;
+        ApprovedBy = approvedBy;
+        ApprovedAt = occurredAt;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
 
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
     // 'Payment pending'". Va antes de construir las líneas para no dejar una venta a medio

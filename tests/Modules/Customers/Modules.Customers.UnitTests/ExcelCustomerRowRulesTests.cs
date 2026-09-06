@@ -1,4 +1,4 @@
-using Modules.Customers.Application;
+﻿using Modules.Customers.Application;
 using Modules.Customers.Domain;
 
 namespace Modules.Customers.UnitTests;
@@ -24,9 +24,11 @@ public sealed class ExcelCustomerRowRulesTests
         string? department = "Antioquia",
         string? city = "Medellin",
         string? classification = "Mayorista",
-        string? withRetention = "No") =>
-        new(2, cuc, name, identificationType, identificationNumber, phone, email, address,
-            department, city, classification, withRetention);
+        string? withRetention = "No",
+        string? vatSurplus = "No") =>
+        new(2, cuc, name, null, identificationType, identificationNumber, phone,
+            email, address,
+            department, city, classification, withRetention, vatSurplus);
 
     [Fact]
     public void AValidRowPassesEveryRule()

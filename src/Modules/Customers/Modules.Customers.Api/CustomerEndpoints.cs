@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -208,6 +208,7 @@ public static class CustomerEndpoints
             new CreateCustomerCommand(
                 tenantId,
                 request.Name,
+                request.BusinessName,
                 request.IdentificationType,
                 request.IdentificationNumber,
                 request.Phone,
@@ -236,6 +237,7 @@ public static class CustomerEndpoints
                 tenantId,
                 customerId,
                 request.Name,
+                request.BusinessName,
                 request.IdentificationType,
                 request.IdentificationNumber,
                 request.Phone,
@@ -411,6 +413,7 @@ public static class CustomerEndpoints
         customer.Id,
         customer.Cuc,
         customer.Name,
+        customer.BusinessName,
         customer.IdentificationType,
         customer.IdentificationNumber,
         customer.Phone,

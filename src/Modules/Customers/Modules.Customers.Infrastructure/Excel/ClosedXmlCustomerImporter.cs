@@ -1,10 +1,10 @@
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
 using Modules.Customers.Application;
 
 namespace Modules.Customers.Infrastructure.Excel;
 
 /// <summary>
-/// Lee un Excel de clientes con ClosedXML. Solo parseo estructural: ubica las once columnas
+/// Lee un Excel de clientes con ClosedXML. Solo parseo estructural: ubica las trece columnas
 /// esperadas por su nombre de cabecera (no por posicion — una persona reordenando columnas en
 /// Excel es mas probable que reordenar texto) y lee las filas de datos como texto crudo. Ninguna
 /// regla de negocio vive aca; eso es <c>ExcelCustomerRowRules</c> y <c>ImportCustomersHandler</c>,
@@ -56,6 +56,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             var row = worksheet.Row(rowNumber);
             var cuc = Cell(row, indexes, CustomerImportColumns.Cuc);
             var name = Cell(row, indexes, CustomerImportColumns.Name);
+            var businessName = Cell(row, indexes, CustomerImportColumns.BusinessName);
             var identificationType = Cell(row, indexes, CustomerImportColumns.IdentificationType);
             var identificationNumber = Cell(row, indexes, CustomerImportColumns.IdentificationNumber);
             var phone = Cell(row, indexes, CustomerImportColumns.Phone);
@@ -65,14 +66,16 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             var city = Cell(row, indexes, CustomerImportColumns.City);
             var classification = Cell(row, indexes, CustomerImportColumns.Classification);
             var withRetention = Cell(row, indexes, CustomerImportColumns.WithRetention);
+            var vatSurplus = Cell(row, indexes, CustomerImportColumns.VatSurplus);
 
             // Una fila completamente vacia es ruido de formato (una fila en blanco que Excel deja
             // entre los datos y el final de la hoja), no una fila de datos que haya que reportar
             // como invalida.
-            if (cuc is null && name is null && identificationType is null &&
+            if (cuc is null && name is null && businessName is null &&
+                identificationType is null &&
                 identificationNumber is null && phone is null && email is null &&
                 address is null && department is null && city is null &&
-                classification is null && withRetention is null)
+                classification is null && withRetention is null && vatSurplus is null)
             {
                 continue;
             }
@@ -81,6 +84,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 rowNumber,
                 cuc,
                 name,
+                businessName,
                 identificationType,
                 identificationNumber,
                 phone,
@@ -89,7 +93,8 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 department,
                 city,
                 classification,
-                withRetention));
+                withRetention,
+                vatSurplus));
         }
 
         return new ExcelCustomerImportFile(true, rows);

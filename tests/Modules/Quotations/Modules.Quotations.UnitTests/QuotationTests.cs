@@ -11,9 +11,18 @@ public sealed class QuotationTests
 
     private static readonly DateOnly ValidUntil = new(2026, 9, 30);
 
+    private static readonly QuotationBillingAccount BillingAccount = new()
+    {
+        CompanyId = Guid.CreateVersion7(),
+        BankName = "Bancolombia",
+        AccountNumber = "12345678",
+        Currency = "COP",
+    };
+
     private static Quotation NewQuotation(
         string? notes = null,
         QuotationParties? parties = null,
+        QuotationBillingAccount? billingAccount = null,
         bool customerWithRetention = false,
         bool customerVatSurplus = false,
         DateOnly? validUntil = null) =>
@@ -27,6 +36,7 @@ public sealed class QuotationTests
             paymentMethod: "Transferencia bancaria",
             notes,
             parties ?? QuotationParties.Empty,
+            billingAccount,
             customerWithRetention,
             customerVatSurplus,
             AdvisorId,
@@ -59,7 +69,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "  QUO-2026-0001  ", ClientId, AdvisorId,
-            null, null, null, QuotationParties.Empty, false, false, AdvisorId, Now);
+            null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now);
 
         Assert.Equal("QUO-2026-0001", quotation.QuotationNumber);
     }
@@ -72,7 +82,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, number, ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_required", error.Code);
     }
@@ -83,7 +93,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, new string('a', 21), ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_too_long", error.Code);
     }
@@ -94,7 +104,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, "QUO-2026-0001", Guid.Empty, AdvisorId,
-                null, null, null, QuotationParties.Empty, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.client_required", error.Code);
     }
@@ -355,7 +365,7 @@ public sealed class QuotationTests
         var parties = new QuotationParties(
             new QuotationPartyDetails { Name = "Nombre alterno" }, Shipping: null);
 
-        quotation.UpdateDetails(validUntil, "Efectivo", null, parties, AdvisorId, Now);
+        quotation.UpdateDetails(validUntil, "Efectivo", null, parties, null, null, AdvisorId, Now);
 
         Assert.Equal(validUntil, quotation.ValidUntil);
         Assert.Equal("Efectivo", quotation.PaymentMethod);
@@ -385,7 +395,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
-            validUntil: null, null, null, QuotationParties.Empty, false, false, AdvisorId, Now);
+            validUntil: null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.Send(Guid.CreateVersion7(), AdvisorId, Now));
@@ -395,7 +405,9 @@ public sealed class QuotationTests
     }
 
     [Fact]
-    public void SendRejectsAQuotationThatIsNotDraft()
+    // Reenviar sí se puede, pero sólo si la cotización volvió a cambiar: si no, no hay nada
+    // nuevo que mandarle al cliente.
+    public void SendRejectsASentQuotationThatDidNotChange()
     {
         var quotation = NewQuotation();
         quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
@@ -403,7 +415,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.Send(Guid.CreateVersion7(), AdvisorId, Now));
 
-        Assert.Equal("quotation.quotation.not_draft", error.Code);
+        Assert.Equal("quotation.quotation.already_sent", error.Code);
     }
 
     [Theory]
@@ -446,7 +458,7 @@ public sealed class QuotationTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
 
         var updateError = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.UpdateDetails(null, null, null, QuotationParties.Empty, AdvisorId, Now));
+            quotation.UpdateDetails(null, null, null, QuotationParties.Empty, null, null, AdvisorId, Now));
         Assert.Equal("quotation.quotation.not_editable", updateError.Code);
     }
 
@@ -504,7 +516,11 @@ public sealed class QuotationTests
     [Fact]
     public void EnsureConvertibleToSaleDoesNotThrowOrChangeStatusForASentQuotation()
     {
-        var quotation = NewQuotation();
+        // Con todo lo que la venta hereda: productos, vigencia, forma de pago y cuenta de cobro.
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
         var versionBeforeConverting = quotation.Version;
 

@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -39,7 +39,7 @@ public sealed class VoidQuotationHandler(
             quotation.Id,
             QuotationHistoryEventType.Voided,
             voidedBy,
-            details: null,
+            QuotationChangeSummary.Voided(),
             now));
         auditPublisher.Publish(
             command.TenantId,

@@ -1,4 +1,4 @@
-using Modules.Quotations.Domain;
+﻿using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -13,6 +13,8 @@ internal static class SaleMapping
         sale.Notes,
         sale.ConvertedAt,
         sale.ConvertedBy.Value,
+        sale.ApprovedAt,
+        sale.ApprovedBy?.Value,
         sale.RitualCollectionSyncId,
         sale.CreatedAt,
         sale.UpdatedAt,

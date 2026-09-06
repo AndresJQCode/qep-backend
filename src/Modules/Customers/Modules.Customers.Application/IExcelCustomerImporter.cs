@@ -1,7 +1,7 @@
-namespace Modules.Customers.Application;
+﻿namespace Modules.Customers.Application;
 
 /// <summary>
-/// Las once columnas que la importacion masiva de clientes (Fase 5) espera y que la plantilla
+/// Las trece columnas que la importacion masiva de clientes (Fase 5) espera y que la plantilla
 /// descargable (Fase 6) genera — el contrato exacto entre las dos fases. En espanol y en este
 /// orden: es el mismo vocabulario que ya usa el resto del sistema, y el orden es el que la
 /// plantilla escribe.
@@ -19,6 +19,17 @@ public static class CustomerImportColumns
     public const string Cuc = "Cuc";
 
     public const string Name = "Nombre";
+
+    /// <summary>
+    /// Opcional (CLI-RS-01): solo la tienen los clientes que son empresas. Vacia, el cliente
+    /// queda sin razon social — no se copia el nombre de contacto, porque eso afirmaria que cada
+    /// cliente importado es una empresa.
+    ///
+    /// Sin tilde, igual que el resto de las cabeceras: el parser compara sin distinguir
+    /// mayusculas pero si tildes, y una cabecera con tilde que alguien retipea a mano deja de
+    /// encontrarse.
+    /// </summary>
+    public const string BusinessName = "Razon Social";
 
     public const string IdentificationType = "Tipo Identificacion";
 
@@ -40,10 +51,18 @@ public static class CustomerImportColumns
 
     public const string WithRetention = "Con Retencion";
 
+    /// <summary>
+    /// Si el cliente tiene excedente de IVA: sus cotizaciones no pagan IVA, cualquiera sea la
+    /// tasa de cada producto (<c>Quotation.CustomerVatSurplus</c>). Mismo formato que
+    /// <see cref="WithRetention"/> — "Si", "No" o vacia, que es "No".
+    /// </summary>
+    public const string VatSurplus = "Excedente Iva";
+
     public static readonly IReadOnlyList<string> Ordered =
     [
         Cuc,
         Name,
+        BusinessName,
         IdentificationType,
         IdentificationNumber,
         Phone,
@@ -52,7 +71,8 @@ public static class CustomerImportColumns
         Department,
         City,
         Classification,
-        WithRetention
+        WithRetention,
+        VatSurplus
     ];
 }
 
@@ -70,6 +90,7 @@ public sealed record ExcelCustomerRow(
     int RowNumber,
     string? Cuc,
     string? Name,
+    string? BusinessName,
     string? IdentificationType,
     string? IdentificationNumber,
     string? Phone,
@@ -78,10 +99,11 @@ public sealed record ExcelCustomerRow(
     string? Department,
     string? City,
     string? Classification,
-    string? WithRetention);
+    string? WithRetention,
+    string? VatSurplus);
 
 /// <summary>
-/// El resultado de parsear un Excel: si la cabecera trae las once columnas esperadas y, si las
+/// El resultado de parsear un Excel: si la cabecera trae las trece columnas esperadas y, si las
 /// trae, las filas de datos ya leidas. Cuando <see cref="HasExpectedColumns"/> es falso,
 /// <see cref="Rows"/> viene vacio — no tiene sentido leer datos de columnas que no se pudieron
 /// ubicar, y el llamador trata eso como un archivo estructuralmente invalido, no como un reporte

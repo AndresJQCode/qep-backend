@@ -1,4 +1,4 @@
-namespace Modules.Customers.Domain;
+﻿namespace Modules.Customers.Domain;
 
 /// <summary>
 /// Un cliente del tenant: la contraparte a la que se le cotiza y se le vende. Guarda solo los
@@ -38,6 +38,7 @@ public sealed class Customer
         Guid tenantId,
         string cuc,
         string name,
+        string? businessName,
         CustomerAddressDetails principalAddress,
         CustomerIdentification identification,
         CustomerContactInfo contact,
@@ -48,6 +49,7 @@ public sealed class Customer
         TenantId = tenantId;
         Cuc = cuc;
         Name = name;
+        BusinessName = businessName;
         // La primera direccion nace principal: un cliente sin direccion principal deja a la
         // cotizacion sin saber a donde entregar, y su ciudad es la que ya emitio el CUC.
         var first = CustomerAddress.Create(id, principalAddress, occurredAt);
@@ -82,7 +84,21 @@ public sealed class Customer
     /// </summary>
     public string Cuc { get; private set; }
 
+    /// <summary>
+    /// A quien se le habla: la persona de contacto del cliente. En un cliente que es una empresa
+    /// no es la empresa — para eso esta <see cref="BusinessName"/>.
+    /// </summary>
     public string Name { get; private set; }
+
+    /// <summary>
+    /// La razon social, cuando el cliente es una empresa (CLI-RS-01).
+    ///
+    /// Opcional a proposito: buena parte del padron son personas, y obligar a repetir el nombre de
+    /// contacto acá sería pedir un dato que no existe. Nulo significa "no es una empresa, o no se
+    /// cargo" — el formulario ofrece copiar el nombre de contacto para quien prefiera tenerlo
+    /// lleno, pero no lo impone.
+    /// </summary>
+    public string? BusinessName { get; private set; }
 
     /// <summary>
     /// Las direcciones del cliente (CLI-DIR-01). Siempre hay al menos una mientras el cliente
@@ -165,6 +181,7 @@ public sealed class Customer
         Guid tenantId,
         string cuc,
         string name,
+        string? businessName,
         CustomerAddressDetails principalAddress,
         CustomerIdentification identification,
         CustomerContactInfo contact,
@@ -175,6 +192,7 @@ public sealed class Customer
             tenantId,
             NormalizeCuc(cuc),
             NormalizeName(name),
+            NormalizeBusinessName(businessName),
             principalAddress,
             identification.Normalized(),
             contact,
@@ -287,6 +305,7 @@ public sealed class Customer
     /// </summary>
     public void Update(
         string name,
+        string? businessName,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -303,12 +322,14 @@ public sealed class Customer
         // se valida aca tambien (no solo dentro de Assign) porque hace falta **antes** de tocar el
         // CUC, y ese cambio tiene que quedar cubierto por la misma garantia de todo-o-nada.
         var normalizedName = NormalizeName(name);
+        var normalizedBusinessName = NormalizeBusinessName(businessName);
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         var normalizedClassificationPrefix = NormalizeClassificationPrefix(classificationPrefix);
 
         Name = normalizedName;
+        BusinessName = normalizedBusinessName;
         Assign(normalizedIdentification);
         Assign(normalizedContact);
 
@@ -411,6 +432,24 @@ public sealed class Customer
             "The customer name is required.",
             "customers.customer.name_too_long",
             $"The customer name cannot exceed {NameMaxLength} characters.");
+
+    // Vacio y ausente son lo mismo: un formulario que manda la razon social en blanco esta
+    // diciendo "este cliente no es una empresa", no guardando una cadena vacia. Mismo criterio que
+    // el resto de los opcionales del modulo.
+    private static string? NormalizeBusinessName(string? businessName)
+    {
+        if (string.IsNullOrWhiteSpace(businessName))
+        {
+            return null;
+        }
+
+        var trimmed = businessName.Trim();
+        return trimmed.Length > NameMaxLength
+            ? throw new CustomersDomainException(
+                "customers.customer.business_name_too_long",
+                $"The customer business name cannot exceed {NameMaxLength} characters.")
+            : trimmed;
+    }
 
     // El CUC llega ya formado desde ICucGenerator + CucFormatter; aca solo se comprueba que
     // llegue y quepa. Un cliente sin CUC es una celda vacia en la grilla y un cliente que la caja

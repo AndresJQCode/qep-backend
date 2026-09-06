@@ -1,18 +1,28 @@
-namespace Modules.Quotations.Application;
+﻿namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Puerto hacia el módulo Catalog (US-3/US-4: precio base y escalas de precio por cantidad del
 /// producto). Mismo criterio de aislamiento que <see cref="IQuotationCustomerLookup"/> — el
 /// adaptador vive en <c>Bootstrapper</c>.
 ///
-/// Sólo expone el precio en COP: el módulo de cotizaciones trabaja en una sola moneda
-/// (US-5, "todos los valores monetarios se muestran en COP"). Un producto sin precio base en COP
-/// no se puede cotizar — lo resuelve <c>QuotationProductPricingResolver</c>.
+/// Expone las **dos** monedas que el catálogo guarda, no una: la cotización se expresa en la
+/// moneda de su cuenta de cobro (<c>Quotation.Currency</c>), y cuál de los dos precios aplica lo
+/// decide <see cref="QuotationProductPricingResolver"/>. Un producto sin precio en la moneda de
+/// la cotización no se puede cotizar ahí — no hay tabla de cambio y este módulo no convierte.
+///
+/// <see cref="FindManyAsync"/> existe para revalorizar: cambiar la moneda de una cotización
+/// obliga a volver a pedir el precio de **cada** línea, y una consulta por línea convierte un
+/// cambio de cuenta en veinte lecturas.
 /// </summary>
 public interface IQuotationProductPricingLookup
 {
     Task<QuotationProductPricingRef?> FindAsync(
         Guid tenantId, Guid productId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken cancellationToken);
 }
 
 /// <param name="TaxPercentage">La tasa de impuesto del producto
@@ -21,8 +31,12 @@ public interface IQuotationProductPricingLookup
 public sealed record QuotationProductPricingRef(
     Guid Id,
     Guid TenantId,
+    /// <summary>Para el resumen del historial ("Agregó Bebidas x3"). Viaja con el precio y no
+    /// por su propia consulta: el producto ya se carga entero para cotizarlo.</summary>
+    string Name,
     bool IsActive,
     decimal? UnitPriceCop,
+    decimal? UnitPriceUsd,
     IReadOnlyCollection<QuotationPriceScaleRef> Scales,
     int? TaxPercentage);
 

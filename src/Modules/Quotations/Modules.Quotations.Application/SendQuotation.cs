@@ -79,7 +79,7 @@ public sealed class SendQuotationHandler(
             quotation.Id,
             QuotationHistoryEventType.Sent,
             sentBy,
-            details: null,
+            QuotationChangeSummary.Sent(),
             now));
         auditPublisher.Publish(
             command.TenantId,

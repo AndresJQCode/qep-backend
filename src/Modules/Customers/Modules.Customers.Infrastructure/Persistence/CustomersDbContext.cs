@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Modules.Customers.Domain;
 
 namespace Modules.Customers.Infrastructure.Persistence;
@@ -40,6 +40,11 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasMaxLength(Customer.CucMaxLength);
         customer.Property(value => value.Name)
             .HasColumnName("name")
+            .HasMaxLength(Customer.NameMaxLength);
+        // Nullable: la razon social solo existe si el cliente es una empresa. Mismo ancho que
+        // name -- es el mismo tipo de dato.
+        customer.Property(value => value.BusinessName)
+            .HasColumnName("business_name")
             .HasMaxLength(Customer.NameMaxLength);
 
         // La identificacion se guarda en dos columnas planas. El agregado la expone ademas como
