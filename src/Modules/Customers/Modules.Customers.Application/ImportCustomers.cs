@@ -92,11 +92,17 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithErrorCode("customers.import.row.phone_too_long")
                 .WithMessage($"The phone cannot exceed {CustomerContactInfo.PhoneMaxLength} characters.");
 
+        // Obligatoria desde la libreta de direcciones (028afe2): la fila crea la direccion
+        // principal del cliente. Se rechaza como fila, con su codigo, y no dejando que reviente
+        // el dominio a mitad del archivo -- eso se llevaria puesto el resto del lote.
         RuleFor(row => row.Address)
-            .MaximumLength(CustomerContactInfo.AddressMaxLength)
+            .NotEmpty()
+                .WithErrorCode("customers.import.row.address_required")
+                .WithMessage("The address is required.")
+            .MaximumLength(CustomerAddress.AddressMaxLength)
                 .WithErrorCode("customers.import.row.address_too_long")
                 .WithMessage(
-                    $"The address cannot exceed {CustomerContactInfo.AddressMaxLength} characters.");
+                    $"The address cannot exceed {CustomerAddress.AddressMaxLength} characters.");
 
         // Vacio es ausente para un campo opcional, mismo criterio que CustomerWriteRules: sin el
         // When(), una celda de correo vacia fallaria EmailAddress() y bloquearia una fila que

@@ -130,10 +130,20 @@ public sealed record QuotationClientAddressResponse(
     string DepartmentName,
     bool IsPrincipal);
 
+/// <summary>
+/// La escala viaja con su restricción, no sólo con su descuento: es lo único con lo que el
+/// formulario puede evitar el 422 de <c>quotation.item.quantity_not_multiple</c> antes de
+/// enviar, en vez de sólo reaccionar a él. <c>Restriction</c> es texto
+/// ("multiple" | "packaging_unit") y no el enum, mismo criterio que
+/// <c>PriceScaleResponse.Restriction</c> en Catalog.
+/// </summary>
 public sealed record QuotationItemPriceScaleResponse(
     int FromUnit,
     int ToUnit,
-    decimal Discount);
+    decimal Discount,
+    string Restriction,
+    int? Multiple,
+    int? PackagingUnit);
 
 public sealed record QuotationResponse(
     Guid Id,

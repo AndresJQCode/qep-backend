@@ -179,6 +179,7 @@ internal static class QuotationsApiHarness
                 identificationType = "NIT",
                 identificationNumber = identificationNumber
                     ?? $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
+                address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
                 withRetention,
@@ -214,6 +215,7 @@ internal static class QuotationsApiHarness
                 name = "Verde Esencial S.A.S.",
                 identificationType = "NIT",
                 identificationNumber,
+                address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
                 withRetention,

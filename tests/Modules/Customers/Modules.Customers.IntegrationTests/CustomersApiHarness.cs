@@ -167,7 +167,7 @@ internal static class CustomersApiHarness
         string? IdentificationNumber = "900.123.456-1",
         string? Phone = null,
         string? Email = null,
-        string? Address = null,
+        string? Address = "Calle 10 # 45-12",
         string? Department = null,
         string? City = null,
         string? Classification = null,
@@ -247,6 +247,7 @@ internal static class CustomersApiHarness
         string name = "Verde Esencial S.A.S.",
         string identificationType = "NIT",
         string identificationNumber = "900.123.456-1",
+        string address = "Calle 10 # 45-12",
         bool withRetention = false,
         bool vatSurplus = false) =>
         new
@@ -254,6 +255,7 @@ internal static class CustomersApiHarness
             name,
             identificationType,
             identificationNumber,
+            address,
             cityId,
             classificationId,
             withRetention,
