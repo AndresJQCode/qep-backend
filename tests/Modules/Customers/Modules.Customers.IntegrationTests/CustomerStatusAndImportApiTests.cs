@@ -497,6 +497,42 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Empty(result.Errors);
     }
 
+    // La celda Direccion dejo de ser opcional cuando nacio la libreta (028afe2): la fila crea la
+    // direccion principal del cliente. Se rechaza como fila, con su codigo, y no como una
+    // excepcion del dominio a mitad del archivo -- que se llevaria puesto el resto del lote.
+    [Fact]
+    public async Task ImportRowWithoutAnAddressIsRejectedWithItsOwnCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        using var manager = CreateManager(factory);
+        var here = await EnsureCityAsync(manager);
+        var classification = await CreateClassificationAsync(manager);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Cliente Sin Direccion",
+                    IdentificationNumber: "900.777.777-7",
+                    Address: null,
+                    Department: here.DepartmentName,
+                    City: here.CityName,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ImportedCount);
+        Assert.Contains(result.Errors, error =>
+            error.RowNumber == 2 && error.Code == "customers.import.row.address_required");
+    }
+
     [Fact]
     public async Task ImportCustomersWithMissingColumnsIsRejected()
     {
