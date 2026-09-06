@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Application;
+﻿namespace Modules.Quotations.Application;
 
 public sealed record SalePaymentProofDto(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 
@@ -13,6 +13,10 @@ public sealed record SaleDto(
     string? Notes,
     DateTimeOffset ConvertedAt,
     Guid ConvertedBy,
+    /// <summary>Cuándo se aprobó y quién. Null mientras la venta sigue pendiente de revisión.
+    /// </summary>
+    DateTimeOffset? ApprovedAt,
+    Guid? ApprovedBy,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
@@ -40,6 +44,8 @@ public sealed record SaleResponse(
     string? Notes,
     DateTimeOffset ConvertedAt,
     Guid ConvertedBy,
+    DateTimeOffset? ApprovedAt,
+    Guid? ApprovedBy,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,

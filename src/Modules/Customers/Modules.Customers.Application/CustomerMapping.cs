@@ -1,4 +1,4 @@
-using Modules.Customers.Domain;
+﻿using Modules.Customers.Domain;
 
 namespace Modules.Customers.Application;
 
@@ -17,6 +17,7 @@ internal static class CustomerMapping
         customer.Id.Value,
         customer.Cuc,
         customer.Name,
+        customer.BusinessName,
         customer.IdentificationType.ToWireValue(),
         customer.IdentificationNumber,
         customer.Phone,

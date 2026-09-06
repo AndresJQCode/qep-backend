@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -18,7 +18,7 @@ public sealed class QuotationApiTests
 
         var response = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
-            new CreateQuotationRequest(clientId, null, "Transferencia bancaria", null, null),
+            new CreateQuotationRequest(clientId, null, "Transferencia bancaria", null, null, null),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -117,7 +117,7 @@ public sealed class QuotationApiTests
 
         var response = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
-            new CreateQuotationRequest(Guid.NewGuid(), null, null, null, null),
+            new CreateQuotationRequest(Guid.NewGuid(), null, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -136,7 +136,7 @@ public sealed class QuotationApiTests
 
         var response = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
-            new CreateQuotationRequest(clientId, null, null, null, null),
+            new CreateQuotationRequest(clientId, null, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -158,7 +158,7 @@ public sealed class QuotationApiTests
 
         var response = await otherOwner.PostAsJsonAsync(
             QuotationsUrl(tenantId),
-            new CreateQuotationRequest(clientId, null, null, null, null),
+            new CreateQuotationRequest(clientId, null, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -178,7 +178,7 @@ public sealed class QuotationApiTests
 
         var response = await readOnly.PostAsJsonAsync(
             QuotationsUrl(tenantId),
-            new CreateQuotationRequest(Guid.NewGuid(), null, null, null, null),
+            new CreateQuotationRequest(Guid.NewGuid(), null, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -320,7 +320,8 @@ public sealed class QuotationApiTests
                 new QuotationPartiesRequest(
                     new QuotationPartyRequest(
                         "Nombre alterno", null, null, null, null, null),
-                    Shipping: null)),
+                    Shipping: null),
+                null),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

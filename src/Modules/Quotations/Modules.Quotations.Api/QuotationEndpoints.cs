@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -33,6 +33,15 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // US-17: la linea de tiempo de la cotizacion -- quien, cuando y que cambio. Ruta aparte
+        // y no un campo del detalle: crece sin techo con cada edicion, y la pantalla del detalle
+        // se pinta sin ella.
+        group.MapGet("/{quotationId:guid}/history", ListQuotationHistoryAsync)
+            .RequireAuthorization(/* QuotationsPermissions.QuotationRead */)
+            .Produces<QuotationHistoryResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         group.MapPost("/", CreateQuotationAsync)
             .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
             .Accepts<CreateQuotationRequest>("application/json")
@@ -43,6 +52,14 @@ public static class QuotationEndpoints
         group.MapPatch("/{quotationId:guid}", UpdateQuotationAsync)
             .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
             .Accepts<UpdateQuotationRequest>("application/json")
+            .Produces<QuotationResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/{quotationId:guid}/client", ChangeQuotationClientAsync)
+            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .Accepts<ChangeQuotationClientRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -132,6 +149,19 @@ public static class QuotationEndpoints
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
+    private static async Task<IResult> ListQuotationHistoryAsync(
+        Guid tenantId,
+        Guid quotationId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var entries = await dispatcher.QueryAsync(
+            new ListQuotationHistoryQuery(tenantId, quotationId),
+            cancellationToken);
+
+        return Results.Ok(new QuotationHistoryResponse(entries));
+    }
+
     private static async Task<IResult> CreateQuotationAsync(
         Guid tenantId,
         CreateQuotationRequest request,
@@ -146,7 +176,8 @@ public static class QuotationEndpoints
                 request.ValidUntil,
                 request.PaymentMethod,
                 request.Notes,
-                request.Parties),
+                request.Parties,
+                request.BillingAccount),
             cancellationToken);
 
         return Results.Created(
@@ -169,7 +200,25 @@ public static class QuotationEndpoints
                 request.ValidUntil,
                 request.PaymentMethod,
                 request.Notes,
-                request.Parties),
+                request.Parties,
+                request.BillingAccount),
+            cancellationToken);
+
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    // US-2 (revisada): cambiar el cliente arrastra las partes y los totales, asi que va por su
+    // propia ruta y no como un campo mas del PATCH. Ver ChangeQuotationClientHandler.
+    private static async Task<IResult> ChangeQuotationClientAsync(
+        Guid tenantId,
+        Guid quotationId,
+        ChangeQuotationClientRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var quotation = await dispatcher.SendAsync(
+            new ChangeQuotationClientCommand(tenantId, quotationId, request.ClientId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -261,6 +310,7 @@ public static class QuotationEndpoints
         quotation.AdvisorEmail,
         quotation.Status,
         quotation.CreatedAt,
+        quotation.Currency,
         quotation.Total);
 
 }

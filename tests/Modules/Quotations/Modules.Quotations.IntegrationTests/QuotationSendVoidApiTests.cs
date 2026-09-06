@@ -47,7 +47,7 @@ public sealed class QuotationSendVoidApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var created = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
-            new CreateQuotationRequest(clientId, null, null, null, null),
+            new CreateQuotationRequest(clientId, null, null, null, null, null),
             TestContext.Current.CancellationToken);
         created.EnsureSuccessStatusCode();
         var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(
@@ -181,7 +181,7 @@ public sealed class QuotationSendVoidApiTests
 
         var response = await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(null, "Efectivo", null, null),
+            new UpdateQuotationRequest(null, "Efectivo", null, null, null),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);

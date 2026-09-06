@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -11,7 +11,8 @@ public sealed record CreateQuotationCommand(
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
-    QuotationPartiesRequest? Parties) : ICommand<QuotationDto>;
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount) : ICommand<QuotationDto>;
 
 public sealed class CreateQuotationValidator : AbstractValidator<CreateQuotationCommand>
 {
@@ -29,6 +30,7 @@ public sealed class CreateQuotationHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
+    IQuotationCompanyLookup companyLookup,
     IQuotationNumberGenerator numberGenerator,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -52,6 +54,9 @@ public sealed class CreateQuotationHandler(
             command.TenantId, command.ClientId, cancellationToken);
         QuotationCustomerEligibility.Ensure(customer, command.TenantId, command.ClientId);
 
+        var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
+            companyLookup, command.TenantId, command.BillingAccount, cancellationToken);
+
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
@@ -65,10 +70,14 @@ public sealed class CreateQuotationHandler(
             quotationNumber,
             command.ClientId,
             advisorId,
-            command.ValidUntil,
+            // Sin vigencia en el request, quince dias desde hoy. Se resuelve **al crear** y
+            // queda guardado: calcularlo al leer haria que la misma cotizacion mostrara una
+            // fecha distinta cada dia.
+            command.ValidUntil ?? DefaultValidUntil(now),
             command.PaymentMethod,
             command.Notes,
             command.Parties.ToDomain(),
+            billingAccount,
             customer.WithRetention,
             customer.VatSurplus,
             advisorId,
@@ -80,7 +89,7 @@ public sealed class CreateQuotationHandler(
             quotation.Id,
             QuotationHistoryEventType.Created,
             advisorId,
-            details: null,
+            QuotationChangeSummary.Created(customer.Name, quotation.Currency),
             now));
         auditPublisher.Publish(
             command.TenantId,
@@ -93,4 +102,9 @@ public sealed class CreateQuotationHandler(
 
         return quotation.ToDto();
     }
+
+    public const int DefaultValidityDays = 15;
+
+    private static DateOnly DefaultValidUntil(DateTimeOffset now) =>
+        DateOnly.FromDateTime(now.UtcDateTime).AddDays(DefaultValidityDays);
 }

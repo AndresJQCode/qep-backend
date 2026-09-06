@@ -1,4 +1,4 @@
-using Modules.Quotations.Application;
+﻿using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -87,6 +87,7 @@ public sealed class ListQuotationsHandlerTests
             paymentMethod: null,
             notes: null,
             QuotationParties.Empty,
+            billingAccount: null,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
@@ -8,6 +8,7 @@ namespace Modules.Customers.Application;
 public sealed record CreateCustomerCommand(
     Guid TenantId,
     string Name,
+    string? BusinessName,
     string IdentificationType,
     string IdentificationNumber,
     string? Phone,
@@ -76,6 +77,7 @@ public sealed class CreateCustomerHandler(
             command.TenantId,
             cuc,
             command.Name,
+            command.BusinessName,
             // La primera direccion nace con el request de alta: su ciudad es la que acaba de
             // emitir el CUC, y sin ella el cliente quedaria sin destino por defecto.
             new CustomerAddressDetails

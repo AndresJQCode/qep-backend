@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -107,7 +107,7 @@ public sealed class ConvertQuotationToSaleHandler(
             quotation.Id,
             QuotationHistoryEventType.Approved,
             convertedBy,
-            details: null,
+            QuotationChangeSummary.ConvertedToSale(sale.SaleNumber),
             now));
         auditPublisher.Publish(
             command.TenantId,

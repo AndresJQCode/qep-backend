@@ -1,4 +1,4 @@
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure.Excel;
 
@@ -68,7 +68,12 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
 
         var validation = FindValidation(workbook, CustomerImportColumns.City);
 
-        Assert.Equal("INDIRECT(VLOOKUP($H2,Referencia!$A:$D,4,FALSE))", validation.Value);
+        // La letra sale del orden real de las columnas: agregar una antes de Departamento
+        // (Razon Social lo hizo) corre la referencia, y fijarla a mano deja la prueba en falso.
+        var department = (char)('A' + CustomerImportColumns.Ordered.ToList()
+            .IndexOf(CustomerImportColumns.Department));
+        Assert.Equal(
+            $"INDIRECT(VLOOKUP(${department}2,Referencia!$A:$D,4,FALSE))", validation.Value);
     }
 
     [Fact]

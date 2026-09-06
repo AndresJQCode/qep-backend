@@ -1,4 +1,4 @@
-namespace Modules.Companies.Domain;
+﻿namespace Modules.Companies.Domain;
 
 /// <summary>
 /// Una cuenta bancaria de la empresa: banco, moneda y numero.
@@ -6,8 +6,11 @@ namespace Modules.Companies.Domain;
 /// Es un value object, no una entidad: una cuenta no existe fuera de su empresa y no tiene
 /// identidad propia que alguien referencie desde afuera. Por eso el PUT la reemplaza entera en
 /// vez de parchear fila por fila, y por eso la persistencia la mapea como coleccion **owned**.
-/// Si algun dia una cotizacion tiene que apuntar a "la cuenta a la que se paga", esa referencia
-/// necesita un id estable y este tipo pasa a ser entidad — con su migracion.
+///
+/// Cuando la cotizacion necesito decir "a esta cuenta se paga", no se le dio identidad a este
+/// tipo: <c>QuotationBillingAccount</c> **copia** banco, numero y moneda al guardarse. Una FK
+/// haria que corregir un digito aca reescribiera cotizaciones ya enviadas, y una cotizacion es
+/// un documento historico. Este tipo sigue sin id, a proposito.
 ///
 /// Las propiedades son <c>init</c> y no posicionales, igual que en <see cref="CompanyContactInfo"/>:
 /// <c>BankName</c>, <c>AccountNumber</c> y <c>Currency</c> son los tres <c>string</c>, y sueltos en

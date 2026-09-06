@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -281,6 +281,7 @@ internal static class ReportingApiHarness
             new CreateQuotationRequest(
                 clientId,
                 validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(45),
+                null,
                 null,
                 null,
                 null),
