@@ -283,6 +283,7 @@ internal static class ReportingApiHarness
                 validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(45),
                 null,
                 null,
+                null,
                 null),
             TestContext.Current.CancellationToken);
         created.EnsureSuccessStatusCode();
