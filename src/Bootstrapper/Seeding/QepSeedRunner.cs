@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Modules.Catalog.Infrastructure.Seed;
 using Modules.Identity.Infrastructure.Seed;
 using Modules.Tenancy.Infrastructure.Seed;
 
@@ -43,5 +44,7 @@ public static class QepSeedRunner
         // Sin esta membresía el tenant sembrado queda invisible: los permisos se resuelven
         // desde ella, así que sin admin activo cualquier request devolvería 403.
         await services.SeedOwnerMembershipAsync(ownerUserId, cancellationToken);
+
+        await services.SeedCatalogAsync(TenancySeeder.SeedTenantId, cancellationToken);
     }
 }
