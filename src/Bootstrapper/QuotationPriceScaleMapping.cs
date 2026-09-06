@@ -19,7 +19,8 @@ internal static class QuotationPriceScaleMapping
             scale.Discount,
             ToRestriction(scale.Restriction),
             scale.Multiple,
-            scale.PackagingUnit);
+            scale.PackagingUnit,
+            scale.AllowGrouping);
 
     private static QuotationPriceScaleRestriction ToRestriction(PriceScaleRestriction restriction) =>
         restriction switch

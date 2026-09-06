@@ -233,10 +233,11 @@ public sealed class QuotationItemApiTests
         Assert.Empty(fetched.Items);
     }
 
-    // CAT-09: la escala que cubre la cantidad decide que cantidades son pedibles. El multiplo se
-    // cuenta desde FromUnit -- una escala 5-48 de a 3 admite 5, 8, 11..., y 7 no.
+    // CAT-09: Multiple ya no bloquea la linea -- si la cantidad no cae en el multiplo, la escala
+    // no aplica y la linea se guarda sin descuento. El multiplo se cuenta sobre la cantidad
+    // cruda: una escala 5-48 de a 3 admite 3, 6, 9..., y 7 no.
     [Fact]
-    public async Task AddItemWithAQuantityOffTheScaleMultipleIsUnprocessable()
+    public async Task AddItemOffTheScaleMultipleIsAcceptedWithoutDiscount()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -252,13 +253,14 @@ public sealed class QuotationItemApiTests
             new AddQuotationItemRequest(productId, 7m),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<QuotationResponse>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(problem);
-        Assert.Equal("quotation.item.quantity_not_multiple", problem.Code);
+        Assert.NotNull(created);
+        Assert.Equal(0m, Assert.Single(created.Items).DiscountPercentage);
     }
 
+    // El multiplo se cuenta sobre la cantidad cruda, no desde FromUnit: 9 = 3 x 3 cumple.
     [Fact]
     public async Task AddItemOnTheScaleMultipleIsAccepted()
     {
@@ -273,14 +275,16 @@ public sealed class QuotationItemApiTests
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 8m),
+            new AddQuotationItemRequest(productId, 9m),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await response.Content.ReadFromJsonAsync<QuotationResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(created);
-        Assert.Equal(8m, Assert.Single(created.Items).Quantity);
+        var item = Assert.Single(created.Items);
+        Assert.Equal(9m, item.Quantity);
+        Assert.Equal(5m, item.DiscountPercentage);
     }
 
     // La cantidad que no cae en ninguna escala sigue sin descuento y sin bloqueo (decision
@@ -309,10 +313,10 @@ public sealed class QuotationItemApiTests
         Assert.Equal(0m, Assert.Single(created.Items).DiscountPercentage);
     }
 
-    // El endpoint que pidio el developer: la cantidad nueva se valida contra la escala en la que
-    // cae, y la linea guardada no se toca cuando no cumple.
+    // Multiple ya no bloquea la edicion: la cantidad nueva se guarda igual, sin descuento,
+    // cuando cae fuera del multiplo de la escala.
     [Fact]
-    public async Task UpdateItemWithAQuantityOffTheScaleMultipleIsUnprocessableAndKeepsTheLine()
+    public async Task UpdateItemOffTheScaleMultipleIsAcceptedWithoutDiscount()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -324,7 +328,7 @@ public sealed class QuotationItemApiTests
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
         var withItem = await ReadQuotationAsync(await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 8m),
+            new AddQuotationItemRequest(productId, 9m),
             TestContext.Current.CancellationToken));
         var itemId = Assert.Single(withItem.Items).Id;
 
@@ -333,16 +337,13 @@ public sealed class QuotationItemApiTests
             new UpdateQuotationItemRequest(7m),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<QuotationResponse>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(problem);
-        Assert.Equal("quotation.item.quantity_not_multiple", problem.Code);
-
-        // Releido desde la base: el 422 no puede haber dejado la cantidad a medio escribir.
-        var fetched = await ReadQuotationAsync(await client.GetAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken));
-        Assert.Equal(8m, Assert.Single(fetched.Items).Quantity);
+        Assert.NotNull(updated);
+        var item = Assert.Single(updated.Items);
+        Assert.Equal(7m, item.Quantity);
+        Assert.Equal(0m, item.DiscountPercentage);
     }
 
     // La otra restriccion se cuenta sobre la cantidad cruda: empaques enteros de 12.

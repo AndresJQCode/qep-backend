@@ -36,7 +36,8 @@ internal static class ProductMapping
         scale.Multiple,
         scale.PackagingUnit,
         scale.FinalUsd,
-        scale.FinalCop);
+        scale.FinalCop,
+        scale.AllowGrouping);
 
     /// <summary>
     /// Mapea una colección resolviendo las URLs en **una sola** consulta al puerto.

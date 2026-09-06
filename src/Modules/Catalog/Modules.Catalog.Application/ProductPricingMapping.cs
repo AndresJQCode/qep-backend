@@ -25,7 +25,8 @@ internal static class ProductPricingMapping
         request.Multiple,
         request.PackagingUnit,
         request.FinalUsd,
-        request.FinalCop);
+        request.FinalCop,
+        request.AllowGrouping ?? false);
 
     // Sin mapa por campo a propósito: es el mismo criterio que ya usa el dominio para sus
     // propios códigos — un valor que no es ninguno de los dos válidos no tiene un campo al que

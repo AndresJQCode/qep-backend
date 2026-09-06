@@ -11,90 +11,88 @@ public sealed class QuotationScaleRestrictionRuleTests
     private static QuotationPriceScaleRef PackagesOf(int packagingUnit) =>
         new(1, 999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, packagingUnit);
 
-    // El multiplo se cuenta desde FromUnit, no desde cero.
+    // El multiplo se cuenta sobre la cantidad cruda, no desde FromUnit. Revierte el criterio de
+    // 5a76b07: en una escala 5-48 de a 3, 8 unidades ya no cumple (8 - 5 = 3 daba valido).
     [Theory]
-    [InlineData(5)]
-    [InlineData(8)]
-    [InlineData(11)]
-    [InlineData(47)]
-    public void MultipleAcceptsQuantitiesOnTheStep(decimal quantity)
-    {
-        QuotationScaleRestrictionRule.EnsureSatisfied(MultipleOf(3), quantity);
-    }
-
-    [Theory]
+    [InlineData(3)]
     [InlineData(6)]
-    [InlineData(7)]
     [InlineData(9)]
-    [InlineData(7.5)]
-    public void MultipleRejectsQuantitiesOffTheStep(decimal quantity)
+    [InlineData(48)]
+    public void MultipleAcceptsRawMultiples(decimal quantity)
     {
-        var exception = Assert.Throws<QuotationsDomainException>(
-            () => QuotationScaleRestrictionRule.EnsureSatisfied(MultipleOf(3), quantity));
+        var result = QuotationScaleRestrictionRule.Evaluate(MultipleOf(3), quantity);
 
-        Assert.Equal("quotation.item.quantity_not_multiple", exception.Code);
+        Assert.True(result.IsSatisfied);
+        Assert.Null(result.Code);
+        Assert.Equal(0m, result.Shortfall);
     }
 
-    // La unidad de empaque se cuenta sobre la cantidad cruda, no sobre el excedente.
+    [Theory]
+    [InlineData(5, 1)]
+    [InlineData(7, 2)]
+    [InlineData(8, 1)]
+    public void MultipleReportsHowManyUnitsAreMissing(decimal quantity, decimal shortfall)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(MultipleOf(3), quantity);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal("quotation.item.quantity_not_multiple", result.Code);
+        Assert.Equal(quantity, result.EvaluatedQuantity);
+        Assert.Equal(shortfall, result.Shortfall);
+    }
+
+    // Evaluate nunca lanza: incumplir el multiplo deja la linea sin descuento, no la bloquea.
+    [Fact]
+    public void MultipleNeverThrows()
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(MultipleOf(3), 7m);
+
+        Assert.False(result.IsSatisfied);
+    }
+
+    // Un multiplo que desmiente la invariante de Catalog no puede bloquear una linea con un
+    // dato que nadie corrige desde la cotizacion, ni dividir por cero.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    public void MultipleIgnoresANonPositiveStep(int multiple)
+    {
+        Assert.True(QuotationScaleRestrictionRule.Evaluate(MultipleOf(multiple), 7m).IsSatisfied);
+    }
+
+    // La unidad de empaque se cuenta sobre la cantidad cruda, igual que antes: sin cambios.
     [Theory]
     [InlineData(12)]
     [InlineData(24)]
     [InlineData(120)]
     public void PackagingUnitAcceptsWholePackages(decimal quantity)
     {
-        QuotationScaleRestrictionRule.EnsureSatisfied(PackagesOf(12), quantity);
+        Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(12), quantity).IsSatisfied);
+        QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(12), quantity);
     }
 
+    // Y sigue siendo un 422: su comportamiento no lo toca esta funcionalidad.
     [Theory]
-    [InlineData(6)]
-    [InlineData(20)]
-    [InlineData(25)]
-    public void PackagingUnitRejectsPartialPackages(decimal quantity)
+    [InlineData(11)]
+    [InlineData(13)]
+    public void PackagingUnitStillThrows(decimal quantity)
     {
         var exception = Assert.Throws<QuotationsDomainException>(
-            () => QuotationScaleRestrictionRule.EnsureSatisfied(PackagesOf(12), quantity));
+            () => QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(12), quantity));
 
         Assert.Equal("quotation.item.quantity_not_packaging_unit", exception.Code);
     }
 
-    // El mensaje lo lee la pantalla para decir "de a 3 desde 5": sin los numeros no sirve.
-    [Fact]
-    public void MultipleMessageCarriesTheStepAndItsOrigin()
-    {
-        var exception = Assert.Throws<QuotationsDomainException>(
-            () => QuotationScaleRestrictionRule.EnsureSatisfied(MultipleOf(3), 7m));
-
-        Assert.Contains("3", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("5", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void PackagingUnitMessageCarriesThePackageSize()
-    {
-        var exception = Assert.Throws<QuotationsDomainException>(
-            () => QuotationScaleRestrictionRule.EnsureSatisfied(PackagesOf(12), 20m));
-
-        Assert.Contains("12", exception.Message, StringComparison.Ordinal);
-    }
-
-    // Catalog garantiza que el campo de la restriccion viene poblado y es > 0. Si una fila lo
-    // desmiente, la linea no se bloquea con un dato que nadie puede corregir desde la cotizacion
-    // -- y sobre todo no se divide por cero.
+    // Catalog exige un empaque > 0, pero si una fila lo desmiente el guard tiene que sostener el
+    // caso desde EnsurePackagingUnit, que es el unico camino que la produccion llama: el % de
+    // decimal por cero lanza, y una linea no se bloquea con un dato que nadie corrige desde la
+    // cotizacion.
     [Theory]
-    [InlineData(null)]
     [InlineData(0)]
-    public void MultipleWithoutAUsableStepDoesNotBlock(int? multiple)
+    [InlineData(-12)]
+    public void PackagingUnitWithoutAUsableSizeDoesNotBlock(int packagingUnit)
     {
-        QuotationScaleRestrictionRule.EnsureSatisfied(
-            new(5, 48, 5m, QuotationPriceScaleRestriction.Multiple, multiple, null), 7m);
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData(0)]
-    public void PackagingUnitWithoutAUsableSizeDoesNotBlock(int? packagingUnit)
-    {
-        QuotationScaleRestrictionRule.EnsureSatisfied(
-            new(1, 999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, packagingUnit), 7m);
+        QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(packagingUnit), 7m);
+        Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(packagingUnit), 7m).IsSatisfied);
     }
 }
