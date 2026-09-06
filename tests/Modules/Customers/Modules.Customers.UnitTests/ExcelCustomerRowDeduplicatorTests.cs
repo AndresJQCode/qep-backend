@@ -1,4 +1,4 @@
-using Modules.Customers.Application;
+﻿using Modules.Customers.Application;
 
 namespace Modules.Customers.UnitTests;
 
@@ -15,6 +15,7 @@ public sealed class ExcelCustomerRowDeduplicatorTests
             rowNumber,
             null,
             "Cliente " + rowNumber,
+            null,
             identificationType,
             identificationNumber,
             null,
@@ -23,6 +24,7 @@ public sealed class ExcelCustomerRowDeduplicatorTests
             "Antioquia",
             "Medellin",
             "Mayorista",
+            "No",
             "No");
 
     [Fact]

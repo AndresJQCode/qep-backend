@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
@@ -9,6 +9,7 @@ public sealed record UpdateCustomerCommand(
     Guid TenantId,
     Guid CustomerId,
     string Name,
+    string? BusinessName,
     string IdentificationType,
     string IdentificationNumber,
     string? Phone,
@@ -89,6 +90,7 @@ public sealed class UpdateCustomerHandler(
 
         customer.Update(
             command.Name,
+            command.BusinessName,
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
             new CustomerContactInfo

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using ClosedXML.Excel;
@@ -635,6 +635,7 @@ public sealed class CustomerStatusAndImportApiTests
         var rowData = new CustomerImportRowData(
             null,
             "Cliente A Corregir",
+            null,
             "NIT",
             "900.999.999-9",
             null,
@@ -643,6 +644,7 @@ public sealed class CustomerStatusAndImportApiTests
             "Antioquia",
             "Ciudad Que No Existe",
             "Clasificacion Que No Existe",
+            null,
             null);
 
         var response = await client.PostAsJsonAsync(
@@ -688,7 +690,8 @@ public sealed class CustomerStatusAndImportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
         var rowData = new CustomerImportRowData(
-            null, "Cliente", "NIT", "900.000.000-0", null, null, null, "Antioquia", "Medellin", "X", null);
+            null, "Cliente", null, "NIT", "900.000.000-0", null, null, null, "Antioquia",
+            "Medellin", "X", null, null);
 
         var response = await client.PostAsJsonAsync(
             $"{CustomersUrl()}/import/failed-rows",
