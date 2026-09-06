@@ -62,16 +62,33 @@ internal static class QuotationScaleGroupPricing
             return new QuotationLinePricing(line.ItemId, 0m, null, null, false);
         }
 
-        var grouped = IsGroupable(scale);
-        var quantity = grouped ? groupTotals[GroupKey(scale)] : line.Quantity;
-        var restriction = QuotationScaleRestrictionRule.Evaluate(scale, quantity);
+        // La agrupación sólo rescata a las que no cumplen solas: una línea que ya cumple
+        // conserva su escala aunque el total del grupo falle. No le cambia el veredicto a
+        // ninguna otra —con múltiplo puro, una línea que cumple es congruente con 0 módulo el
+        // paso, así que entra o sale de la suma sin mover el resto—, y evita que el
+        // incumplimiento de una línea se cobre sobre la de al lado.
+        var individual = QuotationScaleRestrictionRule.Evaluate(scale, line.Quantity);
+        if (individual.IsSatisfied || !IsGroupable(scale))
+        {
+            return new QuotationLinePricing(
+                line.ItemId,
+                individual.IsSatisfied ? scale.Discount : 0m,
+                scale,
+                individual,
+                false);
+        }
+
+        // El total sí lleva las cantidades de todas las líneas del grupo, incluidas las que
+        // cumplen: es el número que la pantalla muestra para explicar el faltante, y el
+        // requisito lo cuenta así (6 + 10 = 16).
+        var grouped = QuotationScaleRestrictionRule.Evaluate(scale, groupTotals[GroupKey(scale)]);
 
         return new QuotationLinePricing(
             line.ItemId,
-            restriction.IsSatisfied ? scale.Discount : 0m,
+            grouped.IsSatisfied ? scale.Discount : 0m,
             scale,
-            restriction,
-            grouped);
+            grouped,
+            true);
     }
 
     // El paso > 0 es invariante de Catalog; exigirlo acá evita que una fila que la desmienta
