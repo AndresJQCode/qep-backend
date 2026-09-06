@@ -1,4 +1,4 @@
-using Modules.Quotations.Domain;
+﻿using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -24,12 +24,15 @@ public sealed class SaleTests
             Now);
 
     [Fact]
-    public void CreateStartsApprovedWithItsProofs()
+    public void CreateStartsPendingWithItsProofs()
     {
         var fileId = Guid.CreateVersion7();
         var sale = NewSale(proofs: [new SalePaymentProofInput(fileId, 50_000m)]);
 
-        Assert.Equal(SaleStatus.Approved, sale.Status);
+        // Nace pendiente: quien la registra no es quien la aprueba.
+        Assert.Equal(SaleStatus.Pending, sale.Status);
+        Assert.Null(sale.ApprovedAt);
+        Assert.Null(sale.ApprovedBy);
         Assert.Equal(QuotationId, sale.QuotationId);
         Assert.Equal(ConvertedBy, sale.ConvertedBy);
         Assert.Equal(Now, sale.ConvertedAt);

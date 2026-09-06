@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -45,7 +45,7 @@ internal sealed class QuotationExpirationProcessor(
                 quotation.Id,
                 QuotationHistoryEventType.Expired,
                 memberId: null,
-                details: null,
+                QuotationChangeSummary.Expired(),
                 now));
             auditPublisher.Publish(
                 quotation.TenantId,

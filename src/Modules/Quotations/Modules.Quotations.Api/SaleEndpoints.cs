@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -26,6 +26,15 @@ public static class SaleEndpoints
         // US-13 a US-16: el asistente de conversión completo en un solo llamado -- estado de
         // pago, notas y comprobantes (ya subidos a Storage por fuera de este request, US-14) --
         // que aprueba la cotización y crea la venta en la misma transacción.
+        // El visto bueno de quien revisa. Ruta propia y no un campo del POST: es otra persona,
+        // en otro momento -- ver ApproveSaleHandler.
+        group.MapPost("/approve", ApproveSaleAsync)
+            .RequireAuthorization(/* SalesPermissions.SaleManage */)
+            .Produces<SaleResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/", ConvertQuotationToSaleAsync)
             .RequireAuthorization(/* SalesPermissions.SaleManage */)
             .Accepts<ConvertQuotationToSaleRequest>("application/json")
@@ -66,6 +75,19 @@ public static class SaleEndpoints
             ToResponse(sale));
     }
 
+    private static async Task<IResult> ApproveSaleAsync(
+        Guid tenantId,
+        Guid quotationId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var sale = await dispatcher.SendAsync(
+            new ApproveSaleCommand(tenantId, quotationId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(sale));
+    }
+
     private static SaleResponse ToResponse(SaleDto sale) => new(
         sale.Id,
         sale.SaleNumber,
@@ -75,6 +97,8 @@ public static class SaleEndpoints
         sale.Notes,
         sale.ConvertedAt,
         sale.ConvertedBy,
+        sale.ApprovedAt,
+        sale.ApprovedBy,
         sale.RitualCollectionSyncId,
         sale.CreatedAt,
         sale.UpdatedAt,

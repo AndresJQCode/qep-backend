@@ -1,4 +1,4 @@
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
 using Modules.Customers.Application;
 
 namespace Modules.Customers.Infrastructure.Excel;
@@ -33,13 +33,20 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
     // de la columna sea corto (ej. "Ciudad").
     private const double MinimumColumnWidth = 14;
 
-    private const int IdentificationTypeColumn = 3;
+    // Se derivan de CustomerImportColumns.Ordered y no se escriben a mano: agregar una columna
+    // al medio movia estos cuatro numeros, y nada avisaba si alguno quedaba atras.
+    private static int ColumnOf(string name) =>
+        CustomerImportColumns.Ordered.ToList().IndexOf(name) + 1;
 
-    private const int DepartmentColumn = 8;
+    private static readonly int IdentificationTypeColumn =
+        ColumnOf(CustomerImportColumns.IdentificationType);
 
-    private const int CityColumn = 9;
+    private static readonly int DepartmentColumn = ColumnOf(CustomerImportColumns.Department);
 
-    private const int ClassificationColumn = 10;
+    private static readonly int CityColumn = ColumnOf(CustomerImportColumns.City);
+
+    private static readonly int ClassificationColumn =
+        ColumnOf(CustomerImportColumns.Classification);
 
     // Piso de filas con desplegable ademas de las que ya trae la fila en BuildWithRows: nadie
     // llena a mano un archivo de miles de filas, y una validacion sobre toda la columna (sin
@@ -106,21 +113,26 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
         return stream.ToArray();
     }
 
-    // El mismo orden que `CustomerImportColumns.Ordered` — una fila desalineada de su cabecera
-    // sería peor que no tener datos precargados.
+    // Cada celda contra la columna que le corresponde por nombre, no por un numero escrito a
+    // mano: una fila desalineada de su cabecera seria peor que no tener datos precargados.
     private static void WriteRow(IXLWorksheet sheet, int excelRow, CustomerImportRowData row)
     {
-        sheet.Cell(excelRow, 1).Value = row.Cuc ?? string.Empty;
-        sheet.Cell(excelRow, 2).Value = row.Name;
-        sheet.Cell(excelRow, 3).Value = row.IdentificationType;
-        sheet.Cell(excelRow, 4).Value = row.IdentificationNumber;
-        sheet.Cell(excelRow, 5).Value = row.Phone ?? string.Empty;
-        sheet.Cell(excelRow, 6).Value = row.Email ?? string.Empty;
-        sheet.Cell(excelRow, 7).Value = row.Address ?? string.Empty;
-        sheet.Cell(excelRow, 8).Value = row.Department;
-        sheet.Cell(excelRow, 9).Value = row.City;
-        sheet.Cell(excelRow, 10).Value = row.Classification;
-        sheet.Cell(excelRow, 11).Value = row.WithRetention ?? string.Empty;
+        void Write(string column, string? value) =>
+            sheet.Cell(excelRow, ColumnOf(column)).Value = value ?? string.Empty;
+
+        Write(CustomerImportColumns.Cuc, row.Cuc);
+        Write(CustomerImportColumns.Name, row.Name);
+        Write(CustomerImportColumns.BusinessName, row.BusinessName);
+        Write(CustomerImportColumns.IdentificationType, row.IdentificationType);
+        Write(CustomerImportColumns.IdentificationNumber, row.IdentificationNumber);
+        Write(CustomerImportColumns.Phone, row.Phone);
+        Write(CustomerImportColumns.Email, row.Email);
+        Write(CustomerImportColumns.Address, row.Address);
+        Write(CustomerImportColumns.Department, row.Department);
+        Write(CustomerImportColumns.City, row.City);
+        Write(CustomerImportColumns.Classification, row.Classification);
+        Write(CustomerImportColumns.WithRetention, row.WithRetention);
+        Write(CustomerImportColumns.VatSurplus, row.VatSurplus);
     }
 
     private static void BuildReferenceSheet(

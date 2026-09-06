@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Application;
+﻿namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Puerto hacia el módulo Customers (US-1/US-18: no se cotiza a un cliente sin CUC o inactivo).
@@ -64,7 +64,11 @@ public sealed record QuotationCustomerRef(
     Guid? DepartmentId = null,
     string? DepartmentName = null,
     IReadOnlyCollection<QuotationCustomerAddressRef>? Addresses = null,
-    DateTimeOffset? UpdatedAt = null);
+    DateTimeOffset? UpdatedAt = null,
+    /// <summary>La razon social, cuando el cliente es una empresa. La cotizacion puede facturar
+    /// a este nombre en vez de al de contacto — ver <c>Quotation.BillingUsesBusinessName</c>.
+    /// </summary>
+    string? BusinessName = null);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
 /// cotizacion.</summary>

@@ -41,6 +41,7 @@ public sealed class Quotation
         string? paymentMethod,
         string? notes,
         QuotationParties parties,
+        QuotationBillingAccount? billingAccount,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -57,6 +58,11 @@ public sealed class Quotation
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);
         Assign(parties);
+        BillingUsesBusinessName = parties.BillingUsesBusinessName;
+        BillingAccount = billingAccount?.Normalized();
+        Currency = BillingAccount is null
+            ? QuotationCurrencies.Default
+            : QuotationCurrencies.FromCode(BillingAccount.Currency);
         CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
         CreatedBy = createdBy;
@@ -168,6 +174,50 @@ public sealed class Quotation
     /// <see cref="QuotationParty"/>.</summary>
     public IReadOnlyCollection<QuotationParty> Parties => _parties;
 
+    /// <summary>Con qué empresa y a qué cuenta se cobra esta cotización, congelado al guardarla
+    /// (<see cref="QuotationBillingAccount"/>). Null mientras nadie la eligió.</summary>
+    public QuotationBillingAccount? BillingAccount { get; private set; }
+
+    /// <summary>
+    /// La moneda de **toda** la cotización: precios unitarios, descuentos, impuestos y totales.
+    ///
+    /// La fija la cuenta de cobro (<see cref="BillingAccount"/>): si se factura a una cuenta en
+    /// dólares, la cotización entera se expresa en dólares, con el precio en dólares de cada
+    /// producto — no con una conversión, que este módulo no sabe hacer. Sin cuenta elegida es
+    /// <see cref="QuotationCurrencies.Default"/>.
+    ///
+    /// Quitar la cuenta **no** devuelve la cotización a pesos: los precios que ya se cotizaron
+    /// quedan como están, y revalorizarlos por un borrado sería un cambio de totales que nadie
+    /// pidió. Vuelve a cambiar recién cuando se elige otra cuenta.
+    /// </summary>
+    public QuotationCurrency Currency { get; private set; }
+
+    /// <summary>
+    /// Cuando la facturación sigue los datos del cliente, si el nombre que va en el documento es
+    /// su razón social en vez del de contacto (CLI-RS-01).
+    ///
+    /// Se resuelve **al leer** y no se congela: el switch prendido significa "seguí al cliente",
+    /// así que si su razón social cambia, la cotización editable la refleja — mismo criterio que
+    /// el resto de los datos que la parte ausente toma del cliente. Irrelevante cuando
+    /// <see cref="Billing"/> tiene fila propia: ahí el nombre lo escribió alguien.
+    /// </summary>
+    public bool BillingUsesBusinessName { get; private set; }
+
+    /// <summary>
+    /// Si la cotización se editó desde la última vez que se envió. <see cref="Send"/> deja
+    /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> en el mismo instante, y toda edición mueve
+    /// el segundo — así que uno mayor que el otro es exactamente "cambió después de enviarse".
+    /// </summary>
+    public bool HasChangesSinceSent => SentAt is { } sentAt && UpdatedAt > sentAt;
+
+    /// <summary>
+    /// Si el botón de enviar tiene sentido ahora. La regla vive acá y no en la pantalla para que
+    /// las dos no puedan discrepar: un borrador siempre, y una enviada sólo si volvió a cambiar.
+    /// </summary>
+    public bool CanBeSent =>
+        Status == QuotationStatus.Draft
+        || (Status == QuotationStatus.Sent && HasChangesSinceSent);
+
     public QuotationParty? Billing => FindParty(QuotationPartyRole.Billing);
 
     public QuotationParty? Shipping => FindParty(QuotationPartyRole.Shipping);
@@ -182,6 +232,7 @@ public sealed class Quotation
         string? paymentMethod,
         string? notes,
         QuotationParties parties,
+        QuotationBillingAccount? billingAccount,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -196,6 +247,7 @@ public sealed class Quotation
             paymentMethod,
             notes,
             parties,
+            billingAccount,
             customerWithRetention,
             customerVatSurplus,
             createdBy,
@@ -270,6 +322,8 @@ public sealed class Quotation
         string? paymentMethod,
         string? notes,
         QuotationParties parties,
+        QuotationBillingAccount? billingAccount,
+        IReadOnlyDictionary<Guid, QuotationItemPricing>? repricing,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
@@ -279,6 +333,81 @@ public sealed class Quotation
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);
         Assign(parties);
+        BillingUsesBusinessName = parties.BillingUsesBusinessName;
+        ApplyBillingAccount(billingAccount, repricing, occurredAt);
+        Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Cuál sería la moneda de esta cotización con esa cuenta de cobro. La aplicación la consulta
+    /// **antes** de guardar, para saber si tiene que ir a buscar los precios de las líneas en otra
+    /// moneda; el agregado la vuelve a calcular al aplicar, así que no depende de que el llamador
+    /// haya preguntado.
+    /// </summary>
+    public QuotationCurrency CurrencyFor(QuotationBillingAccount? billingAccount) =>
+        billingAccount is null
+            ? Currency
+            : QuotationCurrencies.FromCode(billingAccount.Currency);
+
+    // Cambiar de cuenta puede cambiar la moneda, y con ella el precio de cada línea: los importes
+    // guardados son el precio del producto en la moneda vieja, no una cifra convertible. Por eso
+    // el repricing es obligatorio cuando hay líneas —lo trae la aplicación, resuelto contra el
+    // catálogo— y no algo que este método pueda improvisar.
+    private void ApplyBillingAccount(
+        QuotationBillingAccount? billingAccount,
+        IReadOnlyDictionary<Guid, QuotationItemPricing>? repricing,
+        DateTimeOffset occurredAt)
+    {
+        BillingAccount = billingAccount?.Normalized();
+        var currency = CurrencyFor(BillingAccount);
+        if (currency == Currency)
+        {
+            return;
+        }
+
+        foreach (var item in _items)
+        {
+            if (repricing is null || !repricing.TryGetValue(item.ProductId, out var pricing))
+            {
+                throw new QuotationsDomainException(
+                    "quotation.quotation.repricing_incomplete",
+                    "Every line needs a price in the new currency before the quotation can change currency.");
+            }
+
+            item.Reprice(pricing, occurredAt);
+        }
+
+        Currency = currency;
+    }
+
+    /// <summary>
+    /// Cambia el cliente de la cotización mientras sigue editable (Draft o Sent).
+    ///
+    /// US-2 decía que el cliente no se cambiaba, y era razonable: la cotización copió datos suyos
+    /// en varios lugares. Se habilita a pedido, y lo que arrastra está acá y no repartido en el
+    /// caso de uso — las dos partes vuelven a "los datos del cliente" (las que había copiaron al
+    /// cliente viejo: dejarlas sería facturarle a uno y entregarle a otro sin que nadie lo pidiera)
+    /// y el snapshot de retención/excedente de IVA pasa a ser el del cliente nuevo, así que los
+    /// totales cambian.
+    ///
+    /// Lo que **no** cambia: el número de cotización y sus líneas de producto. El número ya se
+    /// emitió una vez y las líneas no dependen del cliente.
+    /// </summary>
+    public void ChangeClient(
+        Guid clientId,
+        bool customerWithRetention,
+        bool customerVatSurplus,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        EnsureEditable();
+
+        ClientId = EnsureValidClientId(clientId);
+        Assign(QuotationParties.Empty);
+        // El cliente nuevo puede no ser una empresa: la eleccion de nombre vuelve al default.
+        BillingUsesBusinessName = false;
+        CustomerWithRetention = customerWithRetention;
+        CustomerVatSurplus = customerVatSurplus;
         Touch(updatedBy, occurredAt);
     }
 
@@ -325,11 +454,20 @@ public sealed class Quotation
     /// </summary>
     public void EnsureSendable()
     {
-        if (Status != QuotationStatus.Draft)
+        // Una Sent que no cambió desde que se envió no se vuelve a enviar: no hay nada nuevo que
+        // mandar, y marcarla otra vez sólo ensucia el historial con un envío que no ocurrió.
+        if (Status == QuotationStatus.Sent && !HasChangesSinceSent)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.already_sent",
+                "The quotation has not changed since it was sent.");
+        }
+
+        if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.not_draft",
-                "Only a draft quotation can be marked as sent.");
+                "Only a draft or sent quotation can be marked as sent.");
         }
 
         if (ValidUntil is null)
@@ -354,7 +492,52 @@ public sealed class Quotation
                 "quotation.quotation.not_sent",
                 "Only a sent quotation can be converted to a sale.");
         }
+
+        // Lo que una venta necesita para existir y que la cotizacion puede no tener todavia. Se
+        // comprueba aca y no en la pantalla porque es la condicion del negocio, no del formulario:
+        // la venta se crea desde este agregado y estos cuatro datos son los que hereda.
+        if (_items.Count == 0)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.items_required",
+                "A quotation without products cannot be converted to a sale.");
+        }
+
+        if (ValidUntil is null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.valid_until_required",
+                "A quotation must have a validity date before it can be converted to a sale.");
+        }
+
+        if (string.IsNullOrWhiteSpace(PaymentMethod))
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.payment_method_required",
+                "A quotation must have a payment method before it can be converted to a sale.");
+        }
+
+        // Sin cuenta de cobro la venta no sabe a donde se paga, que es justo lo que una venta
+        // tiene que decir.
+        if (BillingAccount is null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.account_required",
+                "A quotation must have a billing account before it can be converted to a sale.");
+        }
     }
+
+    /// <summary>
+    /// Si convertir en venta es posible ahora. Misma regla que
+    /// <see cref="EnsureConvertibleToSale"/>, en forma de pregunta: la pantalla la usa para
+    /// habilitar el boton en vez de reimplementar las condiciones.
+    /// </summary>
+    public bool CanBeConvertedToSale =>
+        Status == QuotationStatus.Sent
+        && _items.Count > 0
+        && ValidUntil is not null
+        && !string.IsNullOrWhiteSpace(PaymentMethod)
+        && BillingAccount is not null;
 
     /// <summary>
     /// Vuelve a tomar del cliente maestro <see cref="CustomerWithRetention"/> y

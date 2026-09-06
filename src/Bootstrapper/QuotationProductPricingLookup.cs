@@ -1,4 +1,4 @@
-using Modules.Catalog.Application;
+﻿using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Quotations.Application;
 
@@ -9,8 +9,8 @@ namespace Bootstrapper;
 /// criterio de aislamiento que <see cref="QuotationCustomerLookup"/>.
 ///
 /// No decide nada: sólo traduce el producto y sus escalas de precio al vocabulario de
-/// <c>quotations</c>, en COP — el módulo de cotizaciones trabaja en una sola moneda (US-5). La
-/// resolución de qué escala aplica para una cantidad es de
+/// <c>quotations</c>, con **los dos** precios base que el catálogo guarda. Cuál de los dos aplica
+/// —y qué escala, para una cantidad— es de
 /// <c>QuotationDiscountResolver</c>/<c>QuotationProductPricingResolver</c>, en Application.
 /// </summary>
 internal sealed class QuotationProductPricingLookup(
@@ -42,7 +42,57 @@ internal sealed class QuotationProductPricingLookup(
         }
 
         return new QuotationProductPricingRef(
-            product.Id.Value, product.TenantId, product.IsActive, product.PriceBaseCop, scales,
-            taxPercentage);
+            product.Id.Value, product.TenantId, product.Name, product.IsActive,
+            product.PriceBaseCop, product.PriceBaseUsd, scales, taxPercentage);
+    }
+
+    // Una consulta para todos los productos y otra para todas las tasas: revalorizar una
+    // cotizacion de diez lineas cuesta dos lecturas, no veinte.
+    public async Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return new Dictionary<Guid, QuotationProductPricingRef>();
+        }
+
+        var products = await repository.ListByIdsAsync(
+            tenantId,
+            productIds.Distinct().Select(id => new ProductId(id)).ToArray(),
+            cancellationToken);
+
+        var taxRateIds = products
+            .Select(product => product.TaxRateId)
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToArray();
+        var taxPercentages = new Dictionary<TaxRateId, int>();
+        foreach (var taxRateId in taxRateIds)
+        {
+            var taxRate = await taxRateRepository.FindAsync(tenantId, taxRateId, cancellationToken);
+            if (taxRate is not null)
+            {
+                taxPercentages[taxRateId] = taxRate.Percentage;
+            }
+        }
+
+        return products.ToDictionary(
+            product => product.Id.Value,
+            product => new QuotationProductPricingRef(
+                product.Id.Value,
+                product.TenantId,
+                product.Name,
+                product.IsActive,
+                product.PriceBaseCop,
+                product.PriceBaseUsd,
+                product.PriceScales
+                    .Select(scale => scale.ToQuotationRef())
+                    .ToArray(),
+                product.TaxRateId is { } id && taxPercentages.TryGetValue(id, out var percentage)
+                    ? percentage
+                    : null));
     }
 }

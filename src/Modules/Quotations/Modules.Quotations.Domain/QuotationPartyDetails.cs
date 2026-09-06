@@ -1,4 +1,4 @@
-namespace Modules.Quotations.Domain;
+﻿namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Los datos de una parte tal como entran al agregado (<see cref="Quotation.Create"/> /
@@ -85,7 +85,15 @@ public sealed record QuotationPartyDetails
 /// </summary>
 public sealed record QuotationParties(
     QuotationPartyDetails? Billing,
-    QuotationPartyDetails? Shipping)
+    QuotationPartyDetails? Shipping,
+    /// <summary>
+    /// Con los datos del cliente (sin fila de facturación), a cuál de sus dos nombres se le
+    /// factura: el de contacto o la razón social (CLI-RS-01). Un cliente mayorista es una empresa
+    /// y factura a su razón social, pero el contacto sigue siendo la persona con la que se habla.
+    ///
+    /// No aplica cuando la facturación tiene datos propios: ahí el nombre lo escribió alguien.
+    /// </summary>
+    bool BillingUsesBusinessName = false)
 {
     /// <summary>Las dos partes tomadas del cliente: ninguna fila. El estado por defecto de una
     /// cotización nueva.</summary>

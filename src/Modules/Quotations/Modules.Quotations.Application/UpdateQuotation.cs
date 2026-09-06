@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -11,7 +11,8 @@ public sealed record UpdateQuotationCommand(
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
-    QuotationPartiesRequest? Parties) : ICommand<QuotationDto>;
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount) : ICommand<QuotationDto>;
 
 public sealed class UpdateQuotationValidator : AbstractValidator<UpdateQuotationCommand>
 {
@@ -28,6 +29,8 @@ public sealed class UpdateQuotationHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
+    IQuotationCompanyLookup companyLookup,
+    IQuotationProductPricingLookup pricingLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -55,25 +58,57 @@ public sealed class UpdateQuotationHandler(
             quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
         }
 
+        var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
+            companyLookup, command.TenantId, command.BillingAccount, cancellationToken);
+
+        // Cambiar a una cuenta en otra moneda cambia la moneda de la cotización entera, y con
+        // ella el precio de cada línea: lo guardado es el precio del producto en la moneda vieja,
+        // no una cifra convertible. Se piden todos los precios juntos y **antes** de tocar el
+        // agregado, así una línea sin precio en la moneda nueva corta el guardado completo en vez
+        // de dejar la cotización con dos monedas adentro.
+        var currency = quotation.CurrencyFor(billingAccount);
+        var repricing = currency == quotation.Currency
+            ? null
+            : await QuotationProductPricingResolver.ResolveManyAsync(
+                pricingLookup,
+                command.TenantId,
+                quotation.Items
+                    .Select(item => (item.ProductId, item.Quantity))
+                    .ToArray(),
+                currency,
+                cancellationToken);
+
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
         var now = clock.UtcNow;
+        // La foto de antes, para poder decir en el historial **qué** se editó: el PATCH manda el
+        // encabezado entero en cada guardado, así que sin comparar no hay forma de saberlo.
+        var before = QuotationHeaderSnapshot.Of(quotation);
         quotation.UpdateDetails(
             command.ValidUntil,
             command.PaymentMethod,
             command.Notes,
             command.Parties.ToDomain(),
+            billingAccount,
+            repricing,
             updatedBy,
             now);
 
-        repository.AddHistoryEntry(QuotationHistoryEntry.Create(
-            QuotationHistoryEntryId.New(),
-            quotation.Id,
-            QuotationHistoryEventType.Edited,
-            updatedBy,
-            details: null,
-            now));
+        // Guardar sin cambiar nada no deja fila: apretar Guardar dos veces no es un evento del
+        // historial, y una lista de "editó" vacíos esconde las ediciones que sí importan.
+        var summary = QuotationChangeSummary.HeaderChanged(
+            before, QuotationHeaderSnapshot.Of(quotation));
+        if (summary is not null)
+        {
+            repository.AddHistoryEntry(QuotationHistoryEntry.Create(
+                QuotationHistoryEntryId.New(),
+                quotation.Id,
+                QuotationHistoryEventType.Edited,
+                updatedBy,
+                summary,
+                now));
+        }
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

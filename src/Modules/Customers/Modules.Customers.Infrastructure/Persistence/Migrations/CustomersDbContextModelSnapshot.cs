@@ -86,6 +86,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("BusinessName")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("business_name");
+
                     b.Property<Guid>("ClassificationId")
                         .HasColumnType("uuid")
                         .HasColumnName("classification_id");

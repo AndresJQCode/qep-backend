@@ -32,6 +32,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("advisor_id");
 
+                    b.Property<bool>("BillingUsesBusinessName")
+                        .HasColumnType("boolean")
+                        .HasColumnName("billing_uses_business_name");
+
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
@@ -43,6 +47,12 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("CreatedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
 
                     b.Property<bool>("CustomerVatSurplus")
                         .HasColumnType("boolean")
@@ -329,6 +339,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("approved_at");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approved_by");
+
                     b.Property<DateTimeOffset>("ConvertedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("converted_at");
@@ -521,6 +539,46 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "Year");
 
                     b.ToTable("sale_number_counters", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.Quotation", b =>
+                {
+                    b.OwnsOne("Modules.Quotations.Domain.QuotationBillingAccount", "BillingAccount", b1 =>
+                        {
+                            b1.Property<Guid>("QuotationId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("AccountNumber")
+                                .IsRequired()
+                                .HasMaxLength(32)
+                                .HasColumnType("character varying(32)")
+                                .HasColumnName("billing_account_number");
+
+                            b1.Property<string>("BankName")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid>("CompanyId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_id");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("billing_account_currency");
+
+                            b1.HasKey("QuotationId");
+
+                            b1.ToTable("quotations", "quotations");
+
+                            b1.WithOwner()
+                                .HasForeignKey("QuotationId");
+                        });
+
+                    b.Navigation("BillingAccount");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.QuotationHistoryEntry", b =>

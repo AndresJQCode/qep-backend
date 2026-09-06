@@ -1,4 +1,4 @@
-using Modules.Customers.Application;
+﻿using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Quotations.Application;
 
@@ -64,7 +64,8 @@ internal sealed class QuotationCustomerLookup(
                 .ThenBy(address => address.Name)
                 .Select(address => ToAddressRef(address, citiesById))
                 .ToArray(),
-            customer.UpdatedAt);
+            customer.UpdatedAt,
+            customer.BusinessName);
     }
 
     private static QuotationCustomerAddressRef ToAddressRef(

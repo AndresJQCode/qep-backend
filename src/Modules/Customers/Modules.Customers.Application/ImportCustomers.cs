@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
@@ -138,6 +138,11 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
             .Must(BeSiOrNoOrEmpty)
                 .WithErrorCode("customers.import.row.with_retention_invalid")
                 .WithMessage("The 'Con Retencion' column must be 'Si', 'No' or empty.");
+
+        RuleFor(row => row.VatSurplus)
+            .Must(BeSiOrNoOrEmpty)
+                .WithErrorCode("customers.import.row.vat_surplus_invalid")
+                .WithMessage("The 'Excedente Iva' column must be 'Si', 'No' or empty.");
     }
 
     private static bool IsSupportedIdentificationType(string? value)
@@ -343,6 +348,9 @@ public sealed class ImportCustomersHandler(
                 row.RowNumber,
                 string.IsNullOrWhiteSpace(row.Cuc) ? null : row.Cuc.Trim(),
                 row.Name!.Trim(),
+                // Vacia es "no es una empresa", no una cadena vacia -- lo mismo que hace el
+                // formulario. El agregado lo vuelve a normalizar igual.
+                string.IsNullOrWhiteSpace(row.BusinessName) ? null : row.BusinessName.Trim(),
                 type,
                 number,
                 row.Phone,
@@ -350,7 +358,8 @@ public sealed class ImportCustomersHandler(
                 row.Address,
                 city,
                 classification,
-                ParseWithRetention(row.WithRetention),
+                ParseSiNo(row.WithRetention),
+                ParseSiNo(row.VatSurplus),
                 null,
                 row));
         }
@@ -527,6 +536,7 @@ public sealed class ImportCustomersHandler(
 
                 customer.Update(
                     candidate.Name,
+                    candidate.BusinessName,
                     new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
                     new CustomerContactInfo
                     {
@@ -536,7 +546,8 @@ public sealed class ImportCustomersHandler(
                     new CustomerCommercialInfo
                     {
                         ClassificationId = candidate.Classification.Id,
-                        WithRetention = candidate.WithRetention
+                        WithRetention = candidate.WithRetention,
+                        VatSurplus = candidate.VatSurplus
                     },
                     candidate.Classification.Prefix,
                     now);
@@ -556,6 +567,7 @@ public sealed class ImportCustomersHandler(
                 tenantId,
                 cuc,
                 candidate.Name,
+                candidate.BusinessName,
                 new CustomerAddressDetails
                 {
                     Name = candidate.Name,
@@ -572,7 +584,8 @@ public sealed class ImportCustomersHandler(
                 new CustomerCommercialInfo
                 {
                     ClassificationId = candidate.Classification.Id,
-                    WithRetention = candidate.WithRetention
+                    WithRetention = candidate.WithRetention,
+                    VatSurplus = candidate.VatSurplus
                 },
                 now);
 
@@ -583,8 +596,12 @@ public sealed class ImportCustomersHandler(
         return imported;
     }
 
-    private static bool ParseWithRetention(string? raw) =>
-        !string.IsNullOrWhiteSpace(raw) && string.Equals(raw.Trim(), "Si", StringComparison.OrdinalIgnoreCase);
+    // "Si" es si; cualquier otra cosa —incluida la celda vacia— es no. Lo mismo para las dos
+    // columnas booleanas: el validador ya rechazo todo lo que no sea Si/No/vacio, asi que aca no
+    // queda ningun valor ambiguo por interpretar.
+    private static bool ParseSiNo(string? raw) =>
+        !string.IsNullOrWhiteSpace(raw)
+        && string.Equals(raw.Trim(), "Si", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Los campos crudos de la fila, texto tal cual vino del Excel — nulo se vuelve cadena vacia
@@ -595,6 +612,7 @@ public sealed class ImportCustomersHandler(
     private static CustomerImportRowData ToRowData(ExcelCustomerRow row) => new(
         row.Cuc,
         row.Name ?? string.Empty,
+        row.BusinessName,
         row.IdentificationType ?? string.Empty,
         row.IdentificationNumber ?? string.Empty,
         row.Phone,
@@ -603,7 +621,8 @@ public sealed class ImportCustomersHandler(
         row.Department ?? string.Empty,
         row.City ?? string.Empty,
         row.Classification ?? string.Empty,
-        row.WithRetention);
+        row.WithRetention,
+        row.VatSurplus);
 
     private static string EnsureAcceptableFile(string fileName, long sizeInBytes)
     {
@@ -653,6 +672,7 @@ public sealed class ImportCustomersHandler(
         int RowNumber,
         string? Cuc,
         string Name,
+        string? BusinessName,
         IdentificationType Type,
         string Number,
         string? Phone,
@@ -661,6 +681,7 @@ public sealed class ImportCustomersHandler(
         CustomerCityRef City,
         ClientClassification Classification,
         bool WithRetention,
+        bool VatSurplus,
         CustomerId? TargetId,
         ExcelCustomerRow SourceRow)
     {

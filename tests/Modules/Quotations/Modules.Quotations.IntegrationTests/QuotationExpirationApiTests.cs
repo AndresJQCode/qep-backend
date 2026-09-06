@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Expiration;
@@ -32,7 +32,7 @@ public sealed class QuotationExpirationApiTests
         var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
         await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(yesterday, null, null, null),
+            new UpdateQuotationRequest(yesterday, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         var expiredCount = await RunExpirationSweepAsync(factory);
@@ -61,7 +61,7 @@ public sealed class QuotationExpirationApiTests
         var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
         await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(tomorrow, null, null, null),
+            new UpdateQuotationRequest(tomorrow, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         await RunExpirationSweepAsync(factory);
@@ -86,7 +86,7 @@ public sealed class QuotationExpirationApiTests
         var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
         await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(yesterday, null, null, null),
+            new UpdateQuotationRequest(yesterday, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         await RunExpirationSweepAsync(factory);
