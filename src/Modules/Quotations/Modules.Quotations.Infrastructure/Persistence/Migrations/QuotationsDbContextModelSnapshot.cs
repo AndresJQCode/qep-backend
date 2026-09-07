@@ -343,8 +343,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("generated_at");
 
-                    b.Property<int>("QuotationVersion")
-                        .HasColumnType("integer")
+                    b.Property<long>("QuotationVersion")
+                        .HasColumnType("bigint")
                         .HasColumnName("quotation_version");
 
                     b.Property<string>("StorageKey")

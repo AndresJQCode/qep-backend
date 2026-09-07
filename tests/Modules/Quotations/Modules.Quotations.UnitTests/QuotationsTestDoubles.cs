@@ -233,3 +233,80 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<QuotationHistoryEntry>>([]);
 }
+
+internal sealed class CountingPdfRenderer : IQuotationPdfRenderer
+{
+    public int Calls { get; private set; }
+
+    public QuotationPdfDocument? Last { get; private set; }
+
+    public Task<byte[]> RenderAsync(
+        QuotationPdfDocument document, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Last = document;
+        return Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+    }
+}
+
+internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfStorage
+{
+    public int Saves { get; private set; }
+
+    public string? RequestedFileName { get; private set; }
+
+    public Task<string> SaveAsync(
+        Guid tenantId, QuotationId quotationId, byte[] content, CancellationToken cancellationToken)
+    {
+        Saves++;
+        return Task.FromResult($"quotations/tenants/{tenantId:N}/{Saves}.pdf");
+    }
+
+    public Task<string> CreateDownloadUrlAsync(
+        string storageKey, string downloadFileName, CancellationToken cancellationToken)
+    {
+        RequestedFileName = downloadFileName;
+        return Task.FromResult(downloadUrl);
+    }
+}
+
+/// <summary>Compone lo minimo que el mapeo necesita: estas pruebas verifican cuando se
+/// regenera, no como se ve el documento -- eso lo cubre QuotationPdfDocumentMapperTests.</summary>
+internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
+{
+    public Task<QuotationResponse> ComposeAsync(
+        Guid tenantId, QuotationDto quotation, CancellationToken cancellationToken) =>
+        Task.FromResult(new QuotationResponse(
+            quotation.Id,
+            quotation.QuotationNumber,
+            quotation.ClientId,
+            null,
+            quotation.AdvisorId,
+            null,
+            quotation.Status,
+            quotation.CreatedAt,
+            quotation.ValidUntil,
+            quotation.PaymentMethod,
+            quotation.Currency,
+            quotation.Subtotal,
+            quotation.TaxPercentage,
+            quotation.TaxAmount,
+            quotation.DiscountAmount,
+            quotation.Total,
+            quotation.CustomerVatSurplus,
+            quotation.RetentionAmount,
+            quotation.NetTotal,
+            quotation.Notes,
+            [],
+            quotation.BillingUsesBusinessName,
+            null,
+            quotation.CreatedBy,
+            quotation.UpdatedBy,
+            quotation.UpdatedAt,
+            quotation.SentAt,
+            quotation.PdfFileId,
+            quotation.CanBeSent,
+            quotation.CanBeConvertedToSale,
+            []));
+}
+

@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(QuotationsDbContext))]
-    [Migration("20260907170349_AddQuotationPdfs")]
+    [Migration("20260907171902_AddQuotationPdfs")]
     partial class AddQuotationPdfs
     {
         /// <inheritdoc />
@@ -346,8 +346,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("generated_at");
 
-                    b.Property<int>("QuotationVersion")
-                        .HasColumnType("integer")
+                    b.Property<long>("QuotationVersion")
+                        .HasColumnType("bigint")
                         .HasColumnName("quotation_version");
 
                     b.Property<string>("StorageKey")

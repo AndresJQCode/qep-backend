@@ -19,7 +19,7 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     quotation_id = table.Column<Guid>(type: "uuid", nullable: false),
                     tenant_id = table.Column<Guid>(type: "uuid", nullable: false),
                     storage_key = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
-                    quotation_version = table.Column<int>(type: "integer", nullable: false),
+                    quotation_version = table.Column<long>(type: "bigint", nullable: false),
                     generated_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>

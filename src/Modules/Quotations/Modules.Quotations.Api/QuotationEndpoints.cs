@@ -94,6 +94,20 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Exportar el PDF. POST y no GET porque puede generar el documento: el mismo criterio
+        // que el export de clientes. `QuotationRead` y no `QuotationManage` --tambien igual que
+        // alli-- porque exportar es leer la cotizacion en otro formato: quien la ve en pantalla
+        // ya ve sus precios.
+        //
+        // Devuelve el enlace, no los bytes: la descarga va directo de R2 al navegador con una
+        // URL firmada, sin que el PDF pase por la API.
+        group.MapPost("/{quotationId:guid}/pdf", ExportQuotationPdfAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationRead)
+            .Produces<QuotationPdfExportDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // US-11. Sin cuerpo: no hay motivo obligatorio en las historias de usuario.
         group.MapPost("/{quotationId:guid}/void", VoidQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
@@ -296,6 +310,14 @@ public static class QuotationEndpoints
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
+
+    private static async Task<IResult> ExportQuotationPdfAsync(
+        Guid tenantId,
+        Guid quotationId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ExportQuotationPdfCommand(tenantId, quotationId), cancellationToken));
 
     private static QuotationListItemResponse ToListItemResponse(QuotationListItemDto quotation) => new(
         quotation.Id,

@@ -312,6 +312,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<VoidQuotationCommand, QuotationDto>,
             VoidQuotationHandler>();
         services.AddScoped<
+            ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>,
+            ExportQuotationPdfHandler>();
+        services.AddScoped<
             IQueryHandler<GetSaleQuery, SaleDto>,
             GetSaleHandler>();
         services.AddScoped<
@@ -394,6 +397,7 @@ public static class QepServiceCollectionExtensions
         // Y el mismo patrón entre `customers` y `storage`, para dejar el Excel exportado en el
         // bucket y firmar su enlace de descarga.
         services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
+        services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los

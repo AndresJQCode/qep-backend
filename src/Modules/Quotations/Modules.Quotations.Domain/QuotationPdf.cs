@@ -20,7 +20,7 @@ public sealed class QuotationPdf
         QuotationId quotationId,
         Guid tenantId,
         string storageKey,
-        int quotationVersion,
+        long quotationVersion,
         DateTimeOffset generatedAt)
     {
         QuotationId = quotationId;
@@ -40,7 +40,7 @@ public sealed class QuotationPdf
 
     /// <summary><c>Quotation.Version</c> al momento de generar. No hace falta un mecanismo
     /// propio de invalidación: el agregado ya lo incrementa en cada cambio.</summary>
-    public int QuotationVersion { get; private set; }
+    public long QuotationVersion { get; private set; }
 
     public DateTimeOffset GeneratedAt { get; private set; }
 
@@ -48,7 +48,7 @@ public sealed class QuotationPdf
         QuotationId quotationId,
         Guid tenantId,
         string storageKey,
-        int quotationVersion,
+        long quotationVersion,
         DateTimeOffset generatedAt) =>
         new(quotationId, tenantId, storageKey, quotationVersion, generatedAt);
 
@@ -57,9 +57,9 @@ public sealed class QuotationPdf
     /// —una restauración de base, una escritura fuera de orden— no se arregla regenerándolo, y
     /// tratarlo como obsoleto lo haría regenerar en cada pedido, para siempre.
     /// </summary>
-    public bool IsStaleFor(int quotationVersion) => QuotationVersion < quotationVersion;
+    public bool IsStaleFor(long quotationVersion) => QuotationVersion < quotationVersion;
 
-    public void Regenerate(string storageKey, int quotationVersion, DateTimeOffset generatedAt)
+    public void Regenerate(string storageKey, long quotationVersion, DateTimeOffset generatedAt)
     {
         StorageKey = storageKey;
         QuotationVersion = quotationVersion;
