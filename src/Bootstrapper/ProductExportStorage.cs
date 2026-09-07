@@ -47,6 +47,10 @@ internal sealed class ProductExportStorage(
         var url = await objectStorage.CreatePresignedDownloadUrlAsync(
             key, expiry, fileName, cancellationToken);
 
-        return new ProductExportUpload(url.ToString(), DateTimeOffset.UtcNow.Add(expiry));
+        // `AbsoluteUri`, nunca `ToString()`: `Uri.ToString()` devuelve la forma legible y
+        // **desescapa** el query string (`%20` vuelve a ser espacio, `%22` comilla), lo que
+        // rompe la firma para cualquier cliente HTTP estricto. Un navegador lo normaliza y no
+        // se nota; Meta, que baja este archivo para adjuntarlo al WhatsApp, lo rechaza.
+        return new ProductExportUpload(url.AbsoluteUri, DateTimeOffset.UtcNow.Add(expiry));
     }
 }

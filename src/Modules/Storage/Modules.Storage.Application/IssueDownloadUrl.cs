@@ -56,6 +56,6 @@ public sealed class IssueDownloadUrlHandler(
             clock.UtcNow);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return new DownloadUrlDto(url.ToString());
+        return new DownloadUrlDto(url.AbsoluteUri);
     }
 }

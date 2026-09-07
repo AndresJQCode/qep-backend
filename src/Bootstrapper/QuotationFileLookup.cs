@@ -60,6 +60,10 @@ internal sealed class QuotationFileLookup(
             downloadFileName,
             cancellationToken);
 
-        return url.ToString();
+        // `AbsoluteUri`, nunca `ToString()`: `Uri.ToString()` devuelve la forma legible y
+        // **desescapa** el query string (`%20` vuelve a ser espacio, `%22` comilla), lo que
+        // rompe la firma para cualquier cliente HTTP estricto. Un navegador lo normaliza y no
+        // se nota; Meta, que baja este archivo para adjuntarlo al WhatsApp, lo rechaza.
+        return url.AbsoluteUri;
     }
 }
