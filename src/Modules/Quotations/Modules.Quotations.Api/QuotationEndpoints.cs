@@ -8,13 +8,6 @@ namespace Modules.Quotations.Api;
 
 public static class QuotationEndpoints
 {
-    // TEMPORAL (a pedido, 2026-08-24): las políticas por permiso (QuotationsPermissions.*)
-    // quedan comentadas mientras se prueba el flujo manualmente sin tener que armar
-    // X-Permissions en cada request. RequireAuthorization() sin argumentos sigue exigiendo
-    // autenticación (el stub de desarrollo la da con sólo X-Subject-Id/X-Tenant-Id); lo que se
-    // desactiva es el permiso específico. QuotationsAuthorization.EnsureAuthorized, en el
-    // handler, tiene el mismo interruptor. Reactivar los argumentos comentados antes de
-    // producción.
     public static IEndpointRouteBuilder MapQuotationEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints
@@ -22,13 +15,13 @@ public static class QuotationEndpoints
             .WithTags("Quotations");
 
         group.MapGet("/", ListQuotationsAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationRead */)
+            .RequireAuthorization(QuotationsPermissions.QuotationRead)
             .Produces<QuotationsPageResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/{quotationId:guid}", GetQuotationAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationRead */)
+            .RequireAuthorization(QuotationsPermissions.QuotationRead)
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -37,20 +30,20 @@ public static class QuotationEndpoints
         // y no un campo del detalle: crece sin techo con cada edicion, y la pantalla del detalle
         // se pinta sin ella.
         group.MapGet("/{quotationId:guid}/history", ListQuotationHistoryAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationRead */)
+            .RequireAuthorization(QuotationsPermissions.QuotationRead)
             .Produces<QuotationHistoryResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
         group.MapPost("/", CreateQuotationAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<CreateQuotationRequest>("application/json")
             .Produces<QuotationResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPatch("/{quotationId:guid}", UpdateQuotationAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<UpdateQuotationRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -58,7 +51,7 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPut("/{quotationId:guid}/client", ChangeQuotationClientAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<ChangeQuotationClientRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -66,7 +59,7 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/{quotationId:guid}/items", AddQuotationItemAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<AddQuotationItemRequest>("application/json")
             .Produces<QuotationResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -74,7 +67,7 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPut("/{quotationId:guid}/items/{itemId:guid}", UpdateQuotationItemAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<UpdateQuotationItemRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -82,7 +75,7 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapDelete("/{quotationId:guid}/items/{itemId:guid}", RemoveQuotationItemAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -94,7 +87,7 @@ public static class QuotationEndpoints
         // cotización que ya está en Sent, y el handler lo distingue solo para el historial. No
         // hay `/resend` aparte porque no habría nada distinto que orquestar.
         group.MapPost("/{quotationId:guid}/send", SendQuotationAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<SendQuotationRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -103,7 +96,7 @@ public static class QuotationEndpoints
 
         // US-11. Sin cuerpo: no hay motivo obligatorio en las historias de usuario.
         group.MapPost("/{quotationId:guid}/void", VoidQuotationAsync)
-            .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)

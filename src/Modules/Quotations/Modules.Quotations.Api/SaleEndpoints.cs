@@ -18,7 +18,7 @@ public static class SaleEndpoints
             .WithTags("Sales");
 
         group.MapGet("/", GetSaleAsync)
-            .RequireAuthorization(/* SalesPermissions.SaleRead */)
+            .RequireAuthorization(SalesPermissions.SaleRead)
             .Produces<SaleResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -29,14 +29,14 @@ public static class SaleEndpoints
         // El visto bueno de quien revisa. Ruta propia y no un campo del POST: es otra persona,
         // en otro momento -- ver ApproveSaleHandler.
         group.MapPost("/approve", ApproveSaleAsync)
-            .RequireAuthorization(/* SalesPermissions.SaleManage */)
+            .RequireAuthorization(SalesPermissions.SaleManage)
             .Produces<SaleResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/", ConvertQuotationToSaleAsync)
-            .RequireAuthorization(/* SalesPermissions.SaleManage */)
+            .RequireAuthorization(SalesPermissions.SaleManage)
             .Accepts<ConvertQuotationToSaleRequest>("application/json")
             .Produces<SaleResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
