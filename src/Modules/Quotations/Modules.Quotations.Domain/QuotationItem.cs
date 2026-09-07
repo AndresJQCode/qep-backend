@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Domain;
+namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Una línea de producto de una cotización (modelo-datos-cotizaciones.md §2.2). Entidad hija de

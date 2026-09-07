@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;

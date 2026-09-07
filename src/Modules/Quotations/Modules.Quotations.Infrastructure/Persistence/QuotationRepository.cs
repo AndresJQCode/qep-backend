@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 

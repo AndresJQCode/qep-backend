@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Domain;
+namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Una venta nace <see cref="Pending"/> y otra persona la revisa antes de aprobarla: quien

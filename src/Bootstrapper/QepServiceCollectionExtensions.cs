@@ -1,4 +1,4 @@
-﻿using Bootstrapper.Authentication;
+using Bootstrapper.Authentication;
 using Bootstrapper.Messaging;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Application;

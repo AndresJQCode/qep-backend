@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Modules.Customers.Domain;
 
 namespace Modules.Customers.Infrastructure.Persistence;

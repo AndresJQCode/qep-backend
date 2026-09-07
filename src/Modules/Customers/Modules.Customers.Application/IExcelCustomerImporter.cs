@@ -1,4 +1,4 @@
-﻿namespace Modules.Customers.Application;
+namespace Modules.Customers.Application;
 
 /// <summary>
 /// Las trece columnas que la importacion masiva de clientes (Fase 5) espera y que la plantilla

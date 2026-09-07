@@ -1,4 +1,4 @@
-﻿using Modules.Customers.Application;
+using Modules.Customers.Application;
 
 namespace Modules.Customers.UnitTests;
 

@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;

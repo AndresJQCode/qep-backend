@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 public sealed record QuotationItemDto(
     Guid Id,

@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Domain;
+namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// La moneda en la que está expresada una cotización entera: sus precios unitarios, sus

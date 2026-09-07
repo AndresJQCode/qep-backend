@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Infrastructure.Persistence;

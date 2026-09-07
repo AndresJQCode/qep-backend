@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Domain;
+namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// La empresa y la cuenta con la que se factura esta cotización, congeladas al guardarla.

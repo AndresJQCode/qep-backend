@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
