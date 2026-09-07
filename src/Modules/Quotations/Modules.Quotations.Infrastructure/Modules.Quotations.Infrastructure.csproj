@@ -19,14 +19,12 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
-    <PackageReference Include="PDFsharp" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
   </ItemGroup>
   <ItemGroup>
-    <!-- La tipografia del PDF viaja adentro del ensamblado: la imagen de runtime no trae
-         ninguna fuente instalada. Ver QuotationPdfFonts. -->
-    <EmbeddedResource Include="Pdf\Fonts\LiberationSans-Regular.ttf" />
-    <EmbeddedResource Include="Pdf\Fonts\LiberationSans-Bold.ttf" />
+    <!-- La plantilla es parte del contrato con `qcode-pdf`, no configuracion: viaja adentro
+         del ensamblado para que no se pierda al publicar la imagen. -->
+    <EmbeddedResource Include="Pdf\quotation.typ" />
   </ItemGroup>
 </Project>

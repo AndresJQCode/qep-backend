@@ -69,5 +69,6 @@ public sealed record QuotationPdfLine(
 /// </summary>
 public interface IQuotationPdfRenderer
 {
-    byte[] Render(QuotationPdfDocument document);
+    Task<byte[]> RenderAsync(
+        QuotationPdfDocument document, CancellationToken cancellationToken);
 }

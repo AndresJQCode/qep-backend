@@ -14,6 +14,8 @@ public sealed class QuotationsOptions
     public int ExpirationSweepMinutes { get; init; } = 60;
 
     public WhatsAppOptions WhatsApp { get; init; } = new();
+
+    public PdfOptions Pdf { get; init; } = new();
 }
 
 /// <summary>
@@ -50,4 +52,16 @@ public sealed class WhatsAppOptions
     public string TemplateId { get; init; } = string.Empty;
 
     public string BaseUrl { get; init; } = "https://api.zenvia.com";
+}
+
+/// <summary>
+/// El servicio de generación de PDF (`qcode-pdf`, Typst). Es genérico y compartido con otras
+/// aplicaciones de QCode: no conoce la cotización, así que el markup viaja entero en cada
+/// request y acá sólo vive cómo llegar y con qué autenticarse.
+/// </summary>
+public sealed class PdfOptions
+{
+    public string BaseUrl { get; init; } = "https://qcode-pdf.qcode.co";
+
+    public string ApiKey { get; init; } = string.Empty;
 }
