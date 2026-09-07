@@ -21,7 +21,7 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendHandsTheSenderThePresignedPdfUrl()
     {
-        var (handler, sender, _) = NewHandler();
+        var (handler, sender, _, _, _) = NewHandler();
 
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
@@ -33,7 +33,7 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendAsksForTheFileUnderAReadableName()
     {
-        var (handler, _, files) = NewHandler();
+        var (handler, _, files, _, _) = NewHandler();
 
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
@@ -43,7 +43,7 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendHandsTheSenderTheQuotationTotalAndValidity()
     {
-        var (handler, sender, _) = NewHandler();
+        var (handler, sender, _, _, _) = NewHandler();
 
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
@@ -61,7 +61,7 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendDoesNotReachWhatsAppWhenTheQuotationCannotBeSent()
     {
-        var (handler, sender, files) = NewHandler(withValidUntil: false);
+        var (handler, sender, files, _, _) = NewHandler(withValidUntil: false);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
@@ -71,13 +71,46 @@ public sealed class SendQuotationHandlerTests
         Assert.Null(files.RequestedFileName);
     }
 
+    // US-12 (reenvío): la cotización ya enviada y sin cambios se vuelve a mandar. Lo que
+    // distingue un reenvío de un envío no es lo que sale hacia WhatsApp —es idéntico— sino
+    // cómo queda registrado: evento Resent en el historial y acción `.resent` en auditoría.
+    [Fact]
+    public async Task ResendingAnAlreadySentQuotationRecordsItAsAResend()
+    {
+        var (handler, sender, _, repository, audit) = NewHandler(alreadySent: true);
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(sender.Sent);
+        Assert.Equal(
+            QuotationHistoryEventType.Resent,
+            Assert.Single(repository.HistoryEntries).EventType);
+        Assert.Equal("quotation.quotation.resent", Assert.Single(audit.Actions));
+    }
+
+    [Fact]
+    public async Task SendingADraftRecordsItAsAFirstSend()
+    {
+        var (handler, _, _, repository, audit) = NewHandler();
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            QuotationHistoryEventType.Sent,
+            Assert.Single(repository.HistoryEntries).EventType);
+        Assert.Equal("quotation.quotation.sent", Assert.Single(audit.Actions));
+    }
+
     private static SendQuotationCommand NewCommand() =>
         new(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7());
 
     private static (
         SendQuotationHandler Handler,
         RecordingWhatsAppSender Sender,
-        StubQuotationFileLookup Files) NewHandler(bool withValidUntil = true)
+        StubQuotationFileLookup Files,
+        StubQuotationRepository Repository,
+        RecordingQuotationAuditPublisher Audit) NewHandler(
+        bool withValidUntil = true, bool alreadySent = false)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -95,16 +128,25 @@ public sealed class SendQuotationHandlerTests
             AdvisorId,
             Now);
 
+        if (alreadySent)
+        {
+            // Un envío anterior, no el que la prueba ejerce: por eso no pasa por el handler y
+            // no deja rastro en los dobles que la aserción mira.
+            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now.AddHours(-2));
+        }
+
         var sender = new RecordingWhatsAppSender();
         var files = new StubQuotationFileLookup(PresignedUrl);
+        var repository = new StubQuotationRepository(quotation);
+        var audit = new RecordingQuotationAuditPublisher();
         var customer = new QuotationCustomerRef(
             ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
             "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false);
 
         var handler = new SendQuotationHandler(
-            new StubQuotationRepository(quotation),
+            repository,
             new NoOpQuotationsUnitOfWork(),
-            new NoOpQuotationAuditPublisher(),
+            audit,
             files,
             new StubQuotationCustomerLookup(customer),
             sender,
@@ -112,6 +154,6 @@ public sealed class SendQuotationHandlerTests
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 
-        return (handler, sender, files);
+        return (handler, sender, files, repository, audit);
     }
 }

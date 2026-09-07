@@ -91,6 +91,11 @@ internal sealed class StubQuotationAdvisorLookup(string? email = null)
 
 internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationRepository
 {
+    /// <summary>Las entradas de historial que el handler agregó, en orden. Un envío y un
+    /// reenvío difieren en el tipo de evento y en nada más, así que el historial es lo único
+    /// que los distingue después del hecho.</summary>
+    public List<QuotationHistoryEntry> HistoryEntries { get; } = [];
+
     public Task<Quotation?> FindAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(quotation);
@@ -113,9 +118,7 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
     {
     }
 
-    public void AddHistoryEntry(QuotationHistoryEntry entry)
-    {
-    }
+    public void AddHistoryEntry(QuotationHistoryEntry entry) => HistoryEntries.Add(entry);
 
     public Task<IReadOnlyList<QuotationHistoryEntry>> ListHistoryAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
@@ -125,6 +128,17 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
 internal sealed class NoOpQuotationsUnitOfWork : IQuotationsUnitOfWork
 {
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => Task.FromResult(0);
+}
+
+/// <summary>Registra las acciones publicadas. Enviar y reenviar son la misma llamada al canal
+/// de WhatsApp: la auditoría es donde queda escrito cuál de las dos fue.</summary>
+internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublisher
+{
+    public List<string> Actions { get; } = [];
+
+    public void Publish(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt) => Actions.Add(action);
 }
 
 internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher

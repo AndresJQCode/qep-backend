@@ -212,11 +212,15 @@ public sealed class Quotation
 
     /// <summary>
     /// Si el botón de enviar tiene sentido ahora. La regla vive acá y no en la pantalla para que
-    /// las dos no puedan discrepar: un borrador siempre, y una enviada sólo si volvió a cambiar.
+    /// las dos no puedan discrepar: un borrador y una ya enviada, haya cambiado o no.
+    ///
+    /// Antes una enviada sin cambios quedaba afuera —"no hay nada nuevo que mandar"—, pero eso
+    /// confundía el contenido del mensaje con el hecho de entregarlo: al cliente se le pierde un
+    /// WhatsApp, lo borra o cambia de teléfono, y volver a mandárselo es exactamente lo que la
+    /// persona necesita hacer. <see cref="HasChangesSinceSent"/> sigue existiendo para
+    /// distinguir un reenvío de un envío con cambios en el historial.
     /// </summary>
-    public bool CanBeSent =>
-        Status == QuotationStatus.Draft
-        || (Status == QuotationStatus.Sent && HasChangesSinceSent);
+    public bool CanBeSent => Status is QuotationStatus.Draft or QuotationStatus.Sent;
 
     public QuotationParty? Billing => FindParty(QuotationPartyRole.Billing);
 
@@ -412,9 +416,15 @@ public sealed class Quotation
     }
 
     /// <summary>US-12: genera el PDF (fuera de este agregado — la aplicación ya lo validó contra
-    /// Storage) y marca la cotización como enviada. Sólo desde <see cref="QuotationStatus.Draft"/>:
-    /// no tiene sentido volver a "enviar" algo que ya se envió, y el resto de las transiciones
-    /// (Voided, Expired) tampoco vuelven para atrás a Sent.</summary>
+    /// Storage) y marca la cotización como enviada. Desde <see cref="QuotationStatus.Draft"/> o
+    /// desde <see cref="QuotationStatus.Sent"/>: reenviar es el mismo hecho para el agregado —
+    /// PDF nuevo, <see cref="SentAt"/> nuevo, estado <see cref="QuotationStatus.Sent"/>—, y lo
+    /// que lo distingue de un primer envío es la entrada de historial que escribe el caso de
+    /// uso, no una transición distinta. Voided y Expired sí siguen sin volver para atrás a Sent.
+    ///
+    /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> quedan en el mismo instante también en un
+    /// reenvío, así que <see cref="HasChangesSinceSent"/> vuelve a <c>false</c>: lo que el
+    /// cliente tiene en la mano es, otra vez, la versión vigente.</summary>
     public void Send(Guid pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
     {
         EnsureSendable();
@@ -454,15 +464,6 @@ public sealed class Quotation
     /// </summary>
     public void EnsureSendable()
     {
-        // Una Sent que no cambió desde que se envió no se vuelve a enviar: no hay nada nuevo que
-        // mandar, y marcarla otra vez sólo ensucia el historial con un envío que no ocurrió.
-        if (Status == QuotationStatus.Sent && !HasChangesSinceSent)
-        {
-            throw new QuotationsDomainException(
-                "quotation.quotation.already_sent",
-                "The quotation has not changed since it was sent.");
-        }
-
         if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))
         {
             throw new QuotationsDomainException(
