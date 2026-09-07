@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Api (http)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-api",
+      "program": "${workspaceFolder}/src/Api/bin/Debug/net10.0/Api.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/Api",
+      "stopAtEntry": false,
+      // Takes applicationUrl and environmentVariables from
+      // src/Api/Properties/launchSettings.json -> profiles.http.
+      // It does NOT take launchBrowser or launchUrl: those belong to
+      // `dotnet run` and Visual Studio, not to the VS Code debugger.
+      // Opening the browser is serverReadyAction's job, below.
+      "launchSettingsProfile": "http",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      // The app logs in JSON, so the URL is wrapped in quotes:
+      //   "Message":"Now listening on: http://localhost:5000","State":...
+      // The .NET template pattern ends in \S+, which is greedy and does not
+      // stop at the closing quote, swallowing the rest of the JSON line and
+      // producing an unusable URL. [^\s"]+ stops at the quote.
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\bNow listening on:\s+(https?://[^\s\"]+)",
+        "uriFormat": "%s/scalar/v1"
+      }
+    },
+    {
+      "name": "Api (attach)",
+      "type": "coreclr",
+      "request": "attach"
+    }
+  ]
+}

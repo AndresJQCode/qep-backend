@@ -405,17 +405,61 @@ public sealed class QuotationTests
     }
 
     [Fact]
-    // Reenviar sí se puede, pero sólo si la cotización volvió a cambiar: si no, no hay nada
-    // nuevo que mandarle al cliente.
-    public void SendRejectsASentQuotationThatDidNotChange()
+    // Reenviar una cotización que no cambió es un caso legítimo: al cliente se le puede haber
+    // perdido el mensaje. El PDF se regenera con los datos actuales, así que el reenvío pisa
+    // PdfFileId y SentAt en vez de conservar los del envío anterior.
+    public void SendResendsASentQuotationThatDidNotChange()
     {
         var quotation = NewQuotation();
+        var firstPdf = Guid.CreateVersion7();
+        var secondPdf = Guid.CreateVersion7();
+        var later = Now.AddHours(3);
+        quotation.Send(firstPdf, AdvisorId, Now);
+
+        quotation.Send(secondPdf, AdvisorId, later);
+
+        Assert.Equal(QuotationStatus.Sent, quotation.Status);
+        Assert.Equal(secondPdf, quotation.PdfFileId);
+        Assert.Equal(later, quotation.SentAt);
+        Assert.Equal(3, quotation.Version);
+    }
+
+    [Fact]
+    // El botón sigue disponible después de enviar — es lo que hace posible el reenvío. Y un
+    // reenvío no deja la cotización "con cambios": Send deja SentAt y UpdatedAt en el mismo
+    // instante, igual que el primer envío.
+    public void CanBeSentStaysTrueAfterSendingWithoutChanges()
+    {
+        var quotation = NewQuotation();
+
         quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
 
-        var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now));
+        Assert.True(quotation.CanBeSent);
+        Assert.False(quotation.HasChangesSinceSent);
+    }
 
-        Assert.Equal("quotation.quotation.already_sent", error.Code);
+    [Theory]
+    [InlineData(QuotationStatus.Voided)]
+    [InlineData(QuotationStatus.Expired)]
+    // Abrir el reenvío no abre las transiciones que ya estaban cerradas: una anulada o una
+    // vencida no vuelven a Sent.
+    public void SendStillRejectsAQuotationThatIsNotDraftOrSent(QuotationStatus status)
+    {
+        var quotation = NewQuotation();
+        if (status == QuotationStatus.Voided)
+        {
+            quotation.Void(AdvisorId, Now);
+        }
+        else
+        {
+            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+            quotation.Expire(Now.AddDays(60));
+        }
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now.AddDays(61)));
+
+        Assert.Equal("quotation.quotation.not_draft", error.Code);
     }
 
     [Theory]

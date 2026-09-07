@@ -49,6 +49,8 @@ public static class QuotationChangeSummary
 
     public static string Sent() => "Enviada al cliente con su PDF.";
 
+    public static string Resent() => "Reenviada al cliente con su PDF.";
+
     public static string Voided() => "Anulada.";
 
     public static string Expired() => "Vencida automáticamente al pasar su vigencia.";

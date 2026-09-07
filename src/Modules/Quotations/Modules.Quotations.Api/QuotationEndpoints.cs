@@ -90,6 +90,9 @@ public static class QuotationEndpoints
 
         // US-12: el PDF ya se subió a Storage por fuera de este llamado (flujo de carga firmada
         // que Storage ya expone); acá sólo se referencia el archivo y se marca como enviada.
+        // El reenvío entra por acá también: es el mismo gesto con un PDF nuevo sobre una
+        // cotización que ya está en Sent, y el handler lo distingue solo para el historial. No
+        // hay `/resend` aparte porque no habría nada distinto que orquestar.
         group.MapPost("/{quotationId:guid}/send", SendQuotationAsync)
             .RequireAuthorization(/* QuotationsPermissions.QuotationManage */)
             .Accepts<SendQuotationRequest>("application/json")

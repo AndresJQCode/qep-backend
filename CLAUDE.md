@@ -154,10 +154,16 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   diff de los locks es además el único lugar donde se ve el arrastre transitivo: el parche de
   .NET del 2026-09-05 movió `Microsoft.IdentityModel.*` de `8.0.1` a `8.19.2`, que no está
   declarado en el props y por lo tanto no aparece en su diff.
-- **Las factories de integración deben fijar `Notifications:EmailProvider`.** Sin eso heredan
-  lo que diga `appsettings.json`; con `infobip` y las claves ausentes,
-  `NotificationsOptionsValidator` falla al arrancar y **todas** las pruebas del archivo mueren
-  antes de su aserción.
+- **`Notifications:EmailProvider` vale distinto según el ambiente, y las dos mitades son
+  necesarias.** `appsettings.json` trae `log` —el canal que registra el correo y no lo manda—
+  porque es el mismo archivo en local y en producción y su único trabajo es ser el default que
+  arranca sin credenciales. Producción lo pisa con `infobip` desde `k8s/prod-configMap.yaml`, y
+  `NotificationsOptionsValidator` **rechaza `log` en `Production`** con `ValidateOnStart`: sin esa
+  mitad, olvidarse la clave dejaría las invitaciones marcadas como entregadas sin que salga un
+  correo, sin error y sin log. Mismo par que `Quotations:WhatsApp:*` con Zenvia. Hasta el
+  2026-09-06 el default era `infobip`, así que una factoría de integración que no fijara la clave
+  mataba **todas** las pruebas de su archivo en el arranque; ya no, pero todas la fijan igual y
+  conviene seguir haciéndolo: deja explícito qué canal ejerce la prueba.
 - **El stub de desarrollo concede sólo los permisos de tenancy por defecto.** Una prueba que
   necesita un permiso de otro módulo tiene que pedirlo por `X-Permissions`, o su 403 va a
   venir del permiso faltante y no de lo que cree estar probando.

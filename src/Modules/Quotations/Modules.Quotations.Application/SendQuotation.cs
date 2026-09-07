@@ -36,6 +36,10 @@ public sealed class SendQuotationHandler(
         // orden, no para reemplazar la invariante del agregado.
         quotation.EnsureSendable();
 
+        // Se lee antes de mutar: `Send` deja la cotización en Sent venga de donde venga, así que
+        // después de llamarlo ya no hay forma de saber si esto fue el primer envío o un reenvío.
+        var isResend = quotation.Status == QuotationStatus.Sent;
+
         await QuotationPdfResolver.ResolveAsync(
             pdfLookup, command.TenantId, command.PdfFileId, cancellationToken);
 
@@ -77,14 +81,14 @@ public sealed class SendQuotationHandler(
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(
             QuotationHistoryEntryId.New(),
             quotation.Id,
-            QuotationHistoryEventType.Sent,
+            isResend ? QuotationHistoryEventType.Resent : QuotationHistoryEventType.Sent,
             sentBy,
-            QuotationChangeSummary.Sent(),
+            isResend ? QuotationChangeSummary.Resent() : QuotationChangeSummary.Sent(),
             now));
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
-            "quotation.quotation.sent",
+            isResend ? "quotation.quotation.resent" : "quotation.quotation.sent",
             quotation.Id.ToString(),
             "success",
             now);
