@@ -35,6 +35,13 @@ data:
   # crear un tenant es una decisión de seguridad, y producción la declara de forma
   # explícita en lugar de heredarla en silencio.
   Registration__PublicTenantSignupEnabled: "true"
+  # La imagen trae "log" por defecto, que registra el correo y no lo manda: es lo que deja
+  # levantar la API en local y en las pruebas de integración sin credenciales de Infobip.
+  # Producción tiene que declarar el proveedor real de forma explícita, mismo criterio que
+  # Registration__PublicTenantSignupEnabled. No es opcional: NotificationsOptionsValidator
+  # rechaza "log" en Production con ValidateOnStart, así que sin esta clave el pod no arranca —
+  # que es preferible a que arranque y las invitaciones queden entregadas sin correo.
+  Notifications__EmailProvider: "infobip"
   Notifications__InvitationUrl: "#{NOTIFICATIONS_INVITATION_URL}#"
   Notifications__Infobip__BaseUrl: "#{NOTIFICATIONS_INFOBIP_BASE_URL}#"
   Notifications__Infobip__SenderEmail: "#{NOTIFICATIONS_INFOBIP_SENDER_EMAIL}#"

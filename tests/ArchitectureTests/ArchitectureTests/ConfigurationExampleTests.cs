@@ -74,12 +74,14 @@ public sealed class ConfigurationExampleTests
 
     // La marca de una clase de options es su constante SectionName; es lo que se le pasa a
     // GetSection, así que es la misma fuente de verdad que usa el binder.
-    private static string? SectionNameOf(Type type) =>
-        type.GetField("SectionName", BindingFlags.Public | BindingFlags.Static) is
-            { IsLiteral: true } field
-        && field.FieldType == typeof(string)
+    private static string? SectionNameOf(Type type)
+    {
+        var field = type.GetField("SectionName", BindingFlags.Public | BindingFlags.Static);
+
+        return field is { IsLiteral: true } && field.FieldType == typeof(string)
             ? (string?)field.GetRawConstantValue()
             : null;
+    }
 
     private static IEnumerable<string> KeysOf(Type root) => Keys(root, SectionNameOf(root)!);
 

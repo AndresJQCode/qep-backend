@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace Modules.Notifications.Infrastructure;
@@ -5,7 +6,8 @@ namespace Modules.Notifications.Infrastructure;
 // Falla rápido al arrancar (ValidateOnStart) para que una sección Notifications mal
 // configurada se detecte en el boot y no en el primer email. Las credenciales de Infobip
 // sólo se exigen cuando ese proveedor está seleccionado.
-internal sealed class NotificationsOptionsValidator : IValidateOptions<NotificationsOptions>
+internal sealed class NotificationsOptionsValidator(IHostEnvironment environment)
+    : IValidateOptions<NotificationsOptions>
 {
     private static readonly string[] KnownProviders =
         [NotificationsOptions.LogProvider, NotificationsOptions.InfobipProvider];
@@ -30,6 +32,24 @@ internal sealed class NotificationsOptionsValidator : IValidateOptions<Notificat
             failures.Add(
                 $"Notifications:EmailProvider '{options.EmailProvider}' is not supported "
                 + "(expected 'log' or 'infobip').");
+        }
+
+        // El canal "log" registra el correo y no lo manda. Fuera de producción ese no-op es el
+        // que deja levantar la API y correr las pruebas de integración sin aprovisionar Infobip.
+        // En producción es una trampa silenciosa: la invitación se marca entregada, el worker no
+        // registra ningún error y el destinatario nunca recibe nada — indistinguible de un envío
+        // real. Mismo criterio que QuotationsOptionsValidator con Zenvia: se prefiere que el
+        // arranque falle a que el negocio pierda altas sin enterarse.
+        if (environment.IsProduction()
+            && string.Equals(
+                options.EmailProvider,
+                NotificationsOptions.LogProvider,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add(
+                $"Notifications:EmailProvider cannot be '{NotificationsOptions.LogProvider}' in "
+                + "Production: the invitation is marked as delivered but no email leaves the "
+                + "system.");
         }
 
         if (string.Equals(
