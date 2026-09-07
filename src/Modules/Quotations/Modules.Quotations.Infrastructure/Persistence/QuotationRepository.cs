@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -115,6 +115,21 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
 
     public void AddHistoryEntry(QuotationHistoryEntry entry) =>
         dbContext.QuotationHistoryEntries.Add(entry);
+
+    // Con tracking, a diferencia de ListHistoryAsync: quien lo pide lo hace para decidir si
+    // regenerarlo, y en ese caso llama a Regenerate() sobre esta misma instancia.
+    //
+    // El tenant se filtra por columna propia y no por join con la cotizacion --como si hace el
+    // historial-- porque quotation_pdfs si lleva tenant_id: la copia publica se arma con el, asi
+    // que tenerlo a mano evita cargar la cotizacion entera solo para leerlo.
+    public Task<QuotationPdf?> FindPdfAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        dbContext.QuotationPdfs
+            .FirstOrDefaultAsync(
+                pdf => pdf.QuotationId == quotationId && pdf.TenantId == tenantId,
+                cancellationToken);
+
+    public void AddPdf(QuotationPdf pdf) => dbContext.QuotationPdfs.Add(pdf);
 
     // El filtro de tenant va por la cotizacion y no por la entrada: quotation_history no lleva
     // tenant_id propio -- es hija de una cotizacion que si lo lleva. Sin este join, un id de otro

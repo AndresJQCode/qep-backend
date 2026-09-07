@@ -1,4 +1,4 @@
-﻿namespace Modules.Customers.Domain;
+namespace Modules.Customers.Domain;
 
 /// <summary>
 /// Un cliente del tenant: la contraparte a la que se le cotiza y se le vende. Guarda solo los

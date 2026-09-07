@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Domain;
+namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Una venta, creada al convertir una cotización aprobada (US-13 a US-17,

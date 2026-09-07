@@ -11,6 +11,39 @@ public sealed class SaleApiTests
     private static string SaleUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/sale";
 
+    // `EnsureConvertibleToSale` exige cuatro datos que enviar no pide: productos, vigencia,
+    // forma de pago y cuenta de cobro. Ninguno tenia cobertura de integracion, y su ausencia se
+    // manifestaba como un 422 en pruebas que estaban probando otra cosa -- que es como se
+    // descubrio. Esta cubre el unico que `CreateSentQuotationAsync` puede omitir sin dejar de
+    // poder enviar.
+    [Fact]
+    public async Task ConvertWithoutAPaymentMethodIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId, paymentMethod: null);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest(
+                "FullPaymentReceived",
+                "Pago verificado",
+                [new SalePaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.quotation.payment_method_required", problem.Code);
+    }
+
     [Fact]
     public async Task ConvertCreatesTheSaleAndLeavesTheQuotationSent()
     {
@@ -33,7 +66,9 @@ public sealed class SaleApiTests
         var sale = await response.Content.ReadFromJsonAsync<SaleResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(sale);
-        Assert.Equal("Approved", sale.Status);
+        // Nace Pending desde aa020a8: convertir dejo de ser aprobar. Quien convierte y quien da
+        // el visto bueno son roles distintos, y el estado es lo que hace visible ese paso.
+        Assert.Equal("Pending", sale.Status);
         Assert.Equal("FullPaymentReceived", sale.PaymentStatus);
         Assert.Equal(quotation.Id, sale.QuotationId);
         Assert.StartsWith(
@@ -253,4 +288,6 @@ public sealed class SaleApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    private sealed record ProblemPayload(string Code);
 }

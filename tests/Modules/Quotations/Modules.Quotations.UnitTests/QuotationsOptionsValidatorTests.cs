@@ -20,6 +20,12 @@ public sealed class QuotationsOptionsValidatorTests
         TemplateId = "template-id",
     };
 
+    private static readonly PdfOptions CompletePdf = new()
+    {
+        BaseUrl = "https://qcode-pdf.qcode.co",
+        ApiKey = "clave",
+    };
+
     [Fact]
     public void DevelopmentWithoutWhatsAppCredentialsIsValid()
     {
@@ -32,7 +38,7 @@ public sealed class QuotationsOptionsValidatorTests
     [Fact]
     public void ProductionWithCompleteWhatsAppCredentialsIsValid()
     {
-        var options = new QuotationsOptions { WhatsApp = CompleteWhatsApp };
+        var options = new QuotationsOptions { WhatsApp = CompleteWhatsApp, Pdf = CompletePdf };
 
         var result = ValidatorFor(Environments.Production).Validate(null, options);
 
@@ -84,12 +90,58 @@ public sealed class QuotationsOptionsValidatorTests
         {
             ExpirationSweepMinutes = 0,
             WhatsApp = CompleteWhatsApp,
+            Pdf = CompletePdf,
         };
 
         var result = ValidatorFor(Environments.Production).Validate(null, options);
 
         Assert.True(result.Failed);
         Assert.Contains("Quotations:ExpirationSweepMinutes", result.FailureMessage);
+    }
+
+    // Sin la key, `qcode-pdf` responde 401 y el envío falla con un error de dominio -- ruidoso,
+    // no silencioso como el fallback de WhatsApp. Igual se exige al arrancar: que el proceso no
+    // levante es más barato que descubrirlo cuando una asesora aprieta Enviar.
+    [Fact]
+    public void ProductionWithoutThePdfApiKeyFails()
+    {
+        var options = new QuotationsOptions { WhatsApp = CompleteWhatsApp };
+
+        var result = ValidatorFor(Environments.Production).Validate(null, options);
+
+        Assert.True(result.Failed);
+        Assert.Contains("Quotations:Pdf:ApiKey", result.FailureMessage);
+    }
+
+    // Fuera de producción se puede trabajar sin el servicio: las pruebas de integración no
+    // generan PDFs y nadie tiene por qué aprovisionar `qcode-pdf` para tocar otra cosa.
+    [Fact]
+    public void DevelopmentWithoutThePdfApiKeyIsValid()
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new QuotationsOptions());
+
+        Assert.True(result.Succeeded);
+    }
+
+    // En cualquier ambiente: la plantilla y los datos de la cotización viajan en el cuerpo, así
+    // que una base URL sin TLS los expone en tránsito.
+    [Theory]
+    [InlineData("http://qcode-pdf.qcode.co")]
+    [InlineData("qcode-pdf.qcode.co")]
+    [InlineData("")]
+    public void ANonHttpsPdfBaseUrlFails(string baseUrl)
+    {
+        var options = new QuotationsOptions
+        {
+            WhatsApp = CompleteWhatsApp,
+            Pdf = new PdfOptions { BaseUrl = baseUrl, ApiKey = "clave" },
+        };
+
+        var result = ValidatorFor(Environments.Production).Validate(null, options);
+
+        Assert.True(result.Failed);
+        Assert.Contains("Quotations:Pdf:BaseUrl", result.FailureMessage);
     }
 
     private static QuotationsOptionsValidator ValidatorFor(string environmentName) =>

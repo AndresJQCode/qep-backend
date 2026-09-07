@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Domain;
+namespace Modules.Quotations.Domain;
 
 /// <summary>
 /// Los datos de una parte tal como entran al agregado (<see cref="Quotation.Create"/> /

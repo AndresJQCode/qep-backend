@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Puerto hacia el módulo Catalog (US-3/US-4: precio base y escalas de precio por cantidad del

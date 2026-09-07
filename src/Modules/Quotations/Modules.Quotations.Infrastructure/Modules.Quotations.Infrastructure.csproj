@@ -22,4 +22,9 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- La plantilla es parte del contrato con `qcode-pdf`, no configuracion: viaja adentro
+         del ensamblado para que no se pierda al publicar la imagen. -->
+    <EmbeddedResource Include="Pdf\quotation.typ" />
+  </ItemGroup>
 </Project>

@@ -5,7 +5,7 @@ namespace Modules.Quotations.Application;
 /// <summary>
 /// Resuelve cada archivo de comprobante de pago que llega en el comando de conversión (US-14)
 /// contra los archivos **del tenant de la cotización**. Mismo criterio que
-/// <c>QuotationPdfResolver</c>/<c>ProductImageResolver</c>: la referencia es blanda, sin FK que
+/// <c>ProductImageResolver</c>: la referencia es blanda, sin FK que
 /// la respalde, así que esta comprobación es la única red.
 /// </summary>
 internal static class SalePaymentProofResolver

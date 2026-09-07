@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Arma la respuesta HTTP de una cotización con **todo lo que su pantalla muestra**: el cliente

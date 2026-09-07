@@ -17,7 +17,7 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -333,6 +333,38 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.ToTable("quotation_parties", "quotations");
                 });
 
+            modelBuilder.Entity("Modules.Quotations.Domain.QuotationPdf", b =>
+                {
+                    b.Property<Guid>("QuotationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("quotation_id");
+
+                    b.Property<DateTimeOffset>("GeneratedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("generated_at");
+
+                    b.Property<long>("QuotationVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("quotation_version");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("storage_key");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("QuotationId");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_quotation_pdfs_tenant");
+
+                    b.ToTable("quotation_pdfs", "quotations");
+                });
+
             modelBuilder.Entity("Modules.Quotations.Domain.Sale", b =>
                 {
                     b.Property<Guid>("Id")
@@ -603,6 +635,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("Modules.Quotations.Domain.Quotation", null)
                         .WithMany("Parties")
+                        .HasForeignKey("QuotationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.QuotationPdf", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Quotation", null)
+                        .WithMany()
                         .HasForeignKey("QuotationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

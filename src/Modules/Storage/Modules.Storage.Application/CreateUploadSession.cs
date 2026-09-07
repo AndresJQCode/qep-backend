@@ -48,6 +48,6 @@ public sealed class CreateUploadSessionHandler(
             key, command.MimeType, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return new UploadSessionDto(id.Value, uploadUrl.ToString(), key);
+        return new UploadSessionDto(id.Value, uploadUrl.AbsoluteUri, key);
     }
 }

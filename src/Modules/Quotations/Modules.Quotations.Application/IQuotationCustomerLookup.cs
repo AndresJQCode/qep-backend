@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Puerto hacia el módulo Customers (US-1/US-18: no se cotiza a un cliente sin CUC o inactivo).

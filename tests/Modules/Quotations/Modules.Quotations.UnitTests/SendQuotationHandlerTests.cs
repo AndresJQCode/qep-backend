@@ -18,26 +18,32 @@ public sealed class SendQuotationHandlerTests
     private static readonly DateTimeOffset Now = new(2026, 9, 4, 12, 0, 0, TimeSpan.Zero);
     private static readonly DateOnly ValidUntil = new(2026, 9, 30);
 
+    // La URL **publica**, no la firmada: Meta no puede descargar el PDF desde una prefirmada de
+    // R2 --le falla y descarta el mensaje entero, minutos despues del 200 de Zenvia-- asi que el
+    // envio publica una copia con clave aleatoria y manda esa.
     [Fact]
-    public async Task SendHandsTheSenderThePresignedPdfUrl()
+    public async Task SendHandsTheSenderThePublicPdfUrl()
     {
         var (handler, sender, _, _, _) = NewHandler();
 
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
         Assert.NotNull(sender.Sent);
-        Assert.Equal(PresignedUrl, sender.Sent.DocumentUrl);
+        Assert.Equal(RecordingPdfStorage.PublicUrl, sender.Sent.DocumentUrl);
+        Assert.NotEqual(PresignedUrl, sender.Sent.DocumentUrl);
     }
 
-    // El destinatario recibe el archivo con este nombre, no con la clave de almacenamiento.
+    // Lo que se publica es el objeto que `QuotationPdfProvider` dejo al dia, no un archivo que
+    // el navegador haya subido.
     [Fact]
-    public async Task SendAsksForTheFileUnderAReadableName()
+    public async Task SendPublishesTheCurrentGeneratedDocument()
     {
-        var (handler, _, files, _, _) = NewHandler();
+        var (handler, _, storage, repository, _) = NewHandler();
 
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Cotizacion-QUO-2026-0001.pdf", files.RequestedFileName);
+        Assert.NotNull(repository.Pdf);
+        Assert.Equal(repository.Pdf.StorageKey, storage.PublishedKey);
     }
 
     [Fact]
@@ -61,14 +67,14 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendDoesNotReachWhatsAppWhenTheQuotationCannotBeSent()
     {
-        var (handler, sender, files, _, _) = NewHandler(withValidUntil: false);
+        var (handler, sender, storage, _, _) = NewHandler(withValidUntil: false);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
 
         Assert.Equal("quotation.quotation.valid_until_required", error.Code);
         Assert.Null(sender.Sent);
-        Assert.Null(files.RequestedFileName);
+        Assert.Null(storage.PublishedKey);
     }
 
     // US-12 (reenvío): la cotización ya enviada y sin cambios se vuelve a mandar. Lo que
@@ -102,12 +108,14 @@ public sealed class SendQuotationHandlerTests
     }
 
     private static SendQuotationCommand NewCommand() =>
-        new(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7());
+        new(TenantId, CurrentQuotationId);
+
+    private static Guid CurrentQuotationId;
 
     private static (
         SendQuotationHandler Handler,
         RecordingWhatsAppSender Sender,
-        StubQuotationFileLookup Files,
+        RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
         RecordingQuotationAuditPublisher Audit) NewHandler(
         bool withValidUntil = true, bool alreadySent = false)
@@ -132,11 +140,12 @@ public sealed class SendQuotationHandlerTests
         {
             // Un envío anterior, no el que la prueba ejerce: por eso no pasa por el handler y
             // no deja rastro en los dobles que la aserción mira.
-            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now.AddHours(-2));
+            quotation.Send(AdvisorId, Now.AddHours(-2));
         }
 
+        CurrentQuotationId = quotation.Id.Value;
         var sender = new RecordingWhatsAppSender();
-        var files = new StubQuotationFileLookup(PresignedUrl);
+        var storage = new RecordingPdfStorage(PresignedUrl);
         var repository = new StubQuotationRepository(quotation);
         var audit = new RecordingQuotationAuditPublisher();
         var customer = new QuotationCustomerRef(
@@ -147,13 +156,19 @@ public sealed class SendQuotationHandlerTests
             repository,
             new NoOpQuotationsUnitOfWork(),
             audit,
-            files,
+            new QuotationPdfProvider(
+                repository,
+                new StubQuotationResponseComposer(),
+                new CountingPdfRenderer(),
+                storage,
+                new FixedClock(Now)),
+            storage,
             new StubQuotationCustomerLookup(customer),
             sender,
             new StubMembershipDirectory(AdvisorId.Value),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 
-        return (handler, sender, files, repository, audit);
+        return (handler, sender, storage, repository, audit);
     }
 }

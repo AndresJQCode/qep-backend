@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;

@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 public sealed record SalePaymentProofDto(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 

@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -164,10 +164,7 @@ public sealed class QuotationApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    // TEMPORAL (a pedido, 2026-08-24): la restriccion por permiso esta desactivada en
-    // QuotationEndpoints/QuotationsAuthorization mientras se prueba el flujo manualmente. Esta
-    // prueba queda documentada pero saltada -- reactivarla junto con las políticas comentadas.
-    [Fact(Skip = "Restriccion por permiso desactivada temporalmente (ver QuotationsAuthorization).")]
+    [Fact]
     public async Task CreateWithoutTheManagePermissionIsForbidden()
     {
         await using var database = await StartDatabaseAsync();

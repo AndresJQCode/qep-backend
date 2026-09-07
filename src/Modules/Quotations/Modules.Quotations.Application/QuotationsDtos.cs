@@ -1,4 +1,4 @@
-﻿namespace Modules.Quotations.Application;
+namespace Modules.Quotations.Application;
 
 public sealed record QuotationItemDto(
     Guid Id,
@@ -142,7 +142,12 @@ public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
-public sealed record SendQuotationRequest(Guid PdfFileId);
+/// <summary>
+/// <c>PdfFileId</c> queda por compatibilidad y **se ignora**: el PDF lo genera el backend.
+/// El frontend todavía lo manda, y hacerlo obligatorio -- o rechazarlo -- rompería el envío
+/// en cuanto esto se despliegue. Se elimina cuando el frontend deje de armar el documento.
+/// </summary>
+public sealed record SendQuotationRequest(Guid? PdfFileId = null);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a

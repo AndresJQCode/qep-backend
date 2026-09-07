@@ -90,6 +90,35 @@ public sealed class R2ObjectStorageTests
         Assert.DoesNotContain("response-content-disposition", query, StringComparison.Ordinal);
     }
 
+    // El PDF de una cotización no lo baja un navegador: lo baja Meta, para adjuntarlo al
+    // mensaje de WhatsApp, con un cliente HTTP estricto. Un espacio o una comilla literal en el
+    // query string hacen la URL inválida por RFC 3986, y Meta descarta el mensaje entero minutos
+    // después de que Zenvia ya respondió 200 — un fallo que no se parece en nada a su causa.
+    //
+    // El `Uri` que sale de acá está bien escapado (`%3B%20filename%3D%22…%22`). Lo que rompía
+    // era convertirlo con `Uri.ToString()`, que devuelve la forma legible y **desescapa** el
+    // query. Por eso los consumidores usan `AbsoluteUri`, y esta prueba mide sobre `AbsoluteUri`
+    // y no sobre `Query`: la propiedad `Query` conserva el escapado siempre, así que asertar
+    // sobre ella no habría visto nunca el defecto.
+    [Fact]
+    public async Task DownloadUrlEscapesEverySeparatorInTheContentDisposition()
+    {
+        using var client = new CapturingS3Client();
+        var storage = new R2ObjectStorage(client, Options.Create(new StorageOptions
+        {
+            R2 = new R2Options { Bucket = "qep-private" },
+        }));
+
+        var url = await storage.CreatePresignedDownloadUrlAsync(
+            "files/tenants/x/2026/09/01a079b2567d729697a615e72755164e",
+            TimeSpan.FromHours(24),
+            "Cotizacion-QUO-2026-0002.pdf",
+            TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(' ', url.AbsoluteUri);
+        Assert.DoesNotContain('"', url.AbsoluteUri);
+    }
+
     [Fact]
     public void ClientIsBuiltWithoutChecksumTrailers()
     {

@@ -1,4 +1,4 @@
-﻿namespace Modules.Companies.Domain;
+namespace Modules.Companies.Domain;
 
 /// <summary>
 /// Una cuenta bancaria de la empresa: banco, moneda y numero.

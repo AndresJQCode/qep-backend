@@ -5,13 +5,14 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 public sealed record SendQuotationCommand(
-    Guid TenantId, Guid QuotationId, Guid PdfFileId) : ICommand<QuotationDto>;
+    Guid TenantId, Guid QuotationId) : ICommand<QuotationDto>;
 
 public sealed class SendQuotationHandler(
     IQuotationRepository repository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
-    IQuotationFileLookup pdfLookup,
+    IQuotationPdfProvider pdfProvider,
+    IQuotationPdfStorage pdfStorage,
     IQuotationCustomerLookup customerLookup,
     IWhatsAppSender whatsAppSender,
     IMembershipDirectory membershipDirectory,
@@ -40,18 +41,16 @@ public sealed class SendQuotationHandler(
         // después de llamarlo ya no hay forma de saber si esto fue el primer envío o un reenvío.
         var isResend = quotation.Status == QuotationStatus.Sent;
 
-        await QuotationPdfResolver.ResolveAsync(
-            pdfLookup, command.TenantId, command.PdfFileId, cancellationToken);
+        // El documento se genera acá, no lo sube el navegador: así el PDF que recibe el cliente
+        // no depende de qué pantalla lo pidió ni de qué versión del frontend estaba abierta.
+        // Sólo cuesta una llamada a `qcode-pdf` si la cotización cambió desde la última vez.
+        var pdf = await pdfProvider.EnsureCurrentAsync(quotation, cancellationToken);
 
-        // WhatsApp no descarga el PDF con la sesión de nadie: lo baja Meta, desde sus propios
-        // servidores, y el bucket es privado. Por eso se firma una URL de vida corta en vez de
-        // publicar el archivo — publicarlo lo dejaría accesible para siempre y sin dueño que lo
-        // despublique.
-        var documentUrl = await pdfLookup.CreateDownloadUrlAsync(
-            command.TenantId,
-            command.PdfFileId,
-            $"Cotizacion-{quotation.QuotationNumber}.pdf",
-            cancellationToken);
+        // Meta **no puede** bajar el PDF desde una URL prefirmada de R2: le falla y descarta el
+        // mensaje entero, minutos después de que Zenvia ya respondió 200. Por eso se publica una
+        // copia con clave aleatoria, que además evita que Meta sirva de su caché el documento
+        // viejo en un reenvío. La copia la limpia la regla de lifecycle del bucket.
+        var documentUrl = await pdfStorage.PublishAsync(pdf.StorageKey, cancellationToken);
 
         var customer = await customerLookup.FindAsync(
             command.TenantId, quotation.ClientId, cancellationToken);
@@ -76,7 +75,7 @@ public sealed class SendQuotationHandler(
             cancellationToken);
 
         var now = clock.UtcNow;
-        quotation.Send(command.PdfFileId, sentBy, now);
+        quotation.Send(sentBy, now);
 
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(
             QuotationHistoryEntryId.New(),

@@ -2,9 +2,11 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Expiration;
+using Modules.Quotations.Infrastructure.Pdf;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Quotations.Infrastructure.Whatsapp;
 
@@ -42,10 +44,26 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IQuotationExpirationProcessor, QuotationExpirationProcessor>();
         services.AddHostedService<QuotationExpirationWorker>();
 
+        AddPdfRenderer(services);
         AddWhatsAppSender(services, section.GetSection(nameof(QuotationsOptions.WhatsApp)));
 
         return services;
     }
+
+    /// <summary>
+    /// A diferencia de `AddWhatsAppSender` acá no hay registro condicional ni no-op: no
+    /// existe un PDF de mentira que sirva. Sin la key, `qcode-pdf` responde 401 y el envío
+    /// falla con `quotation.pdf.render_failed` — ruidoso y rastreable, que es lo que se
+    /// quiere. En producción `QuotationsOptionsValidator` ni siquiera deja arrancar.
+    /// </summary>
+    private static void AddPdfRenderer(IServiceCollection services) =>
+        services.AddSingleton<IQuotationPdfRenderer>(sp =>
+            new QCodePdfRenderer(
+                // Timeout propio: el default de HttpClient son 100 segundos, y `qcode-pdf`
+                // corta la compilación a los 15 (`COMPILE_TIMEOUT_MS`). Sin esto, un
+                // servicio caído deja colgado el request de la asesora un minuto y medio.
+                new HttpClient { Timeout = TimeSpan.FromSeconds(30) },
+                sp.GetRequiredService<IOptions<QuotationsOptions>>()));
 
     /// <summary>
     /// `Zenvia` sólo se registra cuando las tres claves están presentes — igual que
@@ -69,7 +87,9 @@ public static class QuotationsInfrastructureExtensions
             // backend.
             services.AddSingleton<IWhatsAppSender>(sp =>
                 new ZenviaWhatsAppSender(
-                    new HttpClient(), sp.GetRequiredService<IOptions<QuotationsOptions>>()));
+                    new HttpClient(),
+                    sp.GetRequiredService<IOptions<QuotationsOptions>>(),
+                    sp.GetRequiredService<ILogger<ZenviaWhatsAppSender>>()));
         }
         else
         {

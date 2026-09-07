@@ -1,4 +1,4 @@
-﻿using Modules.Catalog.Application;
+using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Quotations.Application;
 

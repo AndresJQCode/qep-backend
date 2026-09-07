@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -33,7 +34,7 @@ public sealed class ZenviaWhatsAppSenderTests
     [Fact]
     public async Task SendPutsThePdfUrlInTheDocumentUrlField()
     {
-        var (sender, capture) = NewSender();
+        var (sender, capture, _) = NewSender();
 
         await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
 
@@ -45,7 +46,7 @@ public sealed class ZenviaWhatsAppSenderTests
     [Fact]
     public async Task SendFormatsTheTotalAsColombianPesos()
     {
-        var (sender, capture) = NewSender();
+        var (sender, capture, _) = NewSender();
 
         await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
 
@@ -60,7 +61,7 @@ public sealed class ZenviaWhatsAppSenderTests
     [Fact]
     public async Task SendFormatsTheValidityDateInSpanish()
     {
-        var (sender, capture) = NewSender();
+        var (sender, capture, _) = NewSender();
 
         await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
 
@@ -72,7 +73,7 @@ public sealed class ZenviaWhatsAppSenderTests
     [Fact]
     public async Task SendUsesTheConfiguredTemplateAndSender()
     {
-        var (sender, capture) = NewSender();
+        var (sender, capture, _) = NewSender();
 
         await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
 
@@ -89,7 +90,7 @@ public sealed class ZenviaWhatsAppSenderTests
     [InlineData("+57 300 123 4567", "573001234567")]
     public async Task SendNormalizesTheRecipientPhone(string stored, string expected)
     {
-        var (sender, capture) = NewSender();
+        var (sender, capture, _) = NewSender();
 
         await sender.SendQuotationAsync(
             Message with { ToPhone = stored }, TestContext.Current.CancellationToken);
@@ -100,7 +101,7 @@ public sealed class ZenviaWhatsAppSenderTests
     [Fact]
     public async Task SendRejectsACustomerWithoutAPhone()
     {
-        var (sender, _) = NewSender();
+        var (sender, _, _) = NewSender();
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             sender.SendQuotationAsync(
@@ -112,7 +113,7 @@ public sealed class ZenviaWhatsAppSenderTests
     [Fact]
     public async Task SendSurfacesAZenviaRejectionAsADomainError()
     {
-        var (sender, _) = NewSender(HttpStatusCode.BadRequest, """{"code":"INVALID_TEMPLATE"}""");
+        var (sender, _, _) = NewSender(HttpStatusCode.BadRequest, """{"code":"INVALID_TEMPLATE"}""");
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken));
@@ -121,10 +122,63 @@ public sealed class ZenviaWhatsAppSenderTests
         Assert.Contains("INVALID_TEMPLATE", error.Message);
     }
 
-    private static (IWhatsAppSender Sender, RequestCapture Capture) NewSender(
-        HttpStatusCode status = HttpStatusCode.OK, string responseBody = "{}")
+    // Zenvia responde 200 en cuanto encola el request: la entrega real ocurre después, del lado
+    // de Meta, y sólo se puede rastrear por el id que devuelve en el cuerpo. Sin registrarlo no
+    // queda forma de averiguar por qué una cotización marcada como enviada nunca llegó.
+    [Fact]
+    public async Task SendLogsTheZenviaMessageIdOnSuccess()
+    {
+        var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-abc-123"}""");
+
+        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Messages, message => message.Contains("zid-abc-123"));
+    }
+
+    // Un 2xx con un cuerpo que no trae `id` sigue siendo un envío aceptado: perder el registro
+    // entero —y con él, la única huella de que la cotización salió— sería peor que anotarlo
+    // sin identificador.
+    [Fact]
+    public async Task SendStillLogsTheAcceptanceWhenZenviaOmitsTheMessageId()
+    {
+        var (sender, _, logger) = NewSender(responseBody: """{"status":"queued"}""");
+
+        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Messages, message => message.Contains("COT-000123"));
+    }
+
+    [Fact]
+    public async Task SendStillLogsTheAcceptanceWhenZenviaAnswersWithoutJson()
+    {
+        var (sender, _, logger) = NewSender(responseBody: "OK");
+
+        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Messages, message => message.Contains("COT-000123"));
+    }
+
+    // Red de contención, no un ciclo rojo: el log ya nace sin estos datos. Existe para que
+    // agregarlos más adelante —que es la tentación evidente cuando alguien vuelva a depurar un
+    // "no me llegó"— rompa la prueba en vez de filtrar. La URL prefirmada da acceso al PDF del
+    // tenant durante 24 horas y el teléfono es dato personal; un log se copia a soporte, a un
+    // ticket o a una captura.
+    [Fact]
+    public async Task SendNeverLogsThePresignedUrlOrTheRecipientPhone()
+    {
+        var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-abc-123"}""");
+
+        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("sig=abc"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
+    }
+
+    private static (IWhatsAppSender Sender, RequestCapture Capture, RecordingLogger Logger)
+        NewSender(HttpStatusCode status = HttpStatusCode.OK, string responseBody = "{}")
     {
         var capture = new RequestCapture();
+        var logger = new RecordingLogger();
         var options = Options.Create(new QuotationsOptions
         {
             WhatsApp = new WhatsAppOptions
@@ -138,8 +192,11 @@ public sealed class ZenviaWhatsAppSenderTests
 
         return (
             new ZenviaWhatsAppSender(
-                new HttpClient(new CapturingHandler(capture, status, responseBody)), options),
-            capture);
+                new HttpClient(new CapturingHandler(capture, status, responseBody)),
+                options,
+                logger),
+            capture,
+            logger);
     }
 
     private sealed class RequestCapture
@@ -170,5 +227,23 @@ public sealed class ZenviaWhatsAppSenderTests
 
             return new HttpResponseMessage(status) { Content = new StringContent(responseBody) };
         }
+    }
+
+    private sealed class RecordingLogger : ILogger<ZenviaWhatsAppSender>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception));
     }
 }

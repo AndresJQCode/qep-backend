@@ -1,4 +1,4 @@
-﻿using Modules.Quotations.Domain;
+using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -40,6 +40,16 @@ public interface IQuotationRepository
     /// <see cref="Quotation"/>, en la misma unidad de trabajo.
     /// </summary>
     void AddHistoryEntry(QuotationHistoryEntry entry);
+
+    /// <summary>
+    /// El PDF ya generado de una cotización, si existe. Vive en este repositorio y no en uno
+    /// propio por el mismo motivo que <see cref="AddHistoryEntry"/>: se escribe en la misma
+    /// unidad de trabajo que la operación que lo produjo -- exportar o enviar.
+    /// </summary>
+    Task<QuotationPdf?> FindPdfAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
+
+    void AddPdf(QuotationPdf pdf);
 
     /// <summary>
     /// La línea de tiempo completa de una cotización, de lo más nuevo a lo más viejo. Sin paginar
