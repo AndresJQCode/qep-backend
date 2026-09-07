@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Expiration;
@@ -69,7 +70,9 @@ public static class QuotationsInfrastructureExtensions
             // backend.
             services.AddSingleton<IWhatsAppSender>(sp =>
                 new ZenviaWhatsAppSender(
-                    new HttpClient(), sp.GetRequiredService<IOptions<QuotationsOptions>>()));
+                    new HttpClient(),
+                    sp.GetRequiredService<IOptions<QuotationsOptions>>(),
+                    sp.GetRequiredService<ILogger<ZenviaWhatsAppSender>>()));
         }
         else
         {
