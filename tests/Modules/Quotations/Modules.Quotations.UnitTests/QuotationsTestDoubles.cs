@@ -118,7 +118,17 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
     {
     }
 
+    /// <summary>El PDF que el caso de uso escribio, o el que ya estaba: se puede sembrar antes
+    /// de ejercitar para probar el camino en que no hace falta regenerarlo.</summary>
+    public QuotationPdf? Pdf { get; set; }
+
     public void AddHistoryEntry(QuotationHistoryEntry entry) => HistoryEntries.Add(entry);
+
+    public Task<QuotationPdf?> FindPdfAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult(Pdf);
+
+    public void AddPdf(QuotationPdf pdf) => Pdf = pdf;
 
     public Task<IReadOnlyList<QuotationHistoryEntry>> ListHistoryAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
@@ -208,6 +218,14 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
     }
 
     public void AddHistoryEntry(QuotationHistoryEntry entry)
+    {
+    }
+
+    public Task<QuotationPdf?> FindPdfAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<QuotationPdf?>(null);
+
+    public void AddPdf(QuotationPdf pdf)
     {
     }
 

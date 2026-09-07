@@ -22,6 +22,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<SaleNumberCounter> SaleNumberCounters => Set<SaleNumberCounter>();
 
+    internal DbSet<QuotationPdf> QuotationPdfs => Set<QuotationPdf>();
+
     internal DbSet<QuotationsOutboxMessage> Outbox => Set<QuotationsOutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -30,6 +32,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureQuotationItem(modelBuilder);
         ConfigureQuotationParty(modelBuilder);
         ConfigureQuotationHistoryEntry(modelBuilder);
+        ConfigureQuotationPdf(modelBuilder);
         ConfigureQuotationNumberCounter(modelBuilder);
         ConfigureSale(modelBuilder);
         ConfigureSalePaymentProof(modelBuilder);
@@ -260,6 +263,39 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // No hijo del agregado Quotation (ver comentario en el dominio): igual CASCADE, porque
         // el historial de una cotizacion borrada no tiene a que aferrarse.
         entry.HasOne<Quotation>()
+            .WithMany()
+            .HasForeignKey(value => value.QuotationId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    /// <summary>
+    /// El PDF generado de una cotizacion, una fila por cotizacion: la clave primaria es el
+    /// propio `quotation_id`. Regenerar pisa la fila, y el objeto anterior queda huerfano en el
+    /// bucket, donde lo limpia la regla de lifecycle.
+    /// </summary>
+    private static void ConfigureQuotationPdf(ModelBuilder modelBuilder)
+    {
+        var pdf = modelBuilder.Entity<QuotationPdf>();
+        pdf.ToTable("quotation_pdfs", "quotations");
+        pdf.HasKey(value => value.QuotationId);
+        pdf.Property(value => value.QuotationId)
+            .HasColumnName("quotation_id")
+            .HasConversion(id => id.Value, value => new QuotationId(value))
+            .ValueGeneratedNever();
+        pdf.Property(value => value.TenantId).HasColumnName("tenant_id");
+        pdf.Property(value => value.StorageKey)
+            .HasColumnName("storage_key")
+            .HasMaxLength(500)
+            .IsRequired();
+        pdf.Property(value => value.QuotationVersion).HasColumnName("quotation_version");
+        pdf.Property(value => value.GeneratedAt).HasColumnName("generated_at");
+
+        // El tenant no es parte de la clave --la cotizacion ya es unica-- pero toda consulta de
+        // este modulo filtra por el, y sin indice la de exportar haria un scan.
+        pdf.HasIndex(value => value.TenantId).HasDatabaseName("IX_quotation_pdfs_tenant");
+
+        // CASCADE, igual que el historial: un PDF sin su cotizacion no le sirve a nadie.
+        pdf.HasOne<Quotation>()
             .WithMany()
             .HasForeignKey(value => value.QuotationId)
             .OnDelete(DeleteBehavior.Cascade);
