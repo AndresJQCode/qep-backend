@@ -115,11 +115,14 @@ public sealed class ExportQuotationPdfHandlerTests
         var handler = new ExportQuotationPdfHandler(
             repository,
             new NoOpQuotationsUnitOfWork(),
-            new StubQuotationResponseComposer(),
-            renderer,
+            new QuotationPdfProvider(
+                repository,
+                new StubQuotationResponseComposer(),
+                renderer,
+                storage,
+                new FixedClock(Now)),
             storage,
-            new StubExecutionContext(SubjectId, TenantId),
-            new FixedClock(Now));
+            new StubExecutionContext(SubjectId, TenantId));
 
         return (handler, renderer, storage, repository, quotation);
     }

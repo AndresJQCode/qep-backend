@@ -20,6 +20,7 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class QuotationPdfStorage(
     IObjectStorage objectStorage,
+    IPublicObjectStorage publicObjectStorage,
     IOptions<StorageOptions> options)
     : IQuotationPdfStorage
 {
@@ -48,6 +49,28 @@ internal sealed class QuotationPdfStorage(
 
         await objectStorage.UploadAsync(key, content, PdfContentType, cancellationToken);
         return key;
+    }
+
+    public async Task<string> PublishAsync(
+        string storageKey, CancellationToken cancellationToken)
+    {
+        if (!publicObjectStorage.IsConfigured)
+        {
+            // Ruidoso a proposito. El fallback razonable seria mandar la URL firmada, que es
+            // justo la que Meta no puede bajar: el mensaje se daria por enviado y no llegaria,
+            // sin un solo error. Preferimos que falle el envio.
+            throw new InvalidOperationException(
+                "Storage:R2:PublicBucket and PublicBaseUrl are required to send a quotation by "
+                + "WhatsApp: Meta cannot download the PDF from a presigned URL.");
+        }
+
+        // Clave nueva en cada publicacion, aleatoria: no se puede derivar del id de la
+        // cotizacion --que viaja en la URL del navegador y no es un secreto-- y ademas hace que
+        // Meta, que cachea por URL, vuelva a descargar el documento en un reenvio.
+        var publicKey = $"{QuotationPrefix}/{Guid.CreateVersion7():N}.pdf";
+
+        await publicObjectStorage.CopyFromPrivateAsync(storageKey, publicKey, cancellationToken);
+        return publicObjectStorage.GetUrl(publicKey);
     }
 
     public async Task<string> CreateDownloadUrlAsync(

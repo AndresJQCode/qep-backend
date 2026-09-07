@@ -262,6 +262,18 @@ internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfSto
         return Task.FromResult($"quotations/tenants/{tenantId:N}/{Saves}.pdf");
     }
 
+    /// <summary>La URL publica que se le entrega a Meta. Distinta de la firmada a proposito:
+    /// asi una prueba puede afirmar cual de las dos salio hacia WhatsApp.</summary>
+    public const string PublicUrl = "https://assets-qep.example.co/quotations/abc.pdf";
+
+    public string? PublishedKey { get; private set; }
+
+    public Task<string> PublishAsync(string storageKey, CancellationToken cancellationToken)
+    {
+        PublishedKey = storageKey;
+        return Task.FromResult(PublicUrl);
+    }
+
     public Task<string> CreateDownloadUrlAsync(
         string storageKey, string downloadFileName, CancellationToken cancellationToken)
     {

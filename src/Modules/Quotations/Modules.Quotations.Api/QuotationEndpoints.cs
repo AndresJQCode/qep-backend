@@ -291,7 +291,7 @@ public static class QuotationEndpoints
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
-            new SendQuotationCommand(tenantId, quotationId, request.PdfFileId),
+            new SendQuotationCommand(tenantId, quotationId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));

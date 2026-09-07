@@ -8,6 +8,7 @@ using Modules.Catalog.Application;
 using Modules.Companies.Application;
 using Modules.Customers.Application;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 using Modules.Storage.Application;
 using Testcontainers.PostgreSql;
 
@@ -502,6 +503,23 @@ internal static class QuotationsApiHarness
     /// <summary>Devuelve una cabecera de PDF valida y nada mas: lo que estas pruebas
     /// verifican es el flujo, no el documento. El contenido del PDF lo cubre
     /// `QCodePdfRendererTests` contra el contrato del servicio.</summary>
+    private sealed class StubPdfStorage : IQuotationPdfStorage
+    {
+        public Task<string> SaveAsync(
+            Guid tenantId,
+            QuotationId quotationId,
+            byte[] content,
+            CancellationToken cancellationToken) =>
+            Task.FromResult($"quotations/tenants/{tenantId:N}/{Guid.CreateVersion7():N}.pdf");
+
+        public Task<string> PublishAsync(string storageKey, CancellationToken cancellationToken) =>
+            Task.FromResult($"https://assets.example.co/{storageKey}");
+
+        public Task<string> CreateDownloadUrlAsync(
+            string storageKey, string downloadFileName, CancellationToken cancellationToken) =>
+            Task.FromResult($"https://r2.example.com/{storageKey}?X-Amz-Signature=stub");
+    }
+
     private sealed class StubPdfRenderer : IQuotationPdfRenderer
     {
         public Task<byte[]> RenderAsync(
@@ -559,6 +577,12 @@ internal static class QuotationsApiHarness
                 // que `IObjectStorage`, que tampoco habla con R2 aca.
                 services.RemoveAll<IQuotationPdfRenderer>();
                 services.AddSingleton<IQuotationPdfRenderer, StubPdfRenderer>();
+
+                // El adaptador real copia al bucket publico de R2 y falla si no esta
+                // configurado -- que es el caso aca, y a proposito: un envio que no puede
+                // publicar el PDF no debe darse por bueno. Estas pruebas no ejercitan R2.
+                services.RemoveAll<IQuotationPdfStorage>();
+                services.AddSingleton<IQuotationPdfStorage, StubPdfStorage>();
             });
         }
     }

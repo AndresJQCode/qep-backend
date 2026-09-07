@@ -16,7 +16,7 @@ namespace Bootstrapper;
 /// donde ese acoplamiento es legítimo.
 ///
 /// No decide nada: las reglas (PDF vs. comprobante, tamaño máximo, tenant, disponibilidad) son
-/// de <c>QuotationPdfResolver</c>/<c>SalePaymentProofResolver</c>, en Application.
+/// de <c>SalePaymentProofResolver</c>, en Application.
 /// </summary>
 internal sealed class QuotationFileLookup(
     IFileResourceRepository repository,

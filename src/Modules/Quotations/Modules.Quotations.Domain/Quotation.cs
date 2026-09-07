@@ -162,6 +162,9 @@ public sealed class Quotation
     /// bucket público, y un documento de negocio como una cotización no es ese caso — la URL de
     /// descarga se resuelve bajo demanda contra el endpoint que Storage ya expone.
     /// </summary>
+    /// <summary>Histórico: el `FileResource` que el navegador subía cuando el PDF lo generaba
+    /// el frontend. Las cotizaciones enviadas desde entonces lo dejan en null -- el documento
+    /// vive en `quotation_pdfs`. Se conserva para no reescribir lo que ya pasó.</summary>
     public Guid? PdfFileId { get; private set; }
 
     /// <summary>Token de concurrencia optimista, mismo criterio que Product/Customer.</summary>
@@ -415,8 +418,9 @@ public sealed class Quotation
         Touch(updatedBy, occurredAt);
     }
 
-    /// <summary>US-12: genera el PDF (fuera de este agregado — la aplicación ya lo validó contra
-    /// Storage) y marca la cotización como enviada. Desde <see cref="QuotationStatus.Draft"/> o
+    /// <summary>US-12: marca la cotización como enviada. El PDF lo genera el backend y vive en
+    /// `quotation_pdfs`, versionado contra <see cref="Version"/>: ya no es un archivo que el
+    /// cliente elige y este agregado tenga que recordar. Desde <see cref="QuotationStatus.Draft"/> o
     /// desde <see cref="QuotationStatus.Sent"/>: reenviar es el mismo hecho para el agregado —
     /// PDF nuevo, <see cref="SentAt"/> nuevo, estado <see cref="QuotationStatus.Sent"/>—, y lo
     /// que lo distingue de un primer envío es la entrada de historial que escribe el caso de
@@ -425,11 +429,10 @@ public sealed class Quotation
     /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> quedan en el mismo instante también en un
     /// reenvío, así que <see cref="HasChangesSinceSent"/> vuelve a <c>false</c>: lo que el
     /// cliente tiene en la mano es, otra vez, la versión vigente.</summary>
-    public void Send(Guid pdfFileId, MemberId sentBy, DateTimeOffset occurredAt)
+    public void Send(MemberId sentBy, DateTimeOffset occurredAt)
     {
         EnsureSendable();
 
-        PdfFileId = pdfFileId;
         SentAt = occurredAt;
         Status = QuotationStatus.Sent;
         UpdatedBy = sentBy;

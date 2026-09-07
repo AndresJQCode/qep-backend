@@ -14,11 +14,9 @@ public sealed record QuotationPdfExportDto(string Url, DateTimeOffset GeneratedA
 public sealed class ExportQuotationPdfHandler(
     IQuotationRepository repository,
     IQuotationsUnitOfWork unitOfWork,
-    IQuotationResponseComposer composer,
-    IQuotationPdfRenderer renderer,
+    IQuotationPdfProvider pdfProvider,
     IQuotationPdfStorage storage,
-    IExecutionContext executionContext,
-    IClock clock)
+    IExecutionContext executionContext)
     : ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>
 {
     public async Task<QuotationPdfExportDto> HandleAsync(
@@ -29,39 +27,12 @@ public sealed class ExportQuotationPdfHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, QuotationsPermissions.QuotationRead);
 
-        var quotationId = new QuotationId(command.QuotationId);
-        var quotation = await repository.FindAsync(command.TenantId, quotationId, cancellationToken)
+        var quotation = await repository.FindAsync(
+            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
 
-        var pdf = await repository.FindPdfAsync(command.TenantId, quotationId, cancellationToken);
-
-        // El unico trabajo real de este caso de uso. Generar cuesta una llamada de red a
-        // `qcode-pdf` mas una subida a R2, y la mayoria de las exportaciones son de cotizaciones
-        // que nadie toco desde la anterior: sin esta comparacion, abrir dos veces la misma
-        // pantalla pagaria las dos.
-        if (pdf is null || pdf.IsStaleFor(quotation.Version))
-        {
-            var response = await composer.ComposeAsync(
-                command.TenantId, quotation.ToDto(), cancellationToken);
-            var content = await renderer.RenderAsync(
-                QuotationPdfDocumentMapper.From(response), cancellationToken);
-            var storageKey = await storage.SaveAsync(
-                command.TenantId, quotationId, content, cancellationToken);
-
-            var now = clock.UtcNow;
-            if (pdf is null)
-            {
-                pdf = QuotationPdf.Generate(
-                    quotationId, command.TenantId, storageKey, quotation.Version, now);
-                repository.AddPdf(pdf);
-            }
-            else
-            {
-                pdf.Regenerate(storageKey, quotation.Version, now);
-            }
-
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
+        var pdf = await pdfProvider.EnsureCurrentAsync(quotation, cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         var url = await storage.CreateDownloadUrlAsync(
             pdf.StorageKey,

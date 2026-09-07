@@ -377,15 +377,13 @@ public sealed class QuotationTests
     }
 
     [Fact]
-    public void SendMarksAsSentAndStampsThePdfFileAndSentAt()
+    public void SendMarksAsSentAndStampsSentAt()
     {
         var quotation = NewQuotation();
-        var pdfFileId = Guid.CreateVersion7();
 
-        quotation.Send(pdfFileId, AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
 
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
-        Assert.Equal(pdfFileId, quotation.PdfFileId);
         Assert.Equal(Now, quotation.SentAt);
         Assert.Equal(2, quotation.Version);
     }
@@ -398,7 +396,7 @@ public sealed class QuotationTests
             validUntil: null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now));
+            quotation.Send(AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.valid_until_required", error.Code);
         Assert.Equal(QuotationStatus.Draft, quotation.Status);
@@ -406,20 +404,18 @@ public sealed class QuotationTests
 
     [Fact]
     // Reenviar una cotización que no cambió es un caso legítimo: al cliente se le puede haber
-    // perdido el mensaje. El PDF se regenera con los datos actuales, así que el reenvío pisa
-    // PdfFileId y SentAt en vez de conservar los del envío anterior.
+    // perdido el mensaje. El reenvío pisa SentAt en vez de conservar el del envío anterior. El
+    // documento no se regenera si nada cambió -- eso lo decide `QuotationPdf.IsStaleFor`, fuera
+    // de este agregado.
     public void SendResendsASentQuotationThatDidNotChange()
     {
         var quotation = NewQuotation();
-        var firstPdf = Guid.CreateVersion7();
-        var secondPdf = Guid.CreateVersion7();
         var later = Now.AddHours(3);
-        quotation.Send(firstPdf, AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
 
-        quotation.Send(secondPdf, AdvisorId, later);
+        quotation.Send(AdvisorId, later);
 
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
-        Assert.Equal(secondPdf, quotation.PdfFileId);
         Assert.Equal(later, quotation.SentAt);
         Assert.Equal(3, quotation.Version);
     }
@@ -432,7 +428,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
 
-        quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
 
         Assert.True(quotation.CanBeSent);
         Assert.False(quotation.HasChangesSinceSent);
@@ -452,12 +448,12 @@ public sealed class QuotationTests
         }
         else
         {
-            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+            quotation.Send(AdvisorId, Now);
             quotation.Expire(Now.AddDays(60));
         }
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now.AddDays(61)));
+            quotation.Send(AdvisorId, Now.AddDays(61)));
 
         Assert.Equal("quotation.quotation.not_draft", error.Code);
     }
@@ -470,7 +466,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation();
         if (sendFirst)
         {
-            quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+            quotation.Send(AdvisorId, Now);
         }
 
         quotation.Void(AdvisorId, Now);
@@ -510,7 +506,7 @@ public sealed class QuotationTests
     public void EditingASentQuotationIsAllowed()
     {
         var quotation = NewQuotation();
-        quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
 
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now);
 
@@ -521,7 +517,7 @@ public sealed class QuotationTests
     public void ExpireMovesASentQuotationToExpired()
     {
         var quotation = NewQuotation();
-        quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
         var updatedByBeforeExpiring = quotation.UpdatedBy;
 
         quotation.Expire(Now);
@@ -545,7 +541,7 @@ public sealed class QuotationTests
     public void EditingAnExpiredQuotationIsRejected()
     {
         var quotation = NewQuotation();
-        quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
         quotation.Expire(Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
@@ -565,7 +561,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.Send(Guid.CreateVersion7(), AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
         var versionBeforeConverting = quotation.Version;
 
         quotation.EnsureConvertibleToSale();

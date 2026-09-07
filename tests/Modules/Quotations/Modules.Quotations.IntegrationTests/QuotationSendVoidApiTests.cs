@@ -9,8 +9,10 @@ namespace Modules.Quotations.IntegrationTests;
 /// de PDF nuevo en el backend) y US-11 (anulación).</summary>
 public sealed class QuotationSendVoidApiTests
 {
+    // `PdfFileId` queda en null a proposito desde que el backend genera el documento: era el
+    // `FileResource` que subia el navegador. El PDF ahora vive en `quotation_pdfs`.
     [Fact]
-    public async Task SendMarksAsSentAndStampsThePdfFileAndSentAt()
+    public async Task SendMarksAsSentAndStampsSentAt()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -18,11 +20,10 @@ public sealed class QuotationSendVoidApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
-        var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
-            new SendQuotationRequest(pdfFileId),
+            new SendQuotationRequest(),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -30,7 +31,6 @@ public sealed class QuotationSendVoidApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(sent);
         Assert.Equal("Sent", sent.Status);
-        Assert.Equal(pdfFileId, sent.PdfFileId);
         Assert.NotNull(sent.SentAt);
     }
 
@@ -45,8 +45,12 @@ public sealed class QuotationSendVoidApiTests
     // Enviar exige solo estado y vigencia. Los otros tres requisitos --productos, forma de pago
     // y cuenta de cobro-- son de `EnsureConvertibleToSale`, y se prueban contra ese endpoint.
 
+    // Reemplaza a `SendWithAnUnknownFileIsUnprocessable`, que dejo de tener sentido: enviar ya
+    // no recibe un archivo. Lo que esta prueba fija es la compatibilidad -- el frontend todavia
+    // manda `pdfFileId` y el backend tiene que ignorarlo, no rechazarlo, o el envio se rompe en
+    // cuanto esto se despliega y antes de que el frontend se actualice.
     [Fact]
-    public async Task SendWithAnUnknownFileIsUnprocessable()
+    public async Task SendIgnoresAPdfFileIdSentByAnOlderFrontend()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -60,13 +64,13 @@ public sealed class QuotationSendVoidApiTests
             new SendQuotationRequest(Guid.NewGuid()),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     // Antes afirmaba lo contrario ("solo Draft puede pasar a Sent"). `Quotation.Send` acepta
-    // Sent a proposito --reenviar es el mismo hecho para el agregado, con PDF y `SentAt`
-    // nuevos-- y el frontend ofrece "Reenviar" desde 0fe2426. Lo que distingue un reenvio de un
-    // primer envio es la entrada de historial, no el estado.
+    // Sent a proposito --reenviar es el mismo hecho para el agregado, con `SentAt` nuevo-- y el
+    // frontend ofrece "Reenviar" desde 0fe2426. Lo que distingue un reenvio de un primer envio
+    // es la entrada de historial, no el estado.
     [Fact]
     public async Task SendingAnAlreadySentQuotationResendsIt()
     {
@@ -79,17 +83,17 @@ public sealed class QuotationSendVoidApiTests
         var quotation = await CreateSentQuotationAsync(
             client, factory, tenantId, clientId, productId);
 
-        var secondPdf = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
-            new SendQuotationRequest(secondPdf),
+            new SendQuotationRequest(),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var resent = await response.Content.ReadFromJsonAsync<QuotationResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(resent);
-        Assert.Equal(secondPdf, resent.PdfFileId);
+        Assert.Equal("Sent", resent.Status);
+        Assert.NotNull(resent.SentAt);
     }
 
     [Theory]

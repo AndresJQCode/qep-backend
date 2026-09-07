@@ -398,6 +398,7 @@ public static class QepServiceCollectionExtensions
         // bucket y firmar su enlace de descarga.
         services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
+        services.AddScoped<IQuotationPdfProvider, QuotationPdfProvider>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los
