@@ -459,6 +459,17 @@ internal static class QuotationsApiHarness
             // ausentes, NotificationsOptionsValidator falla al arrancar y todas las pruebas de
             // este proyecto mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+
+            // Mismo criterio, y por el mismo motivo: `WebApplicationFactory` corre en
+            // Development y ahí `CreateBuilder` carga los user-secrets del developer. Si esa
+            // persona configuró Zenvia para probar el envío a mano, el registro condicional ve
+            // las tres claves, monta `ZenviaWhatsAppSender` y estas pruebas empiezan a mandarle
+            // WhatsApps de verdad a clientes de prueba sin teléfono -- que fallan con
+            // `quotation.whatsapp.recipient_missing` en aserciones que no tienen nada que ver.
+            // Vaciarlas fuerza `LogWhatsAppSender`, que es lo que estas pruebas quieren.
+            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
+            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
+            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IObjectStorage>();
