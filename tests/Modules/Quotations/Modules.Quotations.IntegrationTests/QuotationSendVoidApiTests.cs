@@ -37,35 +37,13 @@ public sealed class QuotationSendVoidApiTests
     // Sin vigencia la cotización nunca vencería (QuotationExpirationProcessor filtra por
     // ValidUntil != null) y quedaría convertible a venta para siempre. El dominio lo corta al
     // salir de Draft; acá se verifica que ese código llega al cliente como 422 y no como 500.
-    [Fact]
-    public async Task SendWithoutAValidityDateIsUnprocessable()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var _ = client;
-        var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var created = await client.PostAsJsonAsync(
-            QuotationsUrl(tenantId),
-            new CreateQuotationRequest(clientId, null, null, null, null, null),
-            TestContext.Current.CancellationToken);
-        created.EnsureSuccessStatusCode();
-        var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(
-            TestContext.Current.CancellationToken);
-        Assert.NotNull(quotation);
-        var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
-
-        var response = await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
-            new SendQuotationRequest(pdfFileId),
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
-            TestContext.Current.CancellationToken);
-        Assert.NotNull(problem);
-        Assert.Equal("quotation.quotation.valid_until_required", problem.Code);
-    }
+    // Aca vivia `SendWithoutAValidityDateIsUnprocessable`. Se elimino en vez de arreglarse:
+    // desde 23ae906 `CreateQuotation` le pone vigencia por defecto, asi que por la API no
+    // existe una cotizacion sin `ValidUntil` y su 422 quedo inalcanzable. La invariante sigue
+    // viva en `EnsureSendable` y cubierta por `QuotationTests` a nivel de dominio.
+    //
+    // Enviar exige solo estado y vigencia. Los otros tres requisitos --productos, forma de pago
+    // y cuenta de cobro-- son de `EnsureConvertibleToSale`, y se prueban contra ese endpoint.
 
     [Fact]
     public async Task SendWithAnUnknownFileIsUnprocessable()
@@ -85,21 +63,21 @@ public sealed class QuotationSendVoidApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
-    // Sólo Draft puede pasar a Sent: reenviar una cotización ya enviada es un 422.
+    // Antes afirmaba lo contrario ("solo Draft puede pasar a Sent"). `Quotation.Send` acepta
+    // Sent a proposito --reenviar es el mismo hecho para el agregado, con PDF y `SentAt`
+    // nuevos-- y el frontend ofrece "Reenviar" desde 0fe2426. Lo que distingue un reenvio de un
+    // primer envio es la entrada de historial, no el estado.
     [Fact]
-    public async Task SendingAnAlreadySentQuotationIsUnprocessable()
+    public async Task SendingAnAlreadySentQuotationResendsIt()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
-        var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
-        await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
-            new SendQuotationRequest(pdfFileId),
-            TestContext.Current.CancellationToken);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId);
 
         var secondPdf = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
@@ -107,7 +85,11 @@ public sealed class QuotationSendVoidApiTests
             new SendQuotationRequest(secondPdf),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var resent = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(resent);
+        Assert.Equal(secondPdf, resent.PdfFileId);
     }
 
     [Theory]

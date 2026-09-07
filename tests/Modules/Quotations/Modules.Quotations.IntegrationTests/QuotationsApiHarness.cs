@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Application;
+using Modules.Companies.Application;
 using Modules.Customers.Application;
 using Modules.Quotations.Application;
 using Modules.Storage.Application;
@@ -81,7 +82,11 @@ internal static class QuotationsApiHarness
         CatalogPermissions.TaxRateRead,
         CatalogPermissions.TaxRateManage,
         StoragePermissions.FileUpload,
-        StoragePermissions.FileRead
+        StoragePermissions.FileRead,
+        // Desde que `Quotation.EnsureComplete` exige cuenta de cobro para enviar, armar una
+        // cotización enviable pasa por la API de Companies.
+        CompaniesPermissions.CompanyRead,
+        CompaniesPermissions.CompanyManage
     ];
 
     /// <summary>Registra un tenant nuevo (signup publico) para conseguir una Membership de dueño
@@ -376,10 +381,66 @@ internal static class QuotationsApiHarness
 
     /// <summary>Crea una cotización, le agrega un ítem y la marca como enviada -- el punto de
     /// partida que necesita toda prueba de conversión a venta (US-13 exige <c>Sent</c>).</summary>
-    public static async Task<QuotationResponse> CreateSentQuotationAsync(
-        HttpClient client, QepApiFactory factory, Guid tenantId, Guid clientId, Guid productId)
+    /// <summary>
+    /// Una empresa con una cuenta bancaria, que es de donde la cotización copia su cuenta de
+    /// cobro: <c>QuotationBillingAccountRequest</c> la valida contra las cuentas de la empresa
+    /// antes de copiarla, así que no alcanza con inventar un nombre de banco.
+    /// </summary>
+    public static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId)
     {
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var cityId = await EnsureCityIdAsync(client);
+        const string bankName = "Bancolombia";
+        var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
+        const string currency = "COP";
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name = "QEP Comercial S.A.S.",
+                bankAccounts = new[]
+                {
+                    new { bankName, accountNumber, currency },
+                },
+                taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                cityId,
+                phone = "6015550000",
+                email = "facturacion@qep.example.co",
+                address = "Carrera 7 # 71-21",
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CompanyResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return (body.Id, bankName, accountNumber, currency);
+    }
+
+    public static async Task<QuotationResponse> CreateSentQuotationAsync(
+        HttpClient client,
+        QepApiFactory factory,
+        Guid tenantId,
+        Guid clientId,
+        Guid productId,
+        string? paymentMethod = "Transferencia")
+    {
+        // Los tres datos que `Quotation.EnsureComplete` exige para enviar (f656ec9): productos,
+        // vigencia y cuenta de cobro. La vigencia la pone `CreateQuotationAsync`; las otras dos,
+        // acá. Sin la cuenta el envío devuelve 422 `quotation.billing.account_required`, y el
+        // error aparece en la aserción de la prueba que llamó a este helper, no acá.
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(
+            client,
+            tenantId,
+            clientId,
+            validUntil: null,
+            billingAccount: new QuotationBillingAccountRequest(
+                billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+            // Convertir en venta la exige aparte de `EnsureComplete`
+            // (`quotation.quotation.payment_method_required`). Va acá y no en cada prueba
+            // porque toda cotización enviada es candidata a convertirse.
+            paymentMethod: paymentMethod);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
             new AddQuotationItemRequest(productId, 1m),
@@ -402,17 +463,22 @@ internal static class QuotationsApiHarness
     /// sobrescriben después con <c>UpdateQuotationRequest</c>, que sigue disponible en
     /// <c>Sent</c>.</summary>
     public static async Task<QuotationResponse> CreateQuotationAsync(
-        HttpClient client, Guid tenantId, Guid clientId, DateOnly? validUntil = null)
+        HttpClient client,
+        Guid tenantId,
+        Guid clientId,
+        DateOnly? validUntil = null,
+        QuotationBillingAccountRequest? billingAccount = null,
+        string? paymentMethod = null)
     {
         var response = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
             new CreateQuotationRequest(
                 clientId,
                 validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30),
+                paymentMethod,
                 null,
                 null,
-                null,
-                null),
+                billingAccount),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<QuotationResponse>(
@@ -430,6 +496,18 @@ internal static class QuotationsApiHarness
     private sealed record ClassificationResponseDto(Guid Id, string Name, string Prefix);
 
     private sealed record CustomerResponseDto(Guid Id, string Cuc, bool IsActive);
+
+    private sealed record CompanyResponseDto(Guid Id, string Name);
+
+    /// <summary>Devuelve una cabecera de PDF valida y nada mas: lo que estas pruebas
+    /// verifican es el flujo, no el documento. El contenido del PDF lo cubre
+    /// `QCodePdfRendererTests` contra el contrato del servicio.</summary>
+    private sealed class StubPdfRenderer : IQuotationPdfRenderer
+    {
+        public Task<byte[]> RenderAsync(
+            QuotationPdfDocument document, CancellationToken cancellationToken) =>
+            Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+    }
 
     private sealed record ProductResponseDto(Guid Id);
 
@@ -474,6 +552,13 @@ internal static class QuotationsApiHarness
             {
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
+
+                // El renderer real hace un POST a `qcode-pdf`. Sin sustituirlo, en cuanto el
+                // envio genere el PDF estas pruebas saldrian a la red: lentas, dependientes de
+                // un servicio ajeno, y consumiendo la cuota de una API key real. Mismo criterio
+                // que `IObjectStorage`, que tampoco habla con R2 aca.
+                services.RemoveAll<IQuotationPdfRenderer>();
+                services.AddSingleton<IQuotationPdfRenderer, StubPdfRenderer>();
             });
         }
     }
