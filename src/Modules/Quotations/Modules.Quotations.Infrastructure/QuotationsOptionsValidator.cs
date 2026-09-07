@@ -26,6 +26,27 @@ internal sealed class QuotationsOptionsValidator(IHostEnvironment environment)
         if (environment.IsProduction())
         {
             failures.AddRange(MissingWhatsAppKeys(options.WhatsApp));
+
+            // A diferencia de WhatsApp, acá no hay fallback: sin la key `qcode-pdf` responde
+            // 401 y el envío falla con `quotation.pdf.render_failed`, que es ruidoso. Se exige
+            // igual al arrancar porque descubrirlo cuando una asesora aprieta Enviar es mucho
+            // más caro que un proceso que no levanta.
+            if (string.IsNullOrWhiteSpace(options.Pdf.ApiKey))
+            {
+                failures.Add(
+                    "Quotations:Pdf:ApiKey is required in Production: without it qcode-pdf "
+                    + "rejects every request and no quotation can be sent.");
+            }
+        }
+
+        // En cualquier ambiente: la plantilla y los datos de la cotización -- precios, cliente,
+        // totales -- viajan en el cuerpo del POST, así que sin TLS quedan expuestos en tránsito.
+        if (!Uri.TryCreate(options.Pdf.BaseUrl, UriKind.Absolute, out var pdfBaseUrl) ||
+            pdfBaseUrl.Scheme != Uri.UriSchemeHttps)
+        {
+            failures.Add(
+                "Quotations:Pdf:BaseUrl must be an absolute HTTPS URL: the quotation data "
+                + "travels in the request body.");
         }
 
         return failures.Count > 0
