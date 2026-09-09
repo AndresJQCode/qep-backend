@@ -38,6 +38,7 @@ public static class RequestLogEndpoints
         CancellationToken cancellationToken,
         string? module = null,
         string? errorCode = null,
+        string? traceId = null,
         DateTimeOffset? occurredFrom = null,
         DateTimeOffset? occurredTo = null,
         int page = 1,
@@ -45,7 +46,14 @@ public static class RequestLogEndpoints
     {
         var result = await dispatcher.QueryAsync(
             new ListRequestFailuresQuery(
-                tenantId, module, errorCode, occurredFrom, occurredTo, page, pageSize),
+                tenantId,
+                module,
+                errorCode,
+                traceId,
+                occurredFrom,
+                occurredTo,
+                page,
+                pageSize),
             cancellationToken);
 
         return Results.Ok(new RequestLogPageResponse(
