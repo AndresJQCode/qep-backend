@@ -24,13 +24,13 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendHandsTheSenderThePublicPdfUrl()
     {
-        var (handler, sender, _, _, _) = NewHandler();
+        var harness = NewHandler();
 
-        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
-        Assert.NotNull(sender.Sent);
-        Assert.Equal(RecordingPdfStorage.PublicUrl, sender.Sent.DocumentUrl);
-        Assert.NotEqual(PresignedUrl, sender.Sent.DocumentUrl);
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Equal(RecordingPdfStorage.PublicUrl, harness.Sender.Sent.DocumentUrl);
+        Assert.NotEqual(PresignedUrl, harness.Sender.Sent.DocumentUrl);
     }
 
     // Lo que se publica es el objeto que `QuotationPdfProvider` dejo al dia, no un archivo que
@@ -38,26 +38,26 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendPublishesTheCurrentGeneratedDocument()
     {
-        var (handler, _, storage, repository, _) = NewHandler();
+        var harness = NewHandler();
 
-        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
-        Assert.NotNull(repository.Pdf);
-        Assert.Equal(repository.Pdf.StorageKey, storage.PublishedKey);
+        Assert.NotNull(harness.Repository.Pdf);
+        Assert.Equal(harness.Repository.Pdf.StorageKey, harness.Storage.PublishedKey);
     }
 
     [Fact]
     public async Task SendHandsTheSenderTheQuotationTotalAndValidity()
     {
-        var (handler, sender, _, _, _) = NewHandler();
+        var harness = NewHandler();
 
-        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
-        Assert.NotNull(sender.Sent);
-        Assert.Equal("QUO-2026-0001", sender.Sent.OrderNumber);
-        Assert.Equal(ValidUntil, sender.Sent.ValidUntil);
-        Assert.Equal("Ferretería El Tornillo", sender.Sent.FullName);
-        Assert.Equal("3001234567", sender.Sent.ToPhone);
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Equal("QUO-2026-0001", harness.Sender.Sent.OrderNumber);
+        Assert.Equal(ValidUntil, harness.Sender.Sent.ValidUntil);
+        Assert.Equal("Ferretería El Tornillo", harness.Sender.Sent.FullName);
+        Assert.Equal("3001234567", harness.Sender.Sent.ToPhone);
     }
 
     // El envio por WhatsApp y la firma de la URL son efectos externos irreversibles: si el
@@ -67,14 +67,14 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task SendDoesNotReachWhatsAppWhenTheQuotationCannotBeSent()
     {
-        var (handler, sender, storage, _, _) = NewHandler(withValidUntil: false);
+        var harness = NewHandler(withValidUntil: false);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
 
         Assert.Equal("quotation.quotation.valid_until_required", error.Code);
-        Assert.Null(sender.Sent);
-        Assert.Null(storage.PublishedKey);
+        Assert.Null(harness.Sender.Sent);
+        Assert.Null(harness.Storage.PublishedKey);
     }
 
     // US-12 (reenvío): la cotización ya enviada y sin cambios se vuelve a mandar. Lo que
@@ -83,28 +83,136 @@ public sealed class SendQuotationHandlerTests
     [Fact]
     public async Task ResendingAnAlreadySentQuotationRecordsItAsAResend()
     {
-        var (handler, sender, _, repository, audit) = NewHandler(alreadySent: true);
+        var harness = NewHandler(alreadySent: true);
 
-        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
-        Assert.NotNull(sender.Sent);
+        Assert.NotNull(harness.Sender.Sent);
         Assert.Equal(
             QuotationHistoryEventType.Resent,
-            Assert.Single(repository.HistoryEntries).EventType);
-        Assert.Equal("quotation.quotation.resent", Assert.Single(audit.Actions));
+            Assert.Single(harness.Repository.HistoryEntries).EventType);
+        Assert.Equal("quotation.quotation.resent", Assert.Single(harness.Audit.Actions));
     }
 
     [Fact]
     public async Task SendingADraftRecordsItAsAFirstSend()
     {
-        var (handler, _, _, repository, audit) = NewHandler();
+        var harness = NewHandler();
 
-        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
             QuotationHistoryEventType.Sent,
-            Assert.Single(repository.HistoryEntries).EventType);
-        Assert.Equal("quotation.quotation.sent", Assert.Single(audit.Actions));
+            Assert.Single(harness.Repository.HistoryEntries).EventType);
+        Assert.Equal("quotation.quotation.sent", Assert.Single(harness.Audit.Actions));
+    }
+
+    // ---- El envio que falla ----
+    //
+    // El motivo de todo esto: un envio que se caia no dejaba rastro. La transaccion del request
+    // se descarta a proposito --la cotizacion tiene que quedar en borrador-- y con ella se iba
+    // cualquier registro de que alguien intento enviarla y no pudo.
+
+    [Fact]
+    public async Task AFailedSendIsAnnotatedWithTheStageThatBrokeIt()
+    {
+        var harness = NewHandler(
+            whatsAppFailure: new QuotationsDomainException(
+                "quotation.whatsapp.send_failed", "Zenvia responded 401: unauthorized"));
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        var entry = harness.FailureLog.HistoryEntry;
+        Assert.NotNull(entry);
+        Assert.Equal(AdvisorId, entry.MemberId);
+        // El paso, en el texto que lee quien vende. La traza y la respuesta cruda de Zenvia no
+        // estan aca: las guarda el log de la aplicacion, con el resto de las fallas de la API.
+        Assert.NotNull(entry.Details);
+        Assert.Contains("WhatsApp", entry.Details, StringComparison.Ordinal);
+    }
+
+    // La cara del mismo hecho que ve quien vende: sin traza, sin respuesta cruda, en espanol.
+    [Fact]
+    public async Task AFailedSendLeavesAReadableEntryInTheTimeline()
+    {
+        var harness = NewHandler(
+            whatsAppFailure: new QuotationsDomainException(
+                "quotation.whatsapp.send_failed", "Zenvia responded 401: unauthorized"));
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        var entry = harness.FailureLog.HistoryEntry;
+        Assert.NotNull(entry);
+        Assert.Equal(QuotationHistoryEventType.SendFailed, entry.EventType);
+        Assert.NotNull(entry.Details);
+        Assert.DoesNotContain("Zenvia", entry.Details, StringComparison.Ordinal);
+        Assert.DoesNotContain("401", entry.Details, StringComparison.Ordinal);
+
+        // Y no viaja por el repositorio: iria en la transaccion que se descarta.
+        Assert.Empty(harness.Repository.HistoryEntries);
+    }
+
+    // Un error de dominio ya se explica solo. Relanzarlo tal cual es lo que evita esconder
+    // "el cliente no tiene telefono" detras de un generico que no dice que hacer.
+    [Fact]
+    public async Task ADomainFailureKeepsItsOwnCode()
+    {
+        var harness = NewHandler(
+            whatsAppFailure: new QuotationsDomainException(
+                "quotation.whatsapp.recipient_missing", "The client has no phone number."));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.recipient_missing", error.Code);
+    }
+
+    // El caso que abrio esto: un timeout salia como 500 server.unexpected y la pantalla no tenia
+    // nada que mostrar. Ahora sale con codigo propio, nombrando el paso, y con la original
+    // adentro para que el log de la aplicacion la guarde entera.
+    [Fact]
+    public async Task AnUnexpectedFailureBecomesAClearErrorThatNamesTheStage()
+    {
+        var harness = NewHandler(
+            whatsAppFailure: new TaskCanceledException("A task was canceled."));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.send.failed", error.Code);
+        Assert.Contains("WhatsApp", error.Message, StringComparison.Ordinal);
+        // La original no se pierde: viaja como interna, que es de donde la levanta el log.
+        Assert.IsType<TaskCanceledException>(error.InnerException);
+    }
+
+    // El envio fallido no marca la cotizacion como enviada: es la invariante que ya existia, y
+    // registrar la falla no puede haberla aflojado.
+    [Fact]
+    public async Task AFailedSendLeavesTheQuotationAsADraft()
+    {
+        var harness = NewHandler(
+            whatsAppFailure: new TaskCanceledException("A task was canceled."));
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+        Assert.Empty(harness.Audit.Actions);
+    }
+
+    // Una cotizacion sin vigencia no es un envio que fallo, es uno que nunca empezo: anotarlo
+    // llenaria el registro de ruido que no se arregla mirando una traza.
+    [Fact]
+    public async Task AQuotationThatCannotBeSentIsNotRecordedAsAFailure()
+    {
+        var harness = NewHandler(withValidUntil: false);
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Null(harness.FailureLog.HistoryEntry);
     }
 
     private static SendQuotationCommand NewCommand() =>
@@ -112,13 +220,22 @@ public sealed class SendQuotationHandlerTests
 
     private static Guid CurrentQuotationId;
 
-    private static (
+    /// <summary>
+    /// Lo que arma <see cref="NewHandler"/>. Un registro y no una tupla: son seis piezas y con
+    /// posiciones cada prueba abria con una fila de guiones bajos que habia que contar.
+    /// </summary>
+    private sealed record Harness(
         SendQuotationHandler Handler,
         RecordingWhatsAppSender Sender,
         RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
-        RecordingQuotationAuditPublisher Audit) NewHandler(
-        bool withValidUntil = true, bool alreadySent = false)
+        RecordingQuotationAuditPublisher Audit,
+        RecordingQuotationSendFailureLog FailureLog);
+
+    private static Harness NewHandler(
+        bool withValidUntil = true,
+        bool alreadySent = false,
+        Exception? whatsAppFailure = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -152,6 +269,8 @@ public sealed class SendQuotationHandlerTests
             ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
             "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false);
 
+        var failureLog = new RecordingQuotationSendFailureLog();
+
         var handler = new SendQuotationHandler(
             repository,
             new NoOpQuotationsUnitOfWork(),
@@ -164,11 +283,14 @@ public sealed class SendQuotationHandlerTests
                 new FixedClock(Now)),
             storage,
             new StubQuotationCustomerLookup(customer),
-            sender,
+            whatsAppFailure is null
+                ? sender
+                : new FailingWhatsAppSender(whatsAppFailure),
             new StubMembershipDirectory(AdvisorId.Value),
+            failureLog,
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 
-        return (handler, sender, storage, repository, audit);
+        return new Harness(handler, sender, storage, repository, audit, failureLog);
     }
 }

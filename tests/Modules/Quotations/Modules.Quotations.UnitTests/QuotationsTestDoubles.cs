@@ -9,6 +9,27 @@ namespace Modules.Quotations.UnitTests;
 // Dobles de los puertos que SendQuotationHandler necesita. Registran lo que reciben en vez de
 // simularlo: lo que estas pruebas verifican es qué datos salen del handler hacia cada puerto.
 
+/// <summary>Un canal que se cae siempre, para ejercer el camino de falla del envio.</summary>
+internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
+{
+    public Task SendQuotationAsync(
+        WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
+        Task.FromException(failure);
+}
+
+internal sealed class RecordingQuotationSendFailureLog : IQuotationSendFailureLog
+{
+    public QuotationHistoryEntry? HistoryEntry { get; private set; }
+
+    public Task RecordAsync(
+        QuotationHistoryEntry historyEntry,
+        CancellationToken cancellationToken)
+    {
+        HistoryEntry = historyEntry;
+        return Task.CompletedTask;
+    }
+}
+
 internal sealed class RecordingWhatsAppSender : IWhatsAppSender
 {
     public WhatsAppQuotationMessage? Sent { get; private set; }
@@ -91,6 +112,10 @@ internal sealed class StubQuotationAdvisorLookup(string? email = null)
 
 internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationRepository
 {
+    /// <summary>La cotizacion que el doble devuelve, para poder mirar en que estado quedo
+    /// despues de que el handler corrio.</summary>
+    public Quotation Quotation => quotation;
+
     /// <summary>Las entradas de historial que el handler agregó, en orden. Un envío y un
     /// reenvío difieren en el tipo de evento y en nada más, así que el historial es lo único
     /// que los distingue después del hecho.</summary>

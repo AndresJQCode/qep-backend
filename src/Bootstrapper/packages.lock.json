@@ -385,6 +385,30 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "modules.platform.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Platform.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.platform.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.platform.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.11, )",
+          "Modules.Platform.Application": "[1.0.0, )",
+          "Modules.Platform.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
       "modules.quotations.application": {
         "type": "Project",
         "dependencies": {

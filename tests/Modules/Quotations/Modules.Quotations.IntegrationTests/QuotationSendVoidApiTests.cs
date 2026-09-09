@@ -34,6 +34,38 @@ public sealed class QuotationSendVoidApiTests
         Assert.NotNull(sent.SentAt);
     }
 
+    /// <summary>
+    /// **El envio no lleva cuerpo**, que es como lo llama el frontend desde que el backend genera
+    /// el PDF.
+    ///
+    /// Esta prueba existe por un defecto real: el endpoint seguia declarando un
+    /// `SendQuotationRequest` requerido que no usaba, asi que un `POST` sin cuerpo moria con
+    /// `BadHttpRequestException: Implicit body inferred for parameter "request"` y salia como 500.
+    /// Ninguna prueba lo agarro porque **todas** mandaban cuerpo -- justo lo que el cliente real
+    /// dejo de hacer.
+    /// </summary>
+    [Fact]
+    public async Task SendWorksWithoutABody()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var sent = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(sent);
+        Assert.Equal("Sent", sent.Status);
+    }
+
     // Sin vigencia la cotización nunca vencería (QuotationExpirationProcessor filtra por
     // ValidUntil != null) y quedaría convertible a venta para siempre. El dominio lo corta al
     // salir de Draft; acá se verifica que ese código llega al cliente como 422 y no como 500.

@@ -169,8 +169,37 @@ public sealed class Product
         PriceBaseUsd = pricing.BaseUsd;
         PriceBaseCop = pricing.BaseCop;
 
+        ReplaceScales(pricing.Scales);
+    }
+
+    /// <summary>
+    /// Reemplaza **sólo** las escalas: los precios base y el resto de los datos maestros
+    /// quedan como estaban. Es lo que necesita copiar las escalas de otro producto.
+    ///
+    /// No pasa por <see cref="Update"/> a propósito. Ese verbo reemplaza el producto entero,
+    /// así que el caso de uso tendría que reenviarle nombre, código y los tres opcionales
+    /// para no borrarlos — y un lote que arrastre mal cualquiera de esos campos los limpia en
+    /// todos los destinos de una vez. Acá no hay nada que arrastrar.
+    ///
+    /// Las escalas entrantes se validan contra el precio base **de este** producto, que es la
+    /// razón por la que la copia recalcula el precio final antes de llegar acá. Ver
+    /// <see cref="PriceScaleCopy"/>.
+    /// </summary>
+    public void ApplyPriceScales(
+        IReadOnlyCollection<PriceScaleInput> scales,
+        DateTimeOffset occurredAt)
+    {
+        EnsureActive();
+
+        ReplaceScales(scales);
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
+    private void ReplaceScales(IReadOnlyCollection<PriceScaleInput> scales)
+    {
         _priceScales.Clear();
-        foreach (var scale in pricing.Scales)
+        foreach (var scale in scales)
         {
             _priceScales.Add(PriceScale.Create(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
         }

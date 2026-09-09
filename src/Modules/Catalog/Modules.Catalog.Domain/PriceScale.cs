@@ -201,6 +201,23 @@ public sealed class PriceScale
     }
 
     /// <summary>
+    /// El precio final que le corresponde a un descuento sobre un precio base, con el mismo
+    /// redondeo con el que <see cref="ValidateFinal"/> decide si acepta el que manda el
+    /// cliente.
+    ///
+    /// Vive acá y no en quien lo necesita porque hay dos usos y tienen que dar idéntico:
+    /// <see cref="PriceScaleCopy"/> recalcula el final contra el precio base del destino, y
+    /// esa escala pasa después por esta misma validación. Con la cuenta escrita en dos
+    /// lados, un cambio de redondeo en uno dejaría a la copia generando escalas que el otro
+    /// rechaza.
+    /// </summary>
+    internal static decimal? FinalFor(decimal? productBase, decimal discount) =>
+        productBase is null
+            ? null
+            : Math.Round(
+                productBase.Value * (1 - discount / 100m), 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>
     /// El precio final lo manda el cliente — no lo calcula el backend — pero el backend lo
     /// valida contra el precio base del producto y el descuento de la escala, con una
     /// tolerancia de redondeo de un centavo. Ver DomainDecisiones: precio final por
@@ -226,8 +243,7 @@ public sealed class PriceScale
                 $"A final price in {currencyLabel} requires the product to have a base price in {currencyLabel}.");
         }
 
-        var expected = Math.Round(
-            productBase.Value * (1 - discount / 100m), 2, MidpointRounding.AwayFromZero);
+        var expected = FinalFor(productBase, discount)!.Value;
         if (Math.Abs(final.Value - expected) > 0.01m)
         {
             throw new CatalogDomainException(

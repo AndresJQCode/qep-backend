@@ -108,6 +108,22 @@ public sealed record CreateProductRequest(
     Guid? TaxRateId,
     ProductPricingRequest Pricing);
 
+/// <summary>
+/// El cuerpo de la copia de escalas: de dónde salen y a quiénes van. No lleva las escalas
+/// mismas a propósito — el backend las lee del origen. Que las mandara el cliente es lo que
+/// permitía copiar algo distinto de lo que la pantalla mostró.
+/// </summary>
+public sealed record CopyPriceScalesRequest(
+    Guid SourceProductId,
+    IReadOnlyList<Guid> TargetProductIds);
+
+/// <summary>
+/// Los destinos ya actualizados, en el orden en que se pidieron. Devolverlos evita que el
+/// cliente tenga que releer el listado para pintar el resultado.
+/// </summary>
+public sealed record CopyPriceScalesResponse(
+    IReadOnlyCollection<ProductResponse> Products);
+
 public sealed record UpdateProductRequest(
     string Name,
     string Code,
