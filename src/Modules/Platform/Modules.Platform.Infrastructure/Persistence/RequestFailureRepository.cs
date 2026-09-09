@@ -11,6 +11,7 @@ internal sealed class RequestFailureRepository(PlatformDbContext dbContext)
         Guid tenantId,
         string? moduleName,
         string? errorCode,
+        string? traceId,
         DateTimeOffset? occurredFrom,
         DateTimeOffset? occurredTo,
         int page,
@@ -27,6 +28,11 @@ internal sealed class RequestFailureRepository(PlatformDbContext dbContext)
         if (!string.IsNullOrWhiteSpace(errorCode))
         {
             query = query.Where(failure => failure.ErrorCode == errorCode);
+        }
+
+        if (!string.IsNullOrWhiteSpace(traceId))
+        {
+            query = query.Where(failure => failure.TraceId == traceId);
         }
 
         if (occurredFrom is { } from)

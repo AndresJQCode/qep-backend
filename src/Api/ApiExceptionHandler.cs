@@ -53,7 +53,8 @@ internal sealed class ApiExceptionHandler(
             Instance = httpContext.Request.Path
         };
         problem.Extensions["code"] = code;
-        problem.Extensions["traceId"] = httpContext.TraceIdentifier;
+        // La misma cuenta que guarda el log, para que las dos puntas hablen del mismo request.
+        problem.Extensions["traceId"] = RequestFailureCapture.TraceIdOf(httpContext);
         if (exception is ValidationException validationException)
         {
             problem.Extensions["errors"] = validationException.Errors

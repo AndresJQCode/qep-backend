@@ -12,6 +12,6 @@ namespace Modules.Platform.Application;
 // de `advisorship.manage`: borrar en lote no es leer, y es irreversible.
 public static class PlatformPermissions
 {
-    public const string RequestLogRead = "audit.request_log.read";
-    public const string RequestLogPurge = "audit.request_log.purge";
+    public const string RequestLogRead = "platform.request_log.read";
+    public const string RequestLogPurge = "platform.request_log.purge";
 }

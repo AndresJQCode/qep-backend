@@ -16,10 +16,14 @@ public interface IRequestFailureRepository
     /// Una página del log y el total que la acompaña. Cada filtro es opcional y sólo se aplica
     /// cuando llega distinto de null; los que llegan se combinan con AND.
     /// </summary>
+    /// <param name="traceId">Coincidencia exacta. Es el filtro que usa el enlace "ver en el
+    /// log" desde un error: la pantalla que fallo tiene el `traceId` de su respuesta y con el
+    /// llega a **esa** fila, sin que nadie tenga que adivinar cual de las de ese minuto era.</param>
     Task<(IReadOnlyList<RequestFailure> Items, int Total)> SearchAsync(
         Guid tenantId,
         string? moduleName,
         string? errorCode,
+        string? traceId,
         DateTimeOffset? occurredFrom,
         DateTimeOffset? occurredTo,
         int page,

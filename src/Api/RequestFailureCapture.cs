@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Claims;
 using Bootstrapper.Authentication;
 using Modules.Platform.Application;
@@ -47,7 +48,7 @@ internal static class RequestFailureCapture
             // de `HttpClient` tiene un mensaje inútil ("A task was canceled") y una traza que dice
             // exactamente contra qué servicio se cayó.
             exception.ToString(),
-            httpContext.TraceIdentifier,
+            TraceIdOf(httpContext),
             occurredAt);
 
     /// <summary>
@@ -73,8 +74,23 @@ internal static class RequestFailureCapture
             "La respuesta la produjo la tuberia de la API (autenticacion, autorizacion, " +
             "enrutamiento o limite de tasa), no un error de la aplicacion: no hay excepcion " +
             "ni traza que guardar.",
-            httpContext.TraceIdentifier,
+            TraceIdOf(httpContext),
             occurredAt);
+
+    /// <summary>
+    /// El identificador del request, **exactamente el mismo que recibe el cliente**.
+    ///
+    /// Tiene que ser esta cuenta y no <c>HttpContext.TraceIdentifier</c> a secas. La respuesta de
+    /// error la escribe <c>ProblemDetailsService</c>, y su escritor por defecto pone en la
+    /// extension `traceId` el id de la <see cref="Activity"/> en curso --formato W3C,
+    /// `00-{trace}-{span}-01`-- y solo cae al de Kestrel (`0HNOE...:00000001`) si no hay
+    /// actividad. Guardar el de Kestrel dejaba las dos puntas con identificadores distintos: el
+    /// enlace "ver el detalle en el log" viajaba con uno y la fila estaba guardada con el otro,
+    /// asi que el filtro no encontraba nada. Se copia la regla del framework para que coincidan
+    /// gane quien gane.
+    /// </summary>
+    public static string TraceIdOf(HttpContext httpContext) =>
+        Activity.Current?.Id ?? httpContext.TraceIdentifier;
 
     private static string CodeForStatus(int statusCode) => statusCode switch
     {
