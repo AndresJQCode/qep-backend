@@ -86,9 +86,14 @@ public static class QuotationEndpoints
         // El reenvío entra por acá también: es el mismo gesto con un PDF nuevo sobre una
         // cotización que ya está en Sent, y el handler lo distingue solo para el historial. No
         // hay `/resend` aparte porque no habría nada distinto que orquestar.
+        // **Sin cuerpo.** Lo tuvo: el flujo viejo mandaba el `pdfFileId` del PDF que armaba el
+        // navegador. Cuando el backend paso a generar el documento, el parametro quedo declarado
+        // pero sin uso, y el frontend dejo de mandarlo -- con lo que cada envio moria con
+        // `BadHttpRequestException: Implicit body inferred for parameter "request" but no body
+        // was provided`, que sale como 500 y no explica nada. Un cuerpo que igual llegue se
+        // ignora, asi que un frontend viejo sigue funcionando.
         group.MapPost("/{quotationId:guid}/send", SendQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
-            .Accepts<SendQuotationRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -285,7 +290,6 @@ public static class QuotationEndpoints
     private static async Task<IResult> SendQuotationAsync(
         Guid tenantId,
         Guid quotationId,
-        SendQuotationRequest request,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
         CancellationToken cancellationToken)

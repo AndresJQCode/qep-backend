@@ -22,6 +22,8 @@ using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
+using Modules.Platform.Api;
+using Modules.Platform.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
 using Scalar.AspNetCore;
@@ -58,6 +60,10 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 app.UseExceptionHandler();
+// Afuera de autenticacion y autorizacion a proposito: es la unica posicion desde la que se puede
+// ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el
+// manejador de excepciones porque no tiran nada. Ver RequestFailureLoggingMiddleware.
+app.UseMiddleware<RequestFailureLoggingMiddleware>();
 app.UseRateLimiter();
 // La defensa CSRF protege la sesión autenticada por cookie (ver AddAuthentication);
 // el stub de desarrollo confía en los headers que manda el llamador en vez de en una
@@ -106,6 +112,7 @@ app.MapGeographyEndpoints();
 app.MapQuotationEndpoints();
 app.MapSaleEndpoints();
 app.MapReportingEndpoints();
+app.MapPlatformEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(
     app.Environment,
@@ -120,6 +127,11 @@ await app.Services.InitializeAuthorizationDatabaseAsync(
 await app.Services.InitializeAuditDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeIdentityDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+// El esquema `platform` ya existia --lo usa la tabla outbox_messages, que crea BuildingBlocks--
+// pero nadie lo tenia a cargo. Esta migracion solo crea request_failures; el orden respecto de
+// los demas modulos no importa, porque la tabla no referencia a ninguna otra a proposito.
+await app.Services.InitializePlatformDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeNotificationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
