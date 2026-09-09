@@ -49,6 +49,18 @@ public static class ProductEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Un recurso propio y no un PUT por destino: la operación es "copiar estas escalas a
+        // estos productos", y partirla en N escrituras deja al cliente orquestando una
+        // transacción que no puede cerrar. Bajo /products y no bajo el producto origen porque
+        // escribe en los destinos, que son varios — el origen es un dato del cuerpo.
+        group.MapPost("/products/price-scales/copy", CopyPriceScalesAsync)
+            .RequireAuthorization(CatalogPermissions.ProductManage)
+            .Accepts<CopyPriceScalesRequest>("application/json")
+            .Produces<CopyPriceScalesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/products/{productId:guid}/deactivate", DeactivateProductAsync)
             .RequireAuthorization(CatalogPermissions.ProductManage)
             .Produces<ProductResponse>()
@@ -165,6 +177,23 @@ public static class ProductEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
+    }
+
+    private static async Task<IResult> CopyPriceScalesAsync(
+        Guid tenantId,
+        CopyPriceScalesRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var products = await dispatcher.SendAsync(
+            new CopyPriceScalesCommand(
+                tenantId,
+                request.SourceProductId,
+                request.TargetProductIds ?? []),
+            cancellationToken);
+
+        return Results.Ok(new CopyPriceScalesResponse(
+            products.Select(ToResponse).ToArray()));
     }
 
     private static async Task<IResult> DeactivateProductAsync(
