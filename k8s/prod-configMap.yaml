@@ -51,6 +51,13 @@ data:
   Storage__R2__PublicBucket: "#{STORAGE_R2_PUBLIC_BUCKET}#"
   Storage__R2__PublicBaseUrl: "#{STORAGE_R2_PUBLIC_BASE_URL}#"
   Storage__R2__Endpoint: "#{STORAGE_R2_ENDPOINT}#"
+  # Dónde vive qcode-pdf, el servicio de render. Repite el valor por defecto de la imagen y aun
+  # así va acá por el mismo motivo que Storage__R2__Endpoint: es un servicio externo compartido
+  # con otras aplicaciones de QCode, y mudarlo de host no debería exigir reconstruir y desplegar
+  # esta imagen. QuotationsOptionsValidator exige HTTPS en todo ambiente: la cotización entera
+  # —precios, cliente, totales— viaja en el cuerpo del POST. La API key es una credencial y vive
+  # en prod-secret.yaml.
+  Quotations__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
   # Id de la plantilla de WhatsApp aprobada por Meta. Repite el valor por defecto de la imagen
   # y aun así va acá: cambiar el texto del mensaje es una decisión de negocio que no toca una
   # línea de código, pero Meta no permite editar una plantilla aprobada — hay que crear otra y
