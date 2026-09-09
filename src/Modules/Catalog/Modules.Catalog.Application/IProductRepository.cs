@@ -53,6 +53,19 @@ public interface IProductRepository
         IReadOnlyCollection<ProductId> productIds,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Los mismos productos que <see cref="ListByIdsAsync"/>, pero **con seguimiento**: quien
+    /// la llama los muta y guarda por <see cref="ICatalogUnitOfWork"/>.
+    ///
+    /// Son dos métodos y no un booleano porque la diferencia no es un detalle de la consulta.
+    /// Mutar lo que devuelve <see cref="ListByIdsAsync"/> no falla: no guarda nada, en
+    /// silencio. Un parámetro se puede olvidar en la llamada; un método con otro nombre, no.
+    /// </summary>
+    Task<IReadOnlyList<Product>> ListByIdsForUpdateAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken);
+
     Task<Product?> FindAsync(
         Guid tenantId,
         ProductId productId,

@@ -193,6 +193,24 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .ToListAsync(cancellationToken);
     }
 
+    // Sin AsNoTracking, al revés que ListByIdsAsync: la copia de escalas muta lo que trae.
+    public async Task<IReadOnlyList<Product>> ListByIdsForUpdateAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.Products
+            .Include(product => product.PriceScales)
+            .Where(product =>
+                product.TenantId == tenantId && productIds.Contains(product.Id))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlySet<string>> FindExistingCodesAsync(
         Guid tenantId,
         IReadOnlyCollection<string> codes,
