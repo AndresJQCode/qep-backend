@@ -925,6 +925,26 @@ aprobada— y sin esta clave ese cambio obligaría a reconstruir y desplegar la 
 nada. Es el mismo criterio que `Notifications:EmailProvider` con Infobip, y el precio de que las
 pruebas de integración no necesiten credenciales.
 
+### Generación del PDF (`qcode-pdf`)
+
+El PDF de la cotización lo renderiza `qcode-pdf`, un servicio de Typst genérico y compartido
+con otras aplicaciones de QCode: no conoce la cotización, así que el markup viaja entero en el
+cuerpo de cada request. `QCodePdfRenderer` es su único cliente.
+
+| Clave | Manifiesto | Token del pipeline |
+| --- | --- | --- |
+| `Quotations__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
+| `Quotations__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
+
+**Sin la API key el pod no arranca en producción.** A diferencia de WhatsApp, acá no hay
+fallback: `qcode-pdf` respondería 401 y todo envío moriría con `quotation.pdf.render_failed`.
+`QuotationsOptionsValidator` la exige con `ValidateOnStart` porque descubrirlo cuando una
+asesora aprieta *Enviar* es más caro que un despliegue que no levanta. Fuera de producción la
+clave es opcional.
+
+`BaseUrl` debe ser HTTPS absoluta **en todo ambiente**, incluido local: la cotización completa
+—precios, cliente, totales— viaja en el cuerpo del POST.
+
 ## Verificación
 
 ```powershell
