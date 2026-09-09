@@ -31,6 +31,9 @@ public static class QuotationsInfrastructureExtensions
 
         services.AddScoped<IQuotationRepository, QuotationRepository>();
         services.AddScoped<IQuotationsUnitOfWork, QuotationsUnitOfWork>();
+        // Escribe fuera de la transaccion del request, con un DbContext propio que arma con
+        // los DbContextOptions que registro AddDbContext. Ver IQuotationSendFailureLog.
+        services.AddScoped<IQuotationSendFailureLog, QuotationSendFailureLog>();
         services.AddScoped<IQuotationAuditPublisher, QuotationAuditPublisher>();
         services.AddScoped<IQuotationNumberGenerator, QuotationNumberGenerator>();
         services.AddScoped<ISaleRepository, SaleRepository>();

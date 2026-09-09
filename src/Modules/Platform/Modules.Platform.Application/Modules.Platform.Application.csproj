@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- PlatformAuthorization es internal: no es API publica del modulo, y la regla que hace
+         cumplir se prueba unitariamente. Mismo patron que Catalog. -->
+    <InternalsVisibleTo Include="Modules.Platform.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Platform.Domain\Modules.Platform.Domain.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

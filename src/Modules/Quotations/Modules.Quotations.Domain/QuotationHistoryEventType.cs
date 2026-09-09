@@ -17,6 +17,14 @@ public enum QuotationHistoryEventType
     Edited,
     Sent,
     Resent,
+
+    /// <summary>
+    /// Un intento de envío que se cayó. No es un estado del agregado --la cotización sigue
+    /// en borrador-- sino un hecho de la línea de tiempo: sin esto, quien mira una cotización
+    /// que "no se envía" no ve rastro de los tres intentos anteriores. El detalle técnico no
+    /// vive acá, vive en <c>quotation_send_failures</c>.
+    /// </summary>
+    SendFailed,
     Voided,
     Expired,
     Approved

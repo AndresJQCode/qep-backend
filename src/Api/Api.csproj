@@ -17,6 +17,8 @@
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Infrastructure\Modules.Geography.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Platform\Modules.Platform.Api\Modules.Platform.Api.csproj" />
+    <ProjectReference Include="..\Modules\Platform\Modules.Platform.Infrastructure\Modules.Platform.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Quotations\Modules.Quotations.Api\Modules.Quotations.Api.csproj" />
     <ProjectReference Include="..\Modules\Quotations\Modules.Quotations.Infrastructure\Modules.Quotations.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Reporting\Modules.Reporting.Api\Modules.Reporting.Api.csproj" />

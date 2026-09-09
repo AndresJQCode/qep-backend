@@ -51,6 +51,36 @@ public static class QuotationChangeSummary
 
     public static string Resent() => "Reenviada al cliente con su PDF.";
 
+    /// <summary>
+    /// Un intento de envío que falló, contado para quien vende y no para quien programa.
+    ///
+    /// Dice el paso --que es lo accionable: un cliente sin teléfono lo arregla quien vende,
+    /// un WhatsApp caído no-- y **nada** del error técnico: ni la traza, ni la respuesta
+    /// cruda de Zenvia, ni la URL del PDF. Todo eso vive en <c>quotation_send_failures</c>,
+    /// que es de dónde lo saca el reporte de fallas de envío.
+    /// </summary>
+    public static string SendFailed(QuotationSendStage stage) =>
+        Trim($"No se pudo enviar la cotización: {StageReason(stage)}");
+
+    // En segunda persona y accionable donde se puede hacer algo, y neutro donde no: decirle
+    // "revisá" a alguien por una caída de Zenvia lo manda a buscar un problema que no tiene.
+    private static string StageReason(QuotationSendStage stage) => stage switch
+    {
+        QuotationSendStage.Advisor =>
+            "no pudimos identificar a la asesora que la envía.",
+        QuotationSendStage.Pdf =>
+            "falló la generación del PDF.",
+        QuotationSendStage.Publish =>
+            "falló la publicación del PDF que el cliente tiene que poder descargar.",
+        QuotationSendStage.Recipient =>
+            "el cliente no tiene un número de WhatsApp válido. Revisá sus datos de contacto.",
+        QuotationSendStage.WhatsApp =>
+            "WhatsApp rechazó el mensaje.",
+        QuotationSendStage.Persistence =>
+            "el mensaje salió pero no pudimos registrar el envío. Revisá con el cliente antes de reintentar.",
+        _ => "falló por un motivo no previsto."
+    };
+
     public static string Voided() => "Anulada.";
 
     public static string Expired() => "Vencida automáticamente al pasar su vigencia.";

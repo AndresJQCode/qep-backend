@@ -29,6 +29,8 @@ using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
+using Modules.Platform.Application;
+using Modules.Platform.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
 using Modules.Storage.Application;
@@ -293,6 +295,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListQuotationHistoryQuery, IReadOnlyList<QuotationHistoryEntryDto>>,
             ListQuotationHistoryHandler>();
+        // El log de la aplicacion. Registrados a mano igual que el resto: un caso de uso que se
+        // olvide compila, mapea su endpoint y falla recien en runtime con 500.
+        services.AddScoped<
+            IQueryHandler<ListRequestFailuresQuery, RequestFailurePage>,
+            ListRequestFailuresHandler>();
+        services.AddScoped<
+            ICommandHandler<PurgeRequestFailuresCommand, PurgeRequestFailuresResult>,
+            PurgeRequestFailuresHandler>();
+
         services.AddScoped<
             ICommandHandler<UpdateQuotationCommand, QuotationDto>,
             UpdateQuotationHandler>();
@@ -384,6 +395,7 @@ public static class QepServiceCollectionExtensions
         // Sin AddDbContext y sin inicializador de base: Reporting no tiene tablas propias. Lo
         // unico que registra es el armador de Excel.
         services.AddReportingInfrastructure(configuration);
+        services.AddPlatformInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -513,7 +525,10 @@ public static class QepServiceCollectionExtensions
                 ReportingPermissions.SalesRead,
                 ReportingPermissions.QuotationRead,
                 ReportingPermissions.PriceChangeRead,
-                ReportingPermissions.CustomerRead
+                ReportingPermissions.CustomerRead,
+                // Solo admin: el log expone trazas y mensajes crudos de todos los modulos.
+                PlatformPermissions.RequestLogRead,
+                PlatformPermissions.RequestLogPurge
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -756,6 +771,20 @@ public static class QepServiceCollectionExtensions
             "Permite consultar y exportar el padron de clientes (Clientes CUC) del tenant.",
             "Reporting",
             "low"));
+        // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
+        // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
+        services.AddSingleton(new PermissionDefinition(
+            PlatformPermissions.RequestLogRead,
+            "Leer el log de la aplicacion",
+            "Permite consultar los POST, PUT, PATCH y DELETE que fallaron, con su error completo.",
+            "Platform",
+            "high"));
+        services.AddSingleton(new PermissionDefinition(
+            PlatformPermissions.RequestLogPurge,
+            "Purgar el log de la aplicacion",
+            "Permite borrar del log lo anterior a la ultima semana.",
+            "Platform",
+            "high"));
     }
 
     private static void AddAuthentication(
@@ -969,7 +998,13 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, ReportingPermissions.PriceChangeRead))
             .AddPolicy(
                 ReportingPermissions.CustomerRead,
-                policy => AddPermissionRequirement(policy, ReportingPermissions.CustomerRead));
+                policy => AddPermissionRequirement(policy, ReportingPermissions.CustomerRead))
+            .AddPolicy(
+                PlatformPermissions.RequestLogRead,
+                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogRead))
+            .AddPolicy(
+                PlatformPermissions.RequestLogPurge,
+                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogPurge));
     }
 
     private static void AddPermissionRequirement(
