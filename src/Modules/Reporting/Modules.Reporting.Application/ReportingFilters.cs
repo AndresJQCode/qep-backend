@@ -68,11 +68,20 @@ public sealed record PriceChangeReportCriteria(
     PriceChangeField? Field);
 
 /// <summary>
-/// El reporte de clientes no filtra por fecha: no hay ninguna columna temporal que el negocio
-/// pida acotar. <c>IsActive</c> nulo trae activos e inactivos.
+/// <c>From</c> y <c>To</c> cortan por **fecha de alta** (<c>Customer.CreatedAt</c>), que es la
+/// única fecha que tiene un cliente: no vende ni vence, sólo entra. Es lo que le da sentido a la
+/// serie mensual del resumen y a su comparación contra el periodo anterior, que acá compara altas
+/// contra altas y nunca cartera contra cartera.
+///
+/// Los tres caminos —listado, exportación y resumen— comparten este filtro, que es lo que hace
+/// imposible que el panel, la tabla y el Excel hablen de conjuntos distintos.
+///
+/// <c>IsActive</c> nulo trae activos e inactivos.
 /// </summary>
 public sealed record CustomerReportFilter(
     Guid TenantId,
+    DateOnly? From,
+    DateOnly? To,
     bool? IsActive,
     Guid? ClassificationId,
     Guid? DepartmentId);
@@ -81,6 +90,8 @@ public sealed record CustomerReportFilter(
 /// para que los cuatro puertos reciban el mismo tipo de objeto.</summary>
 public sealed record CustomerReportCriteria(
     Guid TenantId,
+    DateOnly? From,
+    DateOnly? To,
     bool? IsActive,
     Guid? ClassificationId,
     Guid? DepartmentId);
@@ -123,7 +134,13 @@ public static class ReportFilterMapping
             ReportFilterParser.ParsePriceChangeField(filter.Field));
 
     public static CustomerReportCriteria ToCriteria(this CustomerReportFilter filter) =>
-        new(filter.TenantId, filter.IsActive, filter.ClassificationId, filter.DepartmentId);
+        new(
+            filter.TenantId,
+            filter.From,
+            filter.To,
+            filter.IsActive,
+            filter.ClassificationId,
+            filter.DepartmentId);
 }
 
 /// <summary>
@@ -181,6 +198,20 @@ public sealed class PriceChangeReportFilterValidator : AbstractValidator<PriceCh
     }
 }
 
-/// <summary>Sin nada que validar todavía —los tres filtros son tipados—, pero declarado para que
-/// agregar uno de texto no pase por decidir de nuevo si el reporte lleva validador.</summary>
-public sealed class CustomerReportFilterValidator : AbstractValidator<CustomerReportFilter>;
+/// <summary>
+/// Ver <see cref="SalesReportFilterValidator"/>.
+///
+/// Sigue sin tener nada que parsear —el resto de los filtros son tipados—, pero ya no está vacío:
+/// el rango de fechas de alta se rechaza dado vuelta antes de tocar la base, con la misma regla y
+/// el mismo mensaje que sus tres hermanos.
+/// </summary>
+public sealed class CustomerReportFilterValidator : AbstractValidator<CustomerReportFilter>
+{
+    public CustomerReportFilterValidator()
+    {
+        RuleFor(filter => filter.To)
+            .GreaterThanOrEqualTo(filter => filter.From!.Value)
+            .When(filter => filter.From is not null && filter.To is not null)
+            .WithMessage("to must be on or after from.");
+    }
+}
