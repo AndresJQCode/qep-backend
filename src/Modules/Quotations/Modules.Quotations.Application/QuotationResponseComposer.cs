@@ -72,6 +72,7 @@ public sealed class QuotationResponseComposer(
             quotation.Notes,
             quotation.Parties.Select(ToPartyResponse).ToArray(),
             quotation.BillingUsesBusinessName,
+            quotation.IsStorePickup,
             ToBillingResponse(quotation.BillingAccount, company),
             quotation.CreatedBy,
             quotation.UpdatedBy,

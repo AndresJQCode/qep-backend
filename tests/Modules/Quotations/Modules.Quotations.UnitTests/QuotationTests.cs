@@ -376,6 +376,78 @@ public sealed class QuotationTests
         Assert.Equal(AdvisorId, quotation.UpdatedBy);
     }
 
+    // Una cotizacion nueva se entrega: recoger en tienda es una eleccion explicita de quien
+    // cotiza, no el default.
+    [Fact]
+    public void CreateDefaultsToDeliveryInsteadOfStorePickup()
+    {
+        var quotation = NewQuotation();
+
+        Assert.False(quotation.IsStorePickup);
+    }
+
+    // Recoger en tienda gana: si el request trae ademas una parte de entrega, no queda fila de
+    // Shipping. La facturacion no tiene nada que ver con como se entrega.
+    [Fact]
+    public void CreateWithStorePickupDropsTheShippingPartyAndKeepsTheBilling()
+    {
+        var parties = new QuotationParties(
+            new QuotationPartyDetails { Name = "Sede administrativa" },
+            new QuotationPartyDetails { Name = "Bodega Fontibon", Address = "Zona Franca" },
+            IsStorePickup: true);
+
+        var quotation = NewQuotation(parties: parties);
+
+        Assert.True(quotation.IsStorePickup);
+        Assert.Null(quotation.Shipping);
+        Assert.Equal("Sede administrativa", quotation.Billing?.Name);
+    }
+
+    [Fact]
+    public void UpdateDetailsToStorePickupClearsAnExistingShippingParty()
+    {
+        var quotation = NewQuotation(parties: new QuotationParties(
+            Billing: null, new QuotationPartyDetails { Name = "Bodega Fontibon" }));
+
+        quotation.UpdateDetails(
+            ValidUntil, "Efectivo", null,
+            new QuotationParties(
+                Billing: null,
+                new QuotationPartyDetails { Name = "Bodega Fontibon" },
+                IsStorePickup: true),
+            null, null, AdvisorId, Now);
+
+        Assert.True(quotation.IsStorePickup);
+        Assert.Null(quotation.Shipping);
+        Assert.Empty(quotation.Parties);
+    }
+
+    // UpdateDetails reemplaza el recurso entero: un PATCH que no dice "recoger en tienda" vuelve
+    // a la entrega, igual que una parte que no viene vuelve a los datos del cliente.
+    [Fact]
+    public void UpdateDetailsWithoutStorePickupReturnsToDelivery()
+    {
+        var quotation = NewQuotation(parties: QuotationParties.Empty with { IsStorePickup = true });
+
+        quotation.UpdateDetails(
+            ValidUntil, "Efectivo", null, QuotationParties.Empty, null, null, AdvisorId, Now);
+
+        Assert.False(quotation.IsStorePickup);
+    }
+
+    // Cambiar el cliente borra las partes porque copiaron al cliente viejo. Recoger en tienda no
+    // copia nada del cliente: es como se entrega, y sigue valiendo para el nuevo.
+    [Fact]
+    public void ChangeClientKeepsStorePickup()
+    {
+        var quotation = NewQuotation(parties: QuotationParties.Empty with { IsStorePickup = true });
+
+        quotation.ChangeClient(Guid.CreateVersion7(), false, false, AdvisorId, Now);
+
+        Assert.True(quotation.IsStorePickup);
+        Assert.Null(quotation.Shipping);
+    }
+
     [Fact]
     public void SendMarksAsSentAndStampsSentAt()
     {

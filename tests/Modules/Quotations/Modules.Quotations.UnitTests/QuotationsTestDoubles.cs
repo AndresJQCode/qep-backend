@@ -336,6 +336,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.Notes,
             [],
             quotation.BillingUsesBusinessName,
+            quotation.IsStorePickup,
             null,
             quotation.CreatedBy,
             quotation.UpdatedBy,

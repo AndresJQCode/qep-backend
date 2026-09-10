@@ -25,6 +25,7 @@ internal static class QuotationMapping
         quotation.Notes,
         quotation.Parties.Select(ToDto).ToArray(),
         quotation.BillingUsesBusinessName,
+        quotation.IsStorePickup,
         ToDto(quotation.BillingAccount),
         quotation.CreatedBy.Value,
         quotation.UpdatedBy?.Value,
@@ -82,7 +83,8 @@ internal static class QuotationMapping
             : new QuotationParties(
                 request.Billing.ToDomain(),
                 request.Shipping.ToDomain(),
-                request.BillingUsesBusinessName);
+                request.BillingUsesBusinessName,
+                request.IsStorePickup);
 
     private static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null

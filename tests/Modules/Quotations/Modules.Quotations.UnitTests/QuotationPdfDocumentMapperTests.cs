@@ -152,6 +152,21 @@ public sealed class QuotationPdfDocumentMapperTests
 
         Assert.True(document.Billing.SameAsCustomer);
         Assert.True(document.Shipping.SameAsCustomer);
+        Assert.False(document.IsStorePickup);
+    }
+
+    // Recoger en tienda no es "los mismos datos del cliente": eso se lee como "se entrega en la
+    // direccion del cliente", que es justo lo que no va a pasar. La entrega deja de ser la del
+    // cliente y el documento lo dice con su propia bandera.
+    [Fact]
+    public void AStorePickupQuotationDoesNotFallBackToTheCustomerAddress()
+    {
+        var document = QuotationPdfDocumentMapper.From(Response() with { IsStorePickup = true });
+
+        Assert.True(document.IsStorePickup);
+        Assert.False(document.Shipping.SameAsCustomer);
+        Assert.Equal(string.Empty, document.Shipping.Location);
+        Assert.True(document.Billing.SameAsCustomer);
     }
 
     private static QuotationClientResponse Client() => new(
@@ -194,6 +209,7 @@ public sealed class QuotationPdfDocumentMapperTests
         1536120m,
         null,
         [],
+        false,
         false,
         null,
         Guid.CreateVersion7(),

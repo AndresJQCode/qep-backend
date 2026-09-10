@@ -79,6 +79,28 @@ public sealed partial class QuotationTemplateTests
     public async Task TheTemplateCompilesWithEverythingOptionalMissing() =>
         await AssertCompilesAsync(Minimal());
 
+    // Recoger en tienda es su propia rama en "Entregar en", y la unica que dibuja la banda de
+    // partes con la facturacion en los datos del cliente y sin fila de envio.
+    [Fact]
+    public async Task TheTemplateCompilesWithAStorePickup() =>
+        await AssertCompilesAsync(Minimal() with
+        {
+            Shipping = new QuotationPdfParty(false, string.Empty, string.Empty, string.Empty),
+            IsStorePickup = true,
+        });
+
+    // La prueba de contrato de arriba sólo verifica los campos que la plantilla lee; esta
+    // verifica que la rama de recoger en tienda exista y lea el campo correcto.
+    [Fact]
+    public async Task TheTemplatePrintsStorePickupFromItsOwnFlag()
+    {
+        var (source, data) = await CapturedRequestAsync(Minimal() with { IsStorePickup = true });
+
+        Assert.True(data.GetProperty("isStorePickup").GetBoolean());
+        Assert.Contains("data.isStorePickup", source, StringComparison.Ordinal);
+        Assert.Contains("Recoger en tienda", source, StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------------ compilacion
 
     private static async Task AssertCompilesAsync(QuotationPdfDocument document)
@@ -275,6 +297,7 @@ public sealed partial class QuotationTemplateTests
             false, "Sede administrativa", "6015550198 · facturacion@ejemplo.co", "Carrera 7 #71-52"),
         Shipping: new QuotationPdfParty(
             false, "Bodega Fontibón", "3109987766 · bodega@ejemplo.co", "Zona Franca, Bodega 14"),
+        IsStorePickup: false,
         AdvisorLabel: "ana.perez@ejemplo.co",
         Currency: "COP",
         BillingAccount: new QuotationPdfBillingAccount(
@@ -305,6 +328,7 @@ public sealed partial class QuotationTemplateTests
         CustomerLocation: string.Empty,
         Billing: new QuotationPdfParty(true, string.Empty, string.Empty, string.Empty),
         Shipping: new QuotationPdfParty(true, string.Empty, string.Empty, string.Empty),
+        IsStorePickup: false,
         AdvisorLabel: string.Empty,
         Currency: "USD",
         BillingAccount: null,

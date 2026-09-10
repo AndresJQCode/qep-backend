@@ -30,7 +30,8 @@ public static class QuotationPdfDocumentMapper
             Join(ContactSeparator, quotation.Client?.Phone, quotation.Client?.Email),
             Join(LocationSeparator, quotation.Client?.Address, quotation.Client?.CityName),
             PartyFor(quotation, QuotationPartyRole.Billing),
-            PartyFor(quotation, QuotationPartyRole.Shipping),
+            ShippingFor(quotation),
+            quotation.IsStorePickup,
             quotation.AdvisorEmail ?? string.Empty,
             quotation.Currency,
             BillingAccountFor(quotation),
@@ -92,6 +93,14 @@ public static class QuotationPdfDocumentMapper
                 Join(ContactSeparator, party.Phone, party.Email),
                 party.Address ?? string.Empty);
     }
+
+    /// <summary>Recoger en tienda no tiene a dónde entregar: ni fila propia —el dominio la
+    /// borra— ni "los del cliente", que se leería como "se entrega en la dirección del
+    /// cliente". La parte sale vacía y quien dice qué pasa es <c>IsStorePickup</c>.</summary>
+    private static QuotationPdfParty ShippingFor(QuotationResponse quotation) =>
+        quotation.IsStorePickup
+            ? new QuotationPdfParty(false, string.Empty, string.Empty, string.Empty)
+            : PartyFor(quotation, QuotationPartyRole.Shipping);
 
     private static QuotationPdfBillingAccount? BillingAccountFor(QuotationResponse quotation) =>
         quotation.BillingAccount is { } account

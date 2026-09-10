@@ -222,15 +222,18 @@
 
 // ---------------------------------------------------------------------------- partes
 
-// Sólo cuando alguna parte tiene datos propios. Si las dos son "los mismos datos del cliente",
-// la banda entera desaparece en vez de repetir por tercera vez lo que la ficha ya dice.
+// Sólo cuando alguna parte tiene datos propios o el cliente recoge en tienda. Si las dos son
+// "los mismos datos del cliente", la banda entera desaparece en vez de repetir por tercera vez
+// lo que la ficha ya dice. Recoger en tienda sí la muestra aunque la facturación siga al cliente:
+// sin ella el documento callaría que no hay entrega, y callar se lee como "a la dirección del
+// cliente".
 #let parte(valor) = [
   #valor.name
   #if valor.contact != "" [\ #contacto(valor.contact)]
   #if valor.location != "" [\ #valor.location]
 ]
 
-#if not data.billing.sameAsCustomer or not data.shipping.sameAsCustomer [
+#if data.isStorePickup or not data.billing.sameAsCustomer or not data.shipping.sameAsCustomer [
   #grid(
     columns: (1fr, 1fr),
     column-gutter: 10mm,
@@ -244,9 +247,13 @@
       }
     ],
     [
-      #rotulo("Entregar en")
+      // "Entregar en: Recoger en tienda" se contradice en el mismo renglón, así que con
+      // recogida el rótulo pasa a nombrar la modalidad y no un destino.
+      #rotulo(if data.isStorePickup { "Entrega" } else { "Entregar en" })
       #v(3pt, weak: true)
-      #if data.shipping.sameAsCustomer {
+      #if data.isStorePickup {
+        text(weight: "bold")[Recoger en tienda]
+      } else if data.shipping.sameAsCustomer {
         text(fill: apagado, style: "italic")[Los mismos datos del cliente]
       } else {
         parte(data.shipping)

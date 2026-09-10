@@ -26,6 +26,7 @@ public sealed class QCodePdfRendererTests
         CustomerLocation: "Calle 100 #15-20, Bogotá",
         Billing: new QuotationPdfParty(true, "", "", ""),
         Shipping: new QuotationPdfParty(true, "", "", ""),
+        IsStorePickup: false,
         AdvisorLabel: "Ana Pérez",
         Currency: "COP",
         BillingAccount: null,

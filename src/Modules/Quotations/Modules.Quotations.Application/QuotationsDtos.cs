@@ -44,6 +44,9 @@ public sealed record QuotationDto(
     IReadOnlyCollection<QuotationPartyDto> Parties,
     /// <summary>Si la facturación sigue al cliente, si va con su razón social.</summary>
     bool BillingUsesBusinessName,
+    /// <summary>Si el cliente recoge en la tienda. Cuando es true <c>Parties</c> nunca trae la
+    /// parte de entrega.</summary>
+    bool IsStorePickup,
     /// <summary>Con qué empresa y a qué cuenta se cobra. Null mientras nadie la eligió.</summary>
     QuotationBillingAccountDto? BillingAccount,
     Guid CreatedBy,
@@ -111,7 +114,12 @@ public sealed record QuotationPartiesRequest(
     /// <summary>Con los datos del cliente, a cual de sus dos nombres se le factura: el de
     /// contacto (false, el default) o la razon social (true). Se ignora cuando <c>Billing</c>
     /// trae datos propios.</summary>
-    bool BillingUsesBusinessName = false);
+    bool BillingUsesBusinessName = false,
+    /// <summary>El cliente recoge en la tienda (true) o se le entrega (false, el default: un
+    /// frontend que todavia no manda el campo sigue cotizando con entrega). Gana sobre
+    /// <c>Shipping</c>: con true, una parte de entrega que venga igual se descarta y la que
+    /// estuviera guardada se borra.</summary>
+    bool IsStorePickup = false);
 
 public sealed record CreateQuotationRequest(
     Guid ClientId,
@@ -228,6 +236,9 @@ public sealed record QuotationResponse(
     string? Notes,
     IReadOnlyCollection<QuotationPartyResponse> Parties,
     bool BillingUsesBusinessName,
+    // Viaja siempre, aunque sea false: la pantalla decide con esto si muestra el bloque de
+    // entrega o "Recoger en tienda", y un campo ausente la obligaria a adivinar el default.
+    bool IsStorePickup,
     QuotationBillingResponse? BillingAccount,
     Guid CreatedBy,
     Guid? UpdatedBy,

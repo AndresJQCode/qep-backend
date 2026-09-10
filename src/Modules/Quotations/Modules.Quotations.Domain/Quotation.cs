@@ -59,6 +59,7 @@ public sealed class Quotation
         Notes = NormalizeNotes(notes);
         Assign(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
+        IsStorePickup = parties.IsStorePickup;
         BillingAccount = billingAccount?.Normalized();
         Currency = BillingAccount is null
             ? QuotationCurrencies.Default
@@ -207,6 +208,19 @@ public sealed class Quotation
     public bool BillingUsesBusinessName { get; private set; }
 
     /// <summary>
+    /// Si el cliente recoge en la tienda en vez de recibir el pedido en una dirección.
+    ///
+    /// Invariante: con esto prendido <see cref="Shipping"/> es siempre null — no hay a dónde
+    /// entregar, y una fila de envío guardada al lado diría dos cosas distintas de la misma
+    /// entrega. Por eso no es "una parte más": <see cref="Assign(QuotationParties)"/> descarta
+    /// la de entrega cuando llega junto con esto, y prenderlo borra la que hubiera.
+    ///
+    /// A diferencia de las partes, <see cref="ChangeClient"/> no lo toca: las partes se borran
+    /// porque copiaron al cliente viejo, y recoger en tienda no copia nada de ningún cliente.
+    /// </summary>
+    public bool IsStorePickup { get; private set; }
+
+    /// <summary>
     /// Si la cotización se editó desde la última vez que se envió. <see cref="Send"/> deja
     /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> en el mismo instante, y toda edición mueve
     /// el segundo — así que uno mayor que el otro es exactamente "cambió después de enviarse".
@@ -341,6 +355,7 @@ public sealed class Quotation
         Notes = NormalizeNotes(notes);
         Assign(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
+        IsStorePickup = parties.IsStorePickup;
         ApplyBillingAccount(billingAccount, repricing, occurredAt);
         Touch(updatedBy, occurredAt);
     }
@@ -600,10 +615,13 @@ public sealed class Quotation
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es
     // exactamente "volvé a usar los datos del cliente" (el switch prendido de nuevo).
+    //
+    // Recoger en tienda gana sobre la parte de entrega: se asigna null aunque el request la
+    // traiga, y eso borra la fila que hubiera (ver IsStorePickup).
     private void Assign(QuotationParties parties)
     {
         Assign(QuotationPartyRole.Billing, parties.Billing);
-        Assign(QuotationPartyRole.Shipping, parties.Shipping);
+        Assign(QuotationPartyRole.Shipping, parties.IsStorePickup ? null : parties.Shipping);
     }
 
     private void Assign(QuotationPartyRole role, QuotationPartyDetails? details)

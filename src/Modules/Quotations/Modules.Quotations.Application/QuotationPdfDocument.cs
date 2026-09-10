@@ -22,6 +22,11 @@ public sealed record QuotationPdfDocument(
     string CustomerLocation,
     QuotationPdfParty Billing,
     QuotationPdfParty Shipping,
+    /// <summary>El cliente recoge en la tienda: el documento imprime "Recoger en tienda" donde
+    /// iría la entrega. Con esto <see cref="Shipping"/> sale vacía y sin
+    /// <c>SameAsCustomer</c>, para que nada la lea como "se entrega en la dirección del
+    /// cliente".</summary>
+    bool IsStorePickup,
     string AdvisorLabel,
     /// <summary>La moneda de todos los importes del documento, la de la cuenta de cobro: un PDF
     /// que cobra a una cuenta en dólares imprime dólares.</summary>
