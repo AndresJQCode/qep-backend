@@ -32,6 +32,7 @@ internal static class QuotationMapping
         quotation.SentAt,
         quotation.PdfFileId,
         quotation.CanBeSent,
+        quotation.HasChangesSinceSent,
         quotation.CanBeConvertedToSale,
         quotation.Items.Select(ToDto).ToArray());
 

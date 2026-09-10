@@ -580,4 +580,65 @@ public sealed class QuotationTests
 
         Assert.Equal("quotation.quotation.not_sent", error.Code);
     }
+
+    // Lo que se convierte en venta es lo que el cliente recibio, no lo que quedo en la pantalla
+    // despues. Editar una enviada es legitimo -- sigue siendo editable -- pero deja la
+    // cotizacion y el documento entregado diciendo cosas distintas, asi que hay que reenviarla
+    // antes de convertirla.
+    [Fact]
+    public void CanBeConvertedToSaleTurnsFalseAfterEditingASentQuotation()
+    {
+        var quotation = ConvertibleSentQuotation();
+        Assert.True(quotation.CanBeConvertedToSale);
+
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 50_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
+
+        Assert.True(quotation.HasChangesSinceSent);
+        Assert.False(quotation.CanBeConvertedToSale);
+    }
+
+    [Fact]
+    public void EnsureConvertibleToSaleRejectsAQuotationEditedAfterBeingSent()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 50_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
+
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => quotation.EnsureConvertibleToSale());
+
+        Assert.Equal("quotation.quotation.changed_since_sent", error.Code);
+    }
+
+    // El reenvio es la salida: vuelve a dejar SentAt y UpdatedAt en el mismo instante, asi que
+    // la cotizacion y el documento entregado vuelven a coincidir.
+    [Fact]
+    public void ResendingMakesAnEditedQuotationConvertibleAgain()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 50_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
+
+        quotation.Send(AdvisorId, Now.AddHours(2));
+
+        Assert.False(quotation.HasChangesSinceSent);
+        Assert.True(quotation.CanBeConvertedToSale);
+        quotation.EnsureConvertibleToSale();
+    }
+
+    /// <summary>Enviada y con los cuatro datos que la venta hereda: productos, vigencia, forma
+    /// de pago y cuenta de cobro.</summary>
+    private static Quotation ConvertibleSentQuotation()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
+        return quotation;
+    }
 }

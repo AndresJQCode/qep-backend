@@ -134,6 +134,7 @@ public sealed class QuotationPdfDocumentMapperTests
         null,
         true,
         false,
+        false,
         [
             new QuotationItemResponse(
                 Guid.CreateVersion7(),

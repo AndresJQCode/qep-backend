@@ -51,11 +51,16 @@ public sealed record QuotationDto(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? SentAt,
     Guid? PdfFileId,
-    /// <summary>Si tiene sentido ofrecer "enviar" ahora: un borrador siempre, y una enviada
-    /// sólo si volvió a cambiar desde entonces.</summary>
+    /// <summary>Si tiene sentido ofrecer "enviar" ahora: un borrador y una ya enviada, haya
+    /// cambiado o no — reenviar sin cambios es un caso legítimo.</summary>
     bool CanBeSent,
-    /// <summary>Si convertir en venta es posible: enviada, con productos, vigencia, forma de
-    /// pago y cuenta de cobro.</summary>
+    /// <summary>Si se editó después del último envío. Viaja aunque
+    /// <see cref="CanBeConvertedToSale"/> ya lo incluya: es el único de los motivos de ese
+    /// false que la pantalla no puede deducir de los otros campos, y sin él "Convertir en
+    /// venta" desaparece sin decir por qué (la pantalla enumera los otros tres).</summary>
+    bool HasChangesSinceSent,
+    /// <summary>Si convertir en venta es posible: enviada, sin cambios desde ese envío, con
+    /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
     bool CanBeConvertedToSale,
     IReadOnlyCollection<QuotationItemDto> Items);
 
@@ -235,6 +240,7 @@ public sealed record QuotationResponse(
     DateTimeOffset? SentAt,
     Guid? PdfFileId,
     bool CanBeSent,
+    bool HasChangesSinceSent,
     bool CanBeConvertedToSale,
     IReadOnlyCollection<QuotationItemResponse> Items);
 

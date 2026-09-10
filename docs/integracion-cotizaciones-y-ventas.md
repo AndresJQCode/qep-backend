@@ -81,6 +81,10 @@ type QuotationResponse = {
   deliveryAddressOverride: string | null; deliveryCityOverride: string | null;
   createdBy: string; updatedBy: string | null; updatedAt: string;
   sentAt: string | null; pdfFileId: string | null;
+  // Las tres preguntas que la pantalla no reimplementa. `hasChangesSinceSent` (se editó después
+  // del último envío) ya está adentro de `canBeConvertedToSale`; viaja aparte para que el
+  // detalle pueda decir *por qué* no se ofrece convertir, en vez de esconder el botón callado.
+  canBeSent: boolean; hasChangesSinceSent: boolean; canBeConvertedToSale: boolean;
   items: { id, productId, quantity, unitPrice, discountPercentage, discountAmount, subtotal, position }[];
 };
 
@@ -120,6 +124,7 @@ No hace falta publicar (paso 5 de esa guía) — estos archivos no necesitan URL
 | `quotation.quotation.not_editable` | 422 | La cotización no está en `Draft`/`Sent` |
 | `quotation.quotation.not_draft` | 422 | `send` sobre algo que no es `Draft` |
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
+| `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
 | `sale.sale.payment_proof_required` | 422 | Falta al menos un comprobante y el pago no es `PaymentPending` |

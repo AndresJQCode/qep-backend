@@ -289,5 +289,86 @@ public sealed class SaleApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // Lo que se convierte en venta es lo que el cliente recibio. Editar una enviada sigue
+    // permitido -- sigue siendo editable --, pero deja la cotizacion y el PDF entregado
+    // diciendo cosas distintas: convertir ahi adentro registraria una venta por importes que
+    // nadie le mando. La salida es reenviarla.
+    [Fact]
+    public async Task ConvertAQuotationEditedAfterBeingSentIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ChangeTheQuantityAsync(client, tenantId, quotation);
+
+        var response = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.quotation.changed_since_sent", problem.Code);
+
+        // Y la cotizacion lo dice al leerla: de esos dos campos sale el boton apagado y el
+        // aviso que explica por que, sin que la pantalla compare fechas por su cuenta.
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.True(fetched.HasChangesSinceSent);
+        Assert.False(fetched.CanBeConvertedToSale);
+    }
+
+    [Fact]
+    public async Task ResendingMakesAnEditedQuotationConvertibleAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ChangeTheQuantityAsync(client, tenantId, quotation);
+
+        var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
+        var resent = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(pdfFileId),
+            TestContext.Current.CancellationToken);
+        resent.EnsureSuccessStatusCode();
+        var afterResend = await resent.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(afterResend);
+        Assert.False(afterResend.HasChangesSinceSent);
+        Assert.True(afterResend.CanBeConvertedToSale);
+
+        var response = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    /// <summary>Una edicion cualquiera sobre la cotizacion ya enviada: mueve UpdatedAt por
+    /// delante de SentAt, que es lo unico que define "cambio despues de enviarse".</summary>
+    private static async Task ChangeTheQuantityAsync(
+        HttpClient client, Guid tenantId, QuotationResponse quotation)
+    {
+        var itemId = Assert.Single(quotation.Items).Id;
+        var response = await client.PutAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
+            new UpdateQuotationItemRequest(2m),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     private sealed record ProblemPayload(string Code);
 }

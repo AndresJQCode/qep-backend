@@ -343,6 +343,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.SentAt,
             quotation.PdfFileId,
             quotation.CanBeSent,
+            quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToSale,
             []));
 }
