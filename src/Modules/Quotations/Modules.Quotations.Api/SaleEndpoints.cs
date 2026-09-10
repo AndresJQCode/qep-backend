@@ -13,6 +13,19 @@ public static class SaleEndpoints
 {
     public static IEndpointRouteBuilder MapSaleEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        // SALE-01: el listado vive en su propia coleccion y no colgado de una cotizacion. Una
+        // venta se sigue creando y leyendo como sub-recurso de la suya --sigue siendo 1:1-- pero
+        // "las ventas del tenant" no son de ninguna cotizacion en particular.
+        var collection = endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/sales")
+            .WithTags("Sales");
+
+        collection.MapGet("/", ListSalesAsync)
+            .RequireAuthorization(SalesPermissions.SaleRead)
+            .Produces<SalesPageResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/sale")
             .WithTags("Sales");
@@ -45,6 +58,50 @@ public static class SaleEndpoints
 
         return endpoints;
     }
+
+    private static async Task<IResult> ListSalesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        Guid? clientId = null,
+        Guid? advisorId = null,
+        string? status = null,
+        string? paymentStatus = null,
+        DateOnly? convertedFrom = null,
+        DateOnly? convertedTo = null,
+        string? clientCuc = null,
+        string? saleNumber = null,
+        int page = 1,
+        int pageSize = QuotationPaging.DefaultPageSize)
+    {
+        var result = await dispatcher.QueryAsync(
+            new ListSalesQuery(
+                tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
+                clientCuc, saleNumber, page, pageSize),
+            cancellationToken);
+
+        return Results.Ok(new SalesPageResponse(
+            result.Items.Select(ToListItemResponse).ToArray(),
+            result.Total,
+            result.Page,
+            result.PageSize));
+    }
+
+    private static SaleListItemResponse ToListItemResponse(SaleListItemDto sale) => new(
+        sale.Id,
+        sale.SaleNumber,
+        sale.QuotationId,
+        sale.QuotationNumber,
+        sale.ClientId,
+        sale.ClientName,
+        sale.AdvisorId,
+        sale.AdvisorEmail,
+        sale.Status,
+        sale.PaymentStatus,
+        sale.PaymentMethod,
+        sale.ConvertedAt,
+        sale.Currency,
+        sale.Total);
 
     private static async Task<IResult> GetSaleAsync(
         Guid tenantId,
