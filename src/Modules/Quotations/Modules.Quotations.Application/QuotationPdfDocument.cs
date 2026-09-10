@@ -32,11 +32,26 @@ public sealed record QuotationPdfDocument(
     string? PaymentMethod,
     string? Notes,
     IReadOnlyList<QuotationPdfLine> Items,
+    /// <summary>La base sin IVA de todo el documento. El precio de los productos viene con el
+    /// impuesto adentro, así que esto es <b>menos</b> que la suma de las líneas, no más.</summary>
     decimal Subtotal,
+    /// <summary>La suma de los descuentos de línea. Para un mayorista que revende a valor
+    /// público es, exactamente, lo que se gana: por eso el documento la imprime.</summary>
     decimal DiscountAmount,
     decimal TaxPercentage,
     decimal TaxAmount,
-    decimal Total);
+    decimal Total,
+    /// <summary>Retención en la fuente que el cliente le retiene al vendedor (2,5% de la base
+    /// sin IVA). Cero cuando el cliente no la practica. No resta del <see cref="Total"/>, que
+    /// sigue siendo lo facturado — resta del <see cref="NetTotal"/>.</summary>
+    decimal RetentionAmount,
+    /// <summary>Lo que efectivamente se paga en efectivo: <see cref="Total"/> menos la
+    /// retención. Igual al total cuando no hay retención.</summary>
+    decimal NetTotal,
+    /// <summary>El cliente tiene excedente de IVA y por eso el impuesto da cero. Viaja para que
+    /// el documento pueda decirlo: un IVA en cero sin explicación se lee como error de
+    /// cálculo.</summary>
+    bool CustomerVatSurplus);
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">
@@ -56,12 +71,26 @@ public sealed record QuotationPdfBillingAccount(
     string AccountNumber,
     string Currency);
 
+/// <summary>
+/// Una línea tal como el documento la imprime. Los tres importes están en la misma unidad —con
+/// IVA adentro— a propósito: son las tres celdas de una fila que el cliente comprueba a mano, y
+/// la comprobación es <c>DiscountedUnitPrice × Quantity = LineTotal</c>.
+///
+/// Acá no viaja <c>QuotationItem.Subtotal</c>, que es la base <b>sin</b> IVA de la línea. Ese
+/// número es correcto y es lo que el encabezado suma, pero puesto al lado de un unitario que sí
+/// trae impuesto da una fila que no multiplica.
+/// </summary>
 public sealed record QuotationPdfLine(
     string ProductName,
     decimal Quantity,
+    /// <summary>Precio de lista con IVA incluido, snapshot al cotizar. La referencia comercial
+    /// lo llama "valor público": es contra este precio que se mide el descuento.</summary>
     decimal UnitPrice,
     decimal DiscountPercentage,
-    decimal Subtotal);
+    /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado.</summary>
+    decimal DiscountedUnitPrice,
+    /// <summary>Lo que se cobra por la línea entera, IVA adentro.</summary>
+    decimal LineTotal);
 
 /// <summary>
 /// Puerto hacia quien sabe dibujar un PDF. La implementación vive en Infrastructure porque

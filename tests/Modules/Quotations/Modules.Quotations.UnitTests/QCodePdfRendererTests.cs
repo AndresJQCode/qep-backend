@@ -33,13 +33,16 @@ public sealed class QCodePdfRendererTests
         Notes: null,
         Items:
         [
-            new QuotationPdfLine("Tornillo hexagonal 3/8", 100m, 1500m, 0m, 150000m),
+            new QuotationPdfLine("Tornillo hexagonal 3/8", 100m, 1500m, 0m, 1500m, 150000m),
         ],
-        Subtotal: 150000m,
+        Subtotal: 126050.42m,
         DiscountAmount: 0m,
         TaxPercentage: 19m,
-        TaxAmount: 28500m,
-        Total: 178500m);
+        TaxAmount: 23949.58m,
+        Total: 150000m,
+        RetentionAmount: 0m,
+        NetTotal: 150000m,
+        CustomerVatSurplus: false);
 
     [Fact]
     public async Task RenderReturnsThePdfBytesTheServiceProduces()
