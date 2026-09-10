@@ -304,6 +304,21 @@
     .flatten()
 )
 
+// ---------------------------------------------------------------------------- notas
+
+// Va entre la tabla y los totales, como en la cotizacion de referencia: son las condiciones
+// que califican los precios de arriba, y leerlas despues del total es leerlas tarde.
+//
+// Acotado a 130mm y no al ancho de la caja: a 9pt, los 174mm del texto corrido dan renglones de
+// ~110 caracteres y el ojo pierde el salto de línea. Las observaciones son el único párrafo
+// largo del documento, así que es el único bloque que necesita medida propia.
+#if data.notes != none [
+  #v(14pt)
+  #rotulo("Observaciones")
+  #v(4pt, weak: true)
+  #block(width: 130mm)[#data.notes]
+]
+
 #v(14pt)
 
 // ---------------------------------------------------------------------------- totales
@@ -380,16 +395,4 @@
       )
     ],
   )
-]
-
-// ---------------------------------------------------------------------------- notas
-
-// Acotado a 130mm y no al ancho de la caja: a 9pt, los 174mm del texto corrido dan renglones de
-// ~110 caracteres y el ojo pierde el salto de línea. Las observaciones son el único párrafo
-// largo del documento, así que es el único bloque que necesita medida propia.
-#if data.notes != none [
-  #v(16pt)
-  #rotulo("Observaciones")
-  #v(4pt, weak: true)
-  #block(width: 130mm)[#data.notes]
 ]
