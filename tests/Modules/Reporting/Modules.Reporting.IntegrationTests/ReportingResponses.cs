@@ -163,3 +163,27 @@ internal sealed record PriceChangeProductEntry(
     int Count);
 
 internal sealed record PriceChangeComparison(int ChangeCount);
+
+/// <summary>
+/// El resumen del reporte de clientes.
+///
+/// **Sin ningun agregado de monto tampoco, y por otro motivo**: un cliente no factura ni vence, no
+/// tiene un numero que sumar. Lo que se cuenta son clientes.
+///
+/// Los inactivos no viajan: son <c>CustomerCount - ActiveCount</c>.
+/// </summary>
+internal sealed record CustomerReportSummary(
+    int CustomerCount,
+    int ActiveCount,
+    IReadOnlyList<ReportCountPoint> Monthly,
+    IReadOnlyList<CustomerGroupEntry> ByClassification,
+    IReadOnlyList<CustomerGroupEntry> ByDepartment,
+    CustomerComparison? Previous);
+
+internal sealed record CustomerGroupEntry(
+    Guid? Id,
+    string? Label,
+    int EntityCount,
+    int Count);
+
+internal sealed record CustomerComparison(int CustomerCount);

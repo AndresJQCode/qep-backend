@@ -7,7 +7,8 @@ using Modules.Reporting.Application;
 namespace Modules.Reporting.Api;
 
 /// <summary>
-/// Los ocho endpoints de reportes: cuatro listados paginados y sus cuatro exportaciones.
+/// Los doce endpoints de reportes: cuatro listados paginados, sus cuatro resumenes y sus cuatro
+/// exportaciones.
 ///
 /// **La exportacion devuelve el archivo en el cuerpo**, no el 202 + correo que usa
 /// <c>customers/export</c>. La diferencia es deliberada y esta en el contrato: aquella exporta el
@@ -85,6 +86,12 @@ public static class ReportingEndpoints
         group.MapGet("/customers", ListCustomersAsync)
             .RequireAuthorization(ReportingPermissions.CustomerRead)
             .Produces<ReportPage<CustomerReportItemDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/customers/summary", GetCustomersSummaryAsync)
+            .RequireAuthorization(ReportingPermissions.CustomerRead)
+            .Produces<CustomerReportSummaryDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
@@ -279,10 +286,14 @@ public static class ReportingEndpoints
         return Results.File(file.Content, ExcelContentType, file.FileName);
     }
 
+    /// <summary><c>from</c> y <c>to</c> cortan por fecha de alta: ver
+    /// <see cref="CustomerReportFilter"/>.</summary>
     private static async Task<IResult> ListCustomersAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
         bool? isActive = null,
         Guid? classificationId = null,
         Guid? departmentId = null,
@@ -291,7 +302,8 @@ public static class ReportingEndpoints
     {
         var result = await dispatcher.QueryAsync(
             new ListCustomerReportQuery(
-                new CustomerReportFilter(tenantId, isActive, classificationId, departmentId),
+                new CustomerReportFilter(
+                    tenantId, from, to, isActive, classificationId, departmentId),
                 page,
                 pageSize),
             cancellationToken);
@@ -299,17 +311,41 @@ public static class ReportingEndpoints
         return Results.Ok(result);
     }
 
+    /// <summary>Ver <see cref="GetSalesSummaryAsync"/>: mismos filtros que el listado, sin
+    /// paginacion.</summary>
+    private static async Task<IResult> GetCustomersSummaryAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        bool? isActive = null,
+        Guid? classificationId = null,
+        Guid? departmentId = null)
+    {
+        var summary = await dispatcher.QueryAsync(
+            new GetCustomerReportSummaryQuery(
+                new CustomerReportFilter(
+                    tenantId, from, to, isActive, classificationId, departmentId)),
+            cancellationToken);
+
+        return Results.Ok(summary);
+    }
+
     private static async Task<IResult> ExportCustomersAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
         bool? isActive = null,
         Guid? classificationId = null,
         Guid? departmentId = null)
     {
         var file = await dispatcher.QueryAsync(
             new ExportCustomerReportQuery(
-                new CustomerReportFilter(tenantId, isActive, classificationId, departmentId)),
+                new CustomerReportFilter(
+                    tenantId, from, to, isActive, classificationId, departmentId)),
             cancellationToken);
 
         return Results.File(file.Content, ExcelContentType, file.FileName);
