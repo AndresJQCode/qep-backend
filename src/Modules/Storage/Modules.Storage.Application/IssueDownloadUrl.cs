@@ -42,8 +42,13 @@ public sealed class IssueDownloadUrlHandler(
         var storageKey = string.IsNullOrWhiteSpace(command.Variant)
             ? resource.StorageKey
             : resource.GetVariant(command.Variant).StorageKey;
+        // Con el nombre original del recurso, que firma `Content-Disposition: attachment`. Sin
+        // el, R2 sirve el objeto sin disposicion y el navegador **abre** el PDF o la imagen en
+        // una pestana en vez de bajarlos: el endpoint se llama "download-url" y hasta ahora no
+        // descargaba nada. Una variante conserva el nombre del original -- lo que cambia es el
+        // tamano, no que archivo es.
         var url = await objectStorage.CreatePresignedDownloadUrlAsync(
-            storageKey, cancellationToken);
+            storageKey, resource.Name, cancellationToken);
 
         auditPublisher.Publish(
             resource.TenantId,

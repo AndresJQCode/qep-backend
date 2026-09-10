@@ -9,8 +9,14 @@ public interface IObjectStorage
         string contentType,
         CancellationToken cancellationToken);
 
+    // Con la vida por defecto de la configuracion. `downloadFileName` firma
+    // `Content-Disposition: attachment` con ese nombre: sin el, el navegador abre el archivo en
+    // vez de bajarlo -- un PDF o una imagen se renderizan inline, que es justo lo que una accion
+    // llamada "descargar" no debe hacer. Null deja la disposicion al criterio del navegador,
+    // para los enlaces que no consume una persona.
     Task<Uri> CreatePresignedDownloadUrlAsync(
         string key,
+        string? downloadFileName,
         CancellationToken cancellationToken);
 
     // Igual que la anterior, pero con vida y nombre de archivo propios. Existe para los enlaces
