@@ -99,7 +99,14 @@ public sealed record QuotationParties(
     /// <b>Gana sobre <see cref="Shipping"/></b>: con esto prendido no hay a dónde entregar, así que
     /// una parte de entrega que llegue igual se descarta. La facturación no se entera.
     /// </summary>
-    bool IsStorePickup = false)
+    bool IsStorePickup = false,
+    /// <summary>
+    /// La factura sale a nombre de consumidor final (<see cref="FinalConsumer"/>). Excluye a
+    /// <see cref="Billing"/> y a <see cref="BillingUsesBusinessName"/>: a diferencia de
+    /// <see cref="IsStorePickup"/>, que descarta la parte de entrega, acá el agregado rechaza la
+    /// combinación — son dos nombres distintos para la misma factura y no hay uno que gane.
+    /// </summary>
+    bool BillsToFinalConsumer = false)
 {
     /// <summary>Las dos partes tomadas del cliente: ninguna fila. El estado por defecto de una
     /// cotización nueva.</summary>

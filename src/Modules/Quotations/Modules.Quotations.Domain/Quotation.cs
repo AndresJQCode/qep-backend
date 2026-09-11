@@ -57,9 +57,11 @@ public sealed class Quotation
         ValidUntil = validUntil;
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);
+        EnsureBillingIsConsistent(parties);
         Assign(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
+        BillsToFinalConsumer = parties.BillsToFinalConsumer;
         BillingAccount = billingAccount?.Normalized();
         Currency = BillingAccount is null
             ? QuotationCurrencies.Default
@@ -221,6 +223,33 @@ public sealed class Quotation
     public bool IsStorePickup { get; private set; }
 
     /// <summary>
+    /// Si la factura sale a nombre de <see cref="FinalConsumer"/> en vez de a los datos del
+    /// cliente o a una parte propia. La cotización sigue teniendo su cliente real —a quien se le
+    /// cotiza, se le envía y se le entrega—: esto sólo cambia a nombre de quién se factura.
+    ///
+    /// Invariante: con esto prendido <see cref="Billing"/> es null y
+    /// <see cref="BillingUsesBusinessName"/> es false. Se rechaza, no se normaliza: un request que
+    /// manda las dos cosas dice dos nombres distintos para la misma factura, y elegir uno en
+    /// silencio escondería el error de quien lo mandó.
+    ///
+    /// Apaga la retención y el excedente de IVA (<see cref="AppliesRetention"/>,
+    /// <see cref="AppliesVatSurplus"/>) sin tocar <see cref="CustomerWithRetention"/> ni
+    /// <see cref="CustomerVatSurplus"/>: desmarcarlo los restituye sin volver a consultar al
+    /// cliente.
+    /// </summary>
+    public bool BillsToFinalConsumer { get; private set; }
+
+    /// <summary>Si la retención en la fuente se aplica a esta cotización: el cliente la practica
+    /// y la factura no sale a consumidor final, que no la lleva. Es lo que usa
+    /// <see cref="RecalculateTotals"/>; el snapshot del cliente queda aparte.</summary>
+    public bool AppliesRetention => CustomerWithRetention && !BillsToFinalConsumer;
+
+    /// <summary>Si el excedente de IVA exime a esta cotización: el cliente lo tiene y la factura
+    /// no sale a consumidor final, que paga el IVA. Es lo que usa <see cref="RecalculateTotals"/>
+    /// y lo que tiene que leer quien imprima "exento".</summary>
+    public bool AppliesVatSurplus => CustomerVatSurplus && !BillsToFinalConsumer;
+
+    /// <summary>
     /// Si la cotización se editó desde la última vez que se envió. <see cref="Send"/> deja
     /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> en el mismo instante, y toda edición mueve
     /// el segundo — así que uno mayor que el otro es exactamente "cambió después de enviarse".
@@ -349,6 +378,8 @@ public sealed class Quotation
         DateTimeOffset occurredAt)
     {
         EnsureEditable();
+        // Antes de asignar nada: un encabezado rechazado no puede quedar aplicado a medias.
+        EnsureBillingIsConsistent(parties);
 
         ValidUntil = validUntil;
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
@@ -356,6 +387,7 @@ public sealed class Quotation
         Assign(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
+        BillsToFinalConsumer = parties.BillsToFinalConsumer;
         ApplyBillingAccount(billingAccount, repricing, occurredAt);
         Touch(updatedBy, occurredAt);
     }
@@ -428,6 +460,9 @@ public sealed class Quotation
         Assign(QuotationParties.Empty);
         // El cliente nuevo puede no ser una empresa: la eleccion de nombre vuelve al default.
         BillingUsesBusinessName = false;
+        // Facturar a consumidor final se decidió mirando al cliente anterior: el nuevo arranca
+        // con la facturación por defecto, y con su retención/excedente de IVA aplicados.
+        BillsToFinalConsumer = false;
         CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
         Touch(updatedBy, occurredAt);
@@ -631,6 +666,19 @@ public sealed class Quotation
         }
     }
 
+    // Consumidor final tiene nombre y NIT fijos (FinalConsumer): una parte de facturación propia
+    // o la razón social del cliente al lado dirían otro nombre para la misma factura.
+    private static void EnsureBillingIsConsistent(QuotationParties parties)
+    {
+        if (parties.BillsToFinalConsumer &&
+            (parties.Billing is not null || parties.BillingUsesBusinessName))
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.final_consumer_conflict",
+                "A quotation billed to the final consumer cannot carry its own billing party or bill to the customer's business name.");
+        }
+    }
+
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es
     // exactamente "volvé a usar los datos del cliente" (el switch prendido de nuevo).
@@ -690,9 +738,10 @@ public sealed class Quotation
 
         // Un cliente con excedente de IVA no paga IVA en la cotización, cualquiera sea la tasa
         // de cada línea — el impuesto de cada QuotationItem queda intacto (sigue reflejando la
-        // tasa real del producto), pero el encabezado lo ignora entero.
+        // tasa real del producto), pero el encabezado lo ignora entero. Salvo que la factura
+        // salga a consumidor final: ahí el excedente no aplica (AppliesVatSurplus).
         var rawTaxAmount = Round(_items.Sum(item => item.TaxAmount));
-        TaxAmount = CustomerVatSurplus ? 0m : rawTaxAmount;
+        TaxAmount = AppliesVatSurplus ? 0m : rawTaxAmount;
         TaxPercentage = Subtotal > 0 ? Round(TaxAmount / Subtotal * 100m) : 0m;
 
         Total = Subtotal + TaxAmount;
@@ -700,7 +749,7 @@ public sealed class Quotation
         // Retención en la fuente: 2.5% de lo facturado sin IVA. Resta del neto a cobrar, no de
         // Total — Total sigue siendo lo facturado, RetentionAmount es lo que el cliente le
         // retiene al vendedor y no paga en efectivo.
-        RetentionAmount = CustomerWithRetention ? Round(Subtotal * 0.025m) : 0m;
+        RetentionAmount = AppliesRetention ? Round(Subtotal * 0.025m) : 0m;
         NetTotal = Total - RetentionAmount;
     }
 

@@ -90,6 +90,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("billing_uses_business_name");
         quotation.Property(value => value.IsStorePickup)
             .HasColumnName("is_store_pickup");
+        quotation.Property(value => value.BillsToFinalConsumer)
+            .HasColumnName("bills_to_final_consumer");
         quotation.Property(value => value.CustomerWithRetention)
             .HasColumnName("customer_with_retention");
         quotation.Property(value => value.CustomerVatSurplus)

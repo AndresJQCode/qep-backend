@@ -32,9 +32,12 @@ public sealed record QuotationDto(
     decimal DiscountAmount,
     decimal Total,
     // CustomerVatSurplus viaja para que el frontend pueda mostrar "exento por excedente de
-    // IVA" en vez de adivinar por que TaxAmount dio cero. RetentionAmount/NetTotal son el
-    // snapshot de retencion en la fuente (Quotation.RecalculateTotals): NetTotal = Total -
-    // RetentionAmount es lo que efectivamente se cobra en efectivo.
+    // IVA" en vez de adivinar por que TaxAmount dio cero. Es el valor **efectivo**
+    // (Quotation.AppliesVatSurplus), no el snapshot del cliente: facturando a consumidor final
+    // el IVA se cobra aunque el cliente tenga excedente, y la pantalla y el PDF imprimen "exento"
+    // con solo ver esto en true. RetentionAmount/NetTotal son el snapshot de retencion en la
+    // fuente (Quotation.RecalculateTotals): NetTotal = Total - RetentionAmount es lo que
+    // efectivamente se cobra en efectivo.
     bool CustomerVatSurplus,
     decimal RetentionAmount,
     decimal NetTotal,
@@ -47,6 +50,9 @@ public sealed record QuotationDto(
     /// <summary>Si el cliente recoge en la tienda. Cuando es true <c>Parties</c> nunca trae la
     /// parte de entrega.</summary>
     bool IsStorePickup,
+    /// <summary>Si la factura sale a nombre de consumidor final. Cuando es true <c>Parties</c>
+    /// nunca trae la parte de facturación y <c>BillingUsesBusinessName</c> es false.</summary>
+    bool BillsToFinalConsumer,
     /// <summary>Con qué empresa y a qué cuenta se cobra. Null mientras nadie la eligió.</summary>
     QuotationBillingAccountDto? BillingAccount,
     Guid CreatedBy,
@@ -124,7 +130,14 @@ public sealed record QuotationPartiesRequest(
     /// frontend que todavia no manda el campo sigue cotizando con entrega). Gana sobre
     /// <c>Shipping</c>: con true, una parte de entrega que venga igual se descarta y la que
     /// estuviera guardada se borra.</summary>
-    bool IsStorePickup = false);
+    bool IsStorePickup = false,
+    /// <summary>La factura sale a nombre de consumidor final (true) o a los datos del cliente o a
+    /// <c>Billing</c> (false, el default: un frontend que todavia no manda el campo sigue
+    /// facturando como antes). Con true, <c>Billing</c> tiene que venir null y
+    /// <c>BillingUsesBusinessName</c> false; si no, 422
+    /// <c>quotation.billing.final_consumer_conflict</c>. Como el PATCH reemplaza el encabezado
+    /// entero, omitirlo lo apaga.</summary>
+    bool BillsToFinalConsumer = false);
 
 public sealed record CreateQuotationRequest(
     Guid ClientId,
@@ -232,9 +245,12 @@ public sealed record QuotationResponse(
     decimal DiscountAmount,
     decimal Total,
     // CustomerVatSurplus viaja para que el frontend pueda mostrar "exento por excedente de
-    // IVA" en vez de adivinar por que TaxAmount dio cero. RetentionAmount/NetTotal son el
-    // snapshot de retencion en la fuente (Quotation.RecalculateTotals): NetTotal = Total -
-    // RetentionAmount es lo que efectivamente se cobra en efectivo.
+    // IVA" en vez de adivinar por que TaxAmount dio cero. Es el valor **efectivo**
+    // (Quotation.AppliesVatSurplus), no el snapshot del cliente: facturando a consumidor final
+    // el IVA se cobra aunque el cliente tenga excedente, y quote-totals-summary.tsx pinta "IVA —
+    // Exento" con solo ver esto en true. RetentionAmount/NetTotal son el snapshot de retencion en
+    // la fuente (Quotation.RecalculateTotals): NetTotal = Total - RetentionAmount es lo que
+    // efectivamente se cobra en efectivo.
     bool CustomerVatSurplus,
     decimal RetentionAmount,
     decimal NetTotal,
@@ -244,6 +260,10 @@ public sealed record QuotationResponse(
     // Viaja siempre, aunque sea false: la pantalla decide con esto si muestra el bloque de
     // entrega o "Recoger en tienda", y un campo ausente la obligaria a adivinar el default.
     bool IsStorePickup,
+    // Viaja siempre por el mismo motivo: con esto la pantalla elige entre el bloque de
+    // facturacion y la tarjeta fija de consumidor final. Nombre y NIT no viajan: son constantes
+    // (FinalConsumer) que el frontend ya muestra antes de guardar.
+    bool BillsToFinalConsumer,
     QuotationBillingResponse? BillingAccount,
     Guid CreatedBy,
     Guid? UpdatedBy,

@@ -448,6 +448,195 @@ public sealed class QuotationTests
         Assert.Null(quotation.Shipping);
     }
 
+    // Una cotizacion nueva factura a los datos del cliente: consumidor final es una eleccion
+    // explicita de quien cotiza.
+    [Fact]
+    public void CreateDefaultsToBillingTheCustomer()
+    {
+        var quotation = NewQuotation();
+
+        Assert.False(quotation.BillsToFinalConsumer);
+    }
+
+    // Consumidor final apaga la retencion y el excedente de IVA del cliente. Los snapshots del
+    // cliente quedan intactos: son los que vuelven al desmarcar.
+    [Fact]
+    public void BillingToTheFinalConsumerChargesVatAndDropsRetention()
+    {
+        var quotation = NewQuotation(
+            parties: QuotationParties.Empty with { BillsToFinalConsumer = true },
+            customerWithRetention: true,
+            customerVatSurplus: true);
+
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        Assert.True(quotation.BillsToFinalConsumer);
+        // 119_000 con el IVA del 19% adentro -> base 100_000 + IVA 19_000, que ahora se cobra.
+        Assert.Equal(100_000m, quotation.Subtotal);
+        Assert.Equal(19_000m, quotation.TaxAmount);
+        Assert.Equal(19m, quotation.TaxPercentage);
+        Assert.Equal(119_000m, quotation.Total);
+        Assert.Equal(0m, quotation.RetentionAmount);
+        Assert.Equal(119_000m, quotation.NetTotal);
+        Assert.True(quotation.CustomerWithRetention);
+        Assert.True(quotation.CustomerVatSurplus);
+        Assert.False(quotation.AppliesRetention);
+        Assert.False(quotation.AppliesVatSurplus);
+    }
+
+    // El camino real es el PATCH del encabezado: marcarlo ahi tambien recalcula.
+    [Fact]
+    public void UpdateDetailsToTheFinalConsumerRecalculatesTheTotals()
+    {
+        var quotation = NewQuotation(customerWithRetention: true, customerVatSurplus: true);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        Assert.Equal(2_500m, quotation.RetentionAmount);
+
+        quotation.UpdateDetails(
+            ValidUntil, "Efectivo", null,
+            QuotationParties.Empty with { BillsToFinalConsumer = true },
+            null, null, AdvisorId, Now);
+
+        Assert.True(quotation.BillsToFinalConsumer);
+        Assert.Equal(19_000m, quotation.TaxAmount);
+        Assert.Equal(0m, quotation.RetentionAmount);
+        Assert.Equal(119_000m, quotation.NetTotal);
+        Assert.Equal(3, quotation.Version);
+    }
+
+    // Desmarcar no vuelve a consultar al cliente: los snapshots nunca se pisaron, asi que la
+    // retencion y el excedente vuelven solos.
+    [Fact]
+    public void UnmarkingTheFinalConsumerRestoresTheCustomerRetentionAndVatSurplus()
+    {
+        var quotation = NewQuotation(
+            parties: QuotationParties.Empty with { BillsToFinalConsumer = true },
+            customerWithRetention: true,
+            customerVatSurplus: true);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        quotation.UpdateDetails(
+            ValidUntil, "Efectivo", null, QuotationParties.Empty, null, null, AdvisorId, Now);
+
+        Assert.False(quotation.BillsToFinalConsumer);
+        Assert.Equal(0m, quotation.TaxAmount);
+        Assert.Equal(100_000m, quotation.Total);
+        Assert.Equal(2_500m, quotation.RetentionAmount);
+        Assert.Equal(97_500m, quotation.NetTotal);
+    }
+
+    // Nombre y NIT de consumidor final son fijos: una parte propia al lado diria otro nombre para
+    // la misma factura. Se rechaza en vez de elegir una en silencio.
+    [Fact]
+    public void CreateRejectsTheFinalConsumerWithABillingParty()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewQuotation(parties: new QuotationParties(
+                new QuotationPartyDetails { Name = "Sede administrativa" },
+                Shipping: null,
+                BillsToFinalConsumer: true)));
+
+        Assert.Equal("quotation.billing.final_consumer_conflict", error.Code);
+    }
+
+    [Fact]
+    public void CreateRejectsTheFinalConsumerWithTheBusinessName()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewQuotation(parties: QuotationParties.Empty with
+            {
+                BillingUsesBusinessName = true,
+                BillsToFinalConsumer = true,
+            }));
+
+        Assert.Equal("quotation.billing.final_consumer_conflict", error.Code);
+    }
+
+    // El rechazo llega antes de tocar nada: un PATCH que falla no deja la mitad del encabezado
+    // aplicada.
+    [Fact]
+    public void UpdateDetailsRejectsTheFinalConsumerWithABillingPartyWithoutChangingAnything()
+    {
+        var quotation = NewQuotation(notes: "nota original");
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.UpdateDetails(
+                ValidUntil, "Efectivo", "nota nueva",
+                new QuotationParties(
+                    new QuotationPartyDetails { Name = "Sede administrativa" },
+                    Shipping: null,
+                    BillsToFinalConsumer: true),
+                null, null, AdvisorId, Now));
+
+        Assert.Equal("quotation.billing.final_consumer_conflict", error.Code);
+        Assert.Equal("nota original", quotation.Notes);
+        Assert.Null(quotation.Billing);
+        Assert.False(quotation.BillsToFinalConsumer);
+        Assert.Equal(1, quotation.Version);
+    }
+
+    [Fact]
+    public void UpdateDetailsRejectsTheFinalConsumerWithTheBusinessName()
+    {
+        var quotation = NewQuotation();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.UpdateDetails(
+                ValidUntil, "Efectivo", null,
+                QuotationParties.Empty with
+                {
+                    BillingUsesBusinessName = true,
+                    BillsToFinalConsumer = true,
+                },
+                null, null, AdvisorId, Now));
+
+        Assert.Equal("quotation.billing.final_consumer_conflict", error.Code);
+    }
+
+    // Un cliente nuevo arranca con la facturacion por defecto, igual que BillingUsesBusinessName:
+    // la decision de facturar a consumidor final se tomo mirando al cliente anterior.
+    [Fact]
+    public void ChangeClientResetsTheFinalConsumer()
+    {
+        var quotation = NewQuotation(
+            parties: QuotationParties.Empty with { BillsToFinalConsumer = true });
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        quotation.ChangeClient(
+            Guid.CreateVersion7(), customerWithRetention: true, customerVatSurplus: false,
+            AdvisorId, Now);
+
+        Assert.False(quotation.BillsToFinalConsumer);
+        Assert.Equal(2_500m, quotation.RetentionAmount);
+    }
+
+    // RefreshCustomerTaxProfile sigue actualizando los snapshots, pero con consumidor final la
+    // retencion efectiva sigue en cero y el IVA se sigue cobrando.
+    [Fact]
+    public void RefreshCustomerTaxProfileKeepsTheFinalConsumerFreeOfRetention()
+    {
+        var quotation = NewQuotation(
+            parties: QuotationParties.Empty with { BillsToFinalConsumer = true });
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
+
+        Assert.True(quotation.CustomerWithRetention);
+        Assert.True(quotation.CustomerVatSurplus);
+        Assert.Equal(0m, quotation.RetentionAmount);
+        Assert.Equal(19_000m, quotation.TaxAmount);
+    }
+
     [Fact]
     public void SendMarksAsSentAndStampsSentAt()
     {
