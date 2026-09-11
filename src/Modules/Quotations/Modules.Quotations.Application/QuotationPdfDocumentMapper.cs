@@ -29,7 +29,7 @@ public static class QuotationPdfDocumentMapper
             quotation.Client?.Cuc ?? string.Empty,
             Join(ContactSeparator, quotation.Client?.Phone, quotation.Client?.Email),
             Join(LocationSeparator, quotation.Client?.Address, quotation.Client?.CityName),
-            PartyFor(quotation, QuotationPartyRole.Billing),
+            BillingFor(quotation),
             ShippingFor(quotation),
             quotation.IsStorePickup,
             quotation.AdvisorEmail ?? string.Empty,
@@ -93,6 +93,20 @@ public static class QuotationPdfDocumentMapper
                 Join(ContactSeparator, party.Phone, party.Email),
                 party.Address ?? string.Empty);
     }
+
+    /// <summary>Consumidor final no tiene fila de facturación —el dominio la prohíbe— pero
+    /// tampoco es "los del cliente": la factura sale a otro nombre, con el NIT genérico. Sin
+    /// contacto ni dirección, que serían los del cliente real. Nombre y NIT salen de
+    /// <see cref="FinalConsumer"/>, el único lugar del backend donde viven.</summary>
+    private static QuotationPdfParty BillingFor(QuotationResponse quotation) =>
+        quotation.BillsToFinalConsumer
+            ? new QuotationPdfParty(
+                false,
+                FinalConsumer.Name,
+                string.Empty,
+                string.Empty,
+                FinalConsumer.IdentificationNumber)
+            : PartyFor(quotation, QuotationPartyRole.Billing);
 
     /// <summary>Recoger en tienda no tiene a dónde entregar: ni fila propia —el dominio la
     /// borra— ni "los del cliente", que se leería como "se entrega en la dirección del
