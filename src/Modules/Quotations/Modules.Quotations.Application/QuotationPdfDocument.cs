@@ -63,11 +63,19 @@ public sealed record QuotationPdfDocument(
 /// Sin datos propios: se imprime una línea que lo dice, en vez de repetir por tercera vez lo que
 /// el bloque "Cliente" ya muestra.
 /// </param>
+/// <param name="TaxId">
+/// El NIT de la parte, cuando tiene uno fijo que imprimir: hoy sólo consumidor final
+/// (<c>FinalConsumer.IdentificationNumber</c>). Vacío en el resto — una parte propia no guarda
+/// identificación. Va aparte y no pegado a <see cref="Contact"/>: la plantilla parte el contacto
+/// por " · " y el NIT necesita su rótulo. Default vacío para que las partes que no lo tienen no
+/// tengan que decirlo.
+/// </param>
 public sealed record QuotationPdfParty(
     bool SameAsCustomer,
     string Name,
     string Contact,
-    string Location);
+    string Location,
+    string TaxId = "");
 
 public sealed record QuotationPdfBillingAccount(
     string CompanyName,

@@ -97,6 +97,24 @@ public sealed class QCodePdfRendererTests
         Assert.Contains("unknown variable", error.Message);
     }
 
+    // El NIT de la parte viaja como campo propio del documento: la plantilla lo imprime con su
+    // rotulo, y pegado al contacto se partiria por el separador " · ".
+    [Fact]
+    public async Task RenderSendsThePartyTaxIdAsItsOwnField()
+    {
+        var (renderer, capture) = NewRenderer();
+        var document = Document with
+        {
+            Billing = new QuotationPdfParty(false, "Consumidor final", "", "", "222222222222"),
+        };
+
+        await renderer.RenderAsync(document, TestContext.Current.CancellationToken);
+
+        var billing = capture.Body().GetProperty("data").GetProperty("billing");
+        Assert.Equal("222222222222", billing.GetProperty("taxId").GetString());
+        Assert.Equal(string.Empty, billing.GetProperty("contact").GetString());
+    }
+
     private static (IQuotationPdfRenderer Renderer, RequestCapture Capture) NewRenderer(
         byte[]? pdf = null,
         HttpStatusCode status = HttpStatusCode.OK,

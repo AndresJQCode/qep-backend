@@ -10,15 +10,20 @@ namespace Modules.Quotations.UnitTests;
 /// </summary>
 public sealed class QuotationChangeSummaryTests
 {
-    private static QuotationHeaderSnapshot Snapshot(string? shipping, bool isStorePickup) => new(
+    private static QuotationHeaderSnapshot Snapshot(
+        string? shipping,
+        bool isStorePickup,
+        string? billing = null,
+        bool billsToFinalConsumer = false) => new(
         ValidUntil: new DateOnly(2026, 9, 30),
         PaymentMethod: "Efectivo",
         Notes: null,
-        Billing: null,
+        Billing: billing,
         Shipping: shipping,
         BillingAccount: null,
         Currency: QuotationCurrencies.Default,
-        IsStorePickup: isStorePickup);
+        IsStorePickup: isStorePickup,
+        BillsToFinalConsumer: billsToFinalConsumer);
 
     [Fact]
     public void TurningStorePickupOnSaysSoInsteadOfGoingBackToTheCustomer()
@@ -53,5 +58,40 @@ public sealed class QuotationChangeSummaryTests
             Snapshot(null, isStorePickup: true));
 
         Assert.Null(summary);
+    }
+
+    // Marcar consumidor final borra la parte de facturacion propia si la habia. Contado por
+    // AppendParty eso diria "vuelve a los datos del cliente", que es justo lo que no pasa: la
+    // factura sale a otro nombre.
+    [Fact]
+    public void TurningFinalConsumerOnSaysSoInsteadOfGoingBackToTheCustomer()
+    {
+        var summary = QuotationChangeSummary.HeaderChanged(
+            Snapshot(null, isStorePickup: false, billing: "Sede administrativa|||Carrera 7||"),
+            Snapshot(null, isStorePickup: false, billsToFinalConsumer: true));
+
+        Assert.Equal("Editó facturación (consumidor final).", summary);
+    }
+
+    // Sin partes de por medio el cambio igual es un cambio: sin este caso, desmarcar el check
+    // no dejaba fila en el historial.
+    [Fact]
+    public void TurningFinalConsumerOffBackToTheCustomerIsAHeaderChange()
+    {
+        var summary = QuotationChangeSummary.HeaderChanged(
+            Snapshot(null, isStorePickup: false, billsToFinalConsumer: true),
+            Snapshot(null, isStorePickup: false));
+
+        Assert.Equal("Editó facturación (vuelve a los datos del cliente).", summary);
+    }
+
+    [Fact]
+    public void TurningFinalConsumerOffToOwnDataSaysOwnData()
+    {
+        var summary = QuotationChangeSummary.HeaderChanged(
+            Snapshot(null, isStorePickup: false, billsToFinalConsumer: true),
+            Snapshot(null, isStorePickup: false, billing: "Sede administrativa|||Carrera 7||"));
+
+        Assert.Equal("Editó facturación (ahora con datos propios).", summary);
     }
 }

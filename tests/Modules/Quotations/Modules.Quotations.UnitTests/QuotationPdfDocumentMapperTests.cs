@@ -169,6 +169,37 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.True(document.Billing.SameAsCustomer);
     }
 
+    // Consumidor final tiene nombre y NIT fijos y nada mas: ni contacto ni direccion, que en la
+    // parte ausente se heredarian del cliente real y dirian a quien se le vende, no a quien se le
+    // factura.
+    [Fact]
+    public void AFinalConsumerQuotationBillsToTheFixedNameAndTaxId()
+    {
+        var document = QuotationPdfDocumentMapper.From(Response() with { BillsToFinalConsumer = true });
+
+        Assert.False(document.Billing.SameAsCustomer);
+        Assert.Equal("Consumidor final", document.Billing.Name);
+        Assert.Equal("222222222222", document.Billing.TaxId);
+        Assert.Equal(string.Empty, document.Billing.Contact);
+        Assert.Equal(string.Empty, document.Billing.Location);
+        Assert.True(document.Shipping.SameAsCustomer);
+    }
+
+    // Una parte de facturacion propia no guarda identificacion: el campo queda vacio, que la
+    // plantilla lee como "no imprimir".
+    [Fact]
+    public void ABillingPartyWithItsOwnDataHasNoTaxId()
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Billing", "Sede administrativa", null, null, "Carrera 7",
+            null, null);
+
+        var document = QuotationPdfDocumentMapper.From(Response() with { Parties = [party] });
+
+        Assert.Equal("Sede administrativa", document.Billing.Name);
+        Assert.Equal(string.Empty, document.Billing.TaxId);
+    }
+
     private static QuotationClientResponse Client() => new(
         Guid.CreateVersion7(),
         "CUC-0042",

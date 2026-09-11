@@ -120,7 +120,22 @@ public static class QuotationChangeSummary
 
         // "Propios" y "los del cliente" es la distinción que hace la pantalla (el switch), así que
         // es la que entiende quien lee esto — más que "se creó/borró una fila en parties".
-        AppendParty(changes, "facturación", before.Billing, after.Billing);
+        //
+        // Consumidor final se cuenta como tal y tapa al de la parte, mismo criterio que recoger en
+        // tienda con la entrega: marcarlo borra la fila propia, y contado por AppendParty diría
+        // "vuelve a los datos del cliente", que es lo contrario de lo que pasó.
+        if (before.BillsToFinalConsumer != after.BillsToFinalConsumer)
+        {
+            changes.Add(after.BillsToFinalConsumer
+                ? "facturación (consumidor final)"
+                : after.Billing is null
+                    ? "facturación (vuelve a los datos del cliente)"
+                    : "facturación (ahora con datos propios)");
+        }
+        else
+        {
+            AppendParty(changes, "facturación", before.Billing, after.Billing);
+        }
 
         // Pasar a recoger en tienda borra la parte de envío. Contado por AppendParty eso diría
         // "vuelve a los datos del cliente", que es lo contrario de lo que pasó: el pedido ya no
@@ -204,7 +219,8 @@ public sealed record QuotationHeaderSnapshot(
     string? Shipping,
     QuotationBillingAccountSummary? BillingAccount,
     QuotationCurrency Currency,
-    bool IsStorePickup)
+    bool IsStorePickup,
+    bool BillsToFinalConsumer)
 {
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
@@ -217,7 +233,8 @@ public sealed record QuotationHeaderSnapshot(
                 account.BankName, account.AccountNumber, account.Currency)
             : null,
         quotation.Currency,
-        quotation.IsStorePickup);
+        quotation.IsStorePickup,
+        quotation.BillsToFinalConsumer);
 
     private static string? Describe(QuotationParty? party) =>
         party is null

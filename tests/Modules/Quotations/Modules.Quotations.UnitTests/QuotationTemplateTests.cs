@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure;
 using Modules.Quotations.Infrastructure.Pdf;
 
@@ -100,6 +101,35 @@ public sealed partial class QuotationTemplateTests
         Assert.Contains("data.isStorePickup", source, StringComparison.Ordinal);
         Assert.Contains("Recoger en tienda", source, StringComparison.Ordinal);
     }
+
+    // Consumidor final no tiene contacto ni direccion: lo que lo identifica en la factura es el
+    // NIT generico, y la plantilla lo imprime desde su propio campo.
+    [Fact]
+    public async Task TheTemplatePrintsThePartyTaxIdFromItsOwnField()
+    {
+        var (source, data) = await CapturedRequestAsync(Minimal() with
+        {
+            Billing = FinalConsumerBilling(),
+        });
+
+        Assert.Equal(
+            FinalConsumer.IdentificationNumber,
+            data.GetProperty("billing").GetProperty("taxId").GetString());
+        Assert.Contains("valor.taxId", source, StringComparison.Ordinal);
+    }
+
+    // La rama de consumidor final dibuja la banda de partes con una facturacion que no es la del
+    // cliente y no tiene contacto ni direccion: la unica combinacion con el renglon del NIT.
+    [Fact]
+    public async Task TheTemplateCompilesWithAFinalConsumerBilling() =>
+        await AssertCompilesAsync(Minimal() with { Billing = FinalConsumerBilling() });
+
+    private static QuotationPdfParty FinalConsumerBilling() => new(
+        false,
+        FinalConsumer.Name,
+        string.Empty,
+        string.Empty,
+        FinalConsumer.IdentificationNumber);
 
     // ------------------------------------------------------------------ compilacion
 
