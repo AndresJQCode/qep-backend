@@ -60,6 +60,76 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal("3001234567", harness.Sender.Sent.ToPhone);
     }
 
+    // Con datos propios de facturacion, la cotizacion se le puede mandar a ese telefono en vez
+    // del cliente: quien factura no siempre es quien recibe el WhatsApp. Lo elige la pantalla y
+    // viaja como opcion cerrada --Customer o Billing--, no como un telefono suelto.
+    [Fact]
+    public async Task SendToTheBillingPartyUsesItsPhoneAndName()
+    {
+        var harness = NewHandler(billing: BillingParty);
+
+        await harness.Handler.HandleAsync(
+            NewCommand("Billing"), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Equal("3013574996", harness.Sender.Sent.ToPhone);
+        Assert.Equal("Danilo Amaris Ojeda", harness.Sender.Sent.FullName);
+    }
+
+    // Sin elegir, sigue yendo al cliente: es lo que hacia antes de que la opcion existiera.
+    [Fact]
+    public async Task SendWithoutARecipientStillGoesToTheCustomer()
+    {
+        var harness = NewHandler(billing: BillingParty);
+
+        await harness.Handler.HandleAsync(
+            NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Equal("3001234567", harness.Sender.Sent.ToPhone);
+    }
+
+    // Pedir el telefono de facturacion cuando la cotizacion factura a los datos del cliente es
+    // una opcion que la pantalla no deberia haber ofrecido: 422 con codigo, no un envio
+    // silencioso al cliente que nadie pidio.
+    [Fact]
+    public async Task SendToTheBillingPartyWithoutOneIsRejected()
+    {
+        var harness = NewHandler();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(
+                NewCommand("Billing"), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.quotation.billing_phone_missing", error.Code);
+        Assert.Null(harness.Sender.Sent);
+    }
+
+    [Fact]
+    public async Task SendToTheBillingPartyWithoutAPhoneIsRejected()
+    {
+        var harness = NewHandler(
+            billing: new QuotationPartyDetails { Name = "Danilo Amaris Ojeda" });
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(
+                NewCommand("Billing"), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.quotation.billing_phone_missing", error.Code);
+    }
+
+    [Fact]
+    public async Task SendWithAnUnknownRecipientIsRejected()
+    {
+        var harness = NewHandler(billing: BillingParty);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(
+                NewCommand("Whoever"), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.quotation.recipient_invalid", error.Code);
+    }
+
     // El envio por WhatsApp y la firma de la URL son efectos externos irreversibles: si el
     // agregado no puede pasar a Sent, no se puede haber mandado nada. Sin este guard el cliente
     // recibia la cotizacion y el sistema la dejaba en borrador -- el estado a medias que el
@@ -215,8 +285,16 @@ public sealed class SendQuotationHandlerTests
         Assert.Null(harness.FailureLog.HistoryEntry);
     }
 
-    private static SendQuotationCommand NewCommand() =>
-        new(TenantId, CurrentQuotationId);
+    private static SendQuotationCommand NewCommand(string? recipient = null) =>
+        new(TenantId, CurrentQuotationId, recipient);
+
+    private static readonly QuotationPartyDetails BillingParty = new()
+    {
+        Name = "Danilo Amaris Ojeda",
+        Phone = "3013574996",
+        Email = "daniloamaris@ejemplo.co",
+        Address = "calle 90#45",
+    };
 
     private static Guid CurrentQuotationId;
 
@@ -235,7 +313,8 @@ public sealed class SendQuotationHandlerTests
     private static Harness NewHandler(
         bool withValidUntil = true,
         bool alreadySent = false,
-        Exception? whatsAppFailure = null)
+        Exception? whatsAppFailure = null,
+        QuotationPartyDetails? billing = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -246,7 +325,9 @@ public sealed class SendQuotationHandlerTests
             withValidUntil ? ValidUntil : null,
             paymentMethod: "Transferencia bancaria",
             notes: null,
-            QuotationParties.Empty,
+            billing is null
+                ? QuotationParties.Empty
+                : new QuotationParties(billing, null),
             billingAccount: null,
             customerWithRetention: false,
             customerVatSurplus: false,
