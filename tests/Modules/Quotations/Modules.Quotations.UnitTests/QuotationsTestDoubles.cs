@@ -350,6 +350,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             [],
             quotation.BillingUsesBusinessName,
             quotation.IsStorePickup,
+            quotation.BillsToFinalConsumer,
             null,
             quotation.CreatedBy,
             quotation.UpdatedBy,

@@ -19,13 +19,15 @@ internal static class QuotationMapping
         quotation.TaxAmount,
         quotation.DiscountAmount,
         quotation.Total,
-        quotation.CustomerVatSurplus,
+        // El efectivo y no el snapshot: ver el comentario de QuotationDto.CustomerVatSurplus.
+        quotation.AppliesVatSurplus,
         quotation.RetentionAmount,
         quotation.NetTotal,
         quotation.Notes,
         quotation.Parties.Select(ToDto).ToArray(),
         quotation.BillingUsesBusinessName,
         quotation.IsStorePickup,
+        quotation.BillsToFinalConsumer,
         ToDto(quotation.BillingAccount),
         quotation.CreatedBy.Value,
         quotation.UpdatedBy?.Value,
@@ -85,7 +87,8 @@ internal static class QuotationMapping
                 request.Billing.ToDomain(),
                 request.Shipping.ToDomain(),
                 request.BillingUsesBusinessName,
-                request.IsStorePickup);
+                request.IsStorePickup,
+                request.BillsToFinalConsumer);
 
     private static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null
