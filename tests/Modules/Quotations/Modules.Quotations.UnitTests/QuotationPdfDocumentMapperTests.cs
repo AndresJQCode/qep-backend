@@ -219,6 +219,7 @@ public sealed class QuotationPdfDocumentMapperTests
         null,
         true,
         false,
+        false,
         [
             // 12 x 35.900 = 430.800; 15% = 64.620; linea = 366.180 con IVA adentro.
             // IVA contenido = 366.180 x 19 / 119 = 58.465,71; base = 307.714,29.

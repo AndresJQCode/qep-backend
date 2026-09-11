@@ -24,6 +24,16 @@ public interface IQuotationCustomerLookup
         Guid tenantId, string term, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Lo mismo que <see cref="SearchIdsByIdentificationAsync"/> pero contra el CUC — lo usa el
+    /// filtro del listado de ventas (ListSales.cs). Son dos metodos y no uno con un campo a
+    /// elegir porque son dos filtros distintos de la pantalla: el CUC es el codigo que emite el
+    /// sistema y el NIT es el documento que trae el cliente, y buscar "900" en el equivocado
+    /// devuelve otra cosa.
+    /// </summary>
+    Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
+        Guid tenantId, string term, CancellationToken cancellationToken);
+
+    /// <summary>
     /// El nombre de cada uno de estos clientes, en una sola consulta batch — lo usa el listado
     /// (ListQuotations.cs) para que cada fila viaje con el nombre del cliente ya resuelto. Sin
     /// esto, quien pinta la tabla tiene que pedir un cliente por fila: N+1 contra Customers por

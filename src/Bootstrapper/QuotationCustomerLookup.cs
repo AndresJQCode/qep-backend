@@ -90,6 +90,10 @@ internal sealed class QuotationCustomerLookup(
         Guid tenantId, string term, CancellationToken cancellationToken) =>
         repository.SearchIdsByIdentificationNumberAsync(tenantId, term, cancellationToken);
 
+    public Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
+        Guid tenantId, string term, CancellationToken cancellationToken) =>
+        repository.SearchIdsByCucAsync(tenantId, term, cancellationToken);
+
     public async Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
     {

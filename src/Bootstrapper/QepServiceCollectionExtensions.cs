@@ -332,6 +332,12 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetSaleQuery, SaleDto>,
             GetSaleHandler>();
         services.AddScoped<
+            IQueryHandler<ListSalesQuery, SalePage>,
+            ListSalesHandler>();
+        services.AddScoped<
+            IQueryHandler<GetSaleByIdQuery, SaleDetailDto>,
+            GetSaleByIdHandler>();
+        services.AddScoped<
             ICommandHandler<ApproveSaleCommand, SaleDto>,
             ApproveSaleHandler>();
         services.AddScoped<

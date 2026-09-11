@@ -596,7 +596,7 @@ internal static class QuotationsApiHarness
             Task.FromResult(new Uri($"https://r2.test/{key}"));
 
         public Task<Uri> CreatePresignedDownloadUrlAsync(
-            string key, CancellationToken cancellationToken) =>
+            string key, string? downloadFileName, CancellationToken cancellationToken) =>
             Task.FromResult(new Uri($"https://r2.test/{key}"));
 
         public Task<Uri> CreatePresignedDownloadUrlAsync(

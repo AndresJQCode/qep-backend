@@ -32,8 +32,8 @@ internal sealed class R2ObjectStorage(IAmazonS3 client, IOptions<StorageOptions>
     }
 
     public Task<Uri> CreatePresignedDownloadUrlAsync(
-        string key, CancellationToken cancellationToken) =>
-        CreatePresignedDownloadUrlAsync(key, Expiry, downloadFileName: null, cancellationToken);
+        string key, string? downloadFileName, CancellationToken cancellationToken) =>
+        CreatePresignedDownloadUrlAsync(key, Expiry, downloadFileName, cancellationToken);
 
     public async Task<Uri> CreatePresignedDownloadUrlAsync(
         string key,
