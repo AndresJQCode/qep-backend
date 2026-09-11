@@ -383,4 +383,110 @@ public sealed class QuotationApiTests
         Assert.True(fetched.IsStorePickup);
         Assert.DoesNotContain(fetched.Parties, party => party.Role == "Shipping");
     }
+
+    // Facturar a consumidor final: sin parte propia, con el IVA cobrado y sin retencion aunque el
+    // cliente tenga las dos cosas. Sobrevive a la ida y vuelta por la base, y desmarcarlo en el
+    // siguiente PATCH devuelve la retencion y el excedente del cliente sin volver a crearlo.
+    [Fact]
+    public async Task UpdateBillingToTheFinalConsumerDropsRetentionAndVatSurplusAndPersists()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(
+            client, tenantId, withRetention: true, vatSurplus: true);
+        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
+        // 119_000 con el IVA del 19% ya adentro: base 100_000 e IVA 19_000 redondos.
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        var url = $"{QuotationsUrl(tenantId)}/{created.Id}";
+        var added = await client.PostAsJsonAsync(
+            $"{url}/items",
+            new AddQuotationItemRequest(productId, 1m),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, added.StatusCode);
+
+        var response = await client.PatchAsJsonAsync(
+            url,
+            new UpdateQuotationRequest(
+                null,
+                "Efectivo",
+                null,
+                new QuotationPartiesRequest(null, null, BillsToFinalConsumer: true),
+                null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(updated);
+        Assert.True(updated.BillsToFinalConsumer);
+        Assert.False(updated.IsStorePickup);
+        Assert.Empty(updated.Parties);
+        Assert.False(updated.CustomerVatSurplus);
+        Assert.Equal(19_000m, updated.TaxAmount);
+        Assert.Equal(119_000m, updated.Total);
+        Assert.Equal(0m, updated.RetentionAmount);
+        Assert.Equal(119_000m, updated.NetTotal);
+
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            url, TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.True(fetched.BillsToFinalConsumer);
+        Assert.Equal(0m, fetched.RetentionAmount);
+        Assert.Equal(19_000m, fetched.TaxAmount);
+
+        var unmarked = await client.PatchAsJsonAsync(
+            url,
+            new UpdateQuotationRequest(
+                null, "Efectivo", null, new QuotationPartiesRequest(null, null), null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, unmarked.StatusCode);
+        var restored = await unmarked.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(restored);
+        Assert.False(restored.BillsToFinalConsumer);
+        Assert.True(restored.CustomerVatSurplus);
+        Assert.Equal(0m, restored.TaxAmount);
+        Assert.Equal(100_000m, restored.Total);
+        Assert.Equal(2_500m, restored.RetentionAmount);
+        Assert.Equal(97_500m, restored.NetTotal);
+    }
+
+    // Consumidor final con datos propios de facturacion son dos nombres para la misma factura: el
+    // dominio lo rechaza con su codigo, no elige uno.
+    [Fact]
+    public async Task UpdateBillingToTheFinalConsumerWithABillingPartyIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PatchAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{created.Id}",
+            new UpdateQuotationRequest(
+                null,
+                "Efectivo",
+                null,
+                new QuotationPartiesRequest(
+                    new QuotationPartyRequest("Sede administrativa", null, null, null, null, null),
+                    Shipping: null,
+                    BillsToFinalConsumer: true),
+                null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.billing.final_consumer_conflict", problem.Code);
+    }
+
+    private sealed record ProblemPayload(string Code);
 }
