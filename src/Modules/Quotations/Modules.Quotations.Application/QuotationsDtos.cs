@@ -173,7 +173,19 @@ public sealed record UpdateQuotationItemRequest(decimal Quantity);
 /// El frontend todavía lo manda, y hacerlo obligatorio -- o rechazarlo -- rompería el envío
 /// en cuanto esto se despliegue. Se elimina cuando el frontend deje de armar el documento.
 /// </summary>
-public sealed record SendQuotationRequest(Guid? PdfFileId = null);
+/// <summary>
+/// <c>Recipient</c> elige a quien se le manda el documento: <c>"Customer"</c> (el default) o
+/// <c>"Billing"</c>, el telefono que esta cotizacion guardo como datos propios de facturacion.
+/// Opcion cerrada y no un telefono: el numero lo resuelve el backend contra lo que ya tiene
+/// guardado.
+///
+/// <b>El cuerpo entero es opcional</b>: el frontend manda <c>POST .../send</c> sin nada cuando no
+/// hay a quien elegir. Ver <c>SendWorksWithoutABody</c> — un cuerpo requerido aca rompio el envio
+/// con 500.
+/// </summary>
+public sealed record SendQuotationRequest(
+    Guid? PdfFileId = null,
+    string? Recipient = null);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a
