@@ -18,4 +18,24 @@ jobs:
           global-json-file: global.json
       - run: dotnet restore Backend.slnx --locked-mode
       - run: dotnet build Backend.slnx --configuration Release --no-restore
+
+      # `quotation.typ` no la compila `dotnet build`: es un recurso embebido que viaja como
+      # texto hasta `qcode-pdf`, así que una plantilla rota pasa el build y las pruebas, y
+      # falla recién en producción como `quotation.pdf.render_failed`. `QuotationTemplateTests`
+      # la compila de verdad, y sin este paso esa prueba falla en CI a propósito: un skip
+      # silencioso sería el mismo agujero, pero en verde.
+      #
+      # La versión está clavada a la MISMA que el `Dockerfile` de `qcode-pdf`
+      # (`ARG TYPST_VERSION`). Compilar con otra no prueba lo que se ejecuta: si allá la suben,
+      # este pin se mueve con ella. Se usa el binario musl a propósito — es el de la imagen.
+      - name: Install Typst (pinned to qcode-pdf's runtime)
+        env:
+          TYPST_VERSION: v0.13.1
+        run: |
+          curl -fsSL -o /tmp/typst.tar.xz \
+            "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz"
+          tar -xf /tmp/typst.tar.xz -C /tmp
+          sudo mv /tmp/typst-x86_64-unknown-linux-musl/typst /usr/local/bin/typst
+          typst --version
+
       - run: dotnet test Backend.slnx --configuration Release --no-build

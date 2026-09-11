@@ -332,12 +332,18 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetSaleQuery, SaleDto>,
             GetSaleHandler>();
         services.AddScoped<
+            IQueryHandler<ListSalesQuery, SalePage>,
+            ListSalesHandler>();
+        services.AddScoped<
+            IQueryHandler<GetSaleByIdQuery, SaleDetailDto>,
+            GetSaleByIdHandler>();
+        services.AddScoped<
             ICommandHandler<ApproveSaleCommand, SaleDto>,
             ApproveSaleHandler>();
         services.AddScoped<
             ICommandHandler<ConvertQuotationToSaleCommand, SaleDto>,
             ConvertQuotationToSaleHandler>();
-        // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
+        // Reporting. Los doce van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
         //
@@ -373,6 +379,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListCustomerReportQuery, ReportPage<CustomerReportItemDto>>,
             ListCustomerReportHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>,
+            GetCustomerReportSummaryHandler>();
         services.AddScoped<
             IQueryHandler<ExportCustomerReportQuery, ReportFile>,
             ExportCustomerReportHandler>();

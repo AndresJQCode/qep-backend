@@ -153,4 +153,23 @@ public interface ICustomerReportSource
         CustomerReportCriteria criteria,
         int limit,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
+    /// **en la base**. Ver <see cref="ISalesReportSource.SummarizeAsync"/>.
+    ///
+    /// <paramref name="rankSize"/> es cuantas entidades nombradas trae cada reparto —clasificacion
+    /// y departamento— antes de plegar el resto en una fila con <c>Id</c> nulo. Un cero significa
+    /// "no me traigas los repartos": la ventana anterior solo necesita el conteo.
+    ///
+    /// **El reparto por departamento no se agrupa entero en la base, y no se puede.**
+    /// <c>Customer</c> guarda la ciudad de su direccion principal y nada mas — el departamento vive
+    /// del otro lado de la frontera de <c>Geography</c>. Se agrupa por ciudad en la base, que es
+    /// una fila por ciudad y no una por cliente, y el plegado a departamento lo hace el adaptador
+    /// sobre ese resultado ya chico.
+    /// </summary>
+    Task<CustomerReportAggregate> SummarizeAsync(
+        CustomerReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken);
 }

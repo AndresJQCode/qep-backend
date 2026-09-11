@@ -121,7 +121,20 @@ public static class QuotationChangeSummary
         // "Propios" y "los del cliente" es la distinción que hace la pantalla (el switch), así que
         // es la que entiende quien lee esto — más que "se creó/borró una fila en parties".
         AppendParty(changes, "facturación", before.Billing, after.Billing);
-        AppendParty(changes, "envío", before.Shipping, after.Shipping);
+
+        // Pasar a recoger en tienda borra la parte de envío. Contado por AppendParty eso diría
+        // "vuelve a los datos del cliente", que es lo contrario de lo que pasó: el pedido ya no
+        // va a ninguna dirección. El cambio de modalidad se cuenta como tal y tapa al de la parte.
+        if (before.IsStorePickup != after.IsStorePickup)
+        {
+            changes.Add(after.IsStorePickup
+                ? "envío (recoger en tienda)"
+                : "envío (ya no se recoge en tienda)");
+        }
+        else
+        {
+            AppendParty(changes, "envío", before.Shipping, after.Shipping);
+        }
 
         if (before.BillingAccount != after.BillingAccount)
         {
@@ -190,7 +203,8 @@ public sealed record QuotationHeaderSnapshot(
     string? Billing,
     string? Shipping,
     QuotationBillingAccountSummary? BillingAccount,
-    QuotationCurrency Currency)
+    QuotationCurrency Currency,
+    bool IsStorePickup)
 {
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
@@ -202,7 +216,8 @@ public sealed record QuotationHeaderSnapshot(
             ? new QuotationBillingAccountSummary(
                 account.BankName, account.AccountNumber, account.Currency)
             : null,
-        quotation.Currency);
+        quotation.Currency,
+        quotation.IsStorePickup);
 
     private static string? Describe(QuotationParty? party) =>
         party is null

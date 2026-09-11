@@ -81,6 +81,19 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
         Guid tenantId, string term, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid>());
 
+    /// <summary>Los ids que el filtro por CUC debe resolver. Vacio por defecto: la prueba que
+    /// ejerce ese filtro los siembra.</summary>
+    public HashSet<Guid> IdsByCuc { get; } = [];
+
+    public string? LastCucTerm { get; private set; }
+
+    public Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
+        Guid tenantId, string term, CancellationToken cancellationToken)
+    {
+        LastCucTerm = term;
+        return Task.FromResult<IReadOnlySet<Guid>>(IdsByCuc);
+    }
+
     public Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
     {
@@ -336,6 +349,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.Notes,
             [],
             quotation.BillingUsesBusinessName,
+            quotation.IsStorePickup,
             null,
             quotation.CreatedBy,
             quotation.UpdatedBy,
@@ -343,7 +357,42 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.SentAt,
             quotation.PdfFileId,
             quotation.CanBeSent,
+            quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToSale,
             []));
 }
 
+/// <summary>Devuelve las filas sembradas y anota con que filtro se la llamo — lo que las pruebas
+/// del listado de ventas necesitan comprobar es el camino del handler, no la consulta SQL.</summary>
+internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : ISaleRepository
+{
+    public IReadOnlyCollection<Guid>? LastClientIds { get; private set; }
+
+    public Task<Sale?> FindByQuotationIdAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Sale);
+
+    public Task<Sale?> FindByIdAsync(
+        Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Sale.Id == saleId)?.Sale);
+
+    public Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        LastClientIds = clientIds;
+        return Task.FromResult<(IReadOnlyList<SaleWithQuotation>, int)>((rows, rows.Length));
+    }
+
+    public void Add(Sale sale) { }
+}

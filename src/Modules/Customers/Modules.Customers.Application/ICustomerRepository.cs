@@ -113,6 +113,18 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Ids de los clientes cuyo CUC contiene <paramref name="term"/> (coincidencia parcial, sin
+    /// distinguir mayusculas), en una sola consulta sin paginar — gemela de
+    /// <see cref="SearchIdsByIdentificationNumberAsync"/>, la usa el filtro del listado de ventas
+    /// (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup</c>): ni la venta ni la
+    /// cotizacion guardan el CUC.
+    /// </summary>
+    Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
+        Guid tenantId,
+        string term,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// El nombre de cada uno de estos clientes, en una sola consulta batch — la usa el listado de
     /// cotizaciones (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup.FindNamesAsync</c>)
     /// para que cada fila lleve el nombre del cliente sin pedir un cliente por fila. Un id que no

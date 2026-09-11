@@ -44,6 +44,9 @@ public sealed record QuotationDto(
     IReadOnlyCollection<QuotationPartyDto> Parties,
     /// <summary>Si la facturación sigue al cliente, si va con su razón social.</summary>
     bool BillingUsesBusinessName,
+    /// <summary>Si el cliente recoge en la tienda. Cuando es true <c>Parties</c> nunca trae la
+    /// parte de entrega.</summary>
+    bool IsStorePickup,
     /// <summary>Con qué empresa y a qué cuenta se cobra. Null mientras nadie la eligió.</summary>
     QuotationBillingAccountDto? BillingAccount,
     Guid CreatedBy,
@@ -51,11 +54,16 @@ public sealed record QuotationDto(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? SentAt,
     Guid? PdfFileId,
-    /// <summary>Si tiene sentido ofrecer "enviar" ahora: un borrador siempre, y una enviada
-    /// sólo si volvió a cambiar desde entonces.</summary>
+    /// <summary>Si tiene sentido ofrecer "enviar" ahora: un borrador y una ya enviada, haya
+    /// cambiado o no — reenviar sin cambios es un caso legítimo.</summary>
     bool CanBeSent,
-    /// <summary>Si convertir en venta es posible: enviada, con productos, vigencia, forma de
-    /// pago y cuenta de cobro.</summary>
+    /// <summary>Si se editó después del último envío. Viaja aunque
+    /// <see cref="CanBeConvertedToSale"/> ya lo incluya: es el único de los motivos de ese
+    /// false que la pantalla no puede deducir de los otros campos, y sin él "Convertir en
+    /// venta" desaparece sin decir por qué (la pantalla enumera los otros tres).</summary>
+    bool HasChangesSinceSent,
+    /// <summary>Si convertir en venta es posible: enviada, sin cambios desde ese envío, con
+    /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
     bool CanBeConvertedToSale,
     IReadOnlyCollection<QuotationItemDto> Items);
 
@@ -111,7 +119,12 @@ public sealed record QuotationPartiesRequest(
     /// <summary>Con los datos del cliente, a cual de sus dos nombres se le factura: el de
     /// contacto (false, el default) o la razon social (true). Se ignora cuando <c>Billing</c>
     /// trae datos propios.</summary>
-    bool BillingUsesBusinessName = false);
+    bool BillingUsesBusinessName = false,
+    /// <summary>El cliente recoge en la tienda (true) o se le entrega (false, el default: un
+    /// frontend que todavia no manda el campo sigue cotizando con entrega). Gana sobre
+    /// <c>Shipping</c>: con true, una parte de entrega que venga igual se descarta y la que
+    /// estuviera guardada se borra.</summary>
+    bool IsStorePickup = false);
 
 public sealed record CreateQuotationRequest(
     Guid ClientId,
@@ -228,6 +241,9 @@ public sealed record QuotationResponse(
     string? Notes,
     IReadOnlyCollection<QuotationPartyResponse> Parties,
     bool BillingUsesBusinessName,
+    // Viaja siempre, aunque sea false: la pantalla decide con esto si muestra el bloque de
+    // entrega o "Recoger en tienda", y un campo ausente la obligaria a adivinar el default.
+    bool IsStorePickup,
     QuotationBillingResponse? BillingAccount,
     Guid CreatedBy,
     Guid? UpdatedBy,
@@ -235,6 +251,7 @@ public sealed record QuotationResponse(
     DateTimeOffset? SentAt,
     Guid? PdfFileId,
     bool CanBeSent,
+    bool HasChangesSinceSent,
     bool CanBeConvertedToSale,
     IReadOnlyCollection<QuotationItemResponse> Items);
 

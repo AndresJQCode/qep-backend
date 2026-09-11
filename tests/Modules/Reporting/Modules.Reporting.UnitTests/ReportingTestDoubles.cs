@@ -253,3 +253,49 @@ internal sealed class FakePriceChangeReportSource : IPriceChangeReportSource
         int decreaseCount = 0) =>
         new(changeCount, 0, increaseCount, decreaseCount, [], [], []);
 }
+
+/// <summary>
+/// Un origen de clientes que recuerda con qué criterio y con qué tope lo llamaron. Igual que sus
+/// tres hermanos, el resumen lo consulta una o dos veces según haya periodo anterior, y **con qué
+/// tope lo llamó cada vez** es la mitad de lo que hay que probar: de la ventana anterior sólo se
+/// lee el conteo, así que no lleva ranking.
+/// </summary>
+internal sealed class FakeCustomerReportSource : ICustomerReportSource
+{
+    public CustomerReportAggregate Aggregate { get; set; } = EmptyAggregate();
+
+    public CustomerReportAggregate? PrecedingAggregate { get; set; }
+
+    public List<CustomerReportCriteria> SummarizedCriteria { get; } = [];
+
+    public List<int> SummarizedRankSizes { get; } = [];
+
+    public Task<CustomerReportAggregate> SummarizeAsync(
+        CustomerReportCriteria criteria,
+        int rankSize,
+        CancellationToken cancellationToken)
+    {
+        var isPreceding = SummarizedCriteria.Count > 0;
+        SummarizedCriteria.Add(criteria);
+        SummarizedRankSizes.Add(rankSize);
+        return Task.FromResult(isPreceding ? PrecedingAggregate ?? Aggregate : Aggregate);
+    }
+
+    public Task<(IReadOnlyList<CustomerReportItemDto> Items, int Total)> ListAsync(
+        CustomerReportCriteria criteria,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(((IReadOnlyList<CustomerReportItemDto>)[], 0));
+
+    public Task<IReadOnlyList<CustomerReportItemDto>> ListForExportAsync(
+        CustomerReportCriteria criteria,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult((IReadOnlyList<CustomerReportItemDto>)[]);
+
+    public static CustomerReportAggregate EmptyAggregate(
+        int customerCount = 0,
+        int activeCount = 0) =>
+        new(customerCount, activeCount, [], [], []);
+}

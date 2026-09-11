@@ -46,6 +46,10 @@ public sealed class StorageFlowTests
         // 4. Emitir una URL de descarga recién cuando el recurso queda Available.
         var download = await IssueDownloadAsync(client, session.FileResourceId);
         Assert.StartsWith("https://r2.test/", download.Url, StringComparison.Ordinal);
+        // La URL se pide como adjunto y con el nombre original: sin eso el navegador abre el
+        // archivo en una pestana en vez de bajarlo, que es lo que reporto el usuario sobre los
+        // comprobantes de pago. El nombre lo tiene el recurso, no quien lo consume.
+        Assert.Contains("filename=greeting.pdf", download.Url, StringComparison.Ordinal);
         var finalKey = new Uri(download.Url).AbsolutePath.TrimStart('/');
         Assert.StartsWith("files/tenants/", finalKey, StringComparison.Ordinal);
         Assert.Equal(payload, factory.ObjectStorage.Read(finalKey));
@@ -257,10 +261,17 @@ public sealed class StorageFlowTests
             CancellationToken cancellationToken) =>
             Task.FromResult(new Uri($"https://r2.test/{key}"));
 
+        // El nombre de descarga viaja en la query para que la prueba pueda ver que el caso de
+        // uso lo pidio: en R2 real eso se firma como `response-content-disposition`, que es lo
+        // que hace que el archivo baje en vez de abrirse.
         public Task<Uri> CreatePresignedDownloadUrlAsync(
             string key,
+            string? downloadFileName,
             CancellationToken cancellationToken) =>
-            Task.FromResult(new Uri($"https://r2.test/{key}"));
+            Task.FromResult(new Uri(
+                string.IsNullOrWhiteSpace(downloadFileName)
+                    ? $"https://r2.test/{key}"
+                    : $"https://r2.test/{key}?filename={Uri.EscapeDataString(downloadFileName)}"));
 
         public Task<Uri> CreatePresignedDownloadUrlAsync(
             string key,

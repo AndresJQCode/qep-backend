@@ -88,6 +88,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.Property(value => value.Total).HasColumnName("total").HasPrecision(14, 2);
         quotation.Property(value => value.BillingUsesBusinessName)
             .HasColumnName("billing_uses_business_name");
+        quotation.Property(value => value.IsStorePickup)
+            .HasColumnName("is_store_pickup");
         quotation.Property(value => value.CustomerWithRetention)
             .HasColumnName("customer_with_retention");
         quotation.Property(value => value.CustomerVatSurplus)

@@ -93,7 +93,13 @@ public sealed record QuotationParties(
     ///
     /// No aplica cuando la facturación tiene datos propios: ahí el nombre lo escribió alguien.
     /// </summary>
-    bool BillingUsesBusinessName = false)
+    bool BillingUsesBusinessName = false,
+    /// <summary>
+    /// El cliente pasa a recoger el pedido por la tienda en vez de recibirlo en una dirección.
+    /// <b>Gana sobre <see cref="Shipping"/></b>: con esto prendido no hay a dónde entregar, así que
+    /// una parte de entrega que llegue igual se descarta. La facturación no se entera.
+    /// </summary>
+    bool IsStorePickup = false)
 {
     /// <summary>Las dos partes tomadas del cliente: ninguna fila. El estado por defecto de una
     /// cotización nueva.</summary>

@@ -59,6 +59,7 @@ public sealed class Quotation
         Notes = NormalizeNotes(notes);
         Assign(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
+        IsStorePickup = parties.IsStorePickup;
         BillingAccount = billingAccount?.Normalized();
         Currency = BillingAccount is null
             ? QuotationCurrencies.Default
@@ -207,6 +208,19 @@ public sealed class Quotation
     public bool BillingUsesBusinessName { get; private set; }
 
     /// <summary>
+    /// Si el cliente recoge en la tienda en vez de recibir el pedido en una dirección.
+    ///
+    /// Invariante: con esto prendido <see cref="Shipping"/> es siempre null — no hay a dónde
+    /// entregar, y una fila de envío guardada al lado diría dos cosas distintas de la misma
+    /// entrega. Por eso no es "una parte más": <see cref="Assign(QuotationParties)"/> descarta
+    /// la de entrega cuando llega junto con esto, y prenderlo borra la que hubiera.
+    ///
+    /// A diferencia de las partes, <see cref="ChangeClient"/> no lo toca: las partes se borran
+    /// porque copiaron al cliente viejo, y recoger en tienda no copia nada de ningún cliente.
+    /// </summary>
+    public bool IsStorePickup { get; private set; }
+
+    /// <summary>
     /// Si la cotización se editó desde la última vez que se envió. <see cref="Send"/> deja
     /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> en el mismo instante, y toda edición mueve
     /// el segundo — así que uno mayor que el otro es exactamente "cambió después de enviarse".
@@ -341,6 +355,7 @@ public sealed class Quotation
         Notes = NormalizeNotes(notes);
         Assign(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
+        IsStorePickup = parties.IsStorePickup;
         ApplyBillingAccount(billingAccount, repricing, occurredAt);
         Touch(updatedBy, occurredAt);
     }
@@ -497,6 +512,18 @@ public sealed class Quotation
                 "Only a sent quotation can be converted to a sale.");
         }
 
+        // La venta hereda lo que el cliente aceptó, y lo que el cliente vio es el documento del
+        // último envío. Editar una enviada sigue siendo legítimo —sigue siendo editable—, pero
+        // deja la cotización diciendo una cosa y el PDF entregado otra: convertirla ahí adentro
+        // registraría una venta por importes que nadie le mandó. La salida es reenviarla, que
+        // vuelve a alinear las dos.
+        if (HasChangesSinceSent)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.changed_since_sent",
+                "A quotation edited after its last send must be sent again before it can be converted to a sale.");
+        }
+
         // Lo que una venta necesita para existir y que la cotizacion puede no tener todavia. Se
         // comprueba aca y no en la pantalla porque es la condicion del negocio, no del formulario:
         // la venta se crea desde este agregado y estos cuatro datos son los que hereda.
@@ -538,6 +565,7 @@ public sealed class Quotation
     /// </summary>
     public bool CanBeConvertedToSale =>
         Status == QuotationStatus.Sent
+        && !HasChangesSinceSent
         && _items.Count > 0
         && ValidUntil is not null
         && !string.IsNullOrWhiteSpace(PaymentMethod)
@@ -549,6 +577,12 @@ public sealed class Quotation
     /// Silencioso a propósito (no valida ni lanza) para poder llamarse también desde una
     /// lectura: una vez Voided o Expired la cotización queda tal cual quedó, sin excepción, y
     /// nada la vuelve a tocar.
+    ///
+    /// **No pasa por <c>Touch</c>, y eso es carga estructural, no un olvido:** mover
+    /// <see cref="UpdatedAt"/> acá dejaría <see cref="HasChangesSinceSent"/> en <c>true</c> por
+    /// el solo hecho de abrir la cotización después de que su cliente cambió de perfil fiscal,
+    /// y el gate de <see cref="EnsureConvertibleToSale"/> pediría reenviarla sin que nadie la
+    /// haya editado.
     /// </summary>
     public void RefreshCustomerTaxProfile(bool customerWithRetention, bool customerVatSurplus)
     {
@@ -600,10 +634,13 @@ public sealed class Quotation
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es
     // exactamente "volvé a usar los datos del cliente" (el switch prendido de nuevo).
+    //
+    // Recoger en tienda gana sobre la parte de entrega: se asigna null aunque el request la
+    // traiga, y eso borra la fila que hubiera (ver IsStorePickup).
     private void Assign(QuotationParties parties)
     {
         Assign(QuotationPartyRole.Billing, parties.Billing);
-        Assign(QuotationPartyRole.Shipping, parties.Shipping);
+        Assign(QuotationPartyRole.Shipping, parties.IsStorePickup ? null : parties.Shipping);
     }
 
     private void Assign(QuotationPartyRole role, QuotationPartyDetails? details)

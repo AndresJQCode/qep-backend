@@ -332,5 +332,55 @@ public sealed class QuotationApiTests
         Assert.Equal("Billing", billing.Role);
         Assert.Equal("Nombre alterno", billing.Name);
         Assert.NotEqual(created.UpdatedAt, updated.UpdatedAt);
+        Assert.False(updated.IsStorePickup);
+    }
+
+    // Recoger en tienda gana sobre una parte de entrega que venga en el mismo PATCH, borra la
+    // que ya estaba guardada, no toca la facturacion, y sobrevive a la ida y vuelta por la base.
+    [Fact]
+    public async Task UpdateWithStorePickupDropsTheShippingPartyAndPersists()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        Assert.False(created.IsStorePickup);
+
+        var url = $"{QuotationsUrl(tenantId)}/{created.Id}";
+        var billing = new QuotationPartyRequest("Sede administrativa", null, null, null, null, null);
+        var shipping = new QuotationPartyRequest("Bodega Fontibon", null, null, "Zona Franca", null, null);
+
+        var withShipping = await client.PatchAsJsonAsync(
+            url,
+            new UpdateQuotationRequest(
+                null, "Efectivo", null, new QuotationPartiesRequest(billing, shipping), null),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, withShipping.StatusCode);
+
+        var response = await client.PatchAsJsonAsync(
+            url,
+            new UpdateQuotationRequest(
+                null,
+                "Efectivo",
+                null,
+                new QuotationPartiesRequest(billing, shipping, IsStorePickup: true),
+                null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(updated);
+        Assert.True(updated.IsStorePickup);
+        var onlyBilling = Assert.Single(updated.Parties);
+        Assert.Equal("Billing", onlyBilling.Role);
+
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            url, TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.True(fetched.IsStorePickup);
+        Assert.DoesNotContain(fetched.Parties, party => party.Role == "Shipping");
     }
 }
