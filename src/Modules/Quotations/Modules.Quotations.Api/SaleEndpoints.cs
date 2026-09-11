@@ -26,6 +26,14 @@ public static class SaleEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // SALE-04: por el id de la venta. Desde una fila del listado no hay por donde entrar si
+        // la unica ruta cuelga de la cotizacion.
+        collection.MapGet("/{saleId:guid}", GetSaleByIdAsync)
+            .RequireAuthorization(SalesPermissions.SaleRead)
+            .Produces<SaleDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/sale")
             .WithTags("Sales");
@@ -85,6 +93,23 @@ public static class SaleEndpoints
             result.Total,
             result.Page,
             result.PageSize));
+    }
+
+    private static async Task<IResult> GetSaleByIdAsync(
+        Guid tenantId,
+        Guid saleId,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var detail = await dispatcher.QueryAsync(
+            new GetSaleByIdQuery(tenantId, saleId), cancellationToken);
+
+        // La cotizacion se compone igual que en su propio detalle: el mismo composer, para que
+        // las dos pantallas no puedan mostrar cosas distintas de la misma cotizacion.
+        return Results.Ok(new SaleDetailResponse(
+            ToResponse(detail.Sale),
+            await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
     }
 
     private static SaleListItemResponse ToListItemResponse(SaleListItemDto sale) => new(

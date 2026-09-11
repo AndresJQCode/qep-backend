@@ -182,6 +182,53 @@ public sealed class SaleListApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // SALE-04: el detalle se direcciona por la venta, no por su cotizacion. La respuesta trae las
+    // dos --la venta no guarda cliente, productos ni totales, los lee de ella-- para que la
+    // pantalla se dibuje con una sola consulta en vez de encadenar dos.
+    [Fact]
+    public async Task GetReturnsTheSaleWithItsQuotationComposed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var sale = await ConvertToSaleAsync(client, tenantId, quotation.Id);
+
+        var detail = await client.GetFromJsonAsync<SaleDetailResponse>(
+            $"{SalesUrl(tenantId)}/{sale.Id}", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail);
+        Assert.Equal(sale.Id, detail.Sale.Id);
+        Assert.Equal(sale.SaleNumber, detail.Sale.SaleNumber);
+        Assert.Equal("Pending", detail.Sale.Status);
+        // La cotizacion llega compuesta, igual que en su propio detalle: cliente resuelto y
+        // lineas con el nombre del producto, que es lo que la pantalla pinta.
+        Assert.Equal(quotation.Id, detail.Quotation.Id);
+        Assert.NotNull(detail.Quotation.Client);
+        Assert.Equal("Verde Esencial S.A.S.", detail.Quotation.Client.Name);
+        var item = Assert.Single(detail.Quotation.Items);
+        Assert.False(string.IsNullOrWhiteSpace(item.ProductName));
+        Assert.Equal(quotation.Total, detail.Quotation.Total);
+    }
+
+    [Fact]
+    public async Task GetAnUnknownSaleIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+
+        var response = await client.GetAsync(
+            $"{SalesUrl(tenantId)}/{Guid.CreateVersion7()}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el
     /// que la conversion no los exige. Estas pruebas miran el listado, no el asistente.</summary>
     private static async Task<SaleResponse> ConvertToSaleAsync(

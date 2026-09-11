@@ -85,6 +85,16 @@ public sealed record SaleListItemResponse(
     string Currency,
     decimal Total);
 
+/// <summary>
+/// El detalle de una venta (SALE-04): la venta y la cotizacion de la que salio, compuesta igual
+/// que en su propio detalle --cliente resuelto, lineas con nombre y foto del producto, cuenta de
+/// cobro--. Las dos en una respuesta y no dos llamadas encadenadas: la venta no guarda cliente ni
+/// productos, asi que la pantalla necesita las dos para dibujarse.
+/// </summary>
+public sealed record SaleDetailResponse(
+    SaleResponse Sale,
+    QuotationResponse Quotation);
+
 public sealed record SalesPageResponse(
     IReadOnlyCollection<SaleListItemResponse> Items,
     int Total,

@@ -14,6 +14,11 @@ public interface ISaleRepository
     Task<Sale?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 
+    /// <summary>Por el id de la venta, para el detalle que se abre desde el listado (SALE-04).
+    /// Trae los comprobantes: la pantalla los lista y ofrece descargarlos.</summary>
+    Task<Sale?> FindByIdAsync(
+        Guid tenantId, SaleId saleId, CancellationToken cancellationToken);
+
     /// <summary>
     /// Una página del listado de ventas del tenant (SALE-01), ya unida a su cotización.
     ///

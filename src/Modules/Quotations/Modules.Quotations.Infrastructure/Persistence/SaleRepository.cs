@@ -29,6 +29,14 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
                 sale => sale.TenantId == tenantId && sale.QuotationId == quotationId,
                 cancellationToken);
 
+    public Task<Sale?> FindByIdAsync(
+        Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
+        dbContext.Sales
+            .Include(sale => sale.PaymentProofs)
+            .SingleOrDefaultAsync(
+                sale => sale.TenantId == tenantId && sale.Id == saleId,
+                cancellationToken);
+
     public async Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,

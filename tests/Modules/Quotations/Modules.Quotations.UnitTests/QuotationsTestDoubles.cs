@@ -371,6 +371,10 @@ internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : 
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Sale);
 
+    public Task<Sale?> FindByIdAsync(
+        Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Sale.Id == saleId)?.Sale);
+
     public Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
