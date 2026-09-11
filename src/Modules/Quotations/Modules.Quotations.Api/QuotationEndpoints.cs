@@ -94,6 +94,9 @@ public static class QuotationEndpoints
         // ignora, asi que un frontend viejo sigue funcionando.
         group.MapPost("/{quotationId:guid}/send", SendQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
+            // Opcional de verdad: el cuerpo puede no venir. Dejar que se infiera requerido es lo
+            // que rompio el envio con 500 en su momento.
+            .Accepts<SendQuotationRequest>(isOptional: true, "application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -287,15 +290,21 @@ public static class QuotationEndpoints
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
+    /// <summary>
+    /// El cuerpo es <b>opcional</b>: el frontend manda este POST sin nada cuando no hay
+    /// destinatario que elegir, y un cuerpo requerido lo mataba con 500 por el binding implicito
+    /// (ver <c>SendWorksWithoutABody</c>). De ahi el parametro anulable con default.
+    /// </summary>
     private static async Task<IResult> SendQuotationAsync(
         Guid tenantId,
         Guid quotationId,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SendQuotationRequest? request = null)
     {
         var quotation = await dispatcher.SendAsync(
-            new SendQuotationCommand(tenantId, quotationId),
+            new SendQuotationCommand(tenantId, quotationId, request?.Recipient),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));

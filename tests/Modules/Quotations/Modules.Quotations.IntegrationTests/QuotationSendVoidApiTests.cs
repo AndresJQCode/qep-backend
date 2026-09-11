@@ -34,6 +34,33 @@ public sealed class QuotationSendVoidApiTests
         Assert.NotNull(sent.SentAt);
     }
 
+    // El destinatario viaja en el cuerpo. Esta prueba cubre el cableado endpoint -> handler:
+    // pedir el telefono de facturacion en una cotizacion que factura a los datos del cliente
+    // tiene que llegar como 422 con codigo, y no mandarse al cliente en silencio.
+    [Fact]
+    public async Task SendToTheBillingPartyWithoutOneIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(Recipient: "Billing"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        Assert.Contains(
+            "quotation.quotation.billing_phone_missing", body, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// **El envio no lleva cuerpo**, que es como lo llama el frontend desde que el backend genera
     /// el PDF.

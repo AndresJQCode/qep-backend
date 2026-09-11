@@ -4,8 +4,26 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
+/// <summary>
+/// <paramref name="Recipient"/> elige a quien se le manda el WhatsApp: <c>"Customer"</c> (el
+/// default, y lo que hacia antes de que la opcion existiera) o <c>"Billing"</c>, el telefono que
+/// esta cotizacion guardo como datos propios de facturacion — quien factura no siempre es quien
+/// recibe el documento.
+///
+/// Opcion cerrada y no un telefono suelto: el destinatario lo resuelve el backend contra lo que
+/// la cotizacion ya tiene guardado. Aceptar un numero del cliente HTTP seria dejar que la
+/// pantalla mande la cotizacion a donde quiera.
+/// </summary>
 public sealed record SendQuotationCommand(
-    Guid TenantId, Guid QuotationId) : ICommand<QuotationDto>;
+    Guid TenantId, Guid QuotationId, string? Recipient = null) : ICommand<QuotationDto>;
+
+/// <summary>A quien va el mensaje. Texto en el borde, enum adentro: llega por HTTP y un valor
+/// que no matchea es un 422 con codigo, no un cast que revienta.</summary>
+public enum QuotationRecipient
+{
+    Customer,
+    Billing
+}
 
 public sealed class SendQuotationHandler(
     IQuotationRepository repository,
@@ -82,11 +100,15 @@ public sealed class SendQuotationHandler(
             // que quedó marcada como enviada sin que nadie la haya recibido. Así la persona
             // simplemente reintenta el mismo botón en vez de quedar en un estado a medio camino
             // que ningún otro flujo sabe destrabar.
+            // A quien se le manda. Se resuelve despues de validar al cliente porque el default
+            // --y el respaldo de nombre-- sigue saliendo de ahi.
+            var (toPhone, fullName) = ResolveRecipient(command.Recipient, quotation, customer!);
+
             stage = QuotationSendStage.WhatsApp;
             await whatsAppSender.SendQuotationAsync(
                 new WhatsAppQuotationMessage(
-                    ToPhone: customer!.Phone,
-                    FullName: customer.Name,
+                    ToPhone: toPhone,
+                    FullName: fullName,
                     OrderNumber: quotation.QuotationNumber,
                     Total: quotation.Total,
                     ValidUntil: quotation.ValidUntil!.Value,
@@ -165,4 +187,50 @@ public sealed class SendQuotationHandler(
         // sin anotación justo el caso más difícil de diagnosticar, que es el que motivó todo esto.
         await sendFailureLog.RecordAsync(historyEntry, CancellationToken.None);
     }
+    /// <summary>
+    /// El telefono y el nombre a los que va el mensaje.
+    ///
+    /// Sin eleccion, el cliente: es lo que hacia antes de que la opcion existiera, y lo que
+    /// siguen mandando las pantallas que todavia no preguntan. Con <c>Billing</c>, los datos
+    /// propios de facturacion de esta cotizacion — y si no los tiene, o los tiene sin telefono,
+    /// se rechaza en vez de caer al cliente en silencio: la pantalla ofrecio una opcion que no
+    /// existia, y mandarselo a otro sin avisar es peor que no mandarlo.
+    /// </summary>
+    private static (string? ToPhone, string FullName) ResolveRecipient(
+        string? recipient,
+        Quotation quotation,
+        QuotationCustomerRef customer)
+    {
+        if (string.IsNullOrWhiteSpace(recipient))
+        {
+            return (customer.Phone, customer.Name);
+        }
+
+        if (!Enum.TryParse<QuotationRecipient>(recipient, ignoreCase: true, out var parsed))
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.recipient_invalid",
+                $"'{recipient}' is not a valid quotation recipient.");
+        }
+
+        if (parsed == QuotationRecipient.Customer)
+        {
+            return (customer.Phone, customer.Name);
+        }
+
+        var billing = quotation.Billing;
+        if (billing is null || string.IsNullOrWhiteSpace(billing.Phone))
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.billing_phone_missing",
+                "The quotation has no billing phone to send the document to.");
+        }
+
+        // El nombre cae al del cliente si la parte no lo tiene: un campo opcional vacio no
+        // deberia mandar la plantilla sin a quien saludar.
+        return (
+            billing.Phone,
+            string.IsNullOrWhiteSpace(billing.Name) ? customer.Name : billing.Name);
+    }
+
 }
