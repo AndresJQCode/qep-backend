@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
@@ -5,7 +6,7 @@ using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 namespace Modules.Reporting.IntegrationTests;
 
 /// <summary>
-/// Reporte 1: ventas convertidas, listado y exportacion.
+/// Reporte 1: ventas convertidas.
 ///
 /// La siembra pasa por los endpoints reales de Customers, Catalog y Quotations, no por SQL: el
 /// reporte cruza cuatro modulos, y una fila insertada a mano probaria la consulta pero no que la
@@ -110,55 +111,6 @@ public sealed class SalesReportApiTests
     }
 
     [Fact]
-    public async Task ExportReturnsAnExcelFile()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
-        var productId = await CreateProductAsync(client, tenant.TenantId);
-        var quotation = await CreateSentQuotationAsync(
-            client, factory, tenant.TenantId, customer.Id, productId);
-        await ConvertToSaleAsync(client, factory, tenant.TenantId, quotation);
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales/export", TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(ExcelContentType, response.Content.Headers.ContentType?.MediaType);
-        var content = await response.Content.ReadAsByteArrayAsync(
-            TestContext.Current.CancellationToken);
-        // "PK": todo .xlsx es un zip. Que las columnas sean las del contrato lo verifica
-        // ReportExcelBuilderTests, que abre el workbook.
-        Assert.True(content.Length > 0);
-        Assert.Equal([0x50, 0x4B], content[..2]);
-        Assert.Contains(
-            "reporte-ventas-",
-            response.Content.Headers.ContentDisposition?.FileNameStar
-                ?? response.Content.Headers.ContentDisposition?.FileName
-                ?? string.Empty,
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ExportWithNoMatchingRowsFails()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales/export", TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(
-            TestContext.Current.CancellationToken);
-        Assert.Equal("reporting.export.empty", problem?.Code);
-    }
-
-    [Fact]
     public async Task ListRejectsAPaymentStatusThatDoesNotExist()
     {
         await using var database = await StartDatabaseAsync();
@@ -198,5 +150,36 @@ public sealed class SalesReportApiTests
 
         Assert.Equal(1, matching?.Total);
         Assert.Equal(0, other?.Total);
+    }
+
+    /// <summary>
+    /// Las cuatro exportaciones a Excel se retiraron: su único consumidor, <c>qep-frontend</c>,
+    /// quitó la función (<c>99771b9</c>), y armaban el libro entero en memoria dentro de la
+    /// petición. El llamador tiene los cuatro permisos de Reporting y un rango válido de un año,
+    /// así que un 404 sólo puede venir de que la ruta ya no existe.
+    /// </summary>
+    [Fact]
+    public async Task ExportRoutesNoLongerExist()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var to = DateOnly.FromDateTime(DateTime.UtcNow);
+        var range =
+            $"from={to.AddYears(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}"
+            + $"&to={to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+        string[] reports = ["sales", "quotations", "price-changes", "customers"];
+
+        var answered = new List<string>();
+        foreach (var report in reports)
+        {
+            var response = await client.GetAsync(
+                $"{ReportsUrl(tenant.TenantId)}/{report}/export?{range}",
+                TestContext.Current.CancellationToken);
+            answered.Add($"{report}: {(int)response.StatusCode}");
+        }
+
+        Assert.Equal(reports.Select(report => $"{report}: 404"), answered);
     }
 }

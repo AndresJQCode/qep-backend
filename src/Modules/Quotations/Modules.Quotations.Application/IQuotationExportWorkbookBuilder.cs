@@ -13,6 +13,6 @@ public interface IQuotationExportWorkbookBuilder
         CancellationToken cancellationToken);
 }
 
-/// <summary>El archivo listo para bajar: los bytes y el nombre con que el navegador lo guarda.
-/// Misma forma que <c>ReportFile</c> en Reporting.</summary>
+/// <summary>El archivo listo para bajar: los bytes y el nombre con que el navegador lo
+/// guarda.</summary>
 public sealed record QuotationExportFile(byte[] Content, string FileName);

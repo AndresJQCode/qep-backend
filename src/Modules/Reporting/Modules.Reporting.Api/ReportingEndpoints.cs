@@ -7,21 +7,10 @@ using Modules.Reporting.Application;
 namespace Modules.Reporting.Api;
 
 /// <summary>
-/// Los doce endpoints de reportes: cuatro listados paginados, sus cuatro resumenes y sus cuatro
-/// exportaciones.
-///
-/// **La exportacion devuelve el archivo en el cuerpo**, no el 202 + correo que usa
-/// <c>customers/export</c>. La diferencia es deliberada y esta en el contrato: aquella exporta el
-/// padron entero de un tenant y puede tardar, mientras que un reporte ya viene acotado por sus
-/// filtros y tiene tope de filas, asi que la descarga directa es lo correcto.
+/// Los ocho endpoints de reportes: cuatro listados paginados y sus cuatro resumenes.
 /// </summary>
 public static class ReportingEndpoints
 {
-    // El MIME oficial de .xlsx (OOXML SpreadsheetML), el mismo que usa CustomerEndpoints.
-    // ClosedXML solo escribe este formato, nunca el .xls binario viejo.
-    private const string ExcelContentType =
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-
     public static IEndpointRouteBuilder MapReportingEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints
@@ -41,12 +30,6 @@ public static class ReportingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        group.MapGet("/sales/export", ExportSalesAsync)
-            .RequireAuthorization(ReportingPermissions.SalesRead)
-            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         group.MapGet("/quotations", ListQuotationsAsync)
             .RequireAuthorization(ReportingPermissions.QuotationRead)
             .Produces<ReportPage<QuotationsReportItemDto>>()
@@ -56,12 +39,6 @@ public static class ReportingEndpoints
         group.MapGet("/quotations/summary", GetQuotationsSummaryAsync)
             .RequireAuthorization(ReportingPermissions.QuotationRead)
             .Produces<QuotationsReportSummaryDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        group.MapGet("/quotations/export", ExportQuotationsAsync)
-            .RequireAuthorization(ReportingPermissions.QuotationRead)
-            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
@@ -77,12 +54,6 @@ public static class ReportingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        group.MapGet("/price-changes/export", ExportPriceChangesAsync)
-            .RequireAuthorization(ReportingPermissions.PriceChangeRead)
-            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         group.MapGet("/customers", ListCustomersAsync)
             .RequireAuthorization(ReportingPermissions.CustomerRead)
             .Produces<ReportPage<CustomerReportItemDto>>()
@@ -92,12 +63,6 @@ public static class ReportingEndpoints
         group.MapGet("/customers/summary", GetCustomersSummaryAsync)
             .RequireAuthorization(ReportingPermissions.CustomerRead)
             .Produces<CustomerReportSummaryDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        group.MapGet("/customers/export", ExportCustomersAsync)
-            .RequireAuthorization(ReportingPermissions.CustomerRead)
-            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
@@ -127,8 +92,8 @@ public static class ReportingEndpoints
     }
 
     /// <summary>
-    /// Los mismos filtros que el listado **menos la paginacion**, igual que la exportacion: un
-    /// resumen de la pagina que se esta mirando no seria un resumen de nada.
+    /// Los mismos filtros que el listado **menos la paginacion**: un resumen de la pagina que se
+    /// esta mirando no seria un resumen de nada.
     /// </summary>
     private static async Task<IResult> GetSalesSummaryAsync(
         Guid tenantId,
@@ -146,24 +111,6 @@ public static class ReportingEndpoints
             cancellationToken);
 
         return Results.Ok(summary);
-    }
-
-    private static async Task<IResult> ExportSalesAsync(
-        Guid tenantId,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken,
-        DateOnly? from = null,
-        DateOnly? to = null,
-        Guid? advisorId = null,
-        Guid? clientId = null,
-        string? paymentStatus = null)
-    {
-        var file = await dispatcher.QueryAsync(
-            new ExportSalesReportQuery(
-                new SalesReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus)),
-            cancellationToken);
-
-        return Results.File(file.Content, ExcelContentType, file.FileName);
     }
 
     private static async Task<IResult> ListQuotationsAsync(
@@ -208,24 +155,6 @@ public static class ReportingEndpoints
         return Results.Ok(summary);
     }
 
-    private static async Task<IResult> ExportQuotationsAsync(
-        Guid tenantId,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken,
-        DateOnly? from = null,
-        DateOnly? to = null,
-        Guid? advisorId = null,
-        Guid? clientId = null,
-        string? status = null)
-    {
-        var file = await dispatcher.QueryAsync(
-            new ExportQuotationsReportQuery(
-                new QuotationsReportFilter(tenantId, from, to, advisorId, clientId, status)),
-            cancellationToken);
-
-        return Results.File(file.Content, ExcelContentType, file.FileName);
-    }
-
     private static async Task<IResult> ListPriceChangesAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
@@ -266,24 +195,6 @@ public static class ReportingEndpoints
             cancellationToken);
 
         return Results.Ok(summary);
-    }
-
-    private static async Task<IResult> ExportPriceChangesAsync(
-        Guid tenantId,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken,
-        DateOnly? from = null,
-        DateOnly? to = null,
-        Guid? productId = null,
-        Guid? changedBy = null,
-        string? field = null)
-    {
-        var file = await dispatcher.QueryAsync(
-            new ExportPriceChangeReportQuery(
-                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field)),
-            cancellationToken);
-
-        return Results.File(file.Content, ExcelContentType, file.FileName);
     }
 
     /// <summary><c>from</c> y <c>to</c> cortan por fecha de alta: ver
@@ -330,24 +241,5 @@ public static class ReportingEndpoints
             cancellationToken);
 
         return Results.Ok(summary);
-    }
-
-    private static async Task<IResult> ExportCustomersAsync(
-        Guid tenantId,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken,
-        DateOnly? from = null,
-        DateOnly? to = null,
-        bool? isActive = null,
-        Guid? classificationId = null,
-        Guid? departmentId = null)
-    {
-        var file = await dispatcher.QueryAsync(
-            new ExportCustomerReportQuery(
-                new CustomerReportFilter(
-                    tenantId, from, to, isActive, classificationId, departmentId)),
-            cancellationToken);
-
-        return Results.File(file.Content, ExcelContentType, file.FileName);
     }
 }

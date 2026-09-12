@@ -37,16 +37,6 @@ internal sealed class CustomerReportSource(
         return (await ToDtosAsync(rows, cancellationToken), total);
     }
 
-    public async Task<IReadOnlyList<CustomerReportItemDto>> ListForExportAsync(
-        CustomerReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        var query = await BuildQueryAsync(criteria, cancellationToken);
-        var rows = await query.Take(limit).ToListAsync(cancellationToken);
-        return await ToDtosAsync(rows, cancellationToken);
-    }
-
     public async Task<CustomerReportAggregate> SummarizeAsync(
         CustomerReportCriteria criteria,
         int rankSize,
@@ -265,9 +255,8 @@ internal sealed class CustomerReportSource(
     }
 
     /// <summary>
-    /// Los filtros del reporte, compartidos por el listado, la exportacion y el resumen: que los
-    /// tres salgan de aca es lo que hace imposible que el panel, la tabla y el Excel hablen de
-    /// conjuntos distintos.
+    /// Los filtros del reporte, compartidos por el listado y el resumen: que los dos salgan de
+    /// aca es lo que hace imposible que el panel y la tabla hablen de conjuntos distintos.
     /// </summary>
     private async Task<IQueryable<Customer>> FilterCustomersAsync(
         CustomerReportCriteria criteria,

@@ -115,7 +115,7 @@ public sealed class CustomerReportSummaryApiTests
     }
 
     /// <summary>El resumen toma exactamente los mismos filtros que el listado: si contara otro
-    /// conjunto, el panel y el Excel de la misma pantalla dirian cosas distintas.</summary>
+    /// conjunto, el panel y la tabla de la misma pantalla dirian cosas distintas.</summary>
     [Fact]
     public async Task SummaryFiltersByActiveStateLikeTheList()
     {
