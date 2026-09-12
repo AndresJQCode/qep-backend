@@ -55,8 +55,18 @@ internal static class QuotationMapping
         party.DepartmentId,
         party.CityId);
 
+    /// <summary>
+    /// La fila del listado. <paramref name="hasItems"/> y <paramref name="sale"/> llegan
+    /// resueltos por el handler y no se leen del agregado: la busqueda del listado no trae las
+    /// lineas (la tabla no las pinta) y la venta vive en otra tabla, asi que <c>quotation.Items</c>
+    /// aca esta vacia aunque la cotizacion tenga lineas.
+    /// </summary>
     public static QuotationListItemDto ToListItemDto(
-        this Quotation quotation, string? clientName, string? advisorEmail) => new(
+        this Quotation quotation,
+        string? clientName,
+        string? advisorEmail,
+        bool hasItems,
+        Sale? sale) => new(
         quotation.Id.Value,
         quotation.QuotationNumber,
         quotation.ClientId,
@@ -66,7 +76,11 @@ internal static class QuotationMapping
         quotation.Status.ToString(),
         quotation.CreatedAt,
         quotation.Currency.ToCode(),
-        quotation.Total);
+        quotation.Total,
+        quotation.CanBeSent,
+        hasItems && quotation.ValidUntil is not null && quotation.BillingAccount is not null,
+        sale?.Id.Value,
+        sale?.Status.ToString());
 
     private static QuotationItemDto ToDto(QuotationItem item) => new(
         item.Id.Value,

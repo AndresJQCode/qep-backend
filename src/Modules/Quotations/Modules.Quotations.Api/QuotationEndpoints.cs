@@ -379,6 +379,10 @@ public static class QuotationEndpoints
         quotation.Status,
         quotation.CreatedAt,
         quotation.Currency,
-        quotation.Total);
+        quotation.Total,
+        quotation.CanBeSent,
+        quotation.IsComplete,
+        quotation.SaleId,
+        quotation.SaleStatus);
 
 }
