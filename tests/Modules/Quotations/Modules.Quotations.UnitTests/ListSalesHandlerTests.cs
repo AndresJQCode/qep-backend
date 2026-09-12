@@ -34,6 +34,18 @@ public sealed class ListSalesHandlerTests
         Assert.Equal("COP", row.Currency);
     }
 
+    // El nombre de la asesora llega sólo al PDF (spec 2026-09-11, D1): la fila de ventas sigue
+    // mostrando el correo aunque la membresía tenga nombre.
+    [Fact]
+    public async Task ListKeepsTheAdvisorEmailEvenWhenTheMemberHasAName()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("VEN-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora@qcode.co", Assert.Single(page.Items).AdvisorEmail);
+    }
+
     // La alternativa —una consulta por fila— es el N+1 que estos campos existen para evitar.
     [Fact]
     public async Task ListResolvesEveryClientNameInASingleLookup()
@@ -139,7 +151,7 @@ public sealed class ListSalesHandlerTests
         new(
             repository,
             customers,
-            new StubQuotationAdvisorLookup("asesora@qcode.co"),
+            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubExecutionContext(SubjectId, TenantId));
 
     private static SaleWithQuotation NewRow(string saleNumber, Guid clientId)

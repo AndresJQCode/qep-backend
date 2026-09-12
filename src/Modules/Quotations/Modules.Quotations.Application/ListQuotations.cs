@@ -125,10 +125,11 @@ public sealed class ListQuotationsHandler(
 
         // Misma idea que los nombres de cliente: una ida por página, con los ids sin repetir.
         // Antes el frontend se traía el padrón de miembros entero para poner un correo en cada
-        // fila.
-        var advisorEmails = quotations.Count == 0
-            ? new Dictionary<Guid, string?>()
-            : await advisorLookup.FindEmailsAsync(
+        // fila. La fila muestra el correo aunque la asesora tenga nombre: el nombre sólo llega al
+        // PDF (spec 2026-09-11, D1).
+        var advisors = quotations.Count == 0
+            ? new Dictionary<Guid, QuotationAdvisor>()
+            : await advisorLookup.FindAsync(
                 query.TenantId,
                 quotations.Select(quotation => quotation.AdvisorId.Value).Distinct().ToArray(),
                 cancellationToken);
@@ -136,7 +137,7 @@ public sealed class ListQuotationsHandler(
         var items = quotations
             .Select(quotation => quotation.ToListItemDto(
                 clientNames.GetValueOrDefault(quotation.ClientId),
-                advisorEmails.GetValueOrDefault(quotation.AdvisorId.Value)))
+                advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Email))
             .ToArray();
         return new QuotationPage(items, total, page, pageSize);
     }

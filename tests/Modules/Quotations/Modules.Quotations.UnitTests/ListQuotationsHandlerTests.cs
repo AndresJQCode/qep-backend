@@ -68,6 +68,17 @@ public sealed class ListQuotationsHandlerTests
         Assert.Null(Assert.Single(page.Items).ClientName);
     }
 
+    // D1: el listado de cotizaciones sigue con el correo; el nombre es sólo del PDF.
+    [Fact]
+    public async Task ListKeepsTheAdvisorEmailEvenWhenTheMemberHasAName()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewQuotation("QUO-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora@qcode.co", Assert.Single(page.Items).AdvisorEmail);
+    }
+
     private static ListQuotationsQuery NewQuery() =>
         new(TenantId, null, null, null, null, null, null, null, Page: 1, PageSize: 10);
 
@@ -97,6 +108,6 @@ public sealed class ListQuotationsHandlerTests
         StubQuotationCustomerLookup customers, params Quotation[] quotations) =>
         new(new StubQuotationListRepository(quotations),
             customers,
-            new StubQuotationAdvisorLookup(),
+            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubExecutionContext(SubjectId, TenantId));
 }

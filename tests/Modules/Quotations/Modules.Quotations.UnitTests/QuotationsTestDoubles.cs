@@ -107,19 +107,21 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
     }
 }
 
-internal sealed class StubQuotationAdvisorLookup(string? email = null)
+internal sealed class StubQuotationAdvisorLookup(string? email = null, string? displayName = null)
     : IQuotationAdvisorLookup
 {
-    public int FindEmailsCalls { get; private set; }
+    public int FindCalls { get; private set; }
 
-    public Task<IReadOnlyDictionary<Guid, string?>> FindEmailsAsync(
+    public Task<IReadOnlyDictionary<Guid, QuotationAdvisor>> FindAsync(
         Guid tenantId,
         IReadOnlyCollection<Guid> membershipIds,
         CancellationToken cancellationToken)
     {
-        FindEmailsCalls++;
-        return Task.FromResult<IReadOnlyDictionary<Guid, string?>>(
-            membershipIds.Distinct().ToDictionary(id => id, _ => email));
+        FindCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationAdvisor>>(
+            membershipIds
+                .Distinct()
+                .ToDictionary(id => id, _ => new QuotationAdvisor(email, displayName)));
     }
 }
 

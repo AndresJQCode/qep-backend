@@ -35,8 +35,9 @@ public sealed class QuotationResponseComposer(
         var customer = await customerLookup.FindAsync(
             tenantId, quotation.ClientId, cancellationToken);
 
-        var advisorEmails = await advisorLookup.FindEmailsAsync(
+        var advisors = await advisorLookup.FindAsync(
             tenantId, [quotation.AdvisorId], cancellationToken);
+        var advisor = advisors.GetValueOrDefault(quotation.AdvisorId);
 
         // Sólo cuando la cotización eligió cuenta: una consulta más por pantalla, y ninguna en
         // el caso normal de un borrador recién creado.
@@ -55,7 +56,7 @@ public sealed class QuotationResponseComposer(
             quotation.ClientId,
             ToClientResponse(customer),
             quotation.AdvisorId,
-            advisorEmails.GetValueOrDefault(quotation.AdvisorId),
+            advisor?.Email,
             quotation.Status,
             quotation.CreatedAt,
             quotation.ValidUntil,
