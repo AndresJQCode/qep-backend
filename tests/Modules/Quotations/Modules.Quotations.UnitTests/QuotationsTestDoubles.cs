@@ -107,19 +107,21 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
     }
 }
 
-internal sealed class StubQuotationAdvisorLookup(string? email = null)
+internal sealed class StubQuotationAdvisorLookup(string? email = null, string? displayName = null)
     : IQuotationAdvisorLookup
 {
-    public int FindEmailsCalls { get; private set; }
+    public int FindCalls { get; private set; }
 
-    public Task<IReadOnlyDictionary<Guid, string?>> FindEmailsAsync(
+    public Task<IReadOnlyDictionary<Guid, QuotationAdvisor>> FindAsync(
         Guid tenantId,
         IReadOnlyCollection<Guid> membershipIds,
         CancellationToken cancellationToken)
     {
-        FindEmailsCalls++;
-        return Task.FromResult<IReadOnlyDictionary<Guid, string?>>(
-            membershipIds.Distinct().ToDictionary(id => id, _ => email));
+        FindCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationAdvisor>>(
+            membershipIds
+                .Distinct()
+                .ToDictionary(id => id, _ => new QuotationAdvisor(email, displayName)));
     }
 }
 
@@ -138,6 +140,15 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(quotation);
 
+    public Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(
+            quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id)
+                ? new HashSet<Guid> { quotation.Id.Value }
+                : []);
+
     public Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -151,6 +162,18 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         int pageSize,
         CancellationToken cancellationToken) =>
         Task.FromResult<(IReadOnlyList<Quotation>, int)>(([quotation], 1));
+
+    public Task<IReadOnlyList<Quotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Quotation>>([quotation]);
 
     public void Add(Quotation quotation)
     {
@@ -213,18 +236,66 @@ internal sealed class StubMembershipDirectory(Guid membershipId) : IMembershipDi
         Task.FromResult<IReadOnlyList<Guid>>([membershipId]);
 }
 
-internal sealed class StubExecutionContext(Guid subjectId, Guid tenantId) : IExecutionContext
+/// <summary>Concede todo salvo lo que se le nombre: casi toda prueba quiere un sujeto que puede
+/// hacer lo que el caso de uso pide, y las que miran un permiso puntual solo tienen que decir
+/// cual falta.</summary>
+internal sealed class StubExecutionContext(
+    Guid subjectId, Guid tenantId, params string[] deniedPermissions) : IExecutionContext
 {
     public Guid SubjectId { get; } = subjectId;
 
     public TenantId TenantId { get; } = new(tenantId);
 
-    public bool HasPermission(string permission) => true;
+    public bool HasPermission(string permission) => !deniedPermissions.Contains(permission);
+}
+
+/// <summary>Un sujeto del tenant correcto al que le falta el permiso: la mitad de
+/// <c>QuotationsAuthorization</c> que <see cref="StubExecutionContext"/> no deja ejercer.</summary>
+internal sealed class PermissionlessExecutionContext(Guid subjectId, Guid tenantId) : IExecutionContext
+{
+    public Guid SubjectId { get; } = subjectId;
+
+    public TenantId TenantId { get; } = new(tenantId);
+
+    public bool HasPermission(string permission) => false;
 }
 
 internal sealed class FixedClock(DateTimeOffset now) : IClock
 {
     public DateTimeOffset UtcNow { get; } = now;
+}
+
+/// <summary>Los filtros que <see cref="StubQuotationListRepository.ListForExportAsync"/>
+/// recibio.</summary>
+internal sealed record RecordedExportSearch(
+    Guid? ClientId,
+    IReadOnlyCollection<Guid>? ClientIds,
+    MemberId? AdvisorId,
+    QuotationStatus? Status,
+    DateOnly? CreatedFrom,
+    DateOnly? CreatedTo,
+    string? QuotationNumber);
+
+/// <summary>Registra las filas que le llegan en vez de armar un Excel: lo que las pruebas del
+/// handler verifican es que datos salen hacia el archivo, no como se ve -- eso lo cubren las
+/// pruebas de integracion, que abren el workbook.</summary>
+internal sealed class RecordingQuotationExportWorkbookBuilder : IQuotationExportWorkbookBuilder
+{
+    public QuotationExportFile Result { get; } = new([0x50, 0x4B], "cotizaciones-prueba.xlsx");
+
+    public IReadOnlyList<QuotationListItemDto>? Rows { get; private set; }
+
+    public DateTimeOffset? GeneratedAt { get; private set; }
+
+    public QuotationExportFile Build(
+        IReadOnlyList<QuotationListItemDto> rows,
+        DateTimeOffset generatedAt,
+        CancellationToken cancellationToken)
+    {
+        Rows = rows;
+        GeneratedAt = generatedAt;
+        return Result;
+    }
 }
 
 /// <summary>Varias cotizaciones para el listado — <see cref="StubQuotationRepository"/> devuelve
@@ -250,6 +321,50 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         int pageSize,
         CancellationToken cancellationToken) =>
         Task.FromResult<(IReadOnlyList<Quotation>, int)>((quotations, quotations.Length));
+
+    /// <summary>Cuantas veces se leyo para exportar. Una exportacion rechazada (sin permiso, rango
+    /// invalido) no debe llegar a leer nada, y el conteo es la asercion.</summary>
+    public int ExportCalls { get; private set; }
+
+    /// <summary>Los filtros con que se pidio la ultima exportacion, para comprobar que el Excel
+    /// filtra con lo mismo que el listado.</summary>
+    public RecordedExportSearch? LastExportSearch { get; private set; }
+
+    // Honra el contrato de `clientIds` (vacio = ninguna fila) porque es lo que hace que un NIT
+    // sin cliente termine en un Excel vacio; el resto de los filtros son de la consulta SQL y los
+    // cubren las pruebas de integracion.
+    public Task<IReadOnlyList<Quotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        CancellationToken cancellationToken)
+    {
+        ExportCalls++;
+        LastExportSearch = new RecordedExportSearch(
+            clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+        IReadOnlyList<Quotation> rows = clientIds is null
+            ? quotations
+            : quotations.Where(quotation => clientIds.Contains(quotation.ClientId)).ToArray();
+        return Task.FromResult(rows);
+    }
+
+    /// <summary>Contesta desde las cotizaciones sembradas, igual que la consulta real: la fila
+    /// del listado necesita saber si hay lineas aunque la busqueda no las traiga.</summary>
+    public Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(
+            quotations
+                .Where(quotation =>
+                    quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id))
+                .Select(quotation => quotation.Id.Value)
+                .ToHashSet());
 
     public void Add(Quotation quotation)
     {
@@ -333,6 +448,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             null,
             quotation.AdvisorId,
             null,
+            null,
             quotation.Status,
             quotation.CreatedAt,
             quotation.ValidUntil,
@@ -376,6 +492,40 @@ internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : 
     public Task<Sale?> FindByIdAsync(
         Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Sale.Id == saleId)?.Sale);
+
+    /// <summary>Calcula desde las filas sembradas, igual que la consulta real: agrupa por estado
+    /// y suma el total de cada cotizacion mas sus comprobantes. Las dos puntas inclusive.</summary>
+    public Task<SaleWindowSummary> SummarizeAsync(
+        Guid tenantId,
+        DateOnly convertedFrom,
+        DateOnly convertedTo,
+        CancellationToken cancellationToken)
+    {
+        var window = rows.Where(row =>
+        {
+            var day = DateOnly.FromDateTime(row.Sale.ConvertedAt.UtcDateTime);
+            return day >= convertedFrom && day <= convertedTo;
+        }).ToArray();
+
+        var pending = window.Where(row => row.Sale.Status == SaleStatus.Pending).ToArray();
+        var approved = window.Where(row => row.Sale.Status == SaleStatus.Approved).ToArray();
+
+        return Task.FromResult(new SaleWindowSummary(
+            pending.Length,
+            pending.Sum(row => row.Quotation.Total),
+            approved.Length,
+            approved.Sum(row => row.Quotation.Total),
+            window.Sum(row => row.Sale.PaymentProofs.Sum(proof => proof.Amount))));
+    }
+
+    public Task<IReadOnlyDictionary<Guid, Sale>> FindByQuotationIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, Sale>>(
+            rows
+                .Where(row => quotationIds.Contains(row.Quotation.Id))
+                .ToDictionary(row => row.Quotation.Id.Value, row => row.Sale));
 
     public Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
         Guid tenantId,

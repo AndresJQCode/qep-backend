@@ -282,7 +282,7 @@ public sealed class OrphanUserCleanupTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = AdvisorRoles })
+            Content = JsonContent.Create(new { email, displayName = "Ana Pérez", roles = AdvisorRoles })
         };
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);

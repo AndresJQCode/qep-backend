@@ -68,8 +68,8 @@ public sealed record SaleListItemResponse(
     /// entre modulos y una venta historica tiene que poder leerse igual.</summary>
     string? ClientName,
     Guid AdvisorId,
-    /// <summary>Correo de la asesora, no su nombre: el sistema no guarda nombre de persona en
-    /// ninguna parte. Mismo criterio y misma nulabilidad que <c>QuotationListItemResponse</c>.</summary>
+    /// <summary>Correo de la asesora, no su nombre: el nombre de la membresía sólo llega al PDF
+    /// (spec 2026-09-11, D1). Mismo criterio y misma nulabilidad que <c>QuotationListItemResponse</c>.</summary>
     string? AdvisorEmail,
     string Status,
     string PaymentStatus,
@@ -94,6 +94,21 @@ public sealed record SaleListItemResponse(
 public sealed record SaleDetailResponse(
     SaleResponse Sale,
     QuotationResponse Quotation);
+
+/// <summary>
+/// El panel del listado de ventas. Espeja <see cref="SaleSummaryDto"/> — mismos campos y mismo
+/// significado; existe aparte por la misma razon que el resto de los <c>*Response</c>: lo que la
+/// API promete no se mueve solo porque cambie un tipo de la capa de aplicacion.
+/// </summary>
+public sealed record SaleSummaryResponse(
+    int SaleCount,
+    decimal Total,
+    int PendingCount,
+    decimal PendingTotal,
+    int ApprovedCount,
+    decimal ApprovedTotal,
+    decimal CollectedTotal,
+    decimal PreviousTotal);
 
 public sealed record SalesPageResponse(
     IReadOnlyCollection<SaleListItemResponse> Items,

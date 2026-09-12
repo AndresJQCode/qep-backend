@@ -9,6 +9,7 @@ namespace Modules.Tenancy.Application;
 public sealed record InviteMemberCommand(
     TenantId TenantId,
     string Email,
+    string DisplayName,
     IReadOnlyCollection<string> Roles,
     string CorrelationId) : ICommand<MembershipDto>;
 
@@ -17,6 +18,11 @@ public sealed class InviteMemberValidator : AbstractValidator<InviteMemberComman
     public InviteMemberValidator()
     {
         RuleFor(command => command.Email).NotEmpty().MaximumLength(254);
+        // El dominio ya rechaza el nombre vacío con su propio código, pero ese 422 no trae el
+        // mapa `errors` y el formulario no sabría qué input marcar. Éste sí.
+        RuleFor(command => command.DisplayName)
+            .NotEmpty()
+            .MaximumLength(Membership.DisplayNameMaxLength);
         RuleFor(command => command.Roles).NotNull();
     }
 }
@@ -75,6 +81,7 @@ public sealed class InviteMemberHandler(
             MembershipId.New(),
             userId,
             command.TenantId,
+            command.DisplayName,
             command.Roles,
             Origin,
             invitationToken,
@@ -121,7 +128,8 @@ public sealed class InviteMemberHandler(
 
         // Una invitación viva y una membresía activa son las dos no-ops. Renovar una invitación
         // viva movería un plazo con el que alguien cuenta e invalidaría el link que ya está en
-        // su bandeja.
+        // su bandeja. El nombre del cuerpo se ignora igual que los roles: para renombrar a un
+        // miembro está PATCH .../display-name (spec 2026-09-11, D5).
         var invitationIsLive =
             existing.State == MembershipState.Invited && now <= existing.ExpiresAt;
         if (invitationIsLive || existing.State == MembershipState.Active)
@@ -135,6 +143,7 @@ public sealed class InviteMemberHandler(
         // Token nuevo en cada renovación: el link vencido muere con su ventana.
         var invitationToken = InvitationTokens.Generate();
         existing.Reinvite(
+            command.DisplayName,
             command.Roles,
             invitationToken,
             InvitationTokens.HashOf(invitationToken),

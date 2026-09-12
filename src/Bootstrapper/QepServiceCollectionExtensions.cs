@@ -27,10 +27,10 @@ using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
-using Modules.Quotations.Application;
-using Modules.Quotations.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
+using Modules.Quotations.Application;
+using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
 using Modules.Storage.Application;
@@ -86,6 +86,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateMemberRolesCommand, MembershipListItemDto>,
             UpdateMemberRolesHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateMemberDisplayNameCommand, MembershipListItemDto>,
+            UpdateMemberDisplayNameHandler>();
         services.AddScoped<
             ICommandHandler<CreateUploadSessionCommand, UploadSessionDto>,
             CreateUploadSessionHandler>();
@@ -293,6 +296,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListQuotationsQuery, QuotationPage>,
             ListQuotationsHandler>();
         services.AddScoped<
+            IQueryHandler<ExportQuotationsQuery, QuotationExportFile>,
+            ExportQuotationsHandler>();
+        services.AddScoped<
             IQueryHandler<ListQuotationHistoryQuery, IReadOnlyList<QuotationHistoryEntryDto>>,
             ListQuotationHistoryHandler>();
         // El log de la aplicacion. Registrados a mano igual que el resto: un caso de uso que se
@@ -337,6 +343,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetSaleByIdQuery, SaleDetailDto>,
             GetSaleByIdHandler>();
+        services.AddScoped<
+            IQueryHandler<GetSalesSummaryQuery, SaleSummaryDto>,
+            GetSalesSummaryHandler>();
         services.AddScoped<
             ICommandHandler<ApproveSaleCommand, SaleDto>,
             ApproveSaleHandler>();

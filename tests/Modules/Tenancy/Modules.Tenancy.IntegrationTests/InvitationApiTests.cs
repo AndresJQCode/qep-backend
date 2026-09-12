@@ -277,7 +277,7 @@ public sealed class InvitationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{TenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = DefaultRoles })
+            Content = JsonContent.Create(new { email, displayName = "Ana Pérez", roles = DefaultRoles })
         };
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
