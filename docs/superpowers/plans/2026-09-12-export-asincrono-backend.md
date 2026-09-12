@@ -18,10 +18,11 @@
 - Códigos: `quotation.export.empty`, `quotation.export.pending_limit`, `sale.export.empty`, `sale.export.pending_limit`.
 - Contrato: `POST /api/v1/tenants/{tenantId}/quotations/export` (`QuotationRead`) y `POST /api/v1/tenants/{tenantId}/sales/export` (`SaleRead`), filtros por query string sin paginación, respuesta `202 { jobId, requestedAt }`. **Ningún permiso nuevo**: se reusan los dos existentes con sus políticas ya registradas.
 - Lease **10 min**; poll del worker **5 s**; concurrencia **1** por proceso; lotes de **1.000** filas.
-- Reintentos: backoff **1 / 5 / 15 min**, **máximo 3 intentos**; al tercer intento fallido → `Failed`. Definitivo (filtros ilegibles, cero filas al procesar) → `Failed` directo.
+- Lectura **por keyset, nunca offset** (spec D8, hallazgo 11): cotizaciones por `(CreatedAt DESC, QuotationNumber DESC)`, ventas por `(ConvertedAt DESC, SaleNumber DESC)` —el orden de `SaleRepository.SearchAsync`—. `ListForExportAsync` recibe `after` (`QuotationExportCursor` / `SaleExportCursor`: la clave de la última fila leída, `null` en el primer lote) y `limit`, y la condición va en su forma OR porque EF no compara tuplas. Los filtros salen del mismo `FilteredQuery` / `Filtered` que el listado.
+- Reintentos: **`MaxAttempts = 4`**. Backoff de **1 min** después del 1.º intento fallido, **5 min** después del 2.º y **15 min** después del 3.º; el **4.º** fallido → `Failed` + `quotations.export-failed.v1`. Definitivo (filtros ilegibles, cero filas al procesar) → `Failed` directo.
 - Retención: el worker borra **una vez al día** los jobs `Completed`/`Failed` con `completed_at` de más de **30 días**.
 - Eventos: `quotations.export-ready.v1` (payload `tenantId, subjectId, kind, downloadUrl, fileName, rowCount, expiresAt`) y `quotations.export-failed.v1` (payload `tenantId, subjectId, kind`).
-- Archivos: `cotizaciones-yyyy-MM-dd-HHmm.xlsx` y `ventas-yyyy-MM-dd-HHmm.xlsx` (hora UTC de generación). Clave en R2: `exports/tenants/{tenantId:N}/jobs/{jobId:N}.xlsx`. Vigencia del enlace: `Storage:ExportUrlHours` (la misma del export de clientes).
+- Archivos: `cotizaciones-yyyy-MM-dd-HHmm.xlsx` y `ventas-yyyy-MM-dd-HHmm.xlsx` (hora UTC de generación). Clave en R2: `exports/tenants/{tenantId:N}/jobs/{jobId:N}.xlsx` —**bajo `exports/`**, el prefijo de la regla de lifecycle que ya existe (hallazgo 8)—. Vigencia del enlace: `Storage:ExportUrlHours` (`StorageOptions.cs:15`, `24` en `appsettings.json:27`), la misma opción que lee `CustomerExportStorage.cs:49`.
 - Hoja: cabecera en negrita y congelada, fechas como texto ISO-8601 (`"O"`), totales numéricos, encabezados sin tildes, anchos fijos.
 - `last_error`: sólo `TipoDeExcepcion: mensaje`, truncado a 2.000 caracteres. Nunca un secreto.
 - Copy de correos: español colombiano, tuteando.
@@ -37,25 +38,29 @@
 
 ## Hallazgos contra el código (2026-09-12)
 
-Verificados leyendo el código de `develop` (`af62536`) más `8b8c7a8`, no supuestos:
+Verificados leyendo el código de `feature/export-asincrono` en `66073a0` —el mismo commit que `origin/develop`, con `8b8c7a8` ya adentro—, no supuestos. La primera versión se escribió sobre `af62536`; el hallazgo 12 dice qué cambió desde entonces.
 
-1. **Prefijo de los códigos de ventas: `sale.`** Los códigos del lado de ventas son `sale.<área>.<motivo>`: `sale.sale.status_invalid` (`ListSales.cs:149`), `sale.sale.payment_status_invalid` (`ListSales.cs:163`), `sale.summary.range_invalid` (`GetSalesSummary.cs:62`), `sale.payment_proof.*` (`SalePaymentProofResolver.cs:32-53`). El export de cotizaciones ya usa el área `export` (`quotation.export.empty`, `ExportQuotations.cs:99`). Por eso quedan `sale.export.empty` y `sale.export.pending_limit`, tal como los escribió la spec.
+1. **Prefijo de los códigos de ventas: `sale.`** Los códigos del lado de ventas son `sale.<área>.<motivo>`: `sale.sale.status_invalid` (`ListSales.cs:149`), `sale.sale.payment_status_invalid` (`ListSales.cs:163`), `sale.payment_proof.*` (`SalePaymentProofResolver.cs:32-53`); el `sale.summary.range_invalid` que citaba la primera versión se fue con `GetSalesSummary.cs` (`b840526`). El export de cotizaciones ya usa el área `export` (`quotation.export.empty`, `ExportQuotations.cs:99`). Por eso quedan `sale.export.empty` y `sale.export.pending_limit`, tal como los escribió la spec.
 2. **Columnas del Excel de ventas** (D8 lo dejó al plan). La fila es `SaleListItemResponse` (`SalesDtos.cs:60-86`); la tabla del frontend pinta `Venta, Cliente, Asesora, Fecha, Pago, Estado, Total` (`qep-frontend/src/features/sales/components/sale-table.tsx:32-38`), donde **Pago** es `paymentMethod ?? estado del pago` (`sale-table.tsx:62-65`) y **Total** va formateado con la moneda (`sale-table.tsx:69-71`). Siguiendo el precedente del Excel de cotizaciones —que separó `Moneda` antes de `Total` y escribió `Asesor` aunque la tabla diga «Asesora» (`ClosedXmlQuotationExportBuilder.cs:31-40`)— las columnas quedan: **`Venta, Cliente, Asesor, Fecha, Pago, Estado, Moneda, Total`**. `Pago` replica el respaldo de la tabla: `PaymentMethod ?? PaymentStatus`, con el estado por su nombre de enum (`PaymentPending`), igual que `Estado` viaja como `Pending`/`Approved` y el de cotizaciones como `Draft`.
 3. **Los lookups no dependen del request.** `QuotationCustomerLookup` y `QuotationAdvisorLookup` (`src/Bootstrapper`) no usan `IExecutionContext` ni `HttpContext`: se pueden resolver en el scope del worker sin sesión.
 4. **`IObjectStorage` sólo sube `byte[]`** (`IObjectStorage.cs:49-50`). El adaptador de `IExportFileStorage` lee el temporal a bytes para subirlo. Es aceptable: el `.xlsx` va comprimido y pesa órdenes de magnitud menos que el grafo de celdas de ClosedXML. Agregar una sobrecarga con `Stream` obligaría a tocar Storage y los `InMemoryObjectStorage` de todos los harnesses; el puerto recibe una **ruta** para que ese cambio, si hace falta, quede en el adaptador.
-5. **Reintentos: la spec tiene tres esperas y tres intentos.** Con «al tercer intento fallido → `Failed`» sólo se usan la de 1 y la de 5 minutos; la de 15 nunca se alcanza. El plan implementa la regla literal (`MaxAttempts = 3`) y deja las tres esperas en `ExportJob.RetryDelays`, así que si el developer prefiere cuatro intentos (uno + tres reintentos) el cambio es sólo `MaxAttempts = 4`. **Decisión pendiente del developer**; no bloquea.
+5. **Reintentos: cuatro intentos, así se usan las tres esperas** (decisión del developer, 2026-09-12). La primera versión de la spec tenía tres esperas y tres intentos, con lo que la de 15 minutos nunca se alcanzaba. Queda `MaxAttempts = 4` —el primero y un reintento por cada espera de `ExportJob.RetryDelays`—: unos 21 minutos entre el primer fallo y el correo de fallo. El archivo llega por correo y nadie está mirando la pantalla, así que esa ventana cuesta menos que avisar un fallo que una caída corta de R2 o de la base habría resuelto sola.
 6. **Un worker que muere en el último intento.** La toma suma un intento aunque el anterior no haya registrado su fallo (el worker murió). Si al tomar el job queda con `Attempts > MaxAttempts`, el runner lo pasa a `Failed` sin procesarlo: un job no puede consumir intentos para siempre por lease vencido.
 7. **Lease perdido.** `Attempts` es token de concurrencia en EF: si un worker lento termina después de que otro retomó el job, su `UPDATE` no encuentra la fila con los intentos que leyó, `QuotationsUnitOfWork` lo traduce a `RequestConcurrencyException` (`QuotationsUnitOfWork.cs:32-38`) y el runner lo descarta sin evento. Nunca salen dos correos del mismo job.
-8. **La regla de lifecycle de R2 ya está documentada.** `README.md:846-860` describe una regla `expire-exports` sobre `exports/` con `--expire-days 2`, configurada a mano en Cloudflare. La clave nueva (`exports/tenants/…/jobs/…`) cae bajo ese prefijo. D13 la da por pendiente en el repo de plataforma: **el developer tiene que confirmar que la regla existe en el bucket** (`npx wrangler r2 bucket lifecycle list <bucket-privado>`); este plan no crea ninguna.
+8. **La regla de lifecycle de R2 ya existe; no está pendiente.** `README.md:846-860` documenta `expire-exports` sobre el prefijo `exports/` del bucket privado, con `--expire-days 2`, configurada a mano en Cloudflare, y advierte que `--expire-days` tiene que cubrir `ExportUrlHours` con margen. Lo que este plan tiene que garantizar es que el objeto caiga **bajo `exports/`**: `ExportFileStorage.KeyFor` arma `exports/tenants/{tenantId:N}/jobs/{jobId:N}.xlsx` y `ExportFileStorageTests` afirma el prefijo (Task 9). La vigencia sale de la opción que ya existe, `Storage:ExportUrlHours` (`StorageOptions.cs:15`, `24` en `appsettings.json:27`, validada entre 1 y 168 en `StorageOptionsValidator.cs:18-20`), la misma que lee `CustomerExportStorage.cs:49`; la prueba la sube a 48 para que un 24 fijo a mano no pase. Lo único que queda es **verificar** que la regla sigue en el bucket (`npx wrangler r2 bucket lifecycle list <bucket-privado>`, ver «Después del último commit»); este plan no crea ninguna.
 9. **`DocumentFormat.OpenXml` no está en `Directory.Packages.props`.** Hoy llega transitivo por ClosedXML (`3.1.1`, lock de `Modules.Quotations.Infrastructure`). Con `CentralPackageTransitivePinningEnabled=true`, declarar su `PackageVersion` lo fija también en los proyectos que lo reciben por ClosedXML (Customers, Catalog y sus pruebas): **cambian más lock files que los 16 de `572200c`**, con la versión igual. Por eso Task 10 los lista con `git diff` en vez de a mano.
 10. **El worker de exportaciones correría solo en las pruebas.** `WebApplicationFactory` arranca los hosted services; con un poll de 5 s competiría con el tick que la prueba dispara. `QepApiFactory` gana un parámetro `runExportWorker` (por defecto `false`) que saca el hosted service; las pruebas corren `ExportJobRunner` directo, igual que las de vencimiento corren `IQuotationExpirationProcessor`.
-11. **Paginación por offset y filas nuevas.** El export ordena por `CreatedAt` (o `ConvertedAt`) descendente, así que una cotización creada **durante** un export cuyo rango incluye hoy desplaza el offset y puede duplicar una fila en el borde de un lote. La spec ya anota el offset como riesgo de rendimiento; este es el de exactitud. El plan no lo resuelve (keyset sobre `created_at, id` es el arreglo) y lo deja en «Riesgos».
+11. **Keyset y no offset** (decisión del developer, 2026-09-12; spec D8). El rango por defecto es el mes en curso con hoy adentro: con offset, una cotización o venta creada entre dos lotes corre las filas y repite la del borde, y una ya leída que sale del filtro hace saltear la siguiente —la suma de Total queda mal sin ninguna señal—, además de que cada lote lee y descarta todo lo anterior. La clave de orden:
+    - **Cotizaciones: `(CreatedAt DESC, QuotationNumber DESC)`**, no `(CreatedAt, Id)`. `QuotationId` es un `readonly record struct` sin operadores de comparación (`QuotationId.cs:3`), mapeado con `HasConversion` (`QuotationsDbContext.cs:48-51`): `quotation.Id < after.Id` no compila, y EF tampoco lo traduciría. `QuotationNumber` es único por tenant (`IX_quotations_tenant_number`, `QuotationsDbContext.cs:151-153`), así que la clave nunca empata. El listado ordena sólo por `CreatedAt` (`QuotationRepository.cs:57`); el número sólo desempata instantes iguales.
+    - **Ventas: `(ConvertedAt DESC, SaleNumber DESC)`**, exactamente el orden del listado (`SaleRepository.cs:150-151`), único por tenant (`IX_sales_tenant_number`, `QuotationsDbContext.cs:377-379`). `SaleId` tiene el mismo problema que `QuotationId` (`SaleId.cs:3`).
+    - EF no compara tuplas: la condición va como `fecha < @fecha OR (fecha = @fecha AND numero < @numero)`, con `string.Compare(…) < 0`, que EF traduce a `<` sobre la columna —con su collation, la misma del `ORDER BY`—. `Directory.Build.props:7-8` tiene `TreatWarningsAsErrors` y `AnalysisLevel 10.0-recommended`: si el build marca CA1310 sobre ese `string.Compare`, ver la nota de Task 11.
+    - **No había índice para ninguno de los dos órdenes.** Hoy existen `IX_quotations_tenant` e `IX_quotations_created_at` sueltos (`QuotationsDbContext.cs:143,147`) e `IX_sales_tenant` (`:370`), y nada sobre `converted_at`. Task 2 agrega `IX_quotations_tenant_created_at_number (tenant_id, created_at, quotation_number)` e `IX_sales_tenant_converted_at_number (tenant_id, converted_at, sale_number)` en la misma migración `AddExportJobs`. Postgres recorre un btree en los dos sentidos, así que sirven al `DESC` sin declararlo. Son `CREATE INDEX` sin `CONCURRENTLY` sobre tablas chicas: bloquean escrituras unos segundos, al arrancar.
+    - Las pruebas que lo fijan (Tasks 11 y 13) leen de a una fila y meten los dos cambios entre lotes: con offset repetirían una fila y saltearían otra; con keyset salen las que existían al empezar, una vez cada una.
+12. **`develop` se movió después de la primera versión de este plan.** `b840526` borró `GetSalesSummary.cs` y sus pruebas, sacó `GET /sales/summary` de `SaleEndpoints.cs` y achicó `ISaleRepository.cs`, `SaleRepository.cs` y `StubSaleListRepository`; `ba5cdb9` agregó `BatchUpdateQuotationItems.cs` y su ruta, que corrió los handlers de `QuotationEndpoints.cs`; `dd646a0` tocó `QuotationsApiHarness.cs`; `389e344` borró `SaleSummaryApiTests.cs`. Las referencias `archivo:línea` de este plan están re-verificadas contra `66073a0`; las que cambiaron están en Tasks 4, 9, 10 y 12.
 
-## Orden de ramas: primero el retiro de los exports de Reporting
+## Estado de las ramas
 
-`refactor/quitar-exports-de-reportes` (`8b8c7a8`) **todavía no está en `develop`** y edita comentarios de `IQuotationExportWorkbookBuilder.cs` y `ClosedXmlQuotationExportBuilder.cs`, que este plan borra (Task 10). **Orden recomendado:** mergear `refactor/quitar-exports-de-reportes` a `develop` y recién después arrancar Task 0. Si se arranca antes, el merge posterior da un conflicto modificar/borrar trivial en esos dos archivos, que se resuelve borrándolos (`git rm`).
-
-`feature/export-asincrono` **ya existe** localmente: llevó la spec y está mergeada en `develop` (`af62536`). Task 0 la reusa avanzándola a `develop`, no la recrea.
+La precondición de la primera versión ya se cumple. `refactor/quitar-exports-de-reportes` (`8b8c7a8`) entró a `develop` con `1730eb3`, y `feature/export-asincrono` está en `66073a0`, el mismo commit que `origin/develop`. `IQuotationExportWorkbookBuilder.cs` y `ClosedXmlQuotationExportBuilder.cs` ya traen los comentarios de `8b8c7a8`, así que Task 10 los borra sin conflicto. Task 0 sólo lo comprueba: la rama no se recrea ni se mueve.
 
 ## Entrega
 
@@ -109,15 +114,15 @@ Las tareas intermedias de cada commit terminan con **stage** (rutas explícitas,
 
 | Archivo | Cambio |
 | --- | --- |
-| `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationsDbContext.cs` | `ExportJobs` y `ConfigureExportJob` |
+| `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationsDbContext.cs` | `ExportJobs`, `ConfigureExportJob` y los índices del keyset en `quotations` y `sales` (hallazgo 11) |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/Migrations/QuotationsDbContextModelSnapshot.cs` | Regenerado por `dotnet ef` |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs` | Cola, publisher, worker, writer; sale el builder de ClosedXML |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/Modules.Quotations.Infrastructure.csproj` | `DocumentFormat.OpenXml` directo; sale `ClosedXML` |
 | `Directory.Packages.props` | `PackageVersion` de `DocumentFormat.OpenXml` 3.1.1 |
 | `src/Modules/Quotations/Modules.Quotations.Application/ExportQuotations.cs` | De query con archivo a comando que encola |
-| `src/Modules/Quotations/Modules.Quotations.Application/IQuotationRepository.cs` | `ListForExportAsync` por lotes, `AnyForExportAsync` |
+| `src/Modules/Quotations/Modules.Quotations.Application/IQuotationRepository.cs` | `QuotationExportCursor`, `ListForExportAsync` por keyset, `AnyForExportAsync` |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationRepository.cs` | Idem |
-| `src/Modules/Quotations/Modules.Quotations.Application/ISaleRepository.cs`, `…/Infrastructure/Persistence/SaleRepository.cs` | `AnyForExportAsync`, `ListForExportAsync`; filtros compartidos |
+| `src/Modules/Quotations/Modules.Quotations.Application/ISaleRepository.cs`, `…/Infrastructure/Persistence/SaleRepository.cs` | `SaleExportCursor`, `AnyForExportAsync`, `ListForExportAsync` por keyset; filtros compartidos |
 | `src/Modules/Quotations/Modules.Quotations.Application/ListSales.cs` | Usa `SaleListing` |
 | `src/Modules/Quotations/Modules.Quotations.Application/QuotationsDtos.cs` | `ExportJobAcceptedResponse` |
 | `src/Modules/Quotations/Modules.Quotations.Api/QuotationEndpoints.cs` | Sale el `GET /export`, entra el `POST /export` |
@@ -136,7 +141,7 @@ Las tareas intermedias de cada commit terminan con **stage** (rutas explícitas,
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportJobTests.cs` | Crear: transiciones del job |
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportTestDoubles.cs` | Crear: cola en memoria, procesadores, publisher, writer y storage de prueba |
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportJobRunnerTests.cs` | Crear: el tick, sin base |
-| `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsDbContextMappingTests.cs` | Modificar: mapeo de `export_jobs` |
+| `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsDbContextMappingTests.cs` | Modificar: mapeo de `export_jobs` e índices del keyset |
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/OpenXmlExportWorkbookWriterTests.cs` | Crear: forma de la hoja |
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportQuotationsHandlerTests.cs` | Reescribir: orden de D4, encolado |
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportQuotationsValidatorTests.cs` | Modificar: comando en vez de query |
@@ -150,23 +155,25 @@ Las tareas intermedias de cada commit terminan con **stage** (rutas explícitas,
 | `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportJobRunnerIntegrationTests.cs` | Crear: transacción de cierre, reintentos hasta `Failed` |
 | `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportJobWorkerTests.cs` | Crear: el hosted service toma un job solo |
 | `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportFileStorageTests.cs` | Crear |
-| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs` | Reescribir: `POST` → `202` → worker → correo |
-| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/SaleExportApiTests.cs` | Crear |
+| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs` | Reescribir: `POST` → `202` → worker → correo; keyset entre lotes |
+| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/SaleExportApiTests.cs` | Crear, con la prueba de keyset entre lotes |
 | `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj` | Sale `ClosedXML` (el workbook se lee con OpenXML) |
 | `tests/Modules/Notifications/Modules.Notifications.UnitTests/QuotationsExportEmailTemplateTests.cs` | Crear |
 | `tests/Modules/Notifications/Modules.Notifications.IntegrationTests/QuotationsExportNotificationTests.cs` | Crear: los dos correos salen |
 
-**No se tocan, a propósito:** `ExportCustomers.cs` y `ExportProducts.cs` (D15), `IObjectStorage` (hallazgo 4), `k8s/` (1 réplica y 1Gi siguen igual), la regla de lifecycle de R2 (hallazgo 8).
+**No se tocan, a propósito:** `ExportCustomers.cs` y `ExportProducts.cs` (D15), `IObjectStorage` (hallazgo 4), `k8s/` (1 réplica y 1Gi siguen igual), la regla de lifecycle de R2, que ya existe y cubre `exports/` (hallazgo 8).
 
 ---
 
 ### Task 0: Rama y baseline
 
-**Files:** ninguno de código. Commitea este plan.
+**Files:** ninguno de código. Commitea la revisión de este plan y de la spec.
 
 **Interfaces:**
 - Consumes: nada.
-- Produces: rama `feature/export-asincrono` al día con `develop`; `$env:TEMP\qep-export-asincrono-baseline-failed.txt` con las pruebas que ya fallan.
+- Produces: `feature/export-asincrono` comprobada al día con `origin/develop`; `$env:TEMP\qep-export-asincrono-baseline-failed.txt` con las pruebas que ya fallan.
+
+La rama ya está donde tiene que estar (ver «Estado de las ramas»): este paso lo comprueba, no la mueve.
 
 - [ ] **Step 1: Comprobar precondiciones**
 
@@ -174,23 +181,13 @@ Las tareas intermedias de cada commit terminan con **stage** (rutas explícitas,
 git branch --show-current
 git status --short
 git fetch origin
-git merge-base --is-ancestor 8b8c7a8 origin/develop; if ($?) { "retiro de Reporting: mergeado" } else { "retiro de Reporting: FALTA" }
-git merge-base --is-ancestor feature/export-asincrono origin/develop; if ($?) { "rama vieja: contenida en develop" } else { "rama vieja: tiene commits propios" }
+git merge-base --is-ancestor 8b8c7a8 HEAD; if ($?) { "retiro de Reporting: en la rama" } else { "retiro de Reporting: FALTA" }
+git rev-list --left-right --count origin/develop...HEAD
 ```
 
-Esperado: `retiro de Reporting: mergeado` y `rama vieja: contenida en develop`. Si el primero dice `FALTA`, **parar y preguntar** (ver «Orden de ramas»). Si el segundo dice que tiene commits propios, parar y preguntar: no se sabe qué hay ahí.
+Esperado: `feature/export-asincrono`; en `git status` sólo la spec y este plan modificados (la revisión que commitea el Step 3), o nada si ya se commiteó; `retiro de Reporting: en la rama` (entró a `develop` con `1730eb3`); y el `rev-list` en `0 0` —la rama está en `66073a0`, igual que `origin/develop`— o en `0 1` si la revisión ya está commiteada. Si el primer número es mayor que 0, `develop` avanzó: con la rama sin commits propios, `git merge --ff-only origin/develop`; con commits propios, **parar y preguntar**. Si dice `FALTA` o la rama es otra, **parar y preguntar**.
 
-- [ ] **Step 2: Avanzar la rama a develop**
-
-```powershell
-git switch feature/export-asincrono
-git merge --ff-only origin/develop
-git branch --show-current
-```
-
-Esperado: `feature/export-asincrono`, fast-forward sin conflictos.
-
-- [ ] **Step 3: Baseline de la suite, por nombre**
+- [ ] **Step 2: Baseline de la suite, por nombre**
 
 Con Docker corriendo:
 
@@ -212,12 +209,16 @@ Get-Content (Join-Path $env:TEMP "qep-export-asincrono-baseline-failed.txt")
 
 Esperado: la lista de las que ya fallan, posiblemente vacía. Pegarla en el handoff.
 
-- [ ] **Step 4: Commitear el plan** (Git Bash)
+- [ ] **Step 3: Commitear la revisión del plan y de la spec** (Git Bash)
+
+Sólo si `git status --short docs/` los muestra modificados; si no aparecen, la revisión ya está commiteada y este paso se saltea.
 
 ```bash
 test "$(git branch --show-current)" = "feature/export-asincrono" || { echo ABORT; exit 1; }
-git add docs/superpowers/plans/2026-09-12-export-asincrono-backend.md
-git commit -m "docs(quotations): plan de la exportación asíncrona"
+git add docs/superpowers/specs/2026-09-12-export-asincrono-design.md \
+  docs/superpowers/plans/2026-09-12-export-asincrono-backend.md
+git commit -m "docs(quotations): revisar el plan de la exportación asíncrona" \
+  -m "Cuatro intentos para usar las tres esperas, lectura por keyset en vez de offset con sus dos índices, la regla de lifecycle de exports/ que ya existe y las referencias al día con develop (66073a0)."
 ```
 
 ---
@@ -237,7 +238,7 @@ git commit -m "docs(quotations): plan de la exportación asíncrona"
 - Produces:
   - `public enum ExportJobKind { Quotations, Sales }`
   - `public enum ExportJobStatus { Pending, Processing, Completed, Failed }`
-  - `public sealed class ExportJob` con `const int MaxAttempts = 3`, `const int LastErrorMaxLength = 2_000`, `const int FileNameMaxLength = 200`, `static readonly TimeSpan LeaseDuration`, `static readonly TimeSpan Retention`, `static readonly IReadOnlyList<TimeSpan> RetryDelays`; propiedades `Id, TenantId, RequestedBy, Kind, Filters, Status, Attempts, NextAttemptAt, LockedUntil, LastError, FileName, RowCount, RequestedAt, CompletedAt`, `bool HasExceededAttempts`.
+  - `public sealed class ExportJob` con `const int MaxAttempts = 4`, `const int LastErrorMaxLength = 2_000`, `const int FileNameMaxLength = 200`, `static readonly TimeSpan LeaseDuration`, `static readonly TimeSpan Retention`, `static readonly IReadOnlyList<TimeSpan> RetryDelays`; propiedades `Id, TenantId, RequestedBy, Kind, Filters, Status, Attempts, NextAttemptAt, LockedUntil, LastError, FileName, RowCount, RequestedAt, CompletedAt`, `bool HasExceededAttempts`.
   - `static ExportJob Enqueue(Guid id, Guid tenantId, Guid requestedBy, ExportJobKind kind, string filters, DateTimeOffset requestedAt)`
   - `bool IsClaimable(DateTimeOffset now)`, `void Claim(DateTimeOffset now)`, `void Complete(string fileName, int rowCount, DateTimeOffset now)`, `bool RecordTransientFailure(string error, DateTimeOffset now)` (`true` si terminó en `Failed`), `void Fail(string error, DateTimeOffset now)`.
 
@@ -334,9 +335,9 @@ public sealed class ExportJobTests
         Assert.Throws<InvalidOperationException>(() => job.Complete("x.xlsx", 1, Now));
     }
 
-    // D11: 1 y 5 minutos entre intentos; el tercero fallido termina el job.
+    // D11: 1, 5 y 15 minutos entre intentos; el cuarto fallido termina el job.
     [Fact]
-    public void TransientFailuresBackOffAndTheThirdOneFailsTheJob()
+    public void TransientFailuresBackOffOneFiveAndFifteenMinutesAndTheFourthFailsTheJob()
     {
         var job = NewJob();
 
@@ -354,10 +355,24 @@ public sealed class ExportJobTests
 
         var third = second.AddMinutes(5);
         job.Claim(third);
-        Assert.True(job.RecordTransientFailure("IOException: r2 down", third));
+        Assert.False(job.RecordTransientFailure("IOException: r2 down", third));
+        Assert.Equal(third.AddMinutes(15), job.NextAttemptAt);
+
+        var fourth = third.AddMinutes(15);
+        job.Claim(fourth);
+        Assert.True(job.RecordTransientFailure("IOException: r2 down", fourth));
         Assert.Equal(ExportJobStatus.Failed, job.Status);
-        Assert.Equal(third, job.CompletedAt);
-        Assert.Equal(3, job.Attempts);
+        Assert.Equal(fourth, job.CompletedAt);
+        Assert.Equal(4, job.Attempts);
+    }
+
+    // Una espera por reintento: con una espera de más, la última nunca se usaría —el defecto de la
+    // primera versión, tres esperas para tres intentos—.
+    [Fact]
+    public void EveryRetryDelayIsUsedBeforeTheLastAttempt()
+    {
+        Assert.Equal(4, ExportJob.MaxAttempts);
+        Assert.Equal(ExportJob.MaxAttempts - 1, ExportJob.RetryDelays.Count);
     }
 
     [Fact]
@@ -386,7 +401,7 @@ public sealed class ExportJobTests
         Assert.Equal(ExportJob.LastErrorMaxLength, job.LastError!.Length);
     }
 
-    // Si el worker murió en el último intento, el lease vence y la toma suma un cuarto: el job
+    // Si el worker murió en el último intento, el lease vence y la toma suma un quinto: el job
     // ya no tiene intentos y el runner lo cierra sin procesarlo.
     [Fact]
     public void AClaimAfterTheLastAttemptIsDetected()
@@ -395,9 +410,10 @@ public sealed class ExportJobTests
         job.Claim(Now);
         job.Claim(Now.AddMinutes(11));
         job.Claim(Now.AddMinutes(22));
+        job.Claim(Now.AddMinutes(33));
         Assert.False(job.HasExceededAttempts);
 
-        job.Claim(Now.AddMinutes(33));
+        job.Claim(Now.AddMinutes(44));
 
         Assert.True(job.HasExceededAttempts);
     }
@@ -470,8 +486,13 @@ namespace Modules.Quotations.Domain;
 /// </summary>
 public sealed class ExportJob
 {
-    /// <summary>D11: al tercer intento fallido, <see cref="ExportJobStatus.Failed"/>.</summary>
-    public const int MaxAttempts = 3;
+    /// <summary>
+    /// D11: cuatro intentos —el primero y un reintento por cada espera de
+    /// <see cref="RetryDelays"/>—; al cuarto fallido, <see cref="ExportJobStatus.Failed"/>. El
+    /// archivo llega por correo y nadie mira la pantalla: unos 21 minutos de ventana que se
+    /// recuperan de una caída corta de R2 o de la base cuestan menos que un correo de fallo.
+    /// </summary>
+    public const int MaxAttempts = 4;
 
     public const int LastErrorMaxLength = 2_000;
 
@@ -484,9 +505,9 @@ public sealed class ExportJob
     public static readonly TimeSpan Retention = TimeSpan.FromDays(30);
 
     /// <summary>
-    /// D11: la espera después del intento fallido número n es <c>RetryDelays[n - 1]</c>. Con
-    /// <see cref="MaxAttempts"/> en 3 sólo se usan las dos primeras; la tercera queda porque la
-    /// spec la nombra y subir a cuatro intentos es cambiar sólo la constante de arriba.
+    /// D11: la espera después del intento fallido número n es <c>RetryDelays[n - 1]</c>. Tres
+    /// esperas para <see cref="MaxAttempts"/> intentos: el último fallido no espera, termina. Si
+    /// cambia una de las dos cosas, cambia la otra (ExportJobTests lo fija).
     /// </summary>
     public static readonly IReadOnlyList<TimeSpan> RetryDelays =
         [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15)];
@@ -631,7 +652,7 @@ public sealed class ExportJob
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~ExportJobTests"
 ```
 
-Esperado: `Passed! - Failed: 0, Passed: 10`. Pegar la salida.
+Esperado: `Passed! - Failed: 0, Passed: 11`. Pegar la salida.
 
 - [ ] **Step 5: Stage** (Git Bash; el commit sale en Task 5)
 
@@ -648,18 +669,18 @@ git add src/Modules/Quotations/Modules.Quotations.Domain/ExportJobKind.cs \
 ### Task 2: Mapeo EF y migración `AddExportJobs`
 
 **Files:**
-- Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationsDbContext.cs` (`DbSet` junto a `Outbox` `:27`; llamada en `OnModelCreating` `:29-41`; método nuevo antes de `ConfigureOutboxProjection` `:430`)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationsDbContext.cs` (`DbSet` junto a `Outbox` `:27`; llamada en `OnModelCreating` `:29-41`; método nuevo antes de `ConfigureOutboxProjection` `:430`; índice del keyset en `ConfigureQuotation` después de `IX_quotations_created_at` `:147` y en `ConfigureSale` después de `IX_sales_tenant_number` `:377-379`)
 - Create (generados): `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/Migrations/<timestamp>_AddExportJobs.cs`, `<timestamp>_AddExportJobs.Designer.cs`
 - Modify (generado): `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/Migrations/QuotationsDbContextModelSnapshot.cs`
 - Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsDbContextMappingTests.cs`
 
 **Interfaces:**
-- Consumes: `ExportJob` (Task 1).
-- Produces: `internal DbSet<ExportJob> QuotationsDbContext.ExportJobs`; tabla `quotations.export_jobs` con las columnas del modelo de datos de la spec; índices `IX_export_jobs_claim (status, next_attempt_at)` e `IX_export_jobs_requester (tenant_id, requested_by, status)`, los dos filtrados por `status IN ('Pending', 'Processing')`; `attempts` como token de concurrencia.
+- Consumes: `ExportJob` (Task 1); `Quotation`, `Sale` (existentes).
+- Produces: `internal DbSet<ExportJob> QuotationsDbContext.ExportJobs`; tabla `quotations.export_jobs` con las columnas del modelo de datos de la spec; índices `IX_export_jobs_claim (status, next_attempt_at)` e `IX_export_jobs_requester (tenant_id, requested_by, status)`, los dos filtrados por `status IN ('Pending', 'Processing')`; `attempts` como token de concurrencia. Además, los índices del keyset (hallazgo 11): `IX_quotations_tenant_created_at_number (tenant_id, created_at, quotation_number)` sobre `quotations.quotations` e `IX_sales_tenant_converted_at_number (tenant_id, converted_at, sale_number)` sobre `quotations.sales`.
 
-- [ ] **Step 1: Escribir la prueba que falla**
+- [ ] **Step 1: Escribir las pruebas que fallan**
 
-Al final de la clase `QuotationsDbContextMappingTests` (después de `BillsToFinalConsumerMapsToItsSnakeCaseColumn`):
+Al final de la clase `QuotationsDbContextMappingTests` (después de `BillsToFinalConsumerMapsToItsSnakeCaseColumn`, `:17`):
 
 ```csharp
     /// <summary>
@@ -697,15 +718,39 @@ Al final de la clase `QuotationsDbContextMappingTests` (después de `BillsToFina
             requester.Properties.Select(property => property.Name));
         Assert.Equal("status IN ('Pending', 'Processing')", requester.GetFilter());
     }
+
+    /// <summary>
+    /// Las exportaciones leen por keyset (spec 2026-09-12, D8): cada lote pide lo que viene
+    /// después de la última fila, en el orden del listado. Sin un índice que arranque por el
+    /// tenant y siga por la clave de orden, cada lote recorre todas las filas del tenant.
+    /// </summary>
+    [Fact]
+    public void QuotationsAndSalesHaveAnIndexForTheExportKeyset()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var quotations = model.FindEntityType(typeof(Quotation))!.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_quotations_tenant_created_at_number");
+        Assert.Equal(
+            ["TenantId", "CreatedAt", "QuotationNumber"],
+            quotations.Properties.Select(property => property.Name));
+
+        var sales = model.FindEntityType(typeof(Sale))!.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_sales_tenant_converted_at_number");
+        Assert.Equal(
+            ["TenantId", "ConvertedAt", "SaleNumber"],
+            sales.Properties.Select(property => property.Name));
+    }
 ```
 
-- [ ] **Step 2: Correr y verificar que falla**
+- [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~ExportJobMapsToItsTableWithAttemptsAsConcurrencyToken"
+dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~ExportJobMapsToItsTableWithAttemptsAsConcurrencyToken|FullyQualifiedName~QuotationsAndSalesHaveAnIndexForTheExportKeyset"
 ```
 
-Esperado: FAIL en `Assert.NotNull() Failure: Value is null` — el modelo todavía no conoce `ExportJob`. Pegar la salida.
+Esperado: las dos FAIL — la primera en `Assert.NotNull() Failure: Value is null` (el modelo todavía no conoce `ExportJob`), la segunda en `System.InvalidOperationException: Sequence contains no matching element` (no hay índice con ese nombre). Pegar la salida.
 
 - [ ] **Step 3: Implementar el mapeo**
 
@@ -772,15 +817,35 @@ Antes de `ConfigureOutboxProjection` (`:430`):
     }
 ```
 
-- [ ] **Step 4: Correr la prueba y generar la migración**
+En `ConfigureQuotation`, después de `IX_quotations_created_at` (`:147`):
+
+```csharp
+        // El keyset de la exportación (spec 2026-09-12, D8): tenant, fecha de alta y número
+        // —único por tenant, el desempate—. Postgres recorre el btree en los dos sentidos, así que
+        // sirve al ORDER BY descendente sin declararlo.
+        quotation.HasIndex(value => new { value.TenantId, value.CreatedAt, value.QuotationNumber })
+            .HasDatabaseName("IX_quotations_tenant_created_at_number");
+```
+
+En `ConfigureSale`, después de `IX_sales_tenant_number` (`:377-379`):
+
+```csharp
+        // El keyset de la exportación de ventas (spec 2026-09-12, D8): el orden exacto del listado
+        // —fecha de conversión y número como desempate, SaleRepository.SearchAsync— detrás del
+        // tenant.
+        sale.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.SaleNumber })
+            .HasDatabaseName("IX_sales_tenant_converted_at_number");
+```
+
+- [ ] **Step 4: Correr las pruebas y generar la migración**
 
 ```powershell
-dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~ExportJobMapsToItsTableWithAttemptsAsConcurrencyToken"
+dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~ExportJobMapsToItsTableWithAttemptsAsConcurrencyToken|FullyQualifiedName~QuotationsAndSalesHaveAnIndexForTheExportKeyset"
 dotnet ef migrations add AddExportJobs --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext -o Persistence/Migrations
 git diff --stat
 ```
 
-Esperado: la prueba `Passed`. La migración crea `quotations.export_jobs` con las 14 columnas (`filters jsonb`, `last_error text`, `file_name character varying(200)`, `kind`/`status character varying(20)`, `locked_until`/`completed_at` nulos, `row_count integer` nulo) y los dos índices con `filter: "status IN ('Pending', 'Processing')"`, y **nada más**: si el `Up` toca otra tabla, el snapshot estaba desfasado — parar y preguntar. Después, que la migración aplica de verdad (el arranque migra):
+Esperado: las dos pruebas `Passed`. La migración crea `quotations.export_jobs` con las 14 columnas (`filters jsonb`, `last_error text`, `file_name character varying(200)`, `kind`/`status character varying(20)`, `locked_until`/`completed_at` nulos, `row_count integer` nulo) y sus dos índices con `filter: "status IN ('Pending', 'Processing')"`; crea además `IX_quotations_tenant_created_at_number` sobre `quotations.quotations` e `IX_sales_tenant_converted_at_number` sobre `quotations.sales` (hallazgo 11), y **nada más**: si el `Up` toca otra cosa, el snapshot estaba desfasado — parar y preguntar. Después, que la migración aplica de verdad (el arranque migra):
 
 ```powershell
 dotnet build --no-restore
@@ -1038,24 +1103,32 @@ public sealed class ExportJobRunnerTests
         Assert.Equal(1, harness.UnitOfWork.Saves);
     }
 
+    // D11: esperas de 1, 5 y 15 minutos, sin correo mientras quede un intento; el cuarto fallido
+    // cierra el job y recién ahí sale el evento.
     [Fact]
-    public async Task TheThirdTransientFailureFailsTheJobAndPublishesTheFailedEvent()
+    public async Task TheFourthTransientFailureFailsTheJobAndPublishesTheFailedEvent()
     {
         var harness = new Harness();
         var job = harness.Enqueue();
         var runner = harness.Runner(StubExportJobProcessor.Throwing(
             ExportJobKind.Quotations, new IOException("r2 unavailable")));
+        var cancellationToken = TestContext.Current.CancellationToken;
 
-        await runner.RunNextAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(ExportJobRunOutcome.RetryScheduled, await runner.RunNextAsync(cancellationToken));
+        Assert.Equal(Now.AddMinutes(1), job.NextAttemptAt);
         harness.Clock.UtcNow = Now.AddMinutes(1);
-        await runner.RunNextAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(ExportJobRunOutcome.RetryScheduled, await runner.RunNextAsync(cancellationToken));
         Assert.Equal(Now.AddMinutes(6), job.NextAttemptAt);
         harness.Clock.UtcNow = Now.AddMinutes(6);
-        var outcome = await runner.RunNextAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(ExportJobRunOutcome.RetryScheduled, await runner.RunNextAsync(cancellationToken));
+        Assert.Equal(Now.AddMinutes(21), job.NextAttemptAt);
+        Assert.Empty(harness.Events.Failed);
+        harness.Clock.UtcNow = Now.AddMinutes(21);
+        var outcome = await runner.RunNextAsync(cancellationToken);
 
         Assert.Equal(ExportJobRunOutcome.Failed, outcome);
         Assert.Equal(ExportJobStatus.Failed, job.Status);
-        Assert.Equal(3, job.Attempts);
+        Assert.Equal(4, job.Attempts);
         Assert.Same(job, Assert.Single(harness.Events.Failed));
     }
 
@@ -1089,7 +1162,7 @@ public sealed class ExportJobRunnerTests
         Assert.StartsWith("NoProcessor:", job.LastError, StringComparison.Ordinal);
     }
 
-    // El worker murió en el tercer intento y el lease venció: la toma suma un cuarto y el job se
+    // El worker murió en el cuarto intento y el lease venció: la toma suma un quinto y el job se
     // cierra sin procesar, o un job colgado consumiría intentos para siempre.
     [Fact]
     public async Task AJobReclaimedPastItsLastAttemptFailsWithoutProcessing()
@@ -1099,7 +1172,8 @@ public sealed class ExportJobRunnerTests
         job.Claim(Now);
         job.Claim(Now.AddMinutes(11));
         job.Claim(Now.AddMinutes(22));
-        harness.Clock.UtcNow = Now.AddMinutes(33);
+        job.Claim(Now.AddMinutes(33));
+        harness.Clock.UtcNow = Now.AddMinutes(44);
         var processor = StubExportJobProcessor.Succeeding(ExportJobKind.Quotations);
 
         var outcome = await harness.Runner(processor).RunNextAsync(TestContext.Current.CancellationToken);
@@ -1443,7 +1517,7 @@ public sealed class ExportJobRunner(
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~ExportJobRunnerTests|FullyQualifiedName~ExportJobTests"
 ```
 
-Esperado: `Passed! - Failed: 0, Passed: 21`. Pegar la salida.
+Esperado: `Passed! - Failed: 0, Passed: 22`. Pegar la salida.
 
 - [ ] **Step 5: Stage** (Git Bash)
 
@@ -1466,7 +1540,7 @@ git add src/Modules/Quotations/Modules.Quotations.Application/ExportJobLimits.cs
 - Create: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/ExportJobQueue.cs`
 - Create: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/ExportJobEventPublisher.cs`
 - Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:38` (después de `IQuotationAuditPublisher`)
-- Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs:439` (después de `IQuotationFileLookup`)
+- Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs:436` (después de `IQuotationFileLookup`)
 - Modify: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs` (helpers de export, antes de `private sealed record RegisterTenantResponseDto` `:491`)
 - Create: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportTestProcessors.cs`
 - Test: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportJobQueueTests.cs`
@@ -1881,16 +1955,20 @@ public sealed class ExportJobRunnerIntegrationTests
             new FailingExportProcessor(ExportJobKind.Quotations, new IOException("r2 unavailable")));
         var jobId = await EnqueueExportJobAsync(factory, TenantId, RequesterId);
 
-        Assert.Equal(ExportJobRunOutcome.RetryScheduled, await RunExportJobAsync(factory));
-        Assert.Empty(await OutboxMessagesAsync(factory, "quotations.export-failed.v1"));
-        await MakeExportJobDueAsync(factory, jobId);
-        Assert.Equal(ExportJobRunOutcome.RetryScheduled, await RunExportJobAsync(factory));
-        await MakeExportJobDueAsync(factory, jobId);
+        // Tres reintentos —las esperas de 1, 5 y 15 minutos, adelantadas en la base— sin correo,
+        // y el cuarto intento cierra el job.
+        for (var attempt = 1; attempt < ExportJob.MaxAttempts; attempt++)
+        {
+            Assert.Equal(ExportJobRunOutcome.RetryScheduled, await RunExportJobAsync(factory));
+            Assert.Empty(await OutboxMessagesAsync(factory, "quotations.export-failed.v1"));
+            await MakeExportJobDueAsync(factory, jobId);
+        }
+
         Assert.Equal(ExportJobRunOutcome.Failed, await RunExportJobAsync(factory));
 
         var job = await FindExportJobAsync(factory, jobId);
         Assert.Equal(ExportJobStatus.Failed, job.Status);
-        Assert.Equal(3, job.Attempts);
+        Assert.Equal(4, job.Attempts);
         Assert.Equal("IOException: r2 unavailable", job.LastError);
         var failed = Assert.Single(await OutboxMessagesAsync(factory, "quotations.export-failed.v1"));
         using var payload = JsonDocument.Parse(failed.PayloadJson);
@@ -2054,7 +2132,7 @@ En `QuotationsInfrastructureExtensions.cs`, después de `services.AddScoped<IQuo
         services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
 ```
 
-En `QepServiceCollectionExtensions.cs`, después de `services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();` (`:439`):
+En `QepServiceCollectionExtensions.cs`, después de `services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();` (`:436`):
 
 ```csharp
         // El tick del worker de exportaciones. Scoped: ExportJobWorker abre un scope por job para
@@ -2347,7 +2425,7 @@ git add src/Modules/Quotations/Modules.Quotations.Infrastructure/Exports/ExportJ
   tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportJobWorkerTests.cs
 git status --short
 git commit -m "feat(quotations): cola de exportaciones con worker y reintentos" \
-  -m "La tabla quotations.export_jobs es la cola: la toma es un UPDATE con FOR UPDATE SKIP LOCKED y lease de 10 minutos, así que dos workers nunca se llevan el mismo job. ExportJobRunner despacha por kind, cierra en una transacción (estado, quotations.export-ready.v1 y auditoría) y reintenta a 1 y 5 minutos; al tercer intento, Failed y quotations.export-failed.v1. ExportJobWorker lo corre cada 5 s, de a un job, y purga una vez al día lo terminado hace más de 30 días."
+  -m "La tabla quotations.export_jobs es la cola: la toma es un UPDATE con FOR UPDATE SKIP LOCKED y lease de 10 minutos, así que dos workers nunca se llevan el mismo job. ExportJobRunner despacha por kind, cierra en una transacción (estado, quotations.export-ready.v1 y auditoría) y reintenta a 1, 5 y 15 minutos; al cuarto intento fallido, Failed y quotations.export-failed.v1. ExportJobWorker lo corre cada 5 s, de a un job, y purga una vez al día lo terminado hace más de 30 días. La migración suma los índices del keyset que leen los exports de cotizaciones y ventas."
 ```
 
 Antes del `commit`, `git status --short` tiene que mostrar staged (`A `/`M `) sólo los archivos de Tasks 1–5 y nada sin stagear de esas rutas. Si aparece otro archivo, parar.
@@ -3627,11 +3705,11 @@ git add Directory.Packages.props \
 **Files:**
 - Create: `src/Modules/Quotations/Modules.Quotations.Application/IExportFileStorage.cs`
 - Create: `src/Bootstrapper/ExportFileStorage.cs`
-- Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs:417` (después de `ICustomerExportStorage`)
+- Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs:414` (después de `ICustomerExportStorage`)
 - Test: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportFileStorageTests.cs`
 
 **Interfaces:**
-- Consumes: `IObjectStorage.UploadAsync(string key, byte[] content, string contentType, CancellationToken)`, `IObjectStorage.CreatePresignedDownloadUrlAsync(string key, TimeSpan expiry, string? downloadFileName, CancellationToken)`, `StorageOptions.ExportUrlHours`, `IClock` (existentes).
+- Consumes: `IObjectStorage.UploadAsync(string key, byte[] content, string contentType, CancellationToken)`, `IObjectStorage.CreatePresignedDownloadUrlAsync(string key, TimeSpan expiry, string? downloadFileName, CancellationToken)`, `StorageOptions.ExportUrlHours` (`StorageOptions.cs:15`; la misma opción que lee `CustomerExportStorage.cs:49`), `IClock` (existentes).
 - Produces:
   - `public interface IExportFileStorage { Task<ExportFileUpload> UploadAsync(Guid tenantId, Guid jobId, string fileName, string filePath, CancellationToken cancellationToken); }`
   - `public sealed record ExportFileUpload(string DownloadUrl, DateTimeOffset ExpiresAt)`
@@ -3642,6 +3720,8 @@ git add Directory.Packages.props \
 `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportFileStorageTests.cs`:
 
 ```csharp
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -3649,16 +3729,22 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
-/// D9: el archivo va bajo `exports/` con el id del job en la clave. Un reintento pisa el mismo
-/// objeto en vez de dejar basura, y el enlace firmado dura lo mismo que el del export de clientes.
+/// D9: el archivo va bajo `exports/` —el prefijo de la regla de lifecycle que ya existe en el
+/// bucket (D13)— con el id del job en la clave. Un reintento pisa el mismo objeto en vez de dejar
+/// basura, y el enlace firmado vence a las `Storage:ExportUrlHours` horas, la misma opción que el
+/// export de clientes.
 /// </summary>
 public sealed class ExportFileStorageTests
 {
     [Fact]
-    public async Task UploadsUnderAKeyThatCarriesTheJobIdAndSignsTheLink()
+    public async Task UploadsUnderTheExportsPrefixWithTheJobIdAndSignsForExportUrlHours()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var baseFactory = new QepApiFactory(database.GetConnectionString());
+        // 48 y no el default de 24: si el adaptador fijara la vigencia a mano en vez de leer
+        // Storage:ExportUrlHours, esta prueba lo vería.
+        using var factory = baseFactory.WithWebHostBuilder(builder =>
+            builder.UseSetting("Storage:ExportUrlHours", "48"));
         var tenantId = Guid.CreateVersion7();
         var jobId = Guid.CreateVersion7();
         byte[] content = [0x50, 0x4B, 0x03, 0x04];
@@ -3668,14 +3754,16 @@ public sealed class ExportFileStorageTests
         {
             var upload = await UploadAsync(factory, tenantId, jobId, path);
 
+            // Bajo `exports/`: fuera de ese prefijo la regla `expire-exports` no lo ve y el objeto
+            // queda para siempre (README § Reportes exportados).
+            Assert.StartsWith("https://r2.test/exports/", upload.DownloadUrl, StringComparison.Ordinal);
             var key = $"exports/tenants/{tenantId:N}/jobs/{jobId:N}.xlsx";
-            Assert.Equal(content, await factory.ObjectStorage.DownloadAsync(key, TestContext.Current.CancellationToken));
             Assert.Equal($"https://r2.test/{key}", upload.DownloadUrl);
-            // Storage:ExportUrlHours es 24 por defecto (appsettings.json).
+            Assert.Equal(content, await baseFactory.ObjectStorage.DownloadAsync(key, TestContext.Current.CancellationToken));
             Assert.InRange(
                 upload.ExpiresAt,
-                DateTimeOffset.UtcNow.AddHours(23),
-                DateTimeOffset.UtcNow.AddHours(25));
+                DateTimeOffset.UtcNow.AddHours(47),
+                DateTimeOffset.UtcNow.AddHours(49));
         }
         finally
         {
@@ -3713,7 +3801,7 @@ public sealed class ExportFileStorageTests
     }
 
     private static async Task<ExportFileUpload> UploadAsync(
-        QepApiFactory factory, Guid tenantId, Guid jobId, string path)
+        WebApplicationFactory<Program> factory, Guid tenantId, Guid jobId, string path)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IExportFileStorage>().UploadAsync(
@@ -3783,8 +3871,10 @@ namespace Bootstrapper;
 /// job y no un identificador aleatorio, así que un reintento pisa el mismo objeto (D9). Sigue sin
 /// ser adivinable desde afuera: el id es un UUID v7 que sólo conocen la tabla y el correo.
 ///
-/// El objeto va bajo `exports/`, el prefijo que limpia la regla de lifecycle del bucket
-/// (README § Reportes exportados).
+/// El objeto va bajo `exports/` a propósito: es el prefijo de la regla de lifecycle que ya existe
+/// en el bucket privado (`expire-exports`, README § Reportes exportados), y una clave fuera de él
+/// no la borraría nadie. La vigencia es `Storage:ExportUrlHours`, la misma opción que lee
+/// CustomerExportStorage: no hay una vigencia propia de estos exports.
 /// </summary>
 internal sealed class ExportFileStorage(
     IObjectStorage objectStorage,
@@ -3823,7 +3913,7 @@ internal sealed class ExportFileStorage(
 }
 ```
 
-En `QepServiceCollectionExtensions.cs`, después de `services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();` (`:417`):
+En `QepServiceCollectionExtensions.cs`, después de `services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();` (`:414`):
 
 ```csharp
         // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
@@ -3859,7 +3949,7 @@ git add src/Modules/Quotations/Modules.Quotations.Application/IExportFileStorage
 - Modify: `src/Modules/Quotations/Modules.Quotations.Application/IQuotationRepository.cs` (después de `ListForExportAsync` `:35-49`)
 - Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationRepository.cs` (después de `ListForExportAsync` `:65-80`)
 - Modify: `src/Modules/Quotations/Modules.Quotations.Application/QuotationsDtos.cs` (al final)
-- Modify: `src/Modules/Quotations/Modules.Quotations.Api/QuotationEndpoints.cs` (`:11-14` constante, `:28-37` mapeo, `:173-192` handler)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Api/QuotationEndpoints.cs` (`:11-14` constante, `:28-37` mapeo, `:184-203` handler)
 - Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs:298-300`
 - Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:44-45`
 - Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Modules.Quotations.Infrastructure.csproj` (sale `ClosedXML`)
@@ -4679,7 +4769,7 @@ public sealed record ExportJobAcceptedResponse(Guid JobId, DateTimeOffset Reques
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 ```
 
-- Reemplazar `ExportQuotationsAsync` (`:173-192`) por:
+- Reemplazar `ExportQuotationsAsync` (`:184-203`) por:
 
 ```csharp
     private static async Task<IResult> ExportQuotationsAsync(
@@ -4781,7 +4871,7 @@ git diff --cached --name-only -- '*packages.lock.json'
 **Files:**
 - Create: `src/Modules/Quotations/Modules.Quotations.Application/QuotationsExportProcessor.cs`
 - Modify: `src/Modules/Quotations/Modules.Quotations.Application/ExportJobSupport.cs` (agrega `ExportFileNames`)
-- Modify: `src/Modules/Quotations/Modules.Quotations.Application/IQuotationRepository.cs:35-49` (`ListForExportAsync` por lotes)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/IQuotationRepository.cs:35-49` (`ListForExportAsync` por keyset; `QuotationExportCursor` al final del archivo)
 - Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationRepository.cs:65-80`
 - Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs` (junto a `ExportJobRunner`, Task 4)
 - Modify: `README.md:840-844`
@@ -4794,7 +4884,9 @@ git diff --cached --name-only -- '*packages.lock.json'
 **Interfaces:**
 - Consumes: `ExportJobFilters.Read<QuotationsExportFilters>`, `QuotationsExportFilters` (Task 10); `IExportWorkbookWriter`, `ExportColumn`, `ExportCell` (Task 8); `IExportFileStorage` (Task 9); `ExportJobLimits.BatchSize`, `IExportJobProcessor`, `ExportJobResult`, `ExportJobDefinitiveException` (Task 3); `QuotationListing.ParseStatus/ResolveClientIdsByNitAsync/ToListItemsAsync` (existentes); harness `RunExportJobAsync`, `FindExportJobAsync`, `OutboxMessagesAsync` (Task 4).
 - Produces:
-  - `Task<IReadOnlyList<Quotation>> IQuotationRepository.ListForExportAsync(Guid tenantId, Guid? clientId, IReadOnlyCollection<Guid>? clientIds, MemberId? advisorId, QuotationStatus? status, DateOnly? createdFrom, DateOnly? createdTo, string? quotationNumber, int offset, int limit, CancellationToken cancellationToken)` — orden `CreatedAt` desc, `Id` desc.
+  - `public sealed record QuotationExportCursor(DateTimeOffset CreatedAt, string QuotationNumber)` — la clave de la última fila leída.
+  - `Task<IReadOnlyList<Quotation>> IQuotationRepository.ListForExportAsync(Guid tenantId, Guid? clientId, IReadOnlyCollection<Guid>? clientIds, MemberId? advisorId, QuotationStatus? status, DateOnly? createdFrom, DateOnly? createdTo, string? quotationNumber, QuotationExportCursor? after, int limit, CancellationToken cancellationToken)` — keyset sobre `(CreatedAt DESC, QuotationNumber DESC)`; `after` en `null` es el primer lote (hallazgo 11).
+  - Doble: `StubQuotationListRepository.ExportCursors` (`List<QuotationExportCursor?>`, la clave con que se pidió cada lote; la reusa Task 13 como `StubSaleListRepository.ExportCursors`).
   - `public static class ExportFileNames { static string For(string prefix, DateTimeOffset generatedAt); }` → `cotizaciones-2026-09-12-1530.xlsx`.
   - `public sealed class QuotationsExportProcessor : IExportJobProcessor` con `const string SheetName = "Cotizaciones"`, `const string FilePrefix = "cotizaciones"`, `static readonly IReadOnlyList<ExportColumn> Columns`.
   - Dobles: `RecordingExportWorkbookWriter`, `RecordingExportFileStorage` (los reusa Task 13).
@@ -4802,19 +4894,50 @@ git diff --cached --name-only -- '*packages.lock.json'
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
-En `QuotationsTestDoubles.cs`, cambiar la firma de los dos `ListForExportAsync` agregando `int offset, int limit` antes del `CancellationToken`:
+En `QuotationsTestDoubles.cs`, cambiar la firma de los dos `ListForExportAsync` agregando `QuotationExportCursor? after, int limit` antes del `CancellationToken`:
 
-- En `StubQuotationRepository` (`:166-176`): el cuerpo pasa a `Task.FromResult<IReadOnlyList<Quotation>>(offset == 0 ? [quotation] : [])`.
-- En `StubQuotationListRepository` (`:336-354`): la última línea antes del `return` pasa a paginar lo que devuelve:
+- En `StubQuotationRepository` (`:166-176`): el cuerpo pasa a `Task.FromResult<IReadOnlyList<Quotation>>(after is null ? [quotation] : [])`.
+- En `StubQuotationListRepository` (`:325-354`): agregar la propiedad junto a `ExportCalls` y reemplazar el cuerpo de `ListForExportAsync` por el mismo keyset que la consulta real, en memoria:
 
 ```csharp
+    /// <summary>La clave con que se pidió cada lote, en orden: el primero sin clave y cada uno de
+    /// los siguientes con la de la última fila del anterior (keyset, D8).</summary>
+    public List<QuotationExportCursor?> ExportCursors { get; } = [];
+
+    // Honra el contrato de `clientIds` (vacio = ninguna fila) porque es lo que hace que un NIT
+    // sin cliente termine en un Excel vacio, y el orden y la condición del keyset porque es lo que
+    // hace que el procesador corte. El resto de los filtros son de la consulta SQL y los cubren
+    // las pruebas de integracion.
+    public Task<IReadOnlyList<Quotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        QuotationExportCursor? after,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        ExportCalls++;
+        ExportCursors.Add(after);
+        LastExportSearch = new RecordedExportSearch(
+            clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
         IReadOnlyList<Quotation> rows = (clientIds is null
                 ? quotations
                 : quotations.Where(quotation => clientIds.Contains(quotation.ClientId)))
-            .Skip(offset)
+            .Where(quotation => after is null
+                || quotation.CreatedAt < after.CreatedAt
+                || (quotation.CreatedAt == after.CreatedAt
+                    && string.CompareOrdinal(quotation.QuotationNumber, after.QuotationNumber) < 0))
+            .OrderByDescending(quotation => quotation.CreatedAt)
+            .ThenByDescending(quotation => quotation.QuotationNumber, StringComparer.Ordinal)
             .Take(limit)
             .ToArray();
         return Task.FromResult(rows);
+    }
 ```
 
 Al final de `ExportTestDoubles.cs`:
@@ -4939,6 +5062,23 @@ public sealed class QuotationsExportProcessorTests
         Assert.Equal(2, repository.ExportCalls);
         Assert.Equal(ExportJobLimits.BatchSize + 1, result.RowCount);
         Assert.Equal(ExportJobLimits.BatchSize + 1, writer.Rows.Count);
+    }
+
+    // Keyset (D8): cada lote pide lo que viene después de la última fila del anterior, nunca un
+    // offset. Todas del mismo instante: el número desempata, de mayor a menor.
+    [Fact]
+    public async Task EachBatchStartsAfterTheLastRowOfThePreviousOne()
+    {
+        var quotations = Enumerable.Range(1, ExportJobLimits.BatchSize + 1)
+            .Select(number => NewQuotation($"QUO-2026-{number:0000}"))
+            .ToArray();
+        var repository = new StubQuotationListRepository(quotations);
+
+        await NewProcessor(repository).ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new QuotationExportCursor?[] { null, new QuotationExportCursor(Now, "QUO-2026-0002") },
+            repository.ExportCursors);
     }
 
     [Fact]
@@ -5220,6 +5360,78 @@ En `QuotationExportApiTests.cs`, agregar `using System.Text.Json;` y `using Npgs
 
         return null;
     }
+
+    // Keyset y no offset (D8, hallazgo 11). Se lee de a una fila para tener un borde por
+    // cotización, y entre lotes pasan los dos cambios que rompen el offset: una cotización nueva
+    // (con offset, el lote siguiente repetiría la del borde) y una ya leída que sale del filtro
+    // (con offset, el lote siguiente saltearía una). Lo esperado son las que existían al empezar,
+    // en el orden del export, una vez cada una.
+    [Fact]
+    public async Task RowsCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        for (var created = 0; created < 3; created++)
+        {
+            await CreateQuotationAsync(client, tenantId, customerId);
+        }
+
+        var expected = (await ReadDraftBatchAsync(factory, tenantId, after: null, limit: 100))
+            .Select(quotation => quotation.Id)
+            .ToArray();
+        Assert.Equal(3, expected.Length);
+
+        var first = await ReadDraftBatchAsync(factory, tenantId, after: null, limit: 1);
+        await CreateQuotationAsync(client, tenantId, customerId);
+        var second = await ReadDraftBatchAsync(factory, tenantId, CursorOf(first), limit: 1);
+        await SetQuotationStatusAsync(factory, second.Single().Id, QuotationStatus.Voided);
+        var third = await ReadDraftBatchAsync(factory, tenantId, CursorOf(second), limit: 1);
+        var fourth = await ReadDraftBatchAsync(factory, tenantId, CursorOf(third), limit: 1);
+
+        Assert.Equal(expected, first.Concat(second).Concat(third).Select(quotation => quotation.Id));
+        Assert.Empty(fourth);
+    }
+
+    // El repositorio real, contra Postgres: lo que se prueba es la consulta del keyset, no el
+    // procesador. `Draft` es el filtro que la cotización anulada abandona.
+    private static async Task<IReadOnlyList<Quotation>> ReadDraftBatchAsync(
+        QepApiFactory factory, Guid tenantId, QuotationExportCursor? after, int limit)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IQuotationRepository>().ListForExportAsync(
+            tenantId,
+            clientId: null,
+            clientIds: null,
+            advisorId: null,
+            QuotationStatus.Draft,
+            today.AddDays(-7),
+            today.AddDays(1),
+            quotationNumber: null,
+            after,
+            limit,
+            TestContext.Current.CancellationToken);
+    }
+
+    private static QuotationExportCursor CursorOf(IReadOnlyList<Quotation> batch) =>
+        new(batch[^1].CreatedAt, batch[^1].QuotationNumber);
+
+    // Directo en la base, como BackdateAsync: lo que se prueba es la lectura, no la anulación.
+    private static async Task SetQuotationStatusAsync(
+        QepApiFactory factory, QuotationId quotationId, QuotationStatus status)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var updated = await dbContext.Quotations
+            .Where(quotation => quotation.Id == quotationId)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(quotation => quotation.Status, status),
+                TestContext.Current.CancellationToken);
+        Assert.Equal(1, updated);
+    }
 ```
 
 - [ ] **Step 2: Correr y verificar que fallan**
@@ -5228,7 +5440,7 @@ En `QuotationExportApiTests.cs`, agregar `using System.Text.Json;` y `using Npgs
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~QuotationsExportProcessorTests"
 ```
 
-Esperado: no compila — `error CS0246: The type or namespace name 'QuotationsExportProcessor' could not be found`, y `error CS0535: 'StubQuotationRepository' does not implement interface member 'IQuotationRepository.ListForExportAsync(…, CancellationToken)'` (la interfaz todavía tiene la firma sin lote). Pegar la salida.
+Esperado: no compila — `error CS0246: The type or namespace name 'QuotationsExportProcessor' could not be found` (y `QuotationExportCursor`), y `error CS0535: 'StubQuotationRepository' does not implement interface member 'IQuotationRepository.ListForExportAsync(…, CancellationToken)'` (la interfaz todavía tiene la firma sin keyset). Pegar la salida. La prueba de keyset de integración compila recién con el Step 3 y corre en el Step 4.
 
 - [ ] **Step 3: Implementar**
 
@@ -5239,7 +5451,12 @@ Esperado: no compila — `error CS0246: The type or namespace name 'QuotationsEx
     /// lo que lee QuotationsExportProcessor para el Excel. Mismos filtros y misma semántica que
     /// <see cref="SearchAsync"/> —<c>clientIds</c> incluido— porque el archivo tiene que ser lo que
     /// la tabla muestra. Por lotes y no entero: la memoria del worker queda acotada al lote (D8).
-    /// El volumen total lo acota el rango obligatorio de a lo sumo un año.</summary>
+    /// El volumen total lo acota el rango obligatorio de a lo sumo un año.
+    ///
+    /// Keyset y no offset: <paramref name="after"/> es la clave de la última fila del lote
+    /// anterior (<c>null</c> en el primero), y el lote es lo que viene después en el orden
+    /// <c>(CreatedAt DESC, QuotationNumber DESC)</c>. Una cotización creada o que sale del filtro
+    /// durante el export no corre las filas.</summary>
     Task<IReadOnlyList<Quotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -5249,17 +5466,30 @@ Esperado: no compila — `error CS0246: The type or namespace name 'QuotationsEx
         DateOnly? createdFrom,
         DateOnly? createdTo,
         string? quotationNumber,
-        int offset,
+        QuotationExportCursor? after,
         int limit,
         CancellationToken cancellationToken);
 ```
 
-`QuotationRepository.cs`, reemplazar `ListForExportAsync` (`:65-80`):
+y al final de `IQuotationRepository.cs`, fuera de la interfaz:
 
 ```csharp
-    // Un lote en el orden de la tabla, con el id como desempate: dos cotizaciones del mismo
-    // instante tienen que caer siempre en el mismo lote, o una fila se repite o se saltea entre
-    // lotes.
+/// <summary>
+/// Dónde quedó el export (spec 2026-09-12, D8): la fecha de alta y el número de la última fila
+/// leída. El número y no el id porque <see cref="QuotationId"/> no se compara, y el número es único
+/// por tenant (<c>IX_quotations_tenant_number</c>), así que la clave nunca empata.
+/// </summary>
+public sealed record QuotationExportCursor(DateTimeOffset CreatedAt, string QuotationNumber);
+```
+
+`QuotationRepository.cs`, reemplazar `ListForExportAsync` y su comentario (`:65-80`):
+
+```csharp
+    // Keyset sobre (CreatedAt, QuotationNumber), los dos descendentes: el orden de la tabla con el
+    // número —único por tenant— como desempate. El lote siguiente es "lo que viene después de la
+    // última fila leída" y no un offset, así que una cotización creada o que sale del filtro
+    // durante el export no repite ni saltea filas (spec 2026-09-12, D8). EF no compara tuplas: la
+    // condición va en su forma OR. La sirve IX_quotations_tenant_created_at_number.
     public async Task<IReadOnlyList<Quotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -5269,17 +5499,34 @@ Esperado: no compila — `error CS0246: The type or namespace name 'QuotationsEx
         DateOnly? createdFrom,
         DateOnly? createdTo,
         string? quotationNumber,
-        int offset,
+        QuotationExportCursor? after,
         int limit,
-        CancellationToken cancellationToken) =>
-        await FilteredQuery(
-                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber)
+        CancellationToken cancellationToken)
+    {
+        var query = FilteredQuery(
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+
+        if (after is not null)
+        {
+            var createdAt = after.CreatedAt;
+            var number = after.QuotationNumber;
+            // `string.Compare` se traduce a `<` sobre la columna, con su collation: la misma que
+            // usa el ORDER BY de abajo, así que corte y orden no se contradicen.
+            query = query.Where(quotation =>
+                quotation.CreatedAt < createdAt
+                || (quotation.CreatedAt == createdAt
+                    && string.Compare(quotation.QuotationNumber, number) < 0));
+        }
+
+        return await query
             .OrderByDescending(quotation => quotation.CreatedAt)
-            .ThenByDescending(quotation => quotation.Id)
-            .Skip(offset)
+            .ThenByDescending(quotation => quotation.QuotationNumber)
             .Take(limit)
             .ToListAsync(cancellationToken);
+    }
 ```
+
+> CA1310: `Directory.Build.props:7-8` tiene `TreatWarningsAsErrors` y `AnalysisLevel 10.0-recommended`. Si el build marca `CA1310` sobre ese `string.Compare`, envolver sólo la condición en `#pragma warning disable CA1310` / `#pragma warning restore CA1310` con el motivo en una línea: la expresión la traduce EF a SQL y compara con la collation de la columna; no corre ninguna cultura de .NET, y un `StringComparison` la volvería intraducible. No hay precedente de supresión escrita a mano en `src/` (sólo en migraciones generadas), así que mencionarlo en el handoff. Lo mismo vale para `SaleRepository` en Task 12.
 
 Al final de `ExportJobSupport.cs` (y `using System.Globalization;` arriba):
 
@@ -5303,9 +5550,9 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Arma el Excel del listado de cotizaciones en el worker (D7, D8). Lee por lotes de mil con el
-/// mismo filtro que la tabla —<c>FilteredQuery</c> y <see cref="QuotationListing"/>—, escribe cada
-/// lote en streaming y sube el archivo con el id del job.
+/// Arma el Excel del listado de cotizaciones en el worker (D7, D8). Lee por lotes de mil con keyset
+/// y el mismo filtro que la tabla —<c>FilteredQuery</c> y <see cref="QuotationListing"/>—, escribe
+/// cada lote en streaming y sube el archivo con el id del job.
 /// </summary>
 public sealed class QuotationsExportProcessor(
     IQuotationRepository repository,
@@ -5349,8 +5596,11 @@ public sealed class QuotationsExportProcessor(
 
         using var workbook = writer.Create(SheetName, Columns);
         var rowCount = 0;
+        QuotationExportCursor? after = null;
         while (true)
         {
+            // Keyset (D8): el lote siguiente arranca después de la última fila leída, no en un
+            // offset que una cotización nueva o anulada durante el export correría.
             var batch = await repository.ListForExportAsync(
                 job.TenantId,
                 filters.ClientId,
@@ -5360,7 +5610,7 @@ public sealed class QuotationsExportProcessor(
                 filters.CreatedFrom,
                 filters.CreatedTo,
                 filters.QuotationNumber,
-                rowCount,
+                after,
                 ExportJobLimits.BatchSize,
                 cancellationToken);
 
@@ -5373,6 +5623,8 @@ public sealed class QuotationsExportProcessor(
                 {
                     workbook.AppendRow(ToCells(row));
                 }
+
+                after = new QuotationExportCursor(batch[^1].CreatedAt, batch[^1].QuotationNumber);
             }
 
             rowCount += batch.Count;
@@ -5454,7 +5706,7 @@ dotnet restore --locked-mode
 dotnet format --verify-no-changes
 ```
 
-Esperado: `Passed: 8` en el procesador, `Passed: 9` en `QuotationExportApiTests`, el `--locked-mode` pasa y `dotnet format` sin cambios. Después la suite completa contra el baseline, igual que en Task 5 Step 4 (con `$after = Join-Path $env:TEMP "qep-export-asincrono-commit3"`): el `Compare-Object` tiene que salir vacío. Pegar las salidas.
+Esperado: `Passed: 9` en el procesador, `Passed: 10` en `QuotationExportApiTests` (la de keyset incluida: prueba que `string.Compare` se traduce), el `--locked-mode` pasa y `dotnet format` sin cambios. Después la suite completa contra el baseline, igual que en Task 5 Step 4 (con `$after = Join-Path $env:TEMP "qep-export-asincrono-commit3"`): el `Compare-Object` tiene que salir vacío. Pegar las salidas.
 
 - [ ] **Step 5: Commit** (Git Bash)
 
@@ -5473,7 +5725,7 @@ git add src/Modules/Quotations/Modules.Quotations.Application/QuotationsExportPr
   tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs
 git status --short
 git commit -m "feat(quotations): exportar cotizaciones por correo" \
-  -m "POST /quotations/export valida en el orden de la spec (permiso, rango de hasta un año, que haya filas, tres pendientes por persona), encola y responde 202 con jobId y requestedAt. QuotationsExportProcessor lee por lotes de mil con el mismo filtro del listado, escribe el xlsx en streaming con OpenXmlWriter y lo sube con el id del job en la clave." \
+  -m "POST /quotations/export valida en el orden de la spec (permiso, rango de hasta un año, que haya filas, tres pendientes por persona), encola y responde 202 con jobId y requestedAt. QuotationsExportProcessor lee por lotes de mil con keyset —nunca offset— y el mismo filtro del listado, escribe el xlsx en streaming con OpenXmlWriter y lo sube bajo exports/ con el id del job en la clave." \
   -m "Sale el GET síncrono de 572200c, que armaba el Excel dentro del request, junto con ClosedXmlQuotationExportBuilder y la referencia a ClosedXML de Quotations; DocumentFormat.OpenXml pasa a directa en 3.1.1. Lock files regenerados sin mover versiones."
 ```
 
@@ -5488,12 +5740,12 @@ git commit -m "feat(quotations): exportar cotizaciones por correo" \
 **Files:**
 - Create: `src/Modules/Quotations/Modules.Quotations.Application/SaleListing.cs`
 - Modify: `src/Modules/Quotations/Modules.Quotations.Application/ListSales.cs:82-94,110-131,136-165` (usa `SaleListing`)
-- Modify: `src/Modules/Quotations/Modules.Quotations.Application/ISaleRepository.cs` (después de `SearchAsync` `:57-78`)
-- Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/SaleRepository.cs:118-214`
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/ISaleRepository.cs` (`SaleExportCursor` debajo de `SaleWithQuotation` `:10`; dos métodos después de `SearchAsync` `:34-55`)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/SaleRepository.cs:62-158` (`SearchAsync`; los filtros a extraer son `:84-138`)
 - Create: `src/Modules/Quotations/Modules.Quotations.Application/ExportSales.cs`
-- Modify: `src/Modules/Quotations/Modules.Quotations.Api/SaleEndpoints.cs` (mapeo después de `GET /summary` `:29-36`; handler después de `ListSalesAsync` `:100-126`)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Api/SaleEndpoints.cs` (mapeo después de `GET /{saleId:guid}` `:31-35`; handler después de `ListSalesAsync` `:70-96`). `GET /summary` ya no existe (`b840526`).
 - Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs:340-342` (después de `ListSalesHandler`)
-- Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsTestDoubles.cs` (`StubSaleListRepository` `:484-549`)
+- Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsTestDoubles.cs` (`StubSaleListRepository` `:482-524`)
 - Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportSalesValidatorTests.cs`
 - Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportSalesHandlerTests.cs`
 - Test: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/SaleExportApiTests.cs`
@@ -5503,11 +5755,12 @@ git commit -m "feat(quotations): exportar cotizaciones por correo" \
 - Produces:
   - `internal static class SaleListing` con `SaleStatus? ParseStatus(string?)`, `SalePaymentStatus? ParsePaymentStatus(string?)`, `Task<IReadOnlyCollection<Guid>?> ResolveClientIdsByCucAsync(IQuotationCustomerLookup, Guid tenantId, string? clientCuc, CancellationToken)`, `Task<IReadOnlyList<SaleListItemDto>> ToListItemsAsync(IQuotationCustomerLookup, IQuotationAdvisorLookup, Guid tenantId, IReadOnlyList<SaleWithQuotation> rows, CancellationToken)` — mismos códigos `sale.sale.status_invalid` / `sale.sale.payment_status_invalid`.
   - `Task<bool> ISaleRepository.AnyForExportAsync(Guid tenantId, Guid? clientId, IReadOnlyCollection<Guid>? clientIds, MemberId? advisorId, SaleStatus? status, SalePaymentStatus? paymentStatus, DateOnly? convertedFrom, DateOnly? convertedTo, string? saleNumber, CancellationToken cancellationToken)`
-  - `Task<IReadOnlyList<SaleWithQuotation>> ISaleRepository.ListForExportAsync(<los mismos filtros>, int offset, int limit, CancellationToken cancellationToken)` — orden `ConvertedAt` desc, `SaleNumber` desc, igual que el listado.
+  - `public sealed record SaleExportCursor(DateTimeOffset ConvertedAt, string SaleNumber)` — la clave de la última venta leída.
+  - `Task<IReadOnlyList<SaleWithQuotation>> ISaleRepository.ListForExportAsync(<los mismos filtros>, SaleExportCursor? after, int limit, CancellationToken cancellationToken)` — keyset sobre `(ConvertedAt DESC, SaleNumber DESC)`, el orden exacto del listado (`SaleRepository.cs:150-151`); `after` en `null` es el primer lote.
   - `public sealed record ExportSalesCommand(Guid TenantId, Guid? ClientId, Guid? AdvisorId, string? Status, string? PaymentStatus, DateOnly? ConvertedFrom, DateOnly? ConvertedTo, string? ClientCuc, string? SaleNumber) : ICommand<ExportJobAccepted>`
   - `public sealed record SalesExportFilters(Guid? ClientId, Guid? AdvisorId, string? Status, string? PaymentStatus, DateOnly ConvertedFrom, DateOnly ConvertedTo, string? ClientCuc, string? SaleNumber)`
   - `ExportSalesValidator`, `ExportSalesHandler : ICommandHandler<ExportSalesCommand, ExportJobAccepted>`
-  - Doble: `RecordedSaleExportSearch` y, en `StubSaleListRepository`, `AnyCalls`, `ExportCalls`, `LastExportSearch`.
+  - Doble: `RecordedSaleExportSearch` y, en `StubSaleListRepository`, `AnyCalls`, `ExportCalls`, `ExportCursors`, `LastExportSearch`.
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
@@ -5532,6 +5785,9 @@ y dentro de `StubSaleListRepository`, antes de `public void Add(Sale sale) { }`:
     public int AnyCalls { get; private set; }
 
     public int ExportCalls { get; private set; }
+
+    /// <summary>La clave con que se pidió cada lote, en orden (keyset, D8).</summary>
+    public List<SaleExportCursor?> ExportCursors { get; } = [];
 
     public RecordedSaleExportSearch? LastExportSearch { get; private set; }
 
@@ -5565,14 +5821,24 @@ y dentro de `StubSaleListRepository`, antes de `public void Add(Sale sale) { }`:
         DateOnly? convertedFrom,
         DateOnly? convertedTo,
         string? saleNumber,
-        int offset,
+        SaleExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
         ExportCalls++;
+        ExportCursors.Add(after);
         LastExportSearch = new RecordedSaleExportSearch(
             clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
-        IReadOnlyList<SaleWithQuotation> page = Matching(clientIds).Skip(offset).Take(limit).ToArray();
+        // El mismo orden y la misma condición de keyset que SaleRepository, en memoria.
+        IReadOnlyList<SaleWithQuotation> page = Matching(clientIds)
+            .Where(row => after is null
+                || row.Sale.ConvertedAt < after.ConvertedAt
+                || (row.Sale.ConvertedAt == after.ConvertedAt
+                    && string.CompareOrdinal(row.Sale.SaleNumber, after.SaleNumber) < 0))
+            .OrderByDescending(row => row.Sale.ConvertedAt)
+            .ThenByDescending(row => row.Sale.SaleNumber, StringComparer.Ordinal)
+            .Take(limit)
+            .ToArray();
         return Task.FromResult(page);
     }
 
@@ -6093,7 +6359,19 @@ internal static class SaleListing
 
 `ListSales.cs`: reemplazar las líneas de parseo (`:82-83`) por `SaleListing.ParseStatus(query.Status)` / `SaleListing.ParsePaymentStatus(query.PaymentStatus)`; el bloque del CUC (`:86-94`) por `var clientIds = await SaleListing.ResolveClientIdsByCucAsync(customerLookup, query.TenantId, query.ClientCuc, cancellationToken);`; el armado de filas (`:110-131`) por `var items = await SaleListing.ToListItemsAsync(customerLookup, advisorLookup, query.TenantId, rows, cancellationToken);`; y borrar los dos `Parse*` privados (`:136-165`). Comportamiento idéntico: lo cuidan `ListSalesHandlerTests` y `SaleListApiTests`.
 
-`ISaleRepository.cs`, después de `SearchAsync`:
+`ISaleRepository.cs`, debajo de `SaleWithQuotation` (`:10`):
+
+```csharp
+/// <summary>
+/// Dónde quedó el export de ventas (spec 2026-09-12, D8): la fecha de conversión y el número de la
+/// última venta leída, el mismo orden que el listado. El número y no el id porque
+/// <see cref="SaleId"/> no se compara, y el número es único por tenant
+/// (<c>IX_sales_tenant_number</c>).
+/// </summary>
+public sealed record SaleExportCursor(DateTimeOffset ConvertedAt, string SaleNumber);
+```
+
+y después de `SearchAsync` (`:55`):
 
 ```csharp
     /// <summary>Si hay al menos una venta con los filtros del listado: el paso 3 de D4 antes de
@@ -6111,7 +6389,9 @@ internal static class SaleListing
         CancellationToken cancellationToken);
 
     /// <summary>Un lote de las ventas del listado, en su mismo orden, para el Excel de
-    /// SalesExportProcessor (D8). Mismos filtros y semántica que <see cref="SearchAsync"/>.</summary>
+    /// SalesExportProcessor (D8). Mismos filtros y semántica que <see cref="SearchAsync"/>. Keyset
+    /// y no offset: <paramref name="after"/> es la clave de la última venta del lote anterior
+    /// (<c>null</c> en el primero).</summary>
     Task<IReadOnlyList<SaleWithQuotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -6122,12 +6402,12 @@ internal static class SaleListing
         DateOnly? convertedFrom,
         DateOnly? convertedTo,
         string? saleNumber,
-        int offset,
+        SaleExportCursor? after,
         int limit,
         CancellationToken cancellationToken);
 ```
 
-`SaleRepository.cs:118-214`: extraer los filtros de `SearchAsync` a un método privado y usarlo desde los tres:
+`SaleRepository.cs:62-158`: extraer los filtros de `SearchAsync` a un método privado y usarlo desde los tres:
 
 ```csharp
     public async Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
@@ -6144,6 +6424,8 @@ internal static class SaleListing
         int pageSize,
         CancellationToken cancellationToken)
     {
+        // El join va acá adentro y no en el composition root --como sí lo hace el reporte de
+        // ventas-- porque las dos tablas son de este módulo y viven en el mismo DbContext.
         var (sales, quotations) = Filtered(
             tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
         var joined =
@@ -6154,7 +6436,8 @@ internal static class SaleListing
         var total = await joined.CountAsync(cancellationToken);
         var items = await joined
             // Por fecha de conversión, y el número como desempate: dos ventas del mismo instante
-            // tienen que paginar en un orden estable.
+            // --el mismo segundo en una siembra de prueba-- tienen que paginar en un orden
+            // estable, o una fila puede repetirse o saltearse entre páginas.
             .OrderByDescending(row => row.sale.ConvertedAt)
             .ThenByDescending(row => row.sale.SaleNumber)
             .Skip((page - 1) * pageSize)
@@ -6185,8 +6468,11 @@ internal static class SaleListing
             .AnyAsync(cancellationToken);
     }
 
-    // Mismo orden que el listado —el desempate por número incluido—, así que un lote nunca repite
-    // ni saltea filas por empate de fecha.
+    // Keyset sobre el orden exacto del listado —(ConvertedAt, SaleNumber), los dos descendentes—:
+    // el lote siguiente es "lo que viene después de la última venta leída" y no un offset, así que
+    // una venta convertida o que sale del filtro durante el export no repite ni saltea filas
+    // (spec 2026-09-12, D8). El corte va sobre `sales`, antes del join, igual que los filtros. EF
+    // no compara tuplas: la condición va en su forma OR. La sirve IX_sales_tenant_converted_at_number.
     public async Task<IReadOnlyList<SaleWithQuotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -6197,28 +6483,40 @@ internal static class SaleListing
         DateOnly? convertedFrom,
         DateOnly? convertedTo,
         string? saleNumber,
-        int offset,
+        SaleExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
         var (sales, quotations) = Filtered(
             tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+
+        if (after is not null)
+        {
+            var convertedAt = after.ConvertedAt;
+            var number = after.SaleNumber;
+            // `string.Compare` se traduce a `<` sobre la columna, con la collation del ORDER BY.
+            // Si el build marca CA1310, ver la nota de QuotationRepository en Task 11.
+            sales = sales.Where(sale =>
+                sale.ConvertedAt < convertedAt
+                || (sale.ConvertedAt == convertedAt && string.Compare(sale.SaleNumber, number) < 0));
+        }
+
         return await (
                 from sale in sales
                 join quotation in quotations on sale.QuotationId equals quotation.Id
                 select new { sale, quotation })
             .OrderByDescending(row => row.sale.ConvertedAt)
             .ThenByDescending(row => row.sale.SaleNumber)
-            .Skip(offset)
             .Take(limit)
             .Select(row => new SaleWithQuotation(row.sale, row.quotation))
             .ToListAsync(cancellationToken);
     }
 
     // Los filtros del listado y de su Excel salen de acá y de ningún otro lado. Se aplican sobre
-    // cada tabla por separado y el join lo arma quien los usa: filtrar después de proyectar a un
-    // tipo propio es lo que hacía que el proveedor no tradujera la consulta y el listado
-    // respondiera 500. Sin comprobantes ni líneas: la fila no los muestra.
+    // cada tabla por separado y el join se arma recién al final, proyectando ahí mismo: filtrar
+    // después de proyectar a un tipo propio es lo que hacía que el proveedor no tradujera la
+    // consulta y el endpoint respondiera 500. Sin comprobantes ni líneas: la fila no los muestra, y
+    // traerlos sería el mismo N+1 que QuotationRepository.SearchAsync evita.
     private (IQueryable<Sale> Sales, IQueryable<Quotation> Quotations) Filtered(
         Guid tenantId,
         Guid? clientId,
@@ -6290,7 +6588,7 @@ internal static class SaleListing
     }
 ```
 
-> Es el mismo código de filtros de `SaleRepository.cs:140-194`, movido sin cambiar una condición: es la consulta que ya pasa `SaleListApiTests`. Borrar esas líneas del `SearchAsync` viejo.
+> Es el mismo código de filtros de `SaleRepository.cs:84-138`, movido sin cambiar una condición: es la consulta que ya pasa `SaleListApiTests`. Borrar esas líneas del `SearchAsync` viejo, junto con su comentario (`:79-83`), que pasa a `Filtered`.
 
 `src/Modules/Quotations/Modules.Quotations.Application/ExportSales.cs`:
 
@@ -6430,7 +6728,7 @@ public sealed class ExportSalesHandler(
 }
 ```
 
-`SaleEndpoints.cs`, después del mapeo de `/summary` (`:36`):
+`SaleEndpoints.cs`, después del mapeo de `GET /{saleId:guid}` (`:31-35`):
 
 ```csharp
         // El listado de ventas en un .xlsx por correo (spec 2026-09-12): mismo contrato que
@@ -6443,7 +6741,7 @@ public sealed class ExportSalesHandler(
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 ```
 
-y después de `ListSalesAsync` (`:126`):
+y después de `ListSalesAsync` (`:70-96`):
 
 ```csharp
     private static async Task<IResult> ExportSalesAsync(
@@ -6597,6 +6895,23 @@ public sealed class SalesExportProcessorTests
         Assert.Equal(ExportJobLimits.BatchSize + 1, result.RowCount);
     }
 
+    // Keyset (D8): el lote siguiente arranca después de la última venta del anterior. Todas del
+    // mismo instante: el número desempata, de mayor a menor, como en el listado.
+    [Fact]
+    public async Task EachBatchStartsAfterTheLastRowOfThePreviousOne()
+    {
+        var rows = Enumerable.Range(1, ExportJobLimits.BatchSize + 1)
+            .Select(number => NewRow($"VEN-2026-{number:0000}", paymentMethod: null))
+            .ToArray();
+        var repository = new StubSaleListRepository(rows);
+
+        await NewProcessor(repository).ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new SaleExportCursor?[] { null, new SaleExportCursor(Now, "VEN-2026-0002") },
+            repository.ExportCursors);
+    }
+
     [Fact]
     public async Task UploadsAsVentasUnderTheJob()
     {
@@ -6677,7 +6992,7 @@ public sealed class SalesExportProcessorTests
 }
 ```
 
-En `SaleExportApiTests.cs`, agregar `using System.Text.Json;` y, antes de `private static string CurrentRange()`:
+En `SaleExportApiTests.cs`, agregar `using System.Text.Json;`, `using Microsoft.EntityFrameworkCore;`, `using Microsoft.Extensions.DependencyInjection;` y `using Modules.Quotations.Infrastructure.Persistence;` y, antes de `private static string CurrentRange()`:
 
 ```csharp
     // De punta a punta: el POST encola, un tick arma el Excel con las filas del listado de ventas
@@ -6729,6 +7044,75 @@ En `SaleExportApiTests.cs`, agregar `using System.Text.Json;` y, antes de `priva
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
     }
+
+    // Keyset y no offset (D8, hallazgo 11), sobre el orden del listado de ventas. Mismo diseño que
+    // la de cotizaciones: de a una fila, una venta convertida entre el lote 1 y el 2 (con offset,
+    // se repetiría la del borde) y una ya leída que sale del filtro entre el 2 y el 3 (con offset,
+    // se saltearía una).
+    [Fact]
+    public async Task SalesCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        for (var converted = 0; converted < 3; converted++)
+        {
+            await CreateSaleAsync(client, factory, tenantId);
+        }
+
+        var expected = (await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 100))
+            .Select(row => row.Sale.Id)
+            .ToArray();
+        Assert.Equal(3, expected.Length);
+
+        var first = await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 1);
+        await CreateSaleAsync(client, factory, tenantId);
+        var second = await ReadPendingBatchAsync(factory, tenantId, CursorOf(first), limit: 1);
+        await SetSaleStatusAsync(factory, second.Single().Sale.Id, SaleStatus.Approved);
+        var third = await ReadPendingBatchAsync(factory, tenantId, CursorOf(second), limit: 1);
+        var fourth = await ReadPendingBatchAsync(factory, tenantId, CursorOf(third), limit: 1);
+
+        Assert.Equal(expected, first.Concat(second).Concat(third).Select(row => row.Sale.Id));
+        Assert.Empty(fourth);
+    }
+
+    // El repositorio real, contra Postgres. `Pending` es el filtro que la venta aprobada abandona.
+    private static async Task<IReadOnlyList<SaleWithQuotation>> ReadPendingBatchAsync(
+        QepApiFactory factory, Guid tenantId, SaleExportCursor? after, int limit)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<ISaleRepository>().ListForExportAsync(
+            tenantId,
+            clientId: null,
+            clientIds: null,
+            advisorId: null,
+            SaleStatus.Pending,
+            paymentStatus: null,
+            today.AddDays(-7),
+            today.AddDays(1),
+            saleNumber: null,
+            after,
+            limit,
+            TestContext.Current.CancellationToken);
+    }
+
+    private static SaleExportCursor CursorOf(IReadOnlyList<SaleWithQuotation> batch) =>
+        new(batch[^1].Sale.ConvertedAt, batch[^1].Sale.SaleNumber);
+
+    // Directo en la base: lo que se prueba es la lectura, no la aprobación.
+    private static async Task SetSaleStatusAsync(QepApiFactory factory, SaleId saleId, SaleStatus status)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var updated = await dbContext.Sales
+            .Where(sale => sale.Id == saleId)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(sale => sale.Status, status),
+                TestContext.Current.CancellationToken);
+        Assert.Equal(1, updated);
+    }
 ```
 
 - [ ] **Step 2: Correr y verificar que fallan**
@@ -6753,7 +7137,7 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Arma el Excel del listado de ventas en el worker (D7, D8). Mismo esquema que
-/// <see cref="QuotationsExportProcessor"/>: lotes de mil con el filtro del listado
+/// <see cref="QuotationsExportProcessor"/>: lotes de mil con keyset y el filtro del listado
 /// (<see cref="SaleListing"/> y el <c>Filtered</c> de SaleRepository), streaming y subida con el id
 /// del job.
 /// </summary>
@@ -6801,8 +7185,10 @@ public sealed class SalesExportProcessor(
 
         using var workbook = writer.Create(SheetName, Columns);
         var rowCount = 0;
+        SaleExportCursor? after = null;
         while (true)
         {
+            // Keyset (D8): el lote siguiente arranca después de la última venta leída.
             var batch = await repository.ListForExportAsync(
                 job.TenantId,
                 filters.ClientId,
@@ -6813,7 +7199,7 @@ public sealed class SalesExportProcessor(
                 filters.ConvertedFrom,
                 filters.ConvertedTo,
                 filters.SaleNumber,
-                rowCount,
+                after,
                 ExportJobLimits.BatchSize,
                 cancellationToken);
 
@@ -6825,6 +7211,8 @@ public sealed class SalesExportProcessor(
                 {
                     workbook.AppendRow(ToCells(row));
                 }
+
+                after = new SaleExportCursor(batch[^1].Sale.ConvertedAt, batch[^1].Sale.SaleNumber);
             }
 
             rowCount += batch.Count;
@@ -6903,7 +7291,7 @@ dotnet restore --locked-mode
 dotnet format --verify-no-changes
 ```
 
-Esperado: `Passed: 7` en el procesador, `Passed: 16` entre los dos archivos de integración (7 de ventas, 9 de cotizaciones), `--locked-mode` y `format` sin cambios. Después la suite completa contra el baseline como en Task 5 Step 4 (`$after = Join-Path $env:TEMP "qep-export-asincrono-commit4"`): `Compare-Object` vacío. Pegar las salidas.
+Esperado: `Passed: 8` en el procesador, `Passed: 18` entre los dos archivos de integración (8 de ventas, 10 de cotizaciones), `--locked-mode` y `format` sin cambios. Después la suite completa contra el baseline como en Task 5 Step 4 (`$after = Join-Path $env:TEMP "qep-export-asincrono-commit4"`): `Compare-Object` vacío. Pegar las salidas.
 
 - [ ] **Step 5: Commit** (Git Bash)
 
@@ -6918,7 +7306,7 @@ git add src/Modules/Quotations/Modules.Quotations.Application/SalesExportProcess
   tests/Modules/Quotations/Modules.Quotations.IntegrationTests/SaleExportApiTests.cs
 git status --short
 git commit -m "feat(sales): exportar ventas por correo" \
-  -m "POST /sales/export con el mismo contrato que cotizaciones: filtros del listado de ventas, rango de conversión de hasta un año, sale.export.empty y sale.export.pending_limit, y el cupo de tres pendientes compartido con las exportaciones de cotizaciones. SalesExportProcessor escribe las columnas de la tabla de ventas en su orden; el parseo de estados y la resolución del CUC pasan a SaleListing, compartido con el listado."
+  -m "POST /sales/export con el mismo contrato que cotizaciones: filtros del listado de ventas, rango de conversión de hasta un año, sale.export.empty y sale.export.pending_limit, y el cupo de tres pendientes compartido con las exportaciones de cotizaciones. SalesExportProcessor lee por keyset sobre el orden del listado (fecha de conversión y número) y escribe las columnas de la tabla de ventas en su orden; el parseo de estados y la resolución del CUC pasan a SaleListing, y los filtros de SaleRepository a un método compartido con el listado."
 ```
 
 `git status --short` antes del commit: sólo archivos de Tasks 12–13 staged.
@@ -6929,13 +7317,13 @@ git commit -m "feat(sales): exportar ventas por correo" \
 
 - `git push -u origin feature/export-asincrono` y PR a `develop`, después de que el developer revise.
 - **Despliegue: backend primero.** La migración `AddExportJobs` corre al arrancar (`QuotationsDatabaseInitializer`). Recién con el backend arriba se despliega el frontend de `feature/export-asincrono`.
-- Confirmar la regla de lifecycle de R2 sobre `exports/` (hallazgo 8).
+- Verificar que la regla de lifecycle `expire-exports` sigue en el bucket privado: `npx wrangler r2 bucket lifecycle list <bucket-privado>` tiene que listarla con el prefijo `exports/`. Ya existe (hallazgo 8, README § Reportes exportados); no hay que crearla.
 
 ## Riesgos y pendientes
 
 - **Memoria no medida** (spec): el streaming acota el riesgo, pero hay que medir un export de un año real en un pod de 1Gi antes de dar el tema por cerrado.
-- **Offset y filas nuevas** (hallazgo 11): una cotización o venta creada durante un export que incluye hoy puede duplicar una fila en el borde de un lote. El arreglo es keyset sobre (`created_at`, `id`) / (`converted_at`, `sale_number`); queda como seguimiento.
-- **Reintentos** (hallazgo 5): tres intentos usan sólo las esperas de 1 y 5 minutos. Decisión pendiente del developer: dejarlo así o `MaxAttempts = 4`.
+- **Sin snapshot transaccional** (spec, Riesgos): el keyset no repite ni saltea filas, pero cada lote lee el estado de ese momento; una fila que cambia antes de que le toque sale con el valor nuevo, o no sale si dejó el filtro. Leer en `REPEATABLE READ` lo cerraría a costa de sostener una transacción minutos.
+- **CA1310 sobre `string.Compare`** (Tasks 11 y 12): si el analizador lo marca, la supresión local sería la primera escrita a mano en `src/`. Alternativa sin supresión: `EF.Functions.LessThan` de Npgsql con valores de fila, que la spec no eligió (pidió la forma OR).
 - **Límite de pendientes no atómico:** dos pedidos simultáneos con dos pendientes pueden pasar los dos (quedan cuatro). Es un freno de doble clic y abuso, no un invariante; un `advisory lock` lo cerraría si hiciera falta.
 - **Hora del nombre de archivo en UTC:** coherente con el vencimiento del correo ("UTC"), pero una asesora en Colombia ve la hora corrida cinco horas. Si molesta, se pasa a la zona del tenant.
 - **Clientes y Catalog siguen sincrónicos** (D15): recomendado como trabajo aparte.
@@ -6952,11 +7340,12 @@ git commit -m "feat(sales): exportar ventas por correo" \
 | D6 `SKIP LOCKED` y lease | Task 4 (SQL, concurrencia, lease vencido) |
 | D7 un worker, concurrencia 1, despacho por kind | Tasks 3 y 5 |
 | D8 streaming, lotes de 1.000, columnas, anchos, nombres, OpenXML directo | Tasks 8, 10 (paquetes), 11, 13 |
-| D9 storage con clave por `jobId` | Task 9 |
+| D8 keyset en vez de offset, con sus índices | Task 2 (índices), Tasks 11 y 13 (repositorios, procesadores y la prueba entre lotes) |
+| D9 storage con clave por `jobId` bajo `exports/`, vigencia `ExportUrlHours` | Task 9 |
 | D10 cierre en una transacción | Tasks 3 y 4 |
-| D11 transitorio/definitivo/worker muerto | Tasks 1, 3, 4, 11, 13 |
+| D11 cuatro intentos, transitorio/definitivo/worker muerto | Tasks 1, 3, 4, 11, 13 |
 | D12 correos | Tasks 6–7 (y e2e de 11 y 13) |
-| D13 retención | Tasks 3–5; lifecycle de R2 en hallazgo 8 |
+| D13 retención | Tasks 3–5; la regla de lifecycle ya existe y cubre `exports/` (hallazgo 8, Task 9) |
 | D14 frontend | Plan de frontend |
 | D15 fuera de alcance | Nada; ver «Riesgos» |
 | Modelo de datos e índices | Task 2 |
