@@ -438,9 +438,9 @@ internal static class QuotationsApiHarness
             validUntil: null,
             billingAccount: new QuotationBillingAccountRequest(
                 billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            // Convertir en venta la exige aparte de `EnsureComplete`
-            // (`quotation.quotation.payment_method_required`). Va acá y no en cada prueba
-            // porque toda cotización enviada es candidata a convertirse.
+            // Ya no es un requisito para convertir en venta (2026-09-12: el editor dejó de
+            // pedirla, así que exigirla bloqueaba toda cotización nueva). El parámetro se queda
+            // por si alguna prueba puntual quiere una cotización con forma de pago cargada.
             paymentMethod: paymentMethod);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
