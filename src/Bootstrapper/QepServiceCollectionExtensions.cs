@@ -326,6 +326,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<RemoveQuotationItemCommand, QuotationDto>,
             RemoveQuotationItemHandler>();
         services.AddScoped<
+            ICommandHandler<BatchUpdateQuotationItemsCommand, QuotationDto>,
+            BatchUpdateQuotationItemsHandler>();
+        services.AddScoped<
             ICommandHandler<SendQuotationCommand, QuotationDto>,
             SendQuotationHandler>();
         services.AddScoped<
@@ -343,9 +346,6 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetSaleByIdQuery, SaleDetailDto>,
             GetSaleByIdHandler>();
-        services.AddScoped<
-            IQueryHandler<GetSalesSummaryQuery, SaleSummaryDto>,
-            GetSalesSummaryHandler>();
         services.AddScoped<
             ICommandHandler<ApproveSaleCommand, SaleDto>,
             ApproveSaleHandler>();
