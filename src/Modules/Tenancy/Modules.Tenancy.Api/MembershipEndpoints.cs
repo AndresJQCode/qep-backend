@@ -214,6 +214,7 @@ public static class MembershipEndpoints
             membership.Id.Value,
             membership.UserId,
             membership.Email,
+            membership.DisplayName,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -266,10 +267,15 @@ public sealed record MembershipResponse(
     DateTimeOffset ExpiresAt,
     long Version);
 
+/// <param name="DisplayName">
+/// Nulo en membresías anteriores al nombre y en el owner hasta que se cargue. La celda
+/// "Persona" muestra entonces sólo el correo, con el aviso "Sin nombre".
+/// </param>
 public sealed record MembershipListItemResponse(
     Guid Id,
     Guid UserId,
     string? Email,
+    string? DisplayName,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,

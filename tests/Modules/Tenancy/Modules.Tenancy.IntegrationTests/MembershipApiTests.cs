@@ -863,6 +863,75 @@ public sealed class MembershipApiTests
         Assert.Equal("Ana María Pérez", membership.DisplayName);
     }
 
+    [Fact]
+    public async Task ListShowsEachMembersDisplayName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var invited = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: "Valentina Ríos");
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var row = Assert.Single(list!.Items, item => item.Id == membership!.Id);
+        Assert.Equal("Valentina Ríos", row.DisplayName);
+    }
+
+    // La búsqueda encuentra por nombre además de por correo, sin distinguir mayúsculas: el
+    // nombre es lo que la persona que administra el roster recuerda.
+    [Fact]
+    public async Task SearchFindsAMemberByName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var wanted = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: "Valentina Ríos");
+        var wantedMembership = await wanted.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await InviteAsync(client, TenantId, NewEmail(), displayName: "Carlos Mejía");
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships?search=valentina",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var only = Assert.Single(list!.Items);
+        Assert.Equal(wantedMembership!.Id, only.Id);
+    }
+
+    // Suspend, remove, reactivate y roles devuelven la fila por el mismo mapeo que el listado:
+    // la pantalla la repinta con lo que recibe, y sin el nombre la celda "Persona" se vaciaría.
+    [Fact]
+    public async Task ReactivateReturnsTheRowWithItsDisplayName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var invited = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: "Valentina Ríos");
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        var response = await ReactivateAsync(client, TenantId, membership.Id);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var row = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Valentina Ríos", row!.DisplayName);
+    }
+
     private static async Task<HttpResponseMessage> ReactivateAsync(
         HttpClient client,
         string tenantId,
@@ -1033,7 +1102,8 @@ public sealed class MembershipApiTests
         DateTimeOffset InvitedAt,
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
-        long Version);
+        long Version,
+        string? DisplayName);
 
     private sealed record MembershipListPayload(
         IReadOnlyList<MembershipListItemPayload> Items,
