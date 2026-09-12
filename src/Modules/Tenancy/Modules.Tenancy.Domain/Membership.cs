@@ -27,6 +27,12 @@ public sealed class Membership
     /// </summary>
     public const string AdminRole = "admin";
 
+    /// <summary>
+    /// Largo máximo del nombre de la persona. Es el mismo de la columna <c>display_name</c> y del
+    /// validador de Application: las tres capas tienen que decir lo mismo.
+    /// </summary>
+    public const int DisplayNameMaxLength = 150;
+
     private readonly List<IDomainEvent> _domainEvents = [];
     private readonly List<string> _roles = [];
 
@@ -65,6 +71,16 @@ public sealed class Membership
     public MembershipState State { get; private set; }
 
     public string Origin { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// El nombre con el que el tenant presenta a esta persona; hoy lo imprime el PDF de
+    /// cotización en la ficha "Asesor". Vive en la membresía y no en el usuario de Identity
+    /// porque el usuario es global: con el nombre ahí, el admin de otro tenant cambiaría lo que
+    /// imprimen los PDFs de este. Nulo en las filas anteriores a este cambio y en el owner de
+    /// registro, que nunca pasó por una invitación; se carga desde el roster con
+    /// <see cref="Rename"/>.
+    /// </summary>
+    public string? DisplayName { get; private set; }
 
     public DateTimeOffset InvitedAt { get; private set; }
 
@@ -450,6 +466,29 @@ public sealed class Membership
             normalizedRoles));
     }
 
+    /// <summary>
+    /// Cambia el nombre de la persona. Vale en cualquier estado: el nombre es presentación y no
+    /// cambia el acceso.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c> —sin tocar versión ni fecha— cuando el nombre normalizado es el que ya
+    /// tiene. Un guardado repetido no invalida el If-Match de otra pestaña ni deja auditado un
+    /// cambio que no ocurrió.
+    /// </returns>
+    public bool Rename(string displayName, DateTimeOffset occurredAt)
+    {
+        var normalized = NormalizeDisplayName(displayName);
+        if (string.Equals(DisplayName, normalized, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        DisplayName = normalized;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
     public IReadOnlyCollection<IDomainEvent> PullDomainEvents()
     {
         var events = _domainEvents.ToArray();
@@ -485,6 +524,19 @@ public sealed class Membership
                 "tenancy.membership.invitation_token_required",
                 "An invitation requires a token and its hash.");
         }
+    }
+
+    private static string NormalizeDisplayName(string? value)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (normalized.Length is 0 or > DisplayNameMaxLength)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.display_name_invalid",
+                $"Membership display name must be a non-empty value of at most {DisplayNameMaxLength} characters.");
+        }
+
+        return normalized;
     }
 
     private static string ValidateOrigin(string value)

@@ -596,6 +596,117 @@ public sealed class MembershipTests
         Assert.Equal(MembershipState.Expired, membership.State);
     }
 
+    /// <summary>
+    /// El nombre es presentación del tenant: vive en la membresía, se normaliza en el agregado y
+    /// renombrar cuenta como cambio —sube la versión— porque el roster lo edita con If-Match.
+    /// </summary>
+    [Fact]
+    public void RenameTrimsTheNameAndBumpsTheVersion()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var version = membership.Version;
+        var renamedAt = InvitedAt.AddHours(1);
+
+        var changed = membership.Rename("  Ana María Pérez  ", renamedAt);
+
+        Assert.True(changed);
+        Assert.Equal("Ana María Pérez", membership.DisplayName);
+        Assert.Equal(version + 1, membership.Version);
+        Assert.Equal(renamedAt, membership.UpdatedAt);
+    }
+
+    // Guardar dos veces lo mismo no es un cambio: subir la versión invalidaría el If-Match de
+    // otra pestaña por nada.
+    [Fact]
+    public void RenameWithTheSameNormalizedNameIsANoOp()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Rename("Ana María Pérez", InvitedAt.AddHours(1));
+        var version = membership.Version;
+        var updatedAt = membership.UpdatedAt;
+
+        var changed = membership.Rename("  Ana María Pérez ", InvitedAt.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(version, membership.Version);
+        Assert.Equal(updatedAt, membership.UpdatedAt);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void RenameRejectsABlankNameAndLeavesTheMembershipUntouched(string displayName)
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var before = membership.DisplayName;
+        var version = membership.Version;
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Rename(displayName, InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
+        Assert.Equal(before, membership.DisplayName);
+        Assert.Equal(version, membership.Version);
+    }
+
+    [Fact]
+    public void RenameRejectsANameLongerThanTheColumn()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+
+        var error = Assert.Throws<TenantDomainException>(() => membership.Rename(
+            new string('a', Membership.DisplayNameMaxLength + 1), InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
+    }
+
+    [Fact]
+    public void RenameAcceptsANameExactlyAsLongAsTheColumn()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var name = new string('a', Membership.DisplayNameMaxLength);
+
+        membership.Rename(name, InvitedAt.AddHours(1));
+
+        Assert.Equal(name, membership.DisplayName);
+    }
+
+    // El nombre no cambia el acceso, así que se puede cargar en cualquier estado.
+    [Fact]
+    public void RenameWorksOnASuspendedMembership()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Accept(InvitedAt.AddHours(1));
+        membership.Suspend(InvitedAt.AddHours(2));
+
+        Assert.True(membership.Rename("Ana María Pérez", InvitedAt.AddHours(3)));
+        Assert.Equal(MembershipState.Suspended, membership.State);
+    }
+
+    // D3: el owner entra por register-tenant, no por invitación, así que nace sin nombre y lo
+    // carga desde el roster. La protección de owner no alcanza al nombre.
+    [Fact]
+    public void TheOwnerStartsWithoutANameAndCanBeNamedLater()
+    {
+        var owner = CreateOwner();
+
+        Assert.Null(owner.DisplayName);
+        Assert.True(owner.Rename("Laura Gómez", InvitedAt.AddHours(1)));
+        Assert.Equal("Laura Gómez", owner.DisplayName);
+    }
+
+    // Nadie consume un renombre fuera de Tenancy: el PDF lee el nombre cuando se genera.
+    [Fact]
+    public void RenameRaisesNoDomainEvent()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.PullDomainEvents();
+
+        membership.Rename("Ana María Pérez", InvitedAt.AddHours(1));
+
+        Assert.Empty(membership.DomainEvents);
+    }
+
     private static Membership Invite(Guid userId) =>
         Membership.Invite(
             MembershipId.New(),
