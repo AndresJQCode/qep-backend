@@ -69,6 +69,18 @@ public static class MembershipEndpoints
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Con If-Match, igual que `/roles`: dos administradores renombrando a la misma persona es
+        // una carrera real, y el nombre termina impreso en un PDF que se le manda al cliente.
+        group.MapPatch("/{membershipId:guid}/display-name", UpdateDisplayNameAsync)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
+            .Accepts<MembershipDisplayNameUpdateRequest>("application/json")
+            .Produces<MembershipListItemResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -92,6 +104,33 @@ public static class MembershipEndpoints
                 new TenantId(tenantId),
                 new MembershipId(membershipId),
                 request.Roles ?? [],
+                expectedVersion,
+                httpContext.TraceIdentifier),
+            cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{membership.Version}\"";
+        return Results.Ok(ToListItemResponse(membership));
+    }
+
+    private static async Task<IResult> UpdateDisplayNameAsync(
+        Guid tenantId,
+        Guid membershipId,
+        MembershipDisplayNameUpdateRequest request,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion))
+        {
+            throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded membership version is required.");
+        }
+
+        var membership = await dispatcher.SendAsync(
+            new UpdateMemberDisplayNameCommand(
+                new TenantId(tenantId),
+                new MembershipId(membershipId),
+                request.DisplayName ?? string.Empty,
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -185,6 +224,7 @@ public static class MembershipEndpoints
             new InviteMemberCommand(
                 new TenantId(tenantId),
                 request.Email,
+                request.DisplayName,
                 request.Roles ?? [],
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -199,6 +239,7 @@ public static class MembershipEndpoints
             membership.Id.Value,
             membership.UserId,
             email,
+            membership.DisplayName,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -212,6 +253,7 @@ public static class MembershipEndpoints
             membership.Id.Value,
             membership.UserId,
             membership.Email,
+            membership.DisplayName,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -239,16 +281,34 @@ public static class MembershipEndpoints
     }
 }
 
+/// <param name="DisplayName">
+/// Obligatorio. Sin él —ausente, vacío o de más de 150 caracteres— responde 422
+/// <c>validation.failed</c> con <c>errors.DisplayName</c>, el único 422 que el formulario sabe
+/// marcar en el input.
+/// </param>
 public sealed record MembershipInviteRequest(
     string Email,
+    string DisplayName,
     IReadOnlyCollection<string>? Roles);
 
 public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? Roles);
+
+/// <summary>
+/// Nullable porque el campo puede faltar en el JSON: un cuerpo sin <c>displayName</c> llega
+/// acá como <see langword="null"/> (el binder no lo rechaza, sea o no nullable el tipo — ver
+/// <c>MembershipInviteRequest.DisplayName</c>, que es <see langword="string"/> no-nullable y
+/// también acepta el campo ausente). El mapeo a <see cref="string.Empty"/> en el endpoint deja
+/// que sea el validador de FluentValidation quien lo rechace con 422
+/// <c>validation.failed</c> y <c>errors.DisplayName</c>, el único 422 que el diálogo sabe
+/// marcar en el input.
+/// </summary>
+public sealed record MembershipDisplayNameUpdateRequest(string? DisplayName);
 
 public sealed record MembershipResponse(
     Guid Id,
     Guid UserId,
     string Email,
+    string? DisplayName,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,
@@ -257,10 +317,15 @@ public sealed record MembershipResponse(
     DateTimeOffset ExpiresAt,
     long Version);
 
+/// <param name="DisplayName">
+/// Nulo en membresías anteriores al nombre y en el owner hasta que se cargue. La celda
+/// "Persona" muestra entonces sólo el correo, con el aviso "Sin nombre".
+/// </param>
 public sealed record MembershipListItemResponse(
     Guid Id,
     Guid UserId,
     string? Email,
+    string? DisplayName,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,

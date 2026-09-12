@@ -27,10 +27,10 @@ using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
-using Modules.Quotations.Application;
-using Modules.Quotations.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
+using Modules.Quotations.Application;
+using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
 using Modules.Storage.Application;
@@ -86,6 +86,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateMemberRolesCommand, MembershipListItemDto>,
             UpdateMemberRolesHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateMemberDisplayNameCommand, MembershipListItemDto>,
+            UpdateMemberDisplayNameHandler>();
         services.AddScoped<
             ICommandHandler<CreateUploadSessionCommand, UploadSessionDto>,
             CreateUploadSessionHandler>();

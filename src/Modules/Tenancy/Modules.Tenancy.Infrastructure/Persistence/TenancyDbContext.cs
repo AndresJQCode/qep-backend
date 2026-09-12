@@ -94,6 +94,12 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         membership.Property(value => value.Origin)
             .HasColumnName("origin")
             .HasMaxLength(50);
+        // Nulo en las filas anteriores a este cambio y en el owner de registro, que no pasó por
+        // una invitación: el nombre se carga después desde el roster. El largo sale del agregado
+        // para que columna, dominio y validador no puedan divergir.
+        membership.Property(value => value.DisplayName)
+            .HasColumnName("display_name")
+            .HasMaxLength(Membership.DisplayNameMaxLength);
         membership.Property(value => value.InvitedAt).HasColumnName("invited_at");
         membership.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
         membership.Property(value => value.ExpiresAt).HasColumnName("expires_at");
