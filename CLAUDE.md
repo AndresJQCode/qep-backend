@@ -76,6 +76,28 @@ ofrece después de la versión de PowerShell.
 Esto vive acá y no en un archivo compartido porque **este repo tiene su propio developer**:
 declarar su entorno en su repo no le impone nada al del frontend.
 
+## Cómo se escriben los mensajes
+
+**En español colombiano, tuteando.** Vale para las respuestas del asistente al developer y
+para todo texto que el sistema le muestra o le manda a una persona: correos, plantillas de
+WhatsApp, mensajes de error legibles, avisos. **Pisa el estilo de salida del asistente**, que
+por defecto vosea: sin esta regla, cada sesión nueva vuelve al rioplatense.
+
+| Sí                                       | No (voseo)                                  |
+| ---------------------------------------- | ------------------------------------------- |
+| tienes, puedes, quieres                  | tenés, podés, querés                        |
+| elige, revisa, intenta de nuevo          | elegí, revisá, intentá de nuevo             |
+| dime, avísame, escríbenos                | decime, avisame, escribinos                 |
+| No tienes permiso para ver este reporte. | No tenés permiso para ver este reporte.     |
+
+- Registro profesional y cercano: nada de modismos rioplatenses (`dale`, `che`, `laburo`), y
+  tampoco regionalismos colombianos marcados (`parce`, `bacano`). "Listo", "claro" y "de una"
+  sí caben en la conversación con el developer; en un texto del producto, no.
+- **No se traduce lo que es contrato:** identificadores, códigos de error
+  (`quotation.export.empty`), nombres de enum (`Sent`), rutas y permisos quedan tal cual.
+- Un comentario de código o una documentación que se dirige al lector también tutea. Lo que
+  ya está escrito con voseo se corrige cuando se toca el archivo, no en un barrido aparte.
+
 ## Convenciones del backend
 
 Capas `Domain` → `Application` → `Infrastructure` → `Api`, un assembly cada una, verificadas

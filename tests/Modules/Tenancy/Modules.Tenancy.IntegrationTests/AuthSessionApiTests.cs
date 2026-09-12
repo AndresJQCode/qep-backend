@@ -146,7 +146,7 @@ public sealed class AuthSessionApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{SeededTenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = DefaultRoles })
+            Content = JsonContent.Create(new { email, displayName = "Ana Pérez", roles = DefaultRoles })
         };
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }

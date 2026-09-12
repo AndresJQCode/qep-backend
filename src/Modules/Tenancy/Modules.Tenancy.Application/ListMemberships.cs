@@ -4,6 +4,10 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Tenancy.Application;
 
+/// <param name="DisplayName">
+/// El nombre que el tenant cargó para esta persona. Nulo en las membresías anteriores al nombre
+/// y en el owner hasta que alguien lo cargue: la pantalla muestra entonces sólo el correo.
+/// </param>
 /// <param name="IsOwner">
 /// Marca la membresía del owner (Origin de registro, ADR 0017), la que el dominio protege de
 /// suspender, quitar o perder `admin`. Viaja en el contrato para que el frontend deshabilite
@@ -13,6 +17,7 @@ public sealed record MembershipListItemDto(
     MembershipId Id,
     Guid UserId,
     string? Email,
+    string? DisplayName,
     TenantId TenantId,
     MembershipState State,
     IReadOnlyCollection<string> Roles,
@@ -29,6 +34,7 @@ public static class MembershipListItemMappings
             membership.Id,
             membership.UserId,
             email,
+            membership.DisplayName,
             membership.TenantId,
             membership.State,
             membership.Roles,
@@ -146,9 +152,10 @@ public sealed class ListMembershipsHandler(
     }
 
     /// <summary>
-    /// La búsqueda es por correo y nada más: es el único dato con el que se identifica a una
-    /// persona acá, porque Tenancy no guarda nombre y el UserId es un GUID que nadie escribe
-    /// de memoria. Una membresía sin correo no coincide con ningún texto.
+    /// La búsqueda es por correo o por nombre, los dos datos con los que alguien identifica a una
+    /// persona en el roster; el UserId es un GUID que nadie escribe de memoria. Un campo nulo no
+    /// coincide con ningún texto, así que una membresía vieja sin nombre se sigue encontrando por
+    /// su correo.
     /// </summary>
     private static IReadOnlyList<MembershipListItemDto> ApplySearch(
         IReadOnlyList<MembershipListItemDto> items,
@@ -161,10 +168,12 @@ public sealed class ListMembershipsHandler(
 
         var term = search.Trim();
         return items
-            .Where(item => item.Email is not null &&
-                item.Email.Contains(term, StringComparison.OrdinalIgnoreCase))
+            .Where(item => Matches(item.Email, term) || Matches(item.DisplayName, term))
             .ToList();
     }
+
+    private static bool Matches(string? value, string term) =>
+        value is not null && value.Contains(term, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Los conteos se calculan sobre lo buscado pero antes de filtrar por estado: son lo que

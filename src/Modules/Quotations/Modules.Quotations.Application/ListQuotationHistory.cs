@@ -47,15 +47,15 @@ public sealed class ListQuotationHistoryHandler(
             query.TenantId, new QuotationId(query.QuotationId), cancellationToken);
 
         // Una consulta para todos los correos y no uno por entrada: un historial largo repite las
-        // mismas dos o tres personas.
+        // mismas dos o tres personas. El historial muestra el correo, no el nombre (D1).
         var memberIds = entries
             .Where(entry => entry.MemberId.HasValue)
             .Select(entry => entry.MemberId!.Value.Value)
             .Distinct()
             .ToArray();
-        var emails = memberIds.Length == 0
-            ? new Dictionary<Guid, string?>()
-            : await advisorLookup.FindEmailsAsync(query.TenantId, memberIds, cancellationToken);
+        var advisors = memberIds.Length == 0
+            ? new Dictionary<Guid, QuotationAdvisor>()
+            : await advisorLookup.FindAsync(query.TenantId, memberIds, cancellationToken);
 
         return entries
             .Select(entry => new QuotationHistoryEntryDto(
@@ -64,7 +64,7 @@ public sealed class ListQuotationHistoryHandler(
                 entry.EventAt,
                 entry.MemberId?.Value,
                 entry.MemberId is { } memberId
-                    ? emails.GetValueOrDefault(memberId.Value)
+                    ? advisors.GetValueOrDefault(memberId.Value)?.Email
                     : null,
                 entry.Details))
             .ToArray();

@@ -98,8 +98,8 @@ internal static class ReportingApiHarness
 
     /// <summary>Registra un tenant nuevo para conseguir una Membership de dueño ya en Active, y
     /// devuelve un cliente autenticado como ese dueño. <c>OwnerEmail</c> vuelve porque es el
-    /// valor que los reportes muestran en <c>advisorName</c>/<c>changedByName</c>: el sistema no
-    /// guarda nombre de persona en ningun lado.</summary>
+    /// valor que los reportes muestran en <c>advisorName</c>/<c>changedByName</c>: el nombre de la
+    /// membresía sólo llega al PDF (spec 2026-09-11, D1).</summary>
     public static async Task<RegisteredTenant> RegisterTenantAsync(
         QepApiFactory factory, params string[] permissions)
     {

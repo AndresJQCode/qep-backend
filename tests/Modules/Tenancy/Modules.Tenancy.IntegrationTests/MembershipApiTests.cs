@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
@@ -18,6 +19,7 @@ public sealed class MembershipApiTests
     private static readonly string[] UnknownRoles = ["tenancy.unknown"];
     private static readonly string[] AdminRoles = ["admin"];
     private static readonly string[] BillingRoles = ["billing"];
+    private const string DefaultDisplayName = "Ana Pérez";
 
     [Fact]
     public async Task InviteProvisionsUserMembershipAuditAndOutboxEvent()
@@ -395,6 +397,7 @@ public sealed class MembershipApiTests
             Content = JsonContent.Create(new
             {
                 email = NewEmail(),
+                displayName = DefaultDisplayName,
                 roles = UnknownRoles
             })
         };
@@ -758,6 +761,177 @@ public sealed class MembershipApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // El 422 tiene que ser validation.failed con el mapa `errors`: es el único que el formulario
+    // de invitación sabe leer para marcar el input. El código propio del dominio
+    // (display_name_invalid) queda como segunda capa, detrás del validador.
+    [Fact]
+    public async Task InviteWithoutADisplayNameMarksTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/tenants/{TenantId}/memberships")
+        {
+            Content = JsonContent.Create(new { email = NewEmail(), roles = DefaultRoles })
+        };
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("DisplayName", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task InviteWithADisplayNameLongerThanTheColumnMarksTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: new string('a', 151));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("DisplayName", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task InviteReturnsAndStoresTheTrimmedDisplayName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: "  Ana Pérez  ");
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Ana Pérez", membership!.DisplayName);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var row = await QueryRowAsync(
+            connection,
+            "SELECT display_name FROM tenancy.memberships WHERE id = @id",
+            ("id", membership.Id));
+        Assert.Equal("Ana Pérez", row![0]);
+    }
+
+    // D5: una invitación viva es una no-op, y el nombre del cuerpo se ignora igual que los roles.
+    // Para renombrar a alguien está PATCH .../display-name.
+    [Fact]
+    public async Task InvitingAgainWhileTheInvitationIsLiveKeepsTheFirstName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        await InviteAsync(client, TenantId, email, displayName: "Ana Pérez");
+        var second = await InviteAsync(client, TenantId, email, displayName: "Otra Persona");
+
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var membership = await second.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Ana Pérez", membership!.DisplayName);
+    }
+
+    // D5: renovar una invitación vencida sí reescribe el nombre, junto con los roles y la ventana.
+    [Fact]
+    public async Task ReinvitingALapsedInvitationOverwritesTheName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+
+        var first = await InviteAsync(client, TenantId, email, displayName: "Ana Pérez");
+        var invited = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await LapseInvitationAsync(database, invited!.Id);
+
+        var renewed = await InviteAsync(client, TenantId, email, displayName: "Ana María Pérez");
+
+        Assert.Equal(HttpStatusCode.Created, renewed.StatusCode);
+        var membership = await renewed.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(invited.Id, membership!.Id);
+        Assert.Equal("Ana María Pérez", membership.DisplayName);
+    }
+
+    [Fact]
+    public async Task ListShowsEachMembersDisplayName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var invited = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: "Valentina Ríos");
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var row = Assert.Single(list!.Items, item => item.Id == membership!.Id);
+        Assert.Equal("Valentina Ríos", row.DisplayName);
+    }
+
+    // La búsqueda encuentra por nombre además de por correo, sin distinguir mayúsculas: el
+    // nombre es lo que la persona que administra el roster recuerda.
+    [Fact]
+    public async Task SearchFindsAMemberByName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var wanted = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: "Valentina Ríos");
+        var wantedMembership = await wanted.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await InviteAsync(client, TenantId, NewEmail(), displayName: "Carlos Mejía");
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships?search=valentina",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var only = Assert.Single(list!.Items);
+        Assert.Equal(wantedMembership!.Id, only.Id);
+    }
+
+    // Suspend, remove, reactivate y roles devuelven la fila por el mismo mapeo que el listado:
+    // la pantalla la repinta con lo que recibe, y sin el nombre la celda "Persona" se vaciaría.
+    [Fact]
+    public async Task ReactivateReturnsTheRowWithItsDisplayName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var invited = await InviteAsync(
+            client, TenantId, NewEmail(), displayName: "Valentina Ríos");
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await SetStateAsync(database, membership!.Id, "Suspended");
+
+        var response = await ReactivateAsync(client, TenantId, membership.Id);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var row = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Valentina Ríos", row!.DisplayName);
+    }
+
     private static async Task<HttpResponseMessage> ReactivateAsync(
         HttpClient client,
         string tenantId,
@@ -811,17 +985,30 @@ public sealed class MembershipApiTests
 
     private static string NewEmail() => $"invitee-{Guid.NewGuid():N}@example.com";
 
+    // El formulario marca el input leyendo las claves de `errors`, en PascalCase: es lo único
+    // que se afirma del 422 de validación.
+    private static async Task<string[]> ValidationFieldsAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("validation.failed", document.RootElement.GetProperty("code").GetString());
+        return document.RootElement.TryGetProperty("errors", out var errors)
+            ? errors.EnumerateObject().Select(property => property.Name).ToArray()
+            : [];
+    }
+
     private static async Task<HttpResponseMessage> InviteAsync(
         HttpClient client,
         string tenantId,
         string email,
-        string[]? roles = null)
+        string[]? roles = null,
+        string displayName = DefaultDisplayName)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = roles ?? DefaultRoles })
+            Content = JsonContent.Create(new { email, displayName, roles = roles ?? DefaultRoles })
         };
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
@@ -902,7 +1089,8 @@ public sealed class MembershipApiTests
         DateTimeOffset InvitedAt,
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
-        long Version);
+        long Version,
+        string? DisplayName);
 
     private sealed record MembershipListItemPayload(
         Guid Id,
@@ -914,7 +1102,8 @@ public sealed class MembershipApiTests
         DateTimeOffset InvitedAt,
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
-        long Version);
+        long Version,
+        string? DisplayName);
 
     private sealed record MembershipListPayload(
         IReadOnlyList<MembershipListItemPayload> Items,

@@ -116,9 +116,10 @@ public sealed class ListSalesHandler(
                 rows.Select(row => row.Quotation.ClientId).Distinct().ToArray(),
                 cancellationToken);
 
-        var advisorEmails = rows.Count == 0
-            ? new Dictionary<Guid, string?>()
-            : await advisorLookup.FindEmailsAsync(
+        // El correo y no el nombre, mismo criterio que el listado de cotizaciones (D1).
+        var advisors = rows.Count == 0
+            ? new Dictionary<Guid, QuotationAdvisor>()
+            : await advisorLookup.FindAsync(
                 query.TenantId,
                 rows.Select(row => row.Quotation.AdvisorId.Value).Distinct().ToArray(),
                 cancellationToken);
@@ -126,7 +127,7 @@ public sealed class ListSalesHandler(
         var items = rows
             .Select(row => row.ToListItemDto(
                 clientNames.GetValueOrDefault(row.Quotation.ClientId),
-                advisorEmails.GetValueOrDefault(row.Quotation.AdvisorId.Value)))
+                advisors.GetValueOrDefault(row.Quotation.AdvisorId.Value)?.Email))
             .ToArray();
 
         return new SalePage(items, total, page, pageSize);

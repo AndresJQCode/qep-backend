@@ -253,6 +253,7 @@ public sealed class InvitationServiceTests
             MembershipId.New(),
             userId,
             tenantId,
+            "Ana Pérez",
             ["advisor"],
             "invitation",
             Token,

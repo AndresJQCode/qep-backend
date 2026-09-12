@@ -11,12 +11,11 @@ namespace Bootstrapper;
 /// <summary>
 /// Resuelve la etiqueta con la que mostrar a una persona en un reporte.
 ///
-/// **El sistema no guarda nombre de persona en ningun lado.**
-/// <c>Modules.Identity.Domain.User</c> tiene <c>Email</c>, estado y marcas de tiempo;
-/// <c>Modules.Tenancy.Domain.Membership</c> tiene <c>UserId</c> y estado, y ni eso. Asi que el
-/// email es el unico identificador legible que existe, y es lo que viaja en <c>advisorName</c> y
-/// <c>changedByName</c> — los nombres de campo se mantienen porque son los que fija el contrato
-/// de API con el frontend.
+/// **Los reportes muestran el email, no el nombre.** El nombre existe desde el 2026-09-11
+/// —<c>Modules.Tenancy.Domain.Membership.DisplayName</c>—, pero por decisión de alcance sólo lo
+/// imprime el PDF de cotización (spec 2026-09-11, D1); llevarlo a reportes es un trabajo aparte.
+/// Así que lo que viaja en <c>advisorName</c> y <c>changedByName</c> sigue siendo el email — los
+/// nombres de campo se mantienen porque son los que fija el contrato de API con el frontend.
 ///
 /// Vive en <c>Bootstrapper</c> y no en un modulo porque toca los DbContext de **dos** modulos a
 /// la vez (Tenancy e Identity), que es exactamente el acoplamiento que solo el composition root

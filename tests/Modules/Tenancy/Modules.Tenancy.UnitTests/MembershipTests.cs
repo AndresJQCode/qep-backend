@@ -15,6 +15,7 @@ public sealed class MembershipTests
     private const string TokenHash = "plain-invitation-token-hash";
     private const string RenewedToken = "renewed-invitation-token";
     private const string RenewedTokenHash = "renewed-invitation-token-hash";
+    private const string InvitedName = "Ana Pérez";
 
     [Fact]
     public void InviteStartsInvitedAndRaisesEventWithExpiry()
@@ -281,6 +282,7 @@ public sealed class MembershipTests
                 MembershipId.New(),
                 Guid.CreateVersion7(),
                 TenantId.New(),
+                InvitedName,
                 ["advisor"],
                 "invitation",
                 " ",
@@ -302,7 +304,7 @@ public sealed class MembershipTests
         membership.PullDomainEvents();
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
 
-        membership.Reinvite(["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
+        membership.Reinvite(InvitedName, ["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
 
         Assert.Equal(RenewedTokenHash, membership.InvitationTokenHash);
         var invited = Assert.IsType<MembershipInvitedDomainEvent>(
@@ -339,6 +341,7 @@ public sealed class MembershipTests
                 MembershipId.New(),
                 Guid.Empty,
                 TenantId.New(),
+                InvitedName,
                 [],
                 "invitation",
                 Token,
@@ -368,7 +371,7 @@ public sealed class MembershipTests
         var originalId = membership.Id;
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
 
-        membership.Reinvite(["tenancy.admin"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
+        membership.Reinvite(InvitedName, ["tenancy.admin"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
 
         Assert.Equal(originalId, membership.Id);
         Assert.Equal(MembershipState.Invited, membership.State);
@@ -386,7 +389,7 @@ public sealed class MembershipTests
         membership.PullDomainEvents();
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
 
-        membership.Reinvite(["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
+        membership.Reinvite(InvitedName, ["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
 
         var domainEvent = Assert.Single(membership.DomainEvents);
         var invited = Assert.IsType<MembershipInvitedDomainEvent>(domainEvent);
@@ -401,7 +404,7 @@ public sealed class MembershipTests
         var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
         Assert.True(membership.Expire(lapsed));
 
-        membership.Reinvite(["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
+        membership.Reinvite(InvitedName, ["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
 
         Assert.Equal(MembershipState.Invited, membership.State);
         Assert.Equal(lapsed + Ttl, membership.ExpiresAt);
@@ -419,7 +422,7 @@ public sealed class MembershipTests
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
-                ["advisor"], RenewedToken, RenewedTokenHash, withinWindow, Ttl));
+                InvitedName, ["advisor"], RenewedToken, RenewedTokenHash, withinWindow, Ttl));
 
         Assert.Equal("tenancy.membership.invitation_still_valid", error.Code);
         Assert.Equal(MembershipState.Invited, membership.State);
@@ -434,6 +437,7 @@ public sealed class MembershipTests
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
+                InvitedName,
                 ["advisor"],
                 RenewedToken,
                 RenewedTokenHash,
@@ -459,6 +463,7 @@ public sealed class MembershipTests
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
+                InvitedName,
                 ["advisor"],
                 RenewedToken,
                 RenewedTokenHash,
@@ -478,6 +483,7 @@ public sealed class MembershipTests
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
+                InvitedName,
                 ["advisor"],
                 RenewedToken,
                 RenewedTokenHash,
@@ -500,6 +506,7 @@ public sealed class MembershipTests
 
         Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
+                InvitedName,
                 ["tenancy.admin"],
                 RenewedToken,
                 RenewedTokenHash,
@@ -596,11 +603,214 @@ public sealed class MembershipTests
         Assert.Equal(MembershipState.Expired, membership.State);
     }
 
+    /// <summary>
+    /// El nombre es presentación del tenant: vive en la membresía, se normaliza en el agregado y
+    /// renombrar cuenta como cambio —sube la versión— porque el roster lo edita con If-Match.
+    /// </summary>
+    [Fact]
+    public void RenameTrimsTheNameAndBumpsTheVersion()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var version = membership.Version;
+        var renamedAt = InvitedAt.AddHours(1);
+
+        var changed = membership.Rename("  Ana María Pérez  ", renamedAt);
+
+        Assert.True(changed);
+        Assert.Equal("Ana María Pérez", membership.DisplayName);
+        Assert.Equal(version + 1, membership.Version);
+        Assert.Equal(renamedAt, membership.UpdatedAt);
+    }
+
+    // Guardar dos veces lo mismo no es un cambio: subir la versión invalidaría el If-Match de
+    // otra pestaña por nada.
+    [Fact]
+    public void RenameWithTheSameNormalizedNameIsANoOp()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Rename("Ana María Pérez", InvitedAt.AddHours(1));
+        var version = membership.Version;
+        var updatedAt = membership.UpdatedAt;
+
+        var changed = membership.Rename("  Ana María Pérez ", InvitedAt.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(version, membership.Version);
+        Assert.Equal(updatedAt, membership.UpdatedAt);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void RenameRejectsABlankNameAndLeavesTheMembershipUntouched(string displayName)
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var before = membership.DisplayName;
+        var version = membership.Version;
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Rename(displayName, InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
+        Assert.Equal(before, membership.DisplayName);
+        Assert.Equal(version, membership.Version);
+    }
+
+    [Fact]
+    public void RenameRejectsANameLongerThanTheColumn()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+
+        var error = Assert.Throws<TenantDomainException>(() => membership.Rename(
+            new string('a', Membership.DisplayNameMaxLength + 1), InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
+    }
+
+    [Fact]
+    public void RenameAcceptsANameExactlyAsLongAsTheColumn()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var name = new string('a', Membership.DisplayNameMaxLength);
+
+        membership.Rename(name, InvitedAt.AddHours(1));
+
+        Assert.Equal(name, membership.DisplayName);
+    }
+
+    // El nombre no cambia el acceso, así que se puede cargar en cualquier estado.
+    [Fact]
+    public void RenameWorksOnASuspendedMembership()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.Accept(InvitedAt.AddHours(1));
+        membership.Suspend(InvitedAt.AddHours(2));
+
+        Assert.True(membership.Rename("Ana María Pérez", InvitedAt.AddHours(3)));
+        Assert.Equal(MembershipState.Suspended, membership.State);
+    }
+
+    // D3: el owner entra por register-tenant, no por invitación, así que nace sin nombre y lo
+    // carga desde el roster. La protección de owner no alcanza al nombre.
+    [Fact]
+    public void TheOwnerStartsWithoutANameAndCanBeNamedLater()
+    {
+        var owner = CreateOwner();
+
+        Assert.Null(owner.DisplayName);
+        Assert.True(owner.Rename("Laura Gómez", InvitedAt.AddHours(1)));
+        Assert.Equal("Laura Gómez", owner.DisplayName);
+    }
+
+    // Nadie consume un renombre fuera de Tenancy: el PDF lee el nombre cuando se genera.
+    [Fact]
+    public void RenameRaisesNoDomainEvent()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        membership.PullDomainEvents();
+
+        membership.Rename("Ana María Pérez", InvitedAt.AddHours(1));
+
+        Assert.Empty(membership.DomainEvents);
+    }
+
+    [Fact]
+    public void InviteStoresTheTrimmedDisplayName()
+    {
+        var membership = Membership.Invite(
+            MembershipId.New(),
+            Guid.CreateVersion7(),
+            TenantId.New(),
+            "  Ana Pérez  ",
+            ["advisor"],
+            "invitation",
+            Token,
+            TokenHash,
+            InvitedAt,
+            Ttl);
+
+        Assert.Equal("Ana Pérez", membership.DisplayName);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void InviteRejectsABlankDisplayName(string displayName)
+    {
+        var error = Assert.Throws<TenantDomainException>(() =>
+            Membership.Invite(
+                MembershipId.New(),
+                Guid.CreateVersion7(),
+                TenantId.New(),
+                displayName,
+                ["advisor"],
+                "invitation",
+                Token,
+                TokenHash,
+                InvitedAt,
+                Ttl));
+
+        Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
+    }
+
+    [Fact]
+    public void InviteRejectsADisplayNameLongerThanTheColumn()
+    {
+        var error = Assert.Throws<TenantDomainException>(() =>
+            Membership.Invite(
+                MembershipId.New(),
+                Guid.CreateVersion7(),
+                TenantId.New(),
+                new string('a', Membership.DisplayNameMaxLength + 1),
+                ["advisor"],
+                "invitation",
+                Token,
+                TokenHash,
+                InvitedAt,
+                Ttl));
+
+        Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
+    }
+
+    // D5: renovar una invitación vencida reescribe el nombre junto con los roles y la ventana.
+    [Fact]
+    public void ReinviteOverwritesTheDisplayName()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        membership.Reinvite(
+            "  Ana María Pérez  ", ["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
+
+        Assert.Equal("Ana María Pérez", membership.DisplayName);
+    }
+
+    // Mismo criterio que ARejectedReinviteLeavesRolesUntouched: un rechazo no deja nada a medias,
+    // ni roles nuevos ni un token rotado.
+    [Fact]
+    public void AReinviteWithABlankNameLeavesTheMembershipUntouched()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var version = membership.Version;
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reinvite(
+                "   ", ["tenancy.admin"], RenewedToken, RenewedTokenHash, lapsed, Ttl));
+
+        Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
+        Assert.Equal(InvitedName, membership.DisplayName);
+        Assert.Equal(["advisor"], membership.Roles);
+        Assert.Equal(TokenHash, membership.InvitationTokenHash);
+        Assert.Equal(version, membership.Version);
+    }
+
     private static Membership Invite(Guid userId) =>
         Membership.Invite(
             MembershipId.New(),
             userId,
             TenantId.New(),
+            InvitedName,
             ["advisor"],
             "invitation",
             Token,

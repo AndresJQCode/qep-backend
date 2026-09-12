@@ -76,6 +76,17 @@ public sealed class ListQuotationsHandlerTests
         Assert.Null(Assert.Single(page.Items).ClientName);
     }
 
+    // D1: el listado de cotizaciones sigue con el correo; el nombre es sólo del PDF.
+    [Fact]
+    public async Task ListKeepsTheAdvisorEmailEvenWhenTheMemberHasAName()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewQuotation("QUO-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora@qcode.co", Assert.Single(page.Items).AdvisorEmail);
+    }
+
     // Las tres acciones que la fila ofrece y que no se deducen de su estado —editar, anular e
     // ir a aprobar la venta— dependen de si ya se convirtio. Sin esto, quien pinta el listado
     // tiene que pedir la venta de cada fila para saber cuales habilitar.
@@ -224,6 +235,6 @@ public sealed class ListQuotationsHandlerTests
         new(new StubQuotationListRepository(quotations),
             new StubSaleListRepository(sales),
             customers,
-            new StubQuotationAdvisorLookup(),
+            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubExecutionContext(SubjectId, TenantId));
 }

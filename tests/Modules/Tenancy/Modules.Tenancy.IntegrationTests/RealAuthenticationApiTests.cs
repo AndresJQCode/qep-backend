@@ -156,7 +156,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = memberEmail, roles = AdvisorRoles }),
+            Content = JsonContent.Create(new { email = memberEmail, displayName = "Ana Pérez", roles = AdvisorRoles }),
         };
         inviteRequest.Headers.Add("X-Tenant-Id", tenantId.ToString());
         inviteRequest.Headers.Add("X-Qep-Client", "web");
@@ -225,7 +225,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = secondOwnerEmail, roles = AdvisorRoles }),
+            Content = JsonContent.Create(new { email = secondOwnerEmail, displayName = "Ana Pérez", roles = AdvisorRoles }),
         };
         inviteRequest.Headers.Add("X-Tenant-Id", tenantId.ToString());
         inviteRequest.Headers.Add("X-Qep-Client", "web");
@@ -274,7 +274,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = NewEmail(), roles = AdvisorRoles }),
+            Content = JsonContent.Create(new { email = NewEmail(), displayName = "Ana Pérez", roles = AdvisorRoles }),
         };
         beforeDowngrade.Headers.Add("X-Tenant-Id", tenantId.ToString());
         beforeDowngrade.Headers.Add("X-Qep-Client", "web");
@@ -304,7 +304,7 @@ public sealed class RealAuthenticationApiTests
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email = NewEmail(), roles = AdvisorRoles }),
+            Content = JsonContent.Create(new { email = NewEmail(), displayName = "Ana Pérez", roles = AdvisorRoles }),
         };
         afterDowngrade.Headers.Add("X-Tenant-Id", tenantId.ToString());
         afterDowngrade.Headers.Add("X-Qep-Client", "web");

@@ -32,7 +32,7 @@ public static class QuotationPdfDocumentMapper
             BillingFor(quotation),
             ShippingFor(quotation),
             quotation.IsStorePickup,
-            quotation.AdvisorEmail ?? string.Empty,
+            AdvisorLabelFor(quotation),
             quotation.Currency,
             BillingAccountFor(quotation),
             quotation.PaymentMethod,
@@ -115,6 +115,13 @@ public static class QuotationPdfDocumentMapper
         quotation.IsStorePickup
             ? new QuotationPdfParty(false, string.Empty, string.Empty, string.Empty)
             : PartyFor(quotation, QuotationPartyRole.Shipping);
+
+    /// <summary>La ficha "Asesor" presenta a la persona por su nombre, y cae al correo mientras la
+    /// membresía no tenga uno (filas anteriores al nombre y el owner). Sin ninguno de los dos,
+    /// vacío: <c>quotation.typ</c> ya lo resuelve. Un PDF ya generado conserva lo que imprimió:
+    /// el caché sólo se invalida por <c>Quotation.Version</c> (spec 2026-09-11, D7).</summary>
+    private static string AdvisorLabelFor(QuotationResponse quotation) =>
+        quotation.AdvisorName ?? quotation.AdvisorEmail ?? string.Empty;
 
     private static QuotationPdfBillingAccount? BillingAccountFor(QuotationResponse quotation) =>
         quotation.BillingAccount is { } account

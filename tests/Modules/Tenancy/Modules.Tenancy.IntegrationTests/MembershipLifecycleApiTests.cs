@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
@@ -351,8 +352,207 @@ public sealed class MembershipLifecycleApiTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    // 200 con la fila entera y el ETag nuevo: el front repinta la fila y ya tiene qué mandar en
+    // el próximo If-Match. La auditoría va en la misma transacción que el cambio.
+    [Fact]
+    public async Task RenameReturnsTheRowWithANewEtagAndIsAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendDisplayNameAsync(
+            ownerClient, tenantId, memberId, "  Ana María Pérez  ");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("\"2\"", response.Headers.ETag?.Tag);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Ana María Pérez", membership!.DisplayName);
+        Assert.Equal(2, membership.Version);
+        var outcomes = await AuditOutcomesAsync(
+            factory.ConnectionString, memberId, "tenancy.membership.renamed");
+        Assert.Equal("success", Assert.Single(outcomes));
+    }
+
+    // Guardar el mismo nombre no es un cambio: misma versión, y nada auditado.
+    [Fact]
+    public async Task RenamingToTheSameNameKeepsTheVersionAndRecordsNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(
+            ownerClient, tenantId, NewEmail(), AdvisorRoles, displayName: "Ana Pérez");
+
+        var response = await SendDisplayNameAsync(ownerClient, tenantId, memberId, "Ana Pérez");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("\"1\"", response.Headers.ETag?.Tag);
+        Assert.Empty(await AuditOutcomesAsync(
+            factory.ConnectionString, memberId, "tenancy.membership.renamed"));
+    }
+
+    // D3: el owner entra por register-tenant, sin nombre, y lo carga desde el roster.
+    [Fact]
+    public async Task TheOwnerCanNameTheirOwnMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, ownerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+
+        var response = await SendDisplayNameAsync(
+            ownerClient, tenantId, ownerMembershipId, "Laura Gómez");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Laura Gómez", membership!.DisplayName);
+        Assert.True(membership.IsOwner);
+    }
+
+    [Fact]
+    public async Task RenameRequiresIfMatch()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendDisplayNameAsync(
+            ownerClient, tenantId, memberId, "Ana María Pérez", expectedVersion: null);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("precondition.if_match_required", problem!.Code);
+    }
+
+    [Fact]
+    public async Task RenameWithAStaleVersionIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendDisplayNameAsync(
+            ownerClient, tenantId, memberId, "Ana María Pérez", expectedVersion: 99);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+    }
+
+    // 403 y nunca 404: la ruta pide un tenant que no es el del contexto. El handler lo revalida
+    // antes de tocar el repositorio (doble capa), así que no se entera de si el id existe.
+    [Fact]
+    public async Task RenameFromAnotherTenantIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, _) = await RegisterTenantWithOwnerAsync(factory);
+        using var otherClient = CreateClient(factory, OtherSubjectId, OtherTenantId);
+
+        var response = await SendDisplayNameAsync(
+            otherClient, tenantId, ownerMembershipId, "Ana María Pérez");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RenameRequiresTheManagePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        using var readerOnly = CreateClient(factory, Guid.CreateVersion7().ToString(), tenantId);
+        readerOnly.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
+
+        var response = await SendDisplayNameAsync(
+            readerOnly, tenantId, memberId, "Ana María Pérez");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RenameWithABlankNameMarksTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendDisplayNameAsync(ownerClient, tenantId, memberId, "   ");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", document.RootElement.GetProperty("code").GetString());
+        Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("DisplayName", out _));
+    }
+
+    // Mismo validador que al invitar (InviteWithADisplayNameOver150CharactersIsRejected en
+    // MembershipApiTests): FluentValidation da el campo, y es lo único que el diálogo sabe
+    // marcar. 151 caracteres, uno más que Membership.DisplayNameMaxLength.
+    [Fact]
+    public async Task RenameWithANameOver150CharactersMarksTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendDisplayNameAsync(
+            ownerClient, tenantId, memberId, new string('a', 151));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", document.RootElement.GetProperty("code").GetString());
+        Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("DisplayName", out _));
+    }
+
+    // MembershipLoader.LoadAsync (Modules.Tenancy.Application) llama a
+    // FindByIdAsync(id, tenantId): un id real de OTRO tenant, mandado bajo la ruta propia, no
+    // matchea ese filtro y responde 404 tenancy.membership.not_found — igual que un id
+    // inventado (ManageOfUnknownMembershipIsNotFound) — así que nunca confirma que el id exista
+    // en otro tenant. Con esto se prueba el filtro por tenant, no sólo la ausencia del id.
+    [Fact]
+    public async Task RenameOfAMembershipFromAnotherTenantUnderOwnRouteIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantAId, _, _, tenantAOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var (tenantBId, tenantBOwnerMembershipId, _, tenantBOwnerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+
+        var response = await SendDisplayNameAsync(
+            tenantAOwnerClient, tenantAId, tenantBOwnerMembershipId, "Nombre Ajeno");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.not_found", problem!.Code);
+
+        // La membresía del tenant B, mirada desde su propio tenant, sigue sin nombre y en la
+        // versión 1: el intento fallido de tenant A no la tocó.
+        var listResponse = await tenantBOwnerClient.GetAsync(
+            $"/api/v1/tenants/{tenantBId}/memberships",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        var list = await listResponse.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var tenantBOwnerMembership = Assert.Single(
+            list!.Items, item => item.Id == tenantBOwnerMembershipId);
+        Assert.Null(tenantBOwnerMembership.DisplayName);
+        Assert.Equal(1, tenantBOwnerMembership.Version);
+    }
+
     private static readonly string[] AdvisorRoles = ["advisor"];
     private static readonly string[] AdminRoles = ["admin"];
+    private const string DefaultDisplayName = "Ana Pérez";
 
     private static string NewEmail() => $"member-{Guid.NewGuid():N}@example.com";
 
@@ -412,13 +612,14 @@ public sealed class MembershipLifecycleApiTests
         HttpClient client,
         string tenantId,
         string email,
-        IReadOnlyCollection<string>? roles = null)
+        IReadOnlyCollection<string>? roles = null,
+        string displayName = DefaultDisplayName)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = roles ?? AdvisorRoles })
+            Content = JsonContent.Create(new { email, displayName, roles = roles ?? AdvisorRoles })
         };
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -471,6 +672,53 @@ public sealed class MembershipLifecycleApiTests
         }
 
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<HttpResponseMessage> SendDisplayNameAsync(
+        HttpClient client,
+        string tenantId,
+        Guid membershipId,
+        string? displayName,
+        long? expectedVersion = 1)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name")
+        {
+            Content = JsonContent.Create(new { displayName })
+        };
+        if (expectedVersion is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{expectedVersion}\"");
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<string>> AuditOutcomesAsync(
+        string connectionString,
+        Guid membershipId,
+        string action)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT outcome FROM audit.entries
+            WHERE resource_id = @resourceId AND action = @action
+            """,
+            connection);
+        command.Parameters.AddWithValue("resourceId", membershipId.ToString());
+        command.Parameters.AddWithValue("action", action);
+        var outcomes = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(
+            TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            outcomes.Add(reader.GetString(0));
+        }
+
+        return outcomes;
     }
 
     private static async Task<Guid> FindMembershipIdAsync(
@@ -537,7 +785,8 @@ public sealed class MembershipLifecycleApiTests
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
         long Version,
-        bool IsOwner);
+        bool IsOwner,
+        string? DisplayName);
 
     private sealed record MembershipListPayload(
         IReadOnlyList<MembershipListItemPayload> Items);

@@ -133,6 +133,36 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal("Calle 100 #15-20, Bogotá", document.CustomerLocation);
     }
 
+    // D6: la ficha "Asesor" presenta a la persona por su nombre, que es lo que el cliente espera
+    // leer en un documento comercial.
+    [Fact]
+    public void TheAdvisorLabelPrefersTheName()
+    {
+        var document = QuotationPdfDocumentMapper.From(Response() with { AdvisorName = "Ana Pérez" });
+
+        Assert.Equal("Ana Pérez", document.AdvisorLabel);
+    }
+
+    // Sin nombre —membresías anteriores al nombre y el owner hasta que lo cargue— el documento
+    // sigue saliendo con el correo, que es lo que imprimía antes.
+    [Fact]
+    public void TheAdvisorLabelFallsBackToTheEmail()
+    {
+        var document = QuotationPdfDocumentMapper.From(Response() with { AdvisorName = null });
+
+        Assert.Equal("ana@qep.co", document.AdvisorLabel);
+    }
+
+    // Sin ninguno de los dos queda vacío, y quotation.typ ya sabe resolver el vacío.
+    [Fact]
+    public void TheAdvisorLabelIsEmptyWithoutNameOrEmail()
+    {
+        var document = QuotationPdfDocumentMapper.From(
+            Response() with { AdvisorName = null, AdvisorEmail = null });
+
+        Assert.Equal(string.Empty, document.AdvisorLabel);
+    }
+
     // `ClientId` es una referencia blanda entre modulos: una cotizacion cuyo cliente se borro
     // tiene que poder exportarse igual, y no reventar al armar el documento.
     [Fact]
@@ -225,6 +255,7 @@ public sealed class QuotationPdfDocumentMapperTests
         Client(),
         Guid.CreateVersion7(),
         "ana@qep.co",
+        null,
         "Draft",
         new DateTimeOffset(2026, 9, 6, 10, 0, 0, TimeSpan.Zero),
         new DateOnly(2026, 9, 30),

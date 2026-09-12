@@ -4,12 +4,11 @@ namespace Modules.Reporting.Application;
 /// Una venta convertida, con la cotización de origen ya resuelta. Los importes son los de la
 /// cotización: <c>Sale</c> no los duplica (modelo-datos-cotizaciones.md §1.2).
 ///
-/// <c>AdvisorName</c> es el **email** del asesor, no su nombre: el sistema no guarda nombre de
-/// persona en ningún lado —<c>Identity.User</c> tiene <c>Email</c> y estado, y
-/// <c>Tenancy.Membership</c> ni eso—, así que el email es el único identificador legible que
-/// existe. El nombre del campo se mantiene porque es el que el contrato de API fija con el
-/// frontend; léase "la etiqueta con la que mostrar a esta persona". Nulo cuando la fila de
-/// usuario no está.
+/// <c>AdvisorName</c> es el **email** del asesor, no su nombre. El nombre vive en
+/// <c>Tenancy.Membership.DisplayName</c> desde el 2026-09-11, pero sólo lo usa el PDF de
+/// cotización (spec 2026-09-11, D1). El nombre del campo se mantiene porque es el que el contrato
+/// de API fija con el frontend; léase "la etiqueta con la que mostrar a esta persona". Nulo
+/// cuando la fila de usuario no está.
 ///
 /// <c>ClientName</c> sí es un nombre real: sale de <c>Customer.Name</c>.
 /// </summary>

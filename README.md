@@ -358,7 +358,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/authorization/me`      | `GET`                                                                                       | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
 | `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `advisorship.read`                                                                    |
 | `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PATCH`                                                                              | `tenancy.settings.read` / `.update`                                                          |
-| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles` por membership                  | `advisorship.invite` / `.read` / `.manage`                                            |
+| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `display-name` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 
@@ -452,6 +452,7 @@ anterior:
 ```powershell
 $body = @{
   email = "new.member@example.com"
+  displayName = "Ana Pérez"
   roles = @("advisor")
 } | ConvertTo-Json
 
@@ -469,6 +470,7 @@ Respuesta `201 Created`:
 {
   "id": "01900000-0000-7000-8000-000000000010",
   "userId": "01900000-0000-7000-8000-000000000011",
+  "displayName": "Ana Pérez",
   "tenantId": "01900000-0000-7000-8000-000000000001",
   "state": "Invited",
   "roles": ["advisor"],
@@ -481,6 +483,11 @@ Respuesta `201 Created`:
 Repetir secuencialmente la invitación para el mismo email y tenant devuelve la
 Membership existente sin crear duplicados.
 
+`displayName` es obligatorio: se guarda sin espacios a los costados y admite entre 1 y 150
+caracteres. Sin él responde `422 validation.failed` con `errors.DisplayName`. Una invitación
+viva o una membresía activa ignoran el nombre del cuerpo; sólo renovar una invitación vencida
+lo reescribe. Para cambiárselo a un miembro está `PATCH .../display-name`.
+
 Los errores usan `ProblemDetails` e incluyen `code` y `traceId`; los errores de
 validación también incluyen un mapa `errors`.
 
@@ -492,6 +499,35 @@ validación también incluyen un mapa `errors`.
 | `412`  | El `ETag` enviado ya no es la versión vigente                       |
 | `422`  | Falló una validación o regla de dominio                             |
 | `428`  | Falta un encabezado `If-Match` válido                               |
+
+### Nombre del miembro
+
+| Método  | Ruta                                                                  | Permiso              |
+| ------- | --------------------------------------------------------------------- | -------------------- |
+| `PATCH` | `/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name` | `advisorship.manage` |
+
+Cambia el nombre con el que el tenant presenta a la persona, el que imprime el PDF de
+cotización. Vale en cualquier estado de la membresía y sobre la propia: el owner, que entra por
+`register-tenant` sin nombre, lo carga desde acá. Exige `If-Match` con la versión cargada, igual
+que `PATCH .../roles`, y responde `200` con la fila del roster y el `ETag` nuevo. Guardar el
+mismo nombre no sube la versión ni se audita; un cambio real se audita como
+`tenancy.membership.renamed`.
+
+```powershell
+$body = @{ displayName = "Ana María Pérez" } | ConvertTo-Json
+$patchHeaders = $headers.Clone()
+$patchHeaders["If-Match"] = '"1"'
+
+Invoke-RestMethod `
+  -Method Patch `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/memberships/$membershipId/display-name" `
+  -Headers $patchHeaders `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Sin `If-Match` responde `428 precondition.if_match_required`; con una versión vieja, `412`; con
+un nombre vacío o de más de 150 caracteres, `422 validation.failed` con `errors.DisplayName`.
 
 ### Aceptación de la invitación
 

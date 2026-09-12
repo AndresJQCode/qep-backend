@@ -40,8 +40,8 @@ public sealed class SaleListApiTests
         Assert.Equal(quotation.QuotationNumber, row.QuotationNumber);
         Assert.Equal(clientId, row.ClientId);
         Assert.Equal("Verde Esencial S.A.S.", row.ClientName);
-        // La asesora se muestra por correo: el sistema no guarda nombre de persona en ninguna
-        // parte, mismo criterio que el listado de cotizaciones.
+        // La asesora se muestra por correo: el nombre de la membresia solo llega al PDF (spec
+        // 2026-09-11, D1), mismo criterio que el listado de cotizaciones.
         Assert.NotNull(row.AdvisorEmail);
         Assert.Equal("Pending", row.Status);
         Assert.Equal("PaymentPending", row.PaymentStatus);
