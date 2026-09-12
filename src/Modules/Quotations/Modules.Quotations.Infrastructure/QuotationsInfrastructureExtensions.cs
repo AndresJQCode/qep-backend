@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
+using Modules.Quotations.Infrastructure.Excel;
 using Modules.Quotations.Infrastructure.Expiration;
 using Modules.Quotations.Infrastructure.Pdf;
 using Modules.Quotations.Infrastructure.Persistence;
@@ -40,6 +41,8 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<ISaleNumberGenerator, SaleNumberGenerator>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
+        // El Excel del listado. ClosedXML se queda en esta capa: Application solo ve el puerto.
+        services.AddScoped<IQuotationExportWorkbookBuilder, ClosedXmlQuotationExportBuilder>();
 
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();

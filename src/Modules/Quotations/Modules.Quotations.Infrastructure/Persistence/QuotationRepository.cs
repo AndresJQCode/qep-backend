@@ -21,10 +21,6 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
                 quotation => quotation.TenantId == tenantId && quotation.Id == quotationId,
                 cancellationToken);
 
-    // AsNoTracking y sin Include(Items) a propósito: el listado (US-8) sólo pinta encabezado --
-    // número, cliente, asesora, fecha, total, estado -- nunca líneas de producto, así que
-    // traerlas acá sería el mismo N+1 innecesario que ProductRepository.SearchAsync evita no
-    // trayendo lo que la fila no muestra.
     private const string LikeEscapeCharacter = "\\";
 
     // Mismo criterio que CustomerRepository.EscapeLikeWildcards/LikePattern: un numero de
@@ -52,6 +48,53 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         int page,
         int pageSize,
         CancellationToken cancellationToken)
+    {
+        var query = FilteredQuery(
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(quotation => quotation.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    // Sin Count ni paginacion: el Excel se lleva todo lo que el filtro deja pasar, en el mismo
+    // orden que la tabla.
+    public async Task<IReadOnlyList<Quotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        CancellationToken cancellationToken) =>
+        await FilteredQuery(
+                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber)
+            .OrderByDescending(quotation => quotation.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+    // Los filtros del listado y de su Excel salen de aca y de ningun otro lado: si cada camino
+    // armara los suyos, tarde o temprano el archivo diria algo distinto de la pantalla.
+    //
+    // AsNoTracking y sin Include(Items) a propósito: el listado (US-8) sólo pinta encabezado --
+    // número, cliente, asesora, fecha, total, estado -- nunca líneas de producto, así que
+    // traerlas acá sería el mismo N+1 innecesario que ProductRepository.SearchAsync evita no
+    // trayendo lo que la fila no muestra.
+    private IQueryable<Quotation> FilteredQuery(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber)
     {
         var query = dbContext.Quotations
             .AsNoTracking()
@@ -101,14 +144,32 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
             query = query.Where(quotation => quotation.CreatedAt < toUtcExclusive);
         }
 
-        var total = await query.CountAsync(cancellationToken);
-        var items = await query
-            .OrderByDescending(quotation => quotation.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+        return query;
+    }
+
+    // Devuelve ids y no lineas: la pregunta es "tiene al menos una", y traer las lineas para
+    // contarlas seria cargar toda la pagina de items para descartarlos. `Items.Any()` se traduce
+    // a un EXISTS por fila dentro de la misma consulta, filtrado por tenant como todo lo demas.
+    public async Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken)
+    {
+        if (quotationIds.Count == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var ids = quotationIds.ToArray();
+        var found = await dbContext.Quotations
+            .AsNoTracking()
+            .Where(quotation => quotation.TenantId == tenantId
+                && ids.Contains(quotation.Id)
+                && quotation.Items.Any())
+            .Select(quotation => quotation.Id)
             .ToListAsync(cancellationToken);
 
-        return (items, total);
+        return found.Select(id => id.Value).ToHashSet();
     }
 
     public void Add(Quotation quotation) => dbContext.Quotations.Add(quotation);

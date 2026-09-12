@@ -246,6 +246,11 @@ public sealed record QuotationResponse(
     QuotationClientResponse? Client,
     Guid AdvisorId,
     string? AdvisorEmail,
+    /// <summary>El nombre que el tenant cargó en la membresía de la asesora. Null en membresías
+    /// anteriores al nombre y en el owner hasta que lo cargue desde el roster. Hoy sólo lo usa el
+    /// PDF, que cae a <c>AdvisorEmail</c> cuando falta (spec 2026-09-11, D6); la pantalla sigue
+    /// mostrando el correo (D1). Aditivo: un front que no lo lee no se entera.</summary>
+    string? AdvisorName,
     string Status,
     DateTimeOffset CreatedAt,
     DateOnly? ValidUntil,
@@ -323,7 +328,17 @@ public sealed record QuotationListItemResponse(
     /// <summary>La moneda de <c>Total</c>. Viaja por fila porque la grilla mezcla cotizaciones
     /// en pesos y en dolares, y una columna de importes sin moneda seria ilegible.</summary>
     string Currency,
-    decimal Total);
+    decimal Total,
+    /// <summary>Si el envio tiene sentido ahora. Mismo campo y mismo significado que en
+    /// <see cref="QuotationResponse"/>.</summary>
+    bool CanBeSent,
+    /// <summary>Si ya es un documento presentable: al menos una linea, vigencia y cuenta de
+    /// cobro.</summary>
+    bool IsComplete,
+    /// <summary>La venta que salio de esta cotizacion. <c>null</c> es "sin convertir".</summary>
+    Guid? SaleId,
+    /// <summary><c>Pending</c> o <c>Approved</c>; <c>null</c> sin venta.</summary>
+    string? SaleStatus);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>
