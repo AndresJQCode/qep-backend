@@ -115,6 +115,7 @@ public sealed class Membership
         MembershipId id,
         Guid userId,
         TenantId tenantId,
+        string displayName,
         IEnumerable<string> roles,
         string origin,
         string invitationToken,
@@ -137,6 +138,7 @@ public sealed class Membership
         }
 
         ValidateInvitationToken(invitationToken, invitationTokenHash);
+        var normalizedName = NormalizeDisplayName(displayName);
 
         var membership = new Membership(
             id,
@@ -148,6 +150,7 @@ public sealed class Membership
             invitedAt + timeToLive)
         {
             InvitationTokenHash = invitationTokenHash,
+            DisplayName = normalizedName,
         };
         membership._domainEvents.Add(new MembershipInvitedDomainEvent(
             Guid.CreateVersion7(),
@@ -273,8 +276,12 @@ public sealed class Membership
     ///
     /// Una invitación todavía válida se rechaza en vez de renovarse: extender una ventana viva
     /// invalida en silencio el link que ya está en la bandeja de alguien.
+    ///
+    /// El nombre se reescribe junto con los roles: quien renueva una invitación vencida la está
+    /// armando de nuevo (spec 2026-09-11, D5).
     /// </remarks>
     public void Reinvite(
+        string displayName,
         IEnumerable<string> roles,
         string invitationToken,
         string invitationTokenHash,
@@ -289,6 +296,7 @@ public sealed class Membership
         }
 
         ValidateInvitationToken(invitationToken, invitationTokenHash);
+        var normalizedName = NormalizeDisplayName(displayName);
 
         if (State == MembershipState.Invited && occurredAt <= ExpiresAt)
         {
@@ -306,6 +314,7 @@ public sealed class Membership
 
         _roles.Clear();
         _roles.AddRange(NormalizeRoles(roles));
+        DisplayName = normalizedName;
         State = MembershipState.Invited;
         InvitedAt = occurredAt;
         ExpiresAt = occurredAt + timeToLive;

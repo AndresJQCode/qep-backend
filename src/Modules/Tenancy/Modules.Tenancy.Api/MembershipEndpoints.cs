@@ -185,6 +185,7 @@ public static class MembershipEndpoints
             new InviteMemberCommand(
                 new TenantId(tenantId),
                 request.Email,
+                request.DisplayName,
                 request.Roles ?? [],
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -199,6 +200,7 @@ public static class MembershipEndpoints
             membership.Id.Value,
             membership.UserId,
             email,
+            membership.DisplayName,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -239,8 +241,14 @@ public static class MembershipEndpoints
     }
 }
 
+/// <param name="DisplayName">
+/// Obligatorio. Sin él —ausente, vacío o de más de 150 caracteres— responde 422
+/// <c>validation.failed</c> con <c>errors.DisplayName</c>, el único 422 que el formulario sabe
+/// marcar en el input.
+/// </param>
 public sealed record MembershipInviteRequest(
     string Email,
+    string DisplayName,
     IReadOnlyCollection<string>? Roles);
 
 public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? Roles);
@@ -249,6 +257,7 @@ public sealed record MembershipResponse(
     Guid Id,
     Guid UserId,
     string Email,
+    string? DisplayName,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,
