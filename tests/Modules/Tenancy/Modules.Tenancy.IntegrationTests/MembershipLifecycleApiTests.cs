@@ -493,6 +493,63 @@ public sealed class MembershipLifecycleApiTests
         Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("DisplayName", out _));
     }
 
+    // Mismo validador que al invitar (InviteWithADisplayNameOver150CharactersIsRejected en
+    // MembershipApiTests): FluentValidation da el campo, y es lo único que el diálogo sabe
+    // marcar. 151 caracteres, uno más que Membership.DisplayNameMaxLength.
+    [Fact]
+    public async Task RenameWithANameOver150CharactersMarksTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendDisplayNameAsync(
+            ownerClient, tenantId, memberId, new string('a', 151));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", document.RootElement.GetProperty("code").GetString());
+        Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("DisplayName", out _));
+    }
+
+    // MembershipLoader.LoadAsync (Modules.Tenancy.Application) llama a
+    // FindByIdAsync(id, tenantId): un id real de OTRO tenant, mandado bajo la ruta propia, no
+    // matchea ese filtro y responde 404 tenancy.membership.not_found — igual que un id
+    // inventado (ManageOfUnknownMembershipIsNotFound) — así que nunca confirma que el id exista
+    // en otro tenant. Con esto se prueba el filtro por tenant, no sólo la ausencia del id.
+    [Fact]
+    public async Task RenameOfAMembershipFromAnotherTenantUnderOwnRouteIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantAId, _, _, tenantAOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var (tenantBId, tenantBOwnerMembershipId, _, tenantBOwnerClient) =
+            await RegisterTenantWithOwnerAsync(factory);
+
+        var response = await SendDisplayNameAsync(
+            tenantAOwnerClient, tenantAId, tenantBOwnerMembershipId, "Nombre Ajeno");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.not_found", problem!.Code);
+
+        // La membresía del tenant B, mirada desde su propio tenant, sigue sin nombre y en la
+        // versión 1: el intento fallido de tenant A no la tocó.
+        var listResponse = await tenantBOwnerClient.GetAsync(
+            $"/api/v1/tenants/{tenantBId}/memberships",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        var list = await listResponse.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var tenantBOwnerMembership = Assert.Single(
+            list!.Items, item => item.Id == tenantBOwnerMembershipId);
+        Assert.Null(tenantBOwnerMembership.DisplayName);
+        Assert.Equal(1, tenantBOwnerMembership.Version);
+    }
+
     private static readonly string[] AdvisorRoles = ["advisor"];
     private static readonly string[] AdminRoles = ["admin"];
     private const string DefaultDisplayName = "Ana Pérez";

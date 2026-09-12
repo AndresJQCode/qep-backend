@@ -294,8 +294,13 @@ public sealed record MembershipInviteRequest(
 public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? Roles);
 
 /// <summary>
-/// Nullable a propósito: un cuerpo sin el campo llega como vacío al validador y sale como 422
-/// con <c>errors.DisplayName</c>, no como un 400 del binder que el diálogo no sabe leer.
+/// Nullable porque el campo puede faltar en el JSON: un cuerpo sin <c>displayName</c> llega
+/// acá como <see langword="null"/> (el binder no lo rechaza, sea o no nullable el tipo — ver
+/// <c>MembershipInviteRequest.DisplayName</c>, que es <see langword="string"/> no-nullable y
+/// también acepta el campo ausente). El mapeo a <see cref="string.Empty"/> en el endpoint deja
+/// que sea el validador de FluentValidation quien lo rechace con 422
+/// <c>validation.failed</c> y <c>errors.DisplayName</c>, el único 422 que el diálogo sabe
+/// marcar en el input.
 /// </summary>
 public sealed record MembershipDisplayNameUpdateRequest(string? DisplayName);
 
