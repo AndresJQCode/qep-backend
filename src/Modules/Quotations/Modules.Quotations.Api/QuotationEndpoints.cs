@@ -66,6 +66,17 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // El "Guardar" de la modal de agregar productos: varias altas y bajas de una sola vez,
+        // en vez de una escritura por click. Ruta hermana y no un verbo sobre "/items" porque
+        // no es una línea puntual — es la tanda entera.
+        group.MapPost("/{quotationId:guid}/items/batch", BatchUpdateQuotationItemsAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
+            .Accepts<BatchUpdateQuotationItemsRequest>("application/json")
+            .Produces<QuotationResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPut("/{quotationId:guid}/items/{itemId:guid}", UpdateQuotationItemAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<UpdateQuotationItemRequest>("application/json")
@@ -257,6 +268,26 @@ public static class QuotationEndpoints
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/quotations/{quotationId}",
             await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    private static async Task<IResult> BatchUpdateQuotationItemsAsync(
+        Guid tenantId,
+        Guid quotationId,
+        BatchUpdateQuotationItemsRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var toAdd = request.ToAdd
+            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .ToArray();
+
+        var quotation = await dispatcher.SendAsync(
+            new BatchUpdateQuotationItemsCommand(
+                tenantId, quotationId, toAdd, request.ToRemoveItemIds),
+            cancellationToken);
+
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> UpdateQuotationItemAsync(

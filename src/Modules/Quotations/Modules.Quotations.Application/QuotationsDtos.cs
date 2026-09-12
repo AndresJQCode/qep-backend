@@ -166,6 +166,16 @@ public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
+/// <summary>Una línea a agregar, tal como viaja en el request de la tanda — mismo par que
+/// <see cref="AddQuotationItemRequest"/>.</summary>
+public sealed record BatchQuotationItemAdditionRequest(Guid ProductId, decimal Quantity);
+
+/// <summary>El "Guardar" de la modal de agregar productos: varias altas y bajas de una sola
+/// vez. Ver <see cref="BatchUpdateQuotationItemsCommand"/>.</summary>
+public sealed record BatchUpdateQuotationItemsRequest(
+    IReadOnlyList<BatchQuotationItemAdditionRequest> ToAdd,
+    IReadOnlyList<Guid> ToRemoveItemIds);
+
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
 /// <summary>
