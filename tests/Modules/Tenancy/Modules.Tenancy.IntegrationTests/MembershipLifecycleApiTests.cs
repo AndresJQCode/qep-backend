@@ -353,6 +353,7 @@ public sealed class MembershipLifecycleApiTests
 
     private static readonly string[] AdvisorRoles = ["advisor"];
     private static readonly string[] AdminRoles = ["admin"];
+    private const string DefaultDisplayName = "Ana Pérez";
 
     private static string NewEmail() => $"member-{Guid.NewGuid():N}@example.com";
 
@@ -412,13 +413,14 @@ public sealed class MembershipLifecycleApiTests
         HttpClient client,
         string tenantId,
         string email,
-        IReadOnlyCollection<string>? roles = null)
+        IReadOnlyCollection<string>? roles = null,
+        string displayName = DefaultDisplayName)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = roles ?? AdvisorRoles })
+            Content = JsonContent.Create(new { email, displayName, roles = roles ?? AdvisorRoles })
         };
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);

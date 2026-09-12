@@ -18,6 +18,7 @@ public sealed class MembershipApiTests
     private static readonly string[] UnknownRoles = ["tenancy.unknown"];
     private static readonly string[] AdminRoles = ["admin"];
     private static readonly string[] BillingRoles = ["billing"];
+    private const string DefaultDisplayName = "Ana Pérez";
 
     [Fact]
     public async Task InviteProvisionsUserMembershipAuditAndOutboxEvent()
@@ -395,6 +396,7 @@ public sealed class MembershipApiTests
             Content = JsonContent.Create(new
             {
                 email = NewEmail(),
+                displayName = DefaultDisplayName,
                 roles = UnknownRoles
             })
         };
@@ -815,13 +817,14 @@ public sealed class MembershipApiTests
         HttpClient client,
         string tenantId,
         string email,
-        string[]? roles = null)
+        string[]? roles = null,
+        string displayName = DefaultDisplayName)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, roles = roles ?? DefaultRoles })
+            Content = JsonContent.Create(new { email, displayName, roles = roles ?? DefaultRoles })
         };
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
