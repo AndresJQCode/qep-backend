@@ -138,6 +138,15 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(quotation);
 
+    public Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(
+            quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id)
+                ? new HashSet<Guid> { quotation.Id.Value }
+                : []);
+
     public Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -213,13 +222,17 @@ internal sealed class StubMembershipDirectory(Guid membershipId) : IMembershipDi
         Task.FromResult<IReadOnlyList<Guid>>([membershipId]);
 }
 
-internal sealed class StubExecutionContext(Guid subjectId, Guid tenantId) : IExecutionContext
+/// <summary>Concede todo salvo lo que se le nombre: casi toda prueba quiere un sujeto que puede
+/// hacer lo que el caso de uso pide, y las que miran un permiso puntual solo tienen que decir
+/// cual falta.</summary>
+internal sealed class StubExecutionContext(
+    Guid subjectId, Guid tenantId, params string[] deniedPermissions) : IExecutionContext
 {
     public Guid SubjectId { get; } = subjectId;
 
     public TenantId TenantId { get; } = new(tenantId);
 
-    public bool HasPermission(string permission) => true;
+    public bool HasPermission(string permission) => !deniedPermissions.Contains(permission);
 }
 
 internal sealed class FixedClock(DateTimeOffset now) : IClock
@@ -250,6 +263,19 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         int pageSize,
         CancellationToken cancellationToken) =>
         Task.FromResult<(IReadOnlyList<Quotation>, int)>((quotations, quotations.Length));
+
+    /// <summary>Contesta desde las cotizaciones sembradas, igual que la consulta real: la fila
+    /// del listado necesita saber si hay lineas aunque la busqueda no las traiga.</summary>
+    public Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(
+            quotations
+                .Where(quotation =>
+                    quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id))
+                .Select(quotation => quotation.Id.Value)
+                .ToHashSet());
 
     public void Add(Quotation quotation)
     {
@@ -376,6 +402,15 @@ internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : 
     public Task<Sale?> FindByIdAsync(
         Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Sale.Id == saleId)?.Sale);
+
+    public Task<IReadOnlyDictionary<Guid, Sale>> FindByQuotationIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, Sale>>(
+            rows
+                .Where(row => quotationIds.Contains(row.Quotation.Id))
+                .ToDictionary(row => row.Quotation.Id.Value, row => row.Sale));
 
     public Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
         Guid tenantId,

@@ -14,6 +14,18 @@ public interface ISaleRepository
     Task<Sale?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Las ventas de varias cotizaciones de una sola vez, indexadas por id de cotizacion. Para el
+    /// listado de cotizaciones, que necesita saber por fila si ya se convirtio y si esa venta
+    /// sigue pendiente: con <see cref="FindByQuotationIdAsync"/> seria una consulta por fila.
+    ///
+    /// Sin comprobantes: el listado no los muestra.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, Sale>> FindByQuotationIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken);
+
     /// <summary>Por el id de la venta, para el detalle que se abre desde el listado (SALE-04).
     /// Trae los comprobantes: la pantalla los lista y ofrece descargarlos.</summary>
     Task<Sale?> FindByIdAsync(

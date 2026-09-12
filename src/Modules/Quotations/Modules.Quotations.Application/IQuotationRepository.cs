@@ -32,6 +32,17 @@ public interface IQuotationRepository
         int pageSize,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// De los ids dados, cuales tienen al menos una linea. Existe para el listado: su busqueda no
+    /// trae las lineas --la tabla no las pinta-- pero la fila si necesita saber si la cotizacion
+    /// ya es un documento presentable, y preguntarlo cargando cada agregado seria un SELECT por
+    /// fila.
+    /// </summary>
+    Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken);
+
     void Add(Quotation quotation);
 
     /// <summary>

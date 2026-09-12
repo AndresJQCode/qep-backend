@@ -39,7 +39,23 @@ public sealed record QuotationListItemDto(
     /// <summary>La moneda de <c>Total</c>: la grilla mezcla cotizaciones en pesos y en dolares
     /// y una columna de importes sin moneda seria ilegible.</summary>
     string Currency,
-    decimal Total);
+    decimal Total,
+    /// <summary>Si el envio tiene sentido ahora (<see cref="Quotation.CanBeSent"/>). Mismo campo
+    /// y mismo significado que en <c>QuotationResponse</c>: la fila ofrece las mismas acciones
+    /// que el detalle, y sin esto quien las pinta tendria que pedir la cotizacion entera por
+    /// fila solo para saber cuales habilitar.</summary>
+    bool CanBeSent,
+    /// <summary>Si ya es un documento presentable: tiene al menos una linea, vigencia y cuenta
+    /// de cobro. Es lo que el detalle enumera como "lo que le falta" antes de dejar enviar, y
+    /// viaja resuelto porque las lineas no vienen en la fila.</summary>
+    bool IsComplete,
+    /// <summary>La venta que salio de esta cotizacion, si ya se convirtio. <c>null</c> es "sin
+    /// convertir": no hay un estado "convertida" que mirar --la cotizacion se queda en
+    /// <c>Sent</c>-- y la existencia de la venta es la unica senal.</summary>
+    Guid? SaleId,
+    /// <summary><c>Pending</c> mientras esa venta espera el visto bueno, <c>Approved</c> despues.
+    /// <c>null</c> cuando no hay venta.</summary>
+    string? SaleStatus);
 
 /// <summary>Una página del listado y el total que la UI necesita para paginar. Mismo criterio
 /// que <c>CustomerPage</c> en Customers.</summary>
@@ -70,6 +86,7 @@ public static class QuotationPaging
 
 public sealed class ListQuotationsHandler(
     IQuotationRepository repository,
+    ISaleRepository saleRepository,
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IExecutionContext executionContext)
@@ -133,10 +150,35 @@ public sealed class ListQuotationsHandler(
                 quotations.Select(quotation => quotation.AdvisorId.Value).Distinct().ToArray(),
                 cancellationToken);
 
+        var quotationIds = quotations.Select(quotation => quotation.Id).ToArray();
+
+        // Cuales tienen al menos una linea, en una sola consulta para toda la pagina. La busqueda
+        // no trae las lineas a proposito --la tabla no las pinta-- y preguntarlo por fila seria
+        // exactamente el N+1 que esa decision evita.
+        var withItems = quotations.Count == 0
+            ? new HashSet<Guid>()
+            : await repository.FindIdsWithItemsAsync(
+                query.TenantId, quotationIds, cancellationToken);
+
+        // La venta de cada cotizacion --1:1-- para que la fila sepa si ya se convirtio y si esa
+        // venta sigue esperando el visto bueno. Otra ida por pagina, mismo criterio que los
+        // nombres de cliente y los correos de las asesoras.
+        //
+        // Solo para quien puede leer ventas: poder ver cotizaciones no es poder saber cuales se
+        // cobraron. Sin ese permiso la fila viaja sin venta --que es todo lo que esa persona
+        // puede saber-- y la pantalla no le ofrece ir a aprobar nada, que tampoco podria.
+        var sales = quotations.Count == 0
+            || !executionContext.HasPermission(SalesPermissions.SaleRead)
+            ? new Dictionary<Guid, Sale>()
+            : await saleRepository.FindByQuotationIdsAsync(
+                query.TenantId, quotationIds, cancellationToken);
+
         var items = quotations
             .Select(quotation => quotation.ToListItemDto(
                 clientNames.GetValueOrDefault(quotation.ClientId),
-                advisorEmails.GetValueOrDefault(quotation.AdvisorId.Value)))
+                advisorEmails.GetValueOrDefault(quotation.AdvisorId.Value),
+                withItems.Contains(quotation.Id.Value),
+                sales.GetValueOrDefault(quotation.Id.Value)))
             .ToArray();
         return new QuotationPage(items, total, page, pageSize);
     }

@@ -111,6 +111,31 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return (items, total);
     }
 
+    // Devuelve ids y no lineas: la pregunta es "tiene al menos una", y traer las lineas para
+    // contarlas seria cargar toda la pagina de items para descartarlos. `Items.Any()` se traduce
+    // a un EXISTS por fila dentro de la misma consulta, filtrado por tenant como todo lo demas.
+    public async Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken)
+    {
+        if (quotationIds.Count == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var ids = quotationIds.ToArray();
+        var found = await dbContext.Quotations
+            .AsNoTracking()
+            .Where(quotation => quotation.TenantId == tenantId
+                && ids.Contains(quotation.Id)
+                && quotation.Items.Any())
+            .Select(quotation => quotation.Id)
+            .ToListAsync(cancellationToken);
+
+        return found.Select(id => id.Value).ToHashSet();
+    }
+
     public void Add(Quotation quotation) => dbContext.Quotations.Add(quotation);
 
     public void AddHistoryEntry(QuotationHistoryEntry entry) =>

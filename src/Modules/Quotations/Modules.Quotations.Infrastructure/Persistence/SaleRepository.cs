@@ -29,6 +29,28 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
                 sale => sale.TenantId == tenantId && sale.QuotationId == quotationId,
                 cancellationToken);
 
+    // AsNoTracking y sin comprobantes: esto alimenta una fila de listado, que solo pregunta si
+    // la cotizacion ya se convirtio y como quedo esa venta. La relacion es 1:1, asi que indexar
+    // por cotizacion no puede perder filas.
+    public async Task<IReadOnlyDictionary<Guid, Sale>> FindByQuotationIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken)
+    {
+        if (quotationIds.Count == 0)
+        {
+            return new Dictionary<Guid, Sale>();
+        }
+
+        var ids = quotationIds.ToArray();
+        var sales = await dbContext.Sales
+            .AsNoTracking()
+            .Where(sale => sale.TenantId == tenantId && ids.Contains(sale.QuotationId))
+            .ToListAsync(cancellationToken);
+
+        return sales.ToDictionary(sale => sale.QuotationId.Value);
+    }
+
     public Task<Sale?> FindByIdAsync(
         Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
         dbContext.Sales
