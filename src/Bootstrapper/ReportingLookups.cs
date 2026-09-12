@@ -22,7 +22,7 @@ namespace Bootstrapper;
 /// puede tener.
 ///
 /// **Siempre en lote, nunca fila por fila.** Una consulta por fila de reporte es N+1 sobre una
-/// pagina de hasta 200 filas y sobre una exportacion de hasta 50_000.
+/// pagina de hasta 200 filas.
 /// </summary>
 internal sealed class ReportingPeopleLookup(
     TenancyDbContext tenancy,

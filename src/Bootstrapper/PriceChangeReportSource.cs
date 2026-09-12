@@ -39,15 +39,6 @@ internal sealed class PriceChangeReportSource(
         return (await ResolveAuthorsAsync(rows, cancellationToken), total);
     }
 
-    public async Task<IReadOnlyList<PriceChangeReportRow>> ListForExportAsync(
-        PriceChangeReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        var rows = await BuildQuery(criteria).Take(limit).ToListAsync(cancellationToken);
-        return await ResolveAuthorsAsync(rows, cancellationToken);
-    }
-
     public async Task<PriceChangeReportAggregate> SummarizeAsync(
         PriceChangeReportCriteria criteria,
         int rankSize,

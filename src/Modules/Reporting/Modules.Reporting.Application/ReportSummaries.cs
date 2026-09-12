@@ -10,10 +10,9 @@ namespace Modules.Reporting.Application;
 /// total que se calcula sobre la página que se está mirando es un número equivocado con cara de
 /// número correcto.
 ///
-/// Toma **exactamente los mismos filtros que el listado**, menos la paginación — igual que la
-/// exportación (<c>ReportExportRules</c>). Que los tres caminos compartan
-/// <see cref="SalesReportFilter"/> es lo que hace imposible que el panel, la tabla y el Excel
-/// hablen de conjuntos distintos.
+/// Toma **exactamente los mismos filtros que el listado**, menos la paginación. Que los dos
+/// caminos compartan <see cref="SalesReportFilter"/> es lo que hace imposible que el panel y la
+/// tabla hablen de conjuntos distintos.
 /// </summary>
 public sealed record SalesReportSummaryDto(
     int SaleCount,

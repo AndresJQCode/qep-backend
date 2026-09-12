@@ -8,9 +8,9 @@ namespace Modules.Reporting.Application;
 /// El listado paginado del reporte de ventas: una fila por venta convertida, con los datos de su
 /// cotizacion de origen.
 ///
-/// Los filtros viajan en <see cref="SalesReportFilter"/> y no sueltos en la firma porque la
-/// exportacion toma exactamente los mismos (menos la paginacion): compartir el record es lo que
-/// hace imposible que los dos caminos se desalineen.
+/// Los filtros viajan en <see cref="SalesReportFilter"/> y no sueltos en la firma porque el
+/// resumen toma exactamente los mismos (menos la paginacion): compartir el record es lo que hace
+/// imposible que los dos caminos se desalineen.
 /// </summary>
 public sealed record ListSalesReportQuery(SalesReportFilter Filter, int Page, int PageSize)
     : IQuery<ReportPage<SalesReportItemDto>>;

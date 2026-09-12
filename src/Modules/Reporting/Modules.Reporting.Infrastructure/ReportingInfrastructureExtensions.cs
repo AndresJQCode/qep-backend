@@ -1,7 +1,5 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Modules.Reporting.Application;
-using Modules.Reporting.Infrastructure.Excel;
 
 namespace Modules.Reporting.Infrastructure;
 
@@ -16,17 +14,17 @@ namespace Modules.Reporting.Infrastructure;
 public static class ReportingInfrastructureExtensions
 {
     /// <summary>
-    /// <paramref name="configuration"/> no se usa hoy. Va igual en la firma para que registrar el
-    /// modulo se escriba como los otros seis en <c>AddQepPlatform</c>, y para que el dia que
-    /// aparezca una opcion de reporte no haya que cambiarle la forma a la llamada.
+    /// **Hoy no registra nada**: Reporting no tiene ninguna implementacion propia en esta capa.
+    /// Se mantiene, y con <paramref name="configuration"/> en la firma aunque no se use, para que
+    /// registrar el modulo se escriba como los otros seis en <c>AddQepPlatform</c>, y para que el
+    /// dia que aparezca un servicio o una opcion de reporte no haya que cambiarle la forma a la
+    /// llamada.
     /// </summary>
     public static IServiceCollection AddReportingInfrastructure(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-
-        services.AddScoped<IReportExcelBuilder, ClosedXmlReportExcelBuilder>();
 
         return services;
     }

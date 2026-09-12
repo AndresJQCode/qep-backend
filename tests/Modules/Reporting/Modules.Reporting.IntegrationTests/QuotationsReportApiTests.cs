@@ -4,7 +4,7 @@ using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 
 namespace Modules.Reporting.IntegrationTests;
 
-/// <summary>Reporte 2: cotizaciones, listado y exportacion.</summary>
+/// <summary>Reporte 2: cotizaciones.</summary>
 public sealed class QuotationsReportApiTests
 {
     [Fact]
@@ -102,45 +102,5 @@ public sealed class QuotationsReportApiTests
             $"{ReportsUrl(tenant.TenantId)}/quotations", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task ExportReturnsAnExcelFile()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
-        var productId = await CreateProductAsync(client, tenant.TenantId);
-        await CreateSentQuotationAsync(client, factory, tenant.TenantId, customer.Id, productId);
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/quotations/export",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(ExcelContentType, response.Content.Headers.ContentType?.MediaType);
-        var content = await response.Content.ReadAsByteArrayAsync(
-            TestContext.Current.CancellationToken);
-        Assert.Equal([0x50, 0x4B], content[..2]);
-    }
-
-    [Fact]
-    public async Task ExportWithNoMatchingRowsFails()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/quotations/export",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(
-            TestContext.Current.CancellationToken);
-        Assert.Equal("reporting.export.empty", problem?.Code);
     }
 }

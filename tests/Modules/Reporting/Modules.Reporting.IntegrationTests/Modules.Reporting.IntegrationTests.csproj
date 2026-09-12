@@ -1,9 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <!-- Para abrir el .xlsx que el endpoint devuelve y verificar sus columnas: el contrato fija
-         los encabezados y su orden exacto, y nada mas los verifica. -->
-    <PackageReference Include="ClosedXML" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
