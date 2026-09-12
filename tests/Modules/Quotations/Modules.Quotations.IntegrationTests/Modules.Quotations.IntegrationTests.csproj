@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- Para abrir el .xlsx de la exportacion y verificar sus columnas y filas. Mismo motivo que
+         en Reporting.IntegrationTests. -->
+    <PackageReference Include="ClosedXML" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

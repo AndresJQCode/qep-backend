@@ -32,6 +32,22 @@ public interface IQuotationRepository
         int pageSize,
         CancellationToken cancellationToken);
 
+    /// <summary>Todas las cotizaciones que pasan los filtros del listado, en su mismo orden y sin
+    /// paginar: el Excel de <c>ExportQuotationsHandler</c>. Mismos filtros y misma semantica que
+    /// <see cref="SearchAsync"/> -- <c>clientIds</c> incluido -- porque el archivo tiene que ser
+    /// lo que la tabla muestra. Sin tope de filas: la cota de volumen es el rango de fechas
+    /// obligatorio que exige <c>ExportQuotationsValidator</c>.</summary>
+    Task<IReadOnlyList<Quotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        CancellationToken cancellationToken);
+
     void Add(Quotation quotation);
 
     /// <summary>

@@ -84,20 +84,10 @@ public sealed class ListQuotationsHandler(
 
         var page = QuotationPaging.NormalizePage(query.Page);
         var pageSize = QuotationPaging.NormalizePageSize(query.PageSize);
-        var status = ParseStatus(query.Status);
+        var status = QuotationListing.ParseStatus(query.Status);
         var advisorId = query.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
-
-        // El NIT no vive en Quotation: se resuelve a ids contra Customers antes de filtrar, mismo
-        // criterio que ListCustomersHandler con el filtro de Departamento -> ids de ciudad. Sin
-        // termino, `clientIds` queda null ("sin filtro"); con termino sin match, la busqueda ya
-        // sabe que no hay nada que traer.
-        IReadOnlyCollection<Guid>? clientIds = null;
-        if (!string.IsNullOrWhiteSpace(query.ClientNit))
-        {
-            var matchedIds = await customerLookup.SearchIdsByIdentificationAsync(
-                query.TenantId, query.ClientNit, cancellationToken);
-            clientIds = matchedIds.ToArray();
-        }
+        var clientIds = await QuotationListing.ResolveClientIdsByNitAsync(
+            customerLookup, query.TenantId, query.ClientNit, cancellationToken);
 
         var (quotations, total) = await repository.SearchAsync(
             query.TenantId,
@@ -112,49 +102,8 @@ public sealed class ListQuotationsHandler(
             pageSize,
             cancellationToken);
 
-        // Los nombres de cliente de toda la pagina en una sola consulta: la tabla muestra el
-        // nombre, no el id, y resolverlo del lado del que consume el listado es un GET por fila
-        // contra Customers. Los ids van sin repetir -- varias cotizaciones del mismo cliente son
-        // lo normal en una pagina.
-        var clientNames = quotations.Count == 0
-            ? new Dictionary<Guid, string>()
-            : await customerLookup.FindNamesAsync(
-                query.TenantId,
-                quotations.Select(quotation => quotation.ClientId).Distinct().ToArray(),
-                cancellationToken);
-
-        // Misma idea que los nombres de cliente: una ida por página, con los ids sin repetir.
-        // Antes el frontend se traía el padrón de miembros entero para poner un correo en cada
-        // fila.
-        var advisorEmails = quotations.Count == 0
-            ? new Dictionary<Guid, string?>()
-            : await advisorLookup.FindEmailsAsync(
-                query.TenantId,
-                quotations.Select(quotation => quotation.AdvisorId.Value).Distinct().ToArray(),
-                cancellationToken);
-
-        var items = quotations
-            .Select(quotation => quotation.ToListItemDto(
-                clientNames.GetValueOrDefault(quotation.ClientId),
-                advisorEmails.GetValueOrDefault(quotation.AdvisorId.Value)))
-            .ToArray();
+        var items = await QuotationListing.ToListItemsAsync(
+            customerLookup, advisorLookup, query.TenantId, quotations, cancellationToken);
         return new QuotationPage(items, total, page, pageSize);
-    }
-
-    // El valor llega como texto libre por query string, así que una entrada que no matchea
-    // ningún valor del enum es un 422 con código de dominio -- no un filtro que en silencio no
-    // devuelve nada, ni un 500 de un cast que falla.
-    private static QuotationStatus? ParseStatus(string? status)
-    {
-        if (string.IsNullOrWhiteSpace(status))
-        {
-            return null;
-        }
-
-        return Enum.TryParse<QuotationStatus>(status, ignoreCase: true, out var parsed)
-            ? parsed
-            : throw new QuotationsDomainException(
-                "quotation.quotation.status_invalid",
-                $"'{status}' is not a valid quotation status.");
     }
 }

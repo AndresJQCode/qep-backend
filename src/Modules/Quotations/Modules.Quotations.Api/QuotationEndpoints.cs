@@ -8,6 +8,11 @@ namespace Modules.Quotations.Api;
 
 public static class QuotationEndpoints
 {
+    // El MIME oficial de .xlsx (OOXML SpreadsheetML), el mismo que usan ReportingEndpoints y
+    // CustomerEndpoints.
+    private const string ExcelContentType =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
     public static IEndpointRouteBuilder MapQuotationEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints
@@ -17,6 +22,17 @@ public static class QuotationEndpoints
         group.MapGet("/", ListQuotationsAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationRead)
             .Produces<QuotationsPageResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // El listado en un .xlsx, con los mismos filtros que `GET /` para que el archivo sea lo
+        // que la tabla muestra. El archivo va en el cuerpo, como los exports de Reporting, porque
+        // ya viene acotado: el rango de fechas es obligatorio y de a lo sumo un año (ver
+        // ExportQuotationsQuery). Mismo permiso que el listado: son los mismos datos. `/export`
+        // no choca con `/{quotationId:guid}` porque la restriccion de guid no lo acepta.
+        group.MapGet("/export", ExportQuotationsAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationRead)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
@@ -152,6 +168,27 @@ public static class QuotationEndpoints
             result.Total,
             result.Page,
             result.PageSize));
+    }
+
+    private static async Task<IResult> ExportQuotationsAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        Guid? clientId = null,
+        Guid? advisorId = null,
+        string? status = null,
+        DateOnly? createdFrom = null,
+        DateOnly? createdTo = null,
+        string? clientNit = null,
+        string? quotationNumber = null)
+    {
+        var file = await dispatcher.QueryAsync(
+            new ExportQuotationsQuery(
+                tenantId, clientId, advisorId, status, createdFrom, createdTo, clientNit,
+                quotationNumber),
+            cancellationToken);
+
+        return Results.File(file.Content, ExcelContentType, file.FileName);
     }
 
     private static async Task<IResult> GetQuotationAsync(

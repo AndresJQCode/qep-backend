@@ -293,6 +293,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListQuotationsQuery, QuotationPage>,
             ListQuotationsHandler>();
         services.AddScoped<
+            IQueryHandler<ExportQuotationsQuery, QuotationExportFile>,
+            ExportQuotationsHandler>();
+        services.AddScoped<
             IQueryHandler<ListQuotationHistoryQuery, IReadOnlyList<QuotationHistoryEntryDto>>,
             ListQuotationHistoryHandler>();
         // El log de la aplicacion. Registrados a mano igual que el resto: un caso de uso que se
