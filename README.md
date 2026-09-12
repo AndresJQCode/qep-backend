@@ -500,6 +500,35 @@ validación también incluyen un mapa `errors`.
 | `422`  | Falló una validación o regla de dominio                             |
 | `428`  | Falta un encabezado `If-Match` válido                               |
 
+### Nombre del miembro
+
+| Método  | Ruta                                                                  | Permiso              |
+| ------- | --------------------------------------------------------------------- | -------------------- |
+| `PATCH` | `/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name` | `advisorship.manage` |
+
+Cambia el nombre con el que el tenant presenta a la persona, el que imprime el PDF de
+cotización. Vale en cualquier estado de la membresía y sobre la propia: el owner, que entra por
+`register-tenant` sin nombre, lo carga desde acá. Exige `If-Match` con la versión cargada, igual
+que `PATCH .../roles`, y responde `200` con la fila del roster y el `ETag` nuevo. Guardar el
+mismo nombre no sube la versión ni se audita; un cambio real se audita como
+`tenancy.membership.renamed`.
+
+```powershell
+$body = @{ displayName = "Ana María Pérez" } | ConvertTo-Json
+$patchHeaders = $headers.Clone()
+$patchHeaders["If-Match"] = '"1"'
+
+Invoke-RestMethod `
+  -Method Patch `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/memberships/$membershipId/display-name" `
+  -Headers $patchHeaders `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Sin `If-Match` responde `428 precondition.if_match_required`; con una versión vieja, `412`; con
+un nombre vacío o de más de 150 caracteres, `422 validation.failed` con `errors.DisplayName`.
+
 ### Aceptación de la invitación
 
 El email lleva `{Notifications:InvitationUrl}/{token}`. La pantalla que abre ese

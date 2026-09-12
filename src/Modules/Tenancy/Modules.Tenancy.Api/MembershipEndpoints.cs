@@ -69,6 +69,18 @@ public static class MembershipEndpoints
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Con If-Match, igual que `/roles`: dos administradores renombrando a la misma persona es
+        // una carrera real, y el nombre termina impreso en un PDF que se le manda al cliente.
+        group.MapPatch("/{membershipId:guid}/display-name", UpdateDisplayNameAsync)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
+            .Accepts<MembershipDisplayNameUpdateRequest>("application/json")
+            .Produces<MembershipListItemResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -92,6 +104,33 @@ public static class MembershipEndpoints
                 new TenantId(tenantId),
                 new MembershipId(membershipId),
                 request.Roles ?? [],
+                expectedVersion,
+                httpContext.TraceIdentifier),
+            cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{membership.Version}\"";
+        return Results.Ok(ToListItemResponse(membership));
+    }
+
+    private static async Task<IResult> UpdateDisplayNameAsync(
+        Guid tenantId,
+        Guid membershipId,
+        MembershipDisplayNameUpdateRequest request,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion))
+        {
+            throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded membership version is required.");
+        }
+
+        var membership = await dispatcher.SendAsync(
+            new UpdateMemberDisplayNameCommand(
+                new TenantId(tenantId),
+                new MembershipId(membershipId),
+                request.DisplayName ?? string.Empty,
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -253,6 +292,12 @@ public sealed record MembershipInviteRequest(
     IReadOnlyCollection<string>? Roles);
 
 public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? Roles);
+
+/// <summary>
+/// Nullable a propósito: un cuerpo sin el campo llega como vacío al validador y sale como 422
+/// con <c>errors.DisplayName</c>, no como un 400 del binder que el diálogo no sabe leer.
+/// </summary>
+public sealed record MembershipDisplayNameUpdateRequest(string? DisplayName);
 
 public sealed record MembershipResponse(
     Guid Id,
