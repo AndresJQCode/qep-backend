@@ -111,7 +111,3 @@ public sealed record ReportPage<TItem>(
     int Total,
     int Page,
     int PageSize);
-
-/// <summary>Un archivo ya armado, listo para que el endpoint lo devuelva con
-/// <c>Results.File</c>.</summary>
-public sealed record ReportFile(byte[] Content, string FileName);

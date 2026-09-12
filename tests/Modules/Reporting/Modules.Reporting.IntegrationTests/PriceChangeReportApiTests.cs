@@ -129,43 +129,4 @@ public sealed class PriceChangeReportApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
-
-    [Fact]
-    public async Task ExportReturnsAnExcelFile()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-        var productId = await CreateProductAsync(client, tenant.TenantId, baseCop: 100_000m);
-        await ChangeProductBaseCopAsync(client, tenant.TenantId, productId, 120_000m);
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/price-changes/export",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(ExcelContentType, response.Content.Headers.ContentType?.MediaType);
-        var content = await response.Content.ReadAsByteArrayAsync(
-            TestContext.Current.CancellationToken);
-        Assert.Equal([0x50, 0x4B], content[..2]);
-    }
-
-    [Fact]
-    public async Task ExportWithNoMatchingRowsFails()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/price-changes/export",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(
-            TestContext.Current.CancellationToken);
-        Assert.Equal("reporting.export.empty", problem?.Code);
-    }
 }

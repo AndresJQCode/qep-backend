@@ -6,13 +6,12 @@ using Modules.Reporting.Domain;
 namespace Modules.Reporting.UnitTests;
 
 /// <summary>
-/// El handler de ventas, tomado como representante de los ocho: los cuatro listados y las cuatro
-/// exportaciones comparten forma exacta, y lo que cambia entre ellos —el permiso y el origen— lo
-/// cubren las pruebas de integracion endpoint por endpoint.
+/// El handler de ventas, tomado como representante de los cuatro listados: comparten forma
+/// exacta, y lo que cambia entre ellos —el permiso y el origen— lo cubren las pruebas de
+/// integracion endpoint por endpoint.
 ///
 /// Lo que se verifica aca es lo que ninguna prueba de integracion puede aislar: que autorizar
-/// pase **antes** que cualquier otra cosa, que al origen le llegue la paginacion ya normalizada,
-/// y que los dos limites de la exportacion se apliquen sobre lo que el origen devolvio.
+/// pase **antes** que cualquier otra cosa y que al origen le llegue la paginacion ya normalizada.
 /// </summary>
 public sealed class SalesReportHandlerTests
 {
@@ -99,52 +98,6 @@ public sealed class SalesReportHandlerTests
         Assert.Null(source.LastCriteria);
     }
 
-    [Fact]
-    public async Task ExportingAsksForOneRowMoreThanTheCap()
-    {
-        var source = new FakeSalesReportSource { Items = [Item()] };
-        var builder = new FakeReportExcelBuilder();
-        var handler = ExportHandler(source, builder, Tenant, ReportingPermissions.SalesRead);
-
-        var file = await handler.HandleAsync(
-            new ExportSalesReportQuery(Filter()), TestContext.Current.CancellationToken);
-
-        Assert.Equal(ReportExportRules.ExportProbeLimit, source.LastExportLimit);
-        Assert.Equal(1, builder.SalesRowCount);
-        Assert.NotEmpty(file.Content);
-    }
-
-    [Fact]
-    public async Task ExportingWithNoRowsFails()
-    {
-        var source = new FakeSalesReportSource { Items = [] };
-        var builder = new FakeReportExcelBuilder();
-        var handler = ExportHandler(source, builder, Tenant, ReportingPermissions.SalesRead);
-
-        var error = await Assert.ThrowsAsync<ReportingDomainException>(() =>
-            handler.HandleAsync(
-                new ExportSalesReportQuery(Filter()), TestContext.Current.CancellationToken));
-
-        Assert.Equal("reporting.export.empty", error.Code);
-        // Y no se armo ningun archivo: un .xlsx con solo la cabecera es peor que el error.
-        Assert.Null(builder.SalesRowCount);
-    }
-
-    [Fact]
-    public async Task ExportingRejectsACallerWithoutThePermission()
-    {
-        var source = new FakeSalesReportSource { Items = [Item()] };
-        var builder = new FakeReportExcelBuilder();
-        var handler = ExportHandler(source, builder, Tenant, ReportingPermissions.QuotationRead);
-
-        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            handler.HandleAsync(
-                new ExportSalesReportQuery(Filter()), TestContext.Current.CancellationToken));
-
-        Assert.Equal("authorization.denied", error.Code);
-        Assert.Null(source.LastExportLimit);
-    }
-
     private static ListSalesReportHandler ListHandler(
         ISalesReportSource source,
         Guid callerTenant,
@@ -154,36 +107,6 @@ public sealed class SalesReportHandlerTests
             new SalesReportFilterValidator(),
             new FakeExecutionContext(callerTenant, permissions));
 
-    private static ExportSalesReportHandler ExportHandler(
-        ISalesReportSource source,
-        IReportExcelBuilder builder,
-        Guid callerTenant,
-        params string[] permissions) =>
-        new(
-            source,
-            builder,
-            new SalesReportFilterValidator(),
-            new FakeExecutionContext(callerTenant, permissions),
-            new FixedClock(new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero)));
-
     private static SalesReportFilter Filter(string? paymentStatus = null) =>
         new(Tenant, From: null, To: null, AdvisorId: null, ClientId: null, paymentStatus);
-
-    private static SalesReportItemDto Item() =>
-        new(
-            Guid.Parse("01900000-0000-7000-8000-0000000000b1"),
-            "VEN-2026-0001",
-            Guid.Parse("01900000-0000-7000-8000-0000000000b2"),
-            "QUO-2026-0001",
-            new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero),
-            Guid.Parse("01900000-0000-7000-8000-0000000000b3"),
-            "asesora@qcode.co",
-            Guid.Parse("01900000-0000-7000-8000-0000000000b4"),
-            "Cliente SA",
-            "CLI08000001",
-            "Approved",
-            "FullPaymentReceived",
-            100m,
-            19m,
-            119m);
 }

@@ -39,8 +39,6 @@ internal sealed class FakeSalesReportSource : ISalesReportSource
 
     public int? LastPageSize { get; private set; }
 
-    public int? LastExportLimit { get; private set; }
-
     /// <summary>Lo que devuelve el primer <c>SummarizeAsync</c>: el periodo pedido.</summary>
     public SalesReportAggregate Aggregate { get; set; } = new(0, 0m, 0m, 0m, [], [], []);
 
@@ -80,72 +78,6 @@ internal sealed class FakeSalesReportSource : ISalesReportSource
         LastPageSize = pageSize;
         return Task.FromResult((Items, Total));
     }
-
-    public Task<IReadOnlyList<SalesReportItemDto>> ListForExportAsync(
-        SalesReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        LastCriteria = criteria;
-        LastExportLimit = limit;
-        return Task.FromResult(Items);
-    }
-}
-
-/// <summary>Un armador de Excel que no arma nada: devuelve bytes de juguete y anota cuantas filas
-/// recibio. Que el <c>.xlsx</c> este bien formado lo verifican las pruebas de integracion, que
-/// levantan el builder real.</summary>
-internal sealed class FakeReportExcelBuilder : IReportExcelBuilder
-{
-    public int? SalesRowCount { get; private set; }
-
-    public int? QuotationsRowCount { get; private set; }
-
-    public int? PriceChangesRowCount { get; private set; }
-
-    public int? CustomersRowCount { get; private set; }
-
-    public DateTimeOffset? GeneratedAt { get; private set; }
-
-    public ReportFile BuildSales(
-        IReadOnlyList<SalesReportItemDto> rows,
-        DateTimeOffset generatedAt,
-        CancellationToken cancellationToken)
-    {
-        SalesRowCount = rows.Count;
-        GeneratedAt = generatedAt;
-        return new ReportFile([1, 2, 3], "reporte-ventas.xlsx");
-    }
-
-    public ReportFile BuildQuotations(
-        IReadOnlyList<QuotationsReportItemDto> rows,
-        DateTimeOffset generatedAt,
-        CancellationToken cancellationToken)
-    {
-        QuotationsRowCount = rows.Count;
-        GeneratedAt = generatedAt;
-        return new ReportFile([1, 2, 3], "reporte-cotizaciones.xlsx");
-    }
-
-    public ReportFile BuildPriceChanges(
-        IReadOnlyList<PriceChangeReportItemDto> rows,
-        DateTimeOffset generatedAt,
-        CancellationToken cancellationToken)
-    {
-        PriceChangesRowCount = rows.Count;
-        GeneratedAt = generatedAt;
-        return new ReportFile([1, 2, 3], "reporte-cambios-precio.xlsx");
-    }
-
-    public ReportFile BuildCustomers(
-        IReadOnlyList<CustomerReportItemDto> rows,
-        DateTimeOffset generatedAt,
-        CancellationToken cancellationToken)
-    {
-        CustomersRowCount = rows.Count;
-        GeneratedAt = generatedAt;
-        return new ReportFile([1, 2, 3], "reporte-clientes.xlsx");
-    }
 }
 
 /// <summary>
@@ -180,12 +112,6 @@ internal sealed class FakeQuotationsReportSource : IQuotationsReportSource
         int pageSize,
         CancellationToken cancellationToken) =>
         Task.FromResult(((IReadOnlyList<QuotationsReportItemDto>)[], 0));
-
-    public Task<IReadOnlyList<QuotationsReportItemDto>> ListForExportAsync(
-        QuotationsReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken) =>
-        Task.FromResult((IReadOnlyList<QuotationsReportItemDto>)[]);
 
     public static QuotationsReportAggregate EmptyAggregate(
         int quotationCount = 0,
@@ -241,12 +167,6 @@ internal sealed class FakePriceChangeReportSource : IPriceChangeReportSource
         CancellationToken cancellationToken) =>
         Task.FromResult(((IReadOnlyList<PriceChangeReportRow>)[], 0));
 
-    public Task<IReadOnlyList<PriceChangeReportRow>> ListForExportAsync(
-        PriceChangeReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken) =>
-        Task.FromResult((IReadOnlyList<PriceChangeReportRow>)[]);
-
     public static PriceChangeReportAggregate EmptyAggregate(
         int changeCount = 0,
         int increaseCount = 0,
@@ -287,12 +207,6 @@ internal sealed class FakeCustomerReportSource : ICustomerReportSource
         int pageSize,
         CancellationToken cancellationToken) =>
         Task.FromResult(((IReadOnlyList<CustomerReportItemDto>)[], 0));
-
-    public Task<IReadOnlyList<CustomerReportItemDto>> ListForExportAsync(
-        CustomerReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken) =>
-        Task.FromResult((IReadOnlyList<CustomerReportItemDto>)[]);
 
     public static CustomerReportAggregate EmptyAggregate(
         int customerCount = 0,

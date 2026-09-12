@@ -9,7 +9,7 @@ namespace Modules.Reporting.Application;
 /// inválido lo rechazara el binder con un 400 opaco en vez del 422 con el mapa <c>errors</c> que
 /// el contrato fija.
 ///
-/// El mismo record lo usan el listado y la exportación —el contrato pide exactamente los mismos
+/// El mismo record lo usan el listado y el resumen —el contrato pide exactamente los mismos
 /// filtros menos la paginación—, así que también hay un solo validador para los dos caminos.
 /// </summary>
 public sealed record SalesReportFilter(
@@ -73,8 +73,8 @@ public sealed record PriceChangeReportCriteria(
 /// serie mensual del resumen y a su comparación contra el periodo anterior, que acá compara altas
 /// contra altas y nunca cartera contra cartera.
 ///
-/// Los tres caminos —listado, exportación y resumen— comparten este filtro, que es lo que hace
-/// imposible que el panel, la tabla y el Excel hablen de conjuntos distintos.
+/// Los dos caminos —listado y resumen— comparten este filtro, que es lo que hace imposible que
+/// el panel y la tabla hablen de conjuntos distintos.
 ///
 /// <c>IsActive</c> nulo trae activos e inactivos.
 /// </summary>

@@ -26,18 +26,6 @@ public interface ISalesReportSource
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Las filas de la exportacion, sin paginar.
-    ///
-    /// <paramref name="limit"/> **no** es el tope del contrato: el handler pide uno mas que el
-    /// tope justamente para poder distinguir "entro justo" de "se paso" y tirar
-    /// <c>reporting.export.too_many_rows</c>. El origen solo tiene que respetarlo.
-    /// </summary>
-    Task<IReadOnlyList<SalesReportItemDto>> ListForExportAsync(
-        SalesReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken);
-
-    /// <summary>
     /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
     /// **en la base**: sumar en memoria exigiria traerse el periodo entero, que es justamente lo
     /// que el resumen existe para evitar.
@@ -61,11 +49,6 @@ public interface IQuotationsReportSource
         QuotationsReportCriteria criteria,
         int page,
         int pageSize,
-        CancellationToken cancellationToken);
-
-    Task<IReadOnlyList<QuotationsReportItemDto>> ListForExportAsync(
-        QuotationsReportCriteria criteria,
-        int limit,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -99,11 +82,6 @@ public interface IPriceChangeReportSource
         PriceChangeReportCriteria criteria,
         int page,
         int pageSize,
-        CancellationToken cancellationToken);
-
-    Task<IReadOnlyList<PriceChangeReportRow>> ListForExportAsync(
-        PriceChangeReportCriteria criteria,
-        int limit,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -147,11 +125,6 @@ public interface ICustomerReportSource
         CustomerReportCriteria criteria,
         int page,
         int pageSize,
-        CancellationToken cancellationToken);
-
-    Task<IReadOnlyList<CustomerReportItemDto>> ListForExportAsync(
-        CustomerReportCriteria criteria,
-        int limit,
         CancellationToken cancellationToken);
 
     /// <summary>

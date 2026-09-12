@@ -29,10 +29,6 @@ internal static class ReportingApiHarness
 {
     public static string ReportsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/reports";
 
-    /// <summary>El MIME oficial de .xlsx, el mismo que fija el contrato de estos endpoints.</summary>
-    public const string ExcelContentType =
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-
     /// <summary>
     /// Todo lo que hace falta para sembrar (cliente, producto, cotizacion, venta, cambio de
     /// precio) **y ademas** leer los cuatro reportes.
