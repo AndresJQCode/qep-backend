@@ -831,15 +831,52 @@ public sealed class QuotationTests
         Assert.Equal(versionBeforeConverting, quotation.Version);
     }
 
+    // A pedido (2026-09) ya no hace falta haberla enviado: un borrador con los cuatro datos que
+    // la venta hereda se convierte igual que uno ya enviado.
     [Fact]
-    public void EnsureConvertibleToSaleRejectsAQuotationThatIsNotSent()
+    public void EnsureConvertibleToSaleDoesNotThrowForADraftWithEverythingASaleNeeds()
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        quotation.EnsureConvertibleToSale();
+
+        Assert.Equal(QuotationStatus.Draft, quotation.Status);
+        Assert.True(quotation.CanBeConvertedToSale);
+    }
+
+    [Fact]
+    public void EnsureConvertibleToSaleRejectsAVoidedQuotation()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        quotation.Void(AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
             () => quotation.EnsureConvertibleToSale());
 
-        Assert.Equal("quotation.quotation.not_sent", error.Code);
+        Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
+        Assert.False(quotation.CanBeConvertedToSale);
+    }
+
+    [Fact]
+    public void EnsureConvertibleToSaleRejectsAnExpiredQuotation()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        quotation.Send(AdvisorId, Now);
+        quotation.Expire(Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => quotation.EnsureConvertibleToSale());
+
+        Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
     }
 
     // Lo que se convierte en venta es lo que el cliente recibio, no lo que quedo en la pantalla
