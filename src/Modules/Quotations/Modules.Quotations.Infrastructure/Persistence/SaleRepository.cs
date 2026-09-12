@@ -59,6 +59,62 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
                 sale => sale.TenantId == tenantId && sale.Id == saleId,
                 cancellationToken);
 
+    // Dos consultas y ninguna fila de venta en memoria: una agrupa por estado --contando y
+    // sumando el total de cada cotizacion-- y la otra suma los comprobantes de esas mismas
+    // ventas por subconsulta. El panel es de un mes entero, asi que traerse las filas para
+    // sumarlas aca escala con el volumen del tenant.
+    public async Task<SaleWindowSummary> SummarizeAsync(
+        Guid tenantId,
+        DateOnly convertedFrom,
+        DateOnly convertedTo,
+        CancellationToken cancellationToken)
+    {
+        var fromUtc = new DateTimeOffset(
+            convertedFrom.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        // Limite superior exclusivo al dia siguiente, igual que el listado: "hasta el 30"
+        // incluye todo el 30, no solo su instante 00:00:00.
+        var toUtcExclusive = new DateTimeOffset(
+            convertedTo.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+        var sales = dbContext.Sales
+            .AsNoTracking()
+            .Where(sale => sale.TenantId == tenantId
+                && sale.ConvertedAt >= fromUtc
+                && sale.ConvertedAt < toUtcExclusive);
+
+        var byStatus = await sales
+            .Join(
+                dbContext.Quotations.AsNoTracking(),
+                sale => sale.QuotationId,
+                quotation => quotation.Id,
+                (sale, quotation) => new { sale.Status, quotation.Total })
+            .GroupBy(row => row.Status)
+            .Select(group => new
+            {
+                Status = group.Key,
+                Count = group.Count(),
+                Total = group.Sum(row => row.Total),
+            })
+            .ToListAsync(cancellationToken);
+
+        // `decimal?` a proposito: sin ventas en la ventana, SUM devuelve NULL y materializarlo
+        // como decimal explota en vez de dar cero.
+        var collected = await dbContext.SalePaymentProofs
+            .AsNoTracking()
+            .Where(proof => sales.Any(sale => sale.Id == proof.SaleId))
+            .SumAsync(proof => (decimal?)proof.Amount, cancellationToken) ?? 0m;
+
+        var pending = byStatus.SingleOrDefault(row => row.Status == SaleStatus.Pending);
+        var approved = byStatus.SingleOrDefault(row => row.Status == SaleStatus.Approved);
+
+        return new SaleWindowSummary(
+            pending?.Count ?? 0,
+            pending?.Total ?? 0m,
+            approved?.Count ?? 0,
+            approved?.Total ?? 0m,
+            collected);
+    }
+
     public async Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
