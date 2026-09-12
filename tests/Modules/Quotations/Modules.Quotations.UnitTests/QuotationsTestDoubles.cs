@@ -335,6 +335,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             null,
             quotation.AdvisorId,
             null,
+            null,
             quotation.Status,
             quotation.CreatedAt,
             quotation.ValidUntil,

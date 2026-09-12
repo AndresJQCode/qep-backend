@@ -57,6 +57,7 @@ public sealed class QuotationResponseComposer(
             ToClientResponse(customer),
             quotation.AdvisorId,
             advisor?.Email,
+            advisor?.DisplayName,
             quotation.Status,
             quotation.CreatedAt,
             quotation.ValidUntil,
