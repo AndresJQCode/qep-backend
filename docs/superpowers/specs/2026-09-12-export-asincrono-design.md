@@ -225,7 +225,13 @@ sobre el prefijo `exports/`: es infraestructura y va en el repo de plataforma, n
 
 ## Qué pasa con 572200c
 
-Queda en la rama y se construye encima; no se reescribe historia (no hay push).
+El export síncrono ya está publicado: `572200c` (backend) y `098dbce` (frontend) entraron a
+`develop` y a `main` y están en el remoto. Mientras este diseño no se implemente, lo que se
+despliegue desde `main` arma el Excel dentro del request —el riesgo de memoria de
+[Problema](#problema)— y el botón del frontend usa `disabled` + `title` (ver D14).
+
+El trabajo nuevo sale de `develop`, en `feature/export-asincrono` de cada repo, y construye
+encima:
 
 - **Se reutiliza:** `ExportQuotationsValidator` (el año), `QuotationListing`, `FilteredQuery`,
   `ListForExportAsync`.
@@ -233,12 +239,13 @@ Queda en la rama y se construye encima; no se reescribe historia (no hay push).
   a ClosedXML de Quotations (lock files regenerados en ese commit). Con el builder se va también
   el aviso de `AdjustToContents` de la revisión.
 
-El frontend sin commitear conserva `quoteFilterParams`, el helper del rango (se generaliza para
-ventas) y sus pruebas; cambia el hook (de descarga a `POST` + toast) y el botón (D14).
+En el frontend se conservan `quoteFilterParams`, `isExportableQuoteRange` (se generaliza para
+ventas) y sus pruebas; cambian `useExportQuotes` (de descarga a `POST` + toast) y el botón (D14).
 
 ## Entrega
 
-Backend, rama `feature/quotations-export`, cada commit compila y deja las pruebas en verde:
+Backend, rama `feature/export-asincrono` desde `develop`; cada commit compila y deja las pruebas
+en verde:
 
 1. `feat(quotations): cola de exportaciones con worker y reintentos` — tabla, migración,
    `IExportJobQueue`, toma exclusiva, lease, backoff, `ExportJobWorker`.
@@ -247,7 +254,8 @@ Backend, rama `feature/quotations-export`, cada commit compila y deja las prueba
    streaming, `IExportFileStorage`; sale el `GET`.
 4. `feat(sales): exportar ventas por correo`.
 
-Frontend, rama `feature/quotations-export`: `feat(quotes): exportar cotizaciones por correo` y
+Frontend, rama `feature/export-asincrono` desde `develop`: `feat(quotes): exportar cotizaciones
+por correo` y
 `feat(sales): exportar ventas por correo`.
 
 **Despliegue: backend primero** (migración y endpoints), después frontend. Al revés, el botón le
