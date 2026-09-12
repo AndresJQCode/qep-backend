@@ -95,21 +95,6 @@ public sealed record SaleDetailResponse(
     SaleResponse Sale,
     QuotationResponse Quotation);
 
-/// <summary>
-/// El panel del listado de ventas. Espeja <see cref="SaleSummaryDto"/> — mismos campos y mismo
-/// significado; existe aparte por la misma razon que el resto de los <c>*Response</c>: lo que la
-/// API promete no se mueve solo porque cambie un tipo de la capa de aplicacion.
-/// </summary>
-public sealed record SaleSummaryResponse(
-    int SaleCount,
-    decimal Total,
-    int PendingCount,
-    decimal PendingTotal,
-    int ApprovedCount,
-    decimal ApprovedTotal,
-    decimal CollectedTotal,
-    decimal PreviousTotal);
-
 public sealed record SalesPageResponse(
     IReadOnlyCollection<SaleListItemResponse> Items,
     int Total,

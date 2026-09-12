@@ -26,15 +26,6 @@ public static class SaleEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // El panel del listado. Ruta hermana y no un campo del listado: es de todo el periodo,
-        // no de la pagina que se esta mirando, y se pide una vez aunque la grilla pagine.
-        // Antes de "/{saleId:guid}" no hace falta desempatar: "summary" no es un guid.
-        collection.MapGet("/summary", GetSalesSummaryAsync)
-            .RequireAuthorization(SalesPermissions.SaleRead)
-            .Produces<SaleSummaryResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         // SALE-04: por el id de la venta. Desde una fila del listado no hay por donde entrar si
         // la unica ruta cuelga de la cotizacion.
         collection.MapGet("/{saleId:guid}", GetSaleByIdAsync)
@@ -74,27 +65,6 @@ public static class SaleEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         return endpoints;
-    }
-
-    private static async Task<IResult> GetSalesSummaryAsync(
-        Guid tenantId,
-        DateOnly from,
-        DateOnly to,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
-    {
-        var summary = await dispatcher.QueryAsync(
-            new GetSalesSummaryQuery(tenantId, from, to), cancellationToken);
-
-        return Results.Ok(new SaleSummaryResponse(
-            summary.SaleCount,
-            summary.Total,
-            summary.PendingCount,
-            summary.PendingTotal,
-            summary.ApprovedCount,
-            summary.ApprovedTotal,
-            summary.CollectedTotal,
-            summary.PreviousTotal));
     }
 
     private static async Task<IResult> ListSalesAsync(

@@ -403,31 +403,6 @@ internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : 
         Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Sale.Id == saleId)?.Sale);
 
-    /// <summary>Calcula desde las filas sembradas, igual que la consulta real: agrupa por estado
-    /// y suma el total de cada cotizacion mas sus comprobantes. Las dos puntas inclusive.</summary>
-    public Task<SaleWindowSummary> SummarizeAsync(
-        Guid tenantId,
-        DateOnly convertedFrom,
-        DateOnly convertedTo,
-        CancellationToken cancellationToken)
-    {
-        var window = rows.Where(row =>
-        {
-            var day = DateOnly.FromDateTime(row.Sale.ConvertedAt.UtcDateTime);
-            return day >= convertedFrom && day <= convertedTo;
-        }).ToArray();
-
-        var pending = window.Where(row => row.Sale.Status == SaleStatus.Pending).ToArray();
-        var approved = window.Where(row => row.Sale.Status == SaleStatus.Approved).ToArray();
-
-        return Task.FromResult(new SaleWindowSummary(
-            pending.Length,
-            pending.Sum(row => row.Quotation.Total),
-            approved.Length,
-            approved.Sum(row => row.Quotation.Total),
-            window.Sum(row => row.Sale.PaymentProofs.Sum(proof => proof.Amount))));
-    }
-
     public Task<IReadOnlyDictionary<Guid, Sale>> FindByQuotationIdsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
