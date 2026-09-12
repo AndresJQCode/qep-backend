@@ -511,9 +511,10 @@ public sealed class Quotation
     ///
     /// Sin vigencia la cotización nunca vence: <c>QuotationExpirationProcessor</c> filtra por
     /// <see cref="ValidUntil"/> no nulo, así que una Sent sin fecha quedaría convertible a venta
-    /// para siempre, con los precios congelados el día que se envió. Se exige al salir de Draft
-    /// porque es el único punto por el que pasa toda cotización antes de
-    /// <see cref="EnsureConvertibleToSale"/>.
+    /// para siempre, con los precios congelados el día que se envió. Se exige acá **y también**
+    /// en <see cref="EnsureConvertibleToSale"/>, que desde que ésta dejó de exigir haber
+    /// enviado (a pedido, 2026-09) ya no puede apoyarse en que toda cotización pasó por acá
+    /// antes de convertirse.
     /// </summary>
     public void EnsureSendable()
     {
@@ -532,19 +533,20 @@ public sealed class Quotation
         }
     }
 
-    /// <summary>US-16: valida que se pueda convertir en venta. Sólo desde
-    /// <see cref="QuotationStatus.Sent"/> — no se convierte un borrador, ni una ya anulada o
+    /// <summary>US-16: valida que se pueda convertir en venta. Ya no exige haberla enviado
+    /// primero (a pedido, 2026-09) — Draft o Sent alcanzan, mismo criterio de "sigue siendo un
+    /// documento abierto" que <see cref="EnsureSendable"/>; no se convierte una ya anulada ni
     /// vencida. No muta nada: a diferencia de la vieja <c>Approve()</c>, convertir a venta ya no
     /// cambia el estado de la cotización (no existe un estado "aprobada"/"convertida" — ver
     /// <see cref="QuotationStatus"/>), así que esto es sólo el guard de precondición que
     /// <c>ConvertQuotationToSaleHandler</c> llama antes de crear el <see cref="Sale"/>.</summary>
     public void EnsureConvertibleToSale()
     {
-        if (Status != QuotationStatus.Sent)
+        if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))
         {
             throw new QuotationsDomainException(
-                "quotation.quotation.not_sent",
-                "Only a sent quotation can be converted to a sale.");
+                "quotation.quotation.status_not_convertible",
+                "Only a draft or sent quotation can be converted to a sale.");
         }
 
         // La venta hereda lo que el cliente aceptó, y lo que el cliente vio es el documento del
@@ -561,7 +563,13 @@ public sealed class Quotation
 
         // Lo que una venta necesita para existir y que la cotizacion puede no tener todavia. Se
         // comprueba aca y no en la pantalla porque es la condicion del negocio, no del formulario:
-        // la venta se crea desde este agregado y estos cuatro datos son los que hereda.
+        // la venta se crea desde este agregado y estos datos son los que hereda.
+        //
+        // La forma de pago NO esta en esta lista a proposito: el editor de cotizaciones dejo de
+        // pedirla (queda `null` en todo lo creado desde entonces -- ver `UpdateQuotationRequest`
+        // en el frontend, que ya no tiene campo que la escriba), asi que exigirla aca dejaba
+        // inconvertible a cualquier cotizacion nueva sin que hubiera forma de arreglarlo desde la
+        // pantalla. `Sale` tampoco la usa para nada al crearse.
         if (_items.Count == 0)
         {
             throw new QuotationsDomainException(
@@ -574,13 +582,6 @@ public sealed class Quotation
             throw new QuotationsDomainException(
                 "quotation.quotation.valid_until_required",
                 "A quotation must have a validity date before it can be converted to a sale.");
-        }
-
-        if (string.IsNullOrWhiteSpace(PaymentMethod))
-        {
-            throw new QuotationsDomainException(
-                "quotation.quotation.payment_method_required",
-                "A quotation must have a payment method before it can be converted to a sale.");
         }
 
         // Sin cuenta de cobro la venta no sabe a donde se paga, que es justo lo que una venta
@@ -599,11 +600,10 @@ public sealed class Quotation
     /// habilitar el boton en vez de reimplementar las condiciones.
     /// </summary>
     public bool CanBeConvertedToSale =>
-        Status == QuotationStatus.Sent
+        Status is QuotationStatus.Draft or QuotationStatus.Sent
         && !HasChangesSinceSent
         && _items.Count > 0
         && ValidUntil is not null
-        && !string.IsNullOrWhiteSpace(PaymentMethod)
         && BillingAccount is not null;
 
     /// <summary>

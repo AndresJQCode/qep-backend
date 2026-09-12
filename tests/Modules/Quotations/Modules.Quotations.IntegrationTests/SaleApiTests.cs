@@ -5,19 +5,20 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
 
-/// <summary>US-13 a US-17: conversión de una cotización enviada en venta.</summary>
+/// <summary>US-13 a US-17: conversión de una cotización en venta. Ya no hace falta haberla
+/// enviado (a pedido, 2026-09).</summary>
 public sealed class SaleApiTests
 {
     private static string SaleUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/sale";
 
-    // `EnsureConvertibleToSale` exige cuatro datos que enviar no pide: productos, vigencia,
-    // forma de pago y cuenta de cobro. Ninguno tenia cobertura de integracion, y su ausencia se
-    // manifestaba como un 422 en pruebas que estaban probando otra cosa -- que es como se
-    // descubrio. Esta cubre el unico que `CreateSentQuotationAsync` puede omitir sin dejar de
-    // poder enviar.
+    // Bug real, 2026-09-12: el editor de cotizaciones dejo de pedir la forma de pago hace
+    // rato (ver `UpdateQuotationRequest` en el frontend), asi que toda cotizacion nueva la
+    // tiene en null -- pero `EnsureConvertibleToSale` seguia exigiendola, y con eso "Convertir
+    // en venta" no aparecia nunca para nadie. La cobertura vieja probaba lo contrario (que
+    // rechazara sin forma de pago); esta prueba el arreglo.
     [Fact]
-    public async Task ConvertWithoutAPaymentMethodIsUnprocessable()
+    public async Task ConvertWithoutAPaymentMethodSucceeds()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -37,11 +38,7 @@ public sealed class SaleApiTests
                 [new SalePaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
-            TestContext.Current.CancellationToken);
-        Assert.NotNull(problem);
-        Assert.Equal("quotation.quotation.payment_method_required", problem.Code);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     [Fact]
@@ -162,7 +159,9 @@ public sealed class SaleApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
-    // US-13: "Convertir en venta" solo esta disponible en Sent -- un borrador no se convierte.
+    // US-13: ya no hace falta haberla enviado (a pedido, 2026-09), pero un borrador recien
+    // creado por este helper no tiene productos ni cuenta de cobro -- se rechaza por eso, no
+    // por seguir en Draft.
     [Fact]
     public async Task ConvertADraftQuotationIsUnprocessable()
     {
