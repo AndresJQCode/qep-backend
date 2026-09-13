@@ -107,4 +107,73 @@ public sealed class SaleTests
 
         Assert.Equal(2, sale.PaymentProofs.Count);
     }
+
+    // A pedido (2026-09): "Aprobar venta" se bloquea mientras el pago no está completo, y esto
+    // es la forma de destrabarlo sin recrear la venta.
+    [Fact]
+    public void AddPaymentProofsSumsProofsAndUpdatesThePaymentStatus()
+    {
+        var sale = NewSale(
+            paymentStatus: SalePaymentStatus.PaymentPending, proofs: []);
+        var newFileId = Guid.CreateVersion7();
+        var later = Now.AddDays(1);
+
+        sale.AddPaymentProofs(
+            [new SalePaymentProofInput(newFileId, 80_000m)],
+            SalePaymentStatus.FullPaymentReceived,
+            ConvertedBy,
+            later);
+
+        var proof = Assert.Single(sale.PaymentProofs);
+        Assert.Equal(newFileId, proof.FileId);
+        Assert.Equal(80_000m, proof.Amount);
+        Assert.Equal(SalePaymentStatus.FullPaymentReceived, sale.PaymentStatus);
+        Assert.Equal(later, sale.UpdatedAt);
+        Assert.Equal(2, sale.Version);
+    }
+
+    [Fact]
+    public void AddPaymentProofsKeepsProofsAlreadyThere()
+    {
+        var existingFileId = Guid.CreateVersion7();
+        var sale = NewSale(proofs: [new SalePaymentProofInput(existingFileId, 50_000m)]);
+
+        sale.AddPaymentProofs(
+            [new SalePaymentProofInput(Guid.CreateVersion7(), 50_000m)],
+            SalePaymentStatus.FullPaymentReceived,
+            ConvertedBy,
+            Now.AddDays(1));
+
+        Assert.Equal(2, sale.PaymentProofs.Count);
+        Assert.Contains(sale.PaymentProofs, proof => proof.FileId == existingFileId);
+    }
+
+    [Fact]
+    public void AddPaymentProofsRejectsAnEmptyBatch()
+    {
+        var sale = NewSale();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.AddPaymentProofs([], SalePaymentStatus.FullPaymentReceived, ConvertedBy, Now));
+
+        Assert.Equal("sale.sale.payment_proof_required", error.Code);
+    }
+
+    // Aprobada, la venta es el respaldo de un cobro que alguien ya revisó: sumarle
+    // comprobantes ahí adentro cambiaría lo que esa persona dio por bueno.
+    [Fact]
+    public void AddPaymentProofsRejectsAnAlreadyApprovedSale()
+    {
+        var sale = NewSale();
+        sale.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.AddPaymentProofs(
+                [new SalePaymentProofInput(Guid.CreateVersion7(), 10_000m)],
+                SalePaymentStatus.FullPaymentReceived,
+                ConvertedBy,
+                Now.AddDays(1)));
+
+        Assert.Equal("sale.sale.not_pending", error.Code);
+    }
 }

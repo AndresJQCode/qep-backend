@@ -33,6 +33,13 @@ public sealed record ConvertQuotationToSaleRequest(
     string? Notes,
     IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs);
 
+/// <summary>Sumar comprobantes a una venta que ya existe (a pedido, 2026-09) — mismos dos
+/// campos que <see cref="ConvertQuotationToSaleRequest"/> le pide a los comprobantes, sin
+/// <c>Notes</c>: esto no vuelve a pedir lo que ya se cargó al convertir.</summary>
+public sealed record AddSalePaymentProofsRequest(
+    string PaymentStatus,
+    IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs);
+
 public sealed record SalePaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 
 public sealed record SaleResponse(
