@@ -23,6 +23,16 @@ internal sealed class InfobipEmailChannel(
 {
     private readonly InfobipOptions settings = options.Value.Infobip;
 
+    /// <summary>
+    /// Timeout explícito (spec 2026-09-13, A5): el implícito de HttpClient es de 100 s, y el lease del
+    /// reclamo (OutboxDeliveryWorker.Lease) tiene que quedar por encima con margen.
+    /// </summary>
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+
+    // Sin IHttpClientFactory, mismo criterio que ZenviaWhatsAppSender: el canal es singleton y es el
+    // dueño de su cliente durante toda la vida del proceso.
+    internal static HttpClient CreateHttpClient() => new() { Timeout = RequestTimeout };
+
     public async Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
     {
         using var content = new MultipartFormDataContent

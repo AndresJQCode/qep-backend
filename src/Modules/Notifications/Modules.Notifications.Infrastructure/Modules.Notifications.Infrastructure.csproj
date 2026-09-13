@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Modules.Notifications.UnitTests" />
+    <!-- El reclamo, la base de los workers y su DrainAsync se prueban contra Postgres
+         (spec 2026-09-13, Sección 1). Mismo precedente que Quotations con ExportJobWorker. -->
+    <InternalsVisibleTo Include="Modules.Notifications.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Modules.Notifications.Application\Modules.Notifications.Application.csproj" />
