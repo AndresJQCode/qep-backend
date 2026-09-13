@@ -209,7 +209,7 @@ public static class SaleEndpoints
     {
         var sale = await dispatcher.SendAsync(
             new AddSalePaymentProofsCommand(
-                tenantId, quotationId, request.PaymentStatus, request.PaymentProofs),
+                tenantId, quotationId, request.PaymentStatus, request.Notes, request.PaymentProofs),
             cancellationToken);
 
         return Results.Ok(ToResponse(sale));

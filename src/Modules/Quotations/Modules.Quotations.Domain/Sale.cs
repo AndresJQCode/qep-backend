@@ -136,10 +136,16 @@ public sealed class Sale
     /// Sólo sobre <see cref="SaleStatus.Pending"/>: aprobada, la venta es el respaldo de un
     /// cobro que alguien ya revisó con lo que había en ese momento — sumarle comprobantes ahí
     /// adentro cambiaría lo que esa persona dio por bueno.
+    ///
+    /// <paramref name="notes"/> reemplaza <see cref="Notes"/> entero (a pedido, 2026-09): la
+    /// pantalla que suma comprobantes la precarga con lo que ya había, así que lo normal es que
+    /// vuelva igual o corregida, nunca perdida. Null o vacío la borra, mismo criterio que al
+    /// crear la venta.
     /// </summary>
     public void AddPaymentProofs(
         IReadOnlyCollection<SalePaymentProofInput> proofs,
         SalePaymentStatus paymentStatus,
+        string? notes,
         MemberId uploadedBy,
         DateTimeOffset occurredAt)
     {
@@ -164,6 +170,7 @@ public sealed class Sale
         }
 
         PaymentStatus = paymentStatus;
+        Notes = NormalizeNotes(notes);
         UpdatedAt = occurredAt;
         Version++;
     }

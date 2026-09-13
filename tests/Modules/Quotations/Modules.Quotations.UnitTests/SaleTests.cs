@@ -11,6 +11,7 @@ public sealed class SaleTests
 
     private static Sale NewSale(
         SalePaymentStatus paymentStatus = SalePaymentStatus.FullPaymentReceived,
+        string? notes = null,
         IReadOnlyCollection<SalePaymentProofInput>? proofs = null) =>
         Sale.Create(
             SaleId.New(),
@@ -18,7 +19,7 @@ public sealed class SaleTests
             "VEN-2026-0001",
             QuotationId,
             paymentStatus,
-            notes: null,
+            notes,
             ConvertedBy,
             proofs ?? [new SalePaymentProofInput(Guid.CreateVersion7(), 100_000m)],
             Now);
@@ -121,6 +122,7 @@ public sealed class SaleTests
         sale.AddPaymentProofs(
             [new SalePaymentProofInput(newFileId, 80_000m)],
             SalePaymentStatus.FullPaymentReceived,
+            "Pago completado por transferencia",
             ConvertedBy,
             later);
 
@@ -128,8 +130,31 @@ public sealed class SaleTests
         Assert.Equal(newFileId, proof.FileId);
         Assert.Equal(80_000m, proof.Amount);
         Assert.Equal(SalePaymentStatus.FullPaymentReceived, sale.PaymentStatus);
+        Assert.Equal("Pago completado por transferencia", sale.Notes);
         Assert.Equal(later, sale.UpdatedAt);
         Assert.Equal(2, sale.Version);
+    }
+
+    // La pantalla precarga la nota con lo que ya había: mandar null (nadie tocó el campo) no
+    // tiene por qué borrarla, pero tampoco hay forma de que este método lo sepa -- reemplaza
+    // entero, como el resto de sus datos. Se deja explícito para que un cambio futuro no lo
+    // convierta sin querer en "conservar si es null".
+    [Fact]
+    public void AddPaymentProofsReplacesTheNotesEntirelyEvenToNull()
+    {
+        var sale = NewSale(
+            paymentStatus: SalePaymentStatus.PaymentPending,
+            notes: "Nota original",
+            proofs: []);
+
+        sale.AddPaymentProofs(
+            [new SalePaymentProofInput(Guid.CreateVersion7(), 50_000m)],
+            SalePaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1));
+
+        Assert.Null(sale.Notes);
     }
 
     [Fact]
@@ -141,6 +166,7 @@ public sealed class SaleTests
         sale.AddPaymentProofs(
             [new SalePaymentProofInput(Guid.CreateVersion7(), 50_000m)],
             SalePaymentStatus.FullPaymentReceived,
+            null,
             ConvertedBy,
             Now.AddDays(1));
 
@@ -154,7 +180,8 @@ public sealed class SaleTests
         var sale = NewSale();
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            sale.AddPaymentProofs([], SalePaymentStatus.FullPaymentReceived, ConvertedBy, Now));
+            sale.AddPaymentProofs(
+                [], SalePaymentStatus.FullPaymentReceived, null, ConvertedBy, Now));
 
         Assert.Equal("sale.sale.payment_proof_required", error.Code);
     }
@@ -171,6 +198,7 @@ public sealed class SaleTests
             sale.AddPaymentProofs(
                 [new SalePaymentProofInput(Guid.CreateVersion7(), 10_000m)],
                 SalePaymentStatus.FullPaymentReceived,
+                null,
                 ConvertedBy,
                 Now.AddDays(1)));
 

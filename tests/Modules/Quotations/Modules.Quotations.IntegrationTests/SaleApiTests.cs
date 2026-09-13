@@ -377,7 +377,8 @@ public sealed class SaleApiTests
             SaleProofsUrl(tenantId, quotation.Id),
             new AddSalePaymentProofsRequest(
                 "FullPaymentReceived",
-                [new SalePaymentProofRequest(proofFileId, quotation.Total)]),
+                [new SalePaymentProofRequest(proofFileId, quotation.Total)],
+                "Pago completado por transferencia"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -385,6 +386,7 @@ public sealed class SaleApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(sale);
         Assert.Equal("FullPaymentReceived", sale.PaymentStatus);
+        Assert.Equal("Pago completado por transferencia", sale.Notes);
         var proof = Assert.Single(sale.PaymentProofs);
         Assert.Equal(proofFileId, proof.FileId);
         Assert.Equal(quotation.Total, proof.Amount);

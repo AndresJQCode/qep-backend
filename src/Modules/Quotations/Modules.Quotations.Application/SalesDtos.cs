@@ -38,7 +38,11 @@ public sealed record ConvertQuotationToSaleRequest(
 /// <c>Notes</c>: esto no vuelve a pedir lo que ya se cargó al convertir.</summary>
 public sealed record AddSalePaymentProofsRequest(
     string PaymentStatus,
-    IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs);
+    IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs,
+    /// <summary>Reemplaza <c>Sale.Notes</c> entero (a pedido, 2026-09). La pantalla la precarga
+    /// con lo que ya había, así que ausente o null la borra igual que al crear la venta — no es
+    /// un PATCH parcial.</summary>
+    string? Notes = null);
 
 public sealed record SalePaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 

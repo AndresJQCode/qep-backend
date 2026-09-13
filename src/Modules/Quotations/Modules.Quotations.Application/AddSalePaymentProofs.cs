@@ -15,6 +15,7 @@ public sealed record AddSalePaymentProofsCommand(
     Guid TenantId,
     Guid QuotationId,
     string PaymentStatus,
+    string? Notes,
     IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs) : ICommand<SaleDto>;
 
 public sealed class AddSalePaymentProofsValidator
@@ -29,6 +30,9 @@ public sealed class AddSalePaymentProofsValidator
             .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
             .WithMessage(
                 $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
+        RuleFor(command => command.Notes)
+            .MaximumLength(Sale.NotesMaxLength)
+            .When(command => command.Notes is not null);
         RuleForEach(command => command.PaymentProofs).SetValidator(new SalePaymentProofRequestValidator());
     }
 }
@@ -73,6 +77,7 @@ public sealed class AddSalePaymentProofsHandler(
                 .Select(proof => new SalePaymentProofInput(proof.FileId, proof.Amount))
                 .ToArray(),
             paymentStatus,
+            command.Notes,
             uploadedBy,
             now);
 
