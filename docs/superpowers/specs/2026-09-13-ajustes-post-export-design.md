@@ -171,7 +171,15 @@ La forma de pago (`Efectivo`, `Transferencia`…) ya está en español y no camb
 
 ### Voseo (frontend)
 
-`src/features/sales/services/sales.api.ts:117` pasa de «No tenés permiso para ver las ventas de este espacio de trabajo.» a «No tienes permiso para ver las ventas de este espacio de trabajo.». Si alguna prueba verifica ese texto, se actualiza también. Va en su propio commit en `qep-frontend`.
+Los cinco textos con voseo de `describeSalesFailure` (`src/features/sales/services/sales.api.ts:112,117,121,136,140`) pasan a tuteo:
+
+- sin conexión: «Revisa tu conexión e intenta de nuevo»;
+- sin permiso: «No tienes permiso»;
+- venta inexistente: «Vuelve al listado»;
+- filtros inválidos: «Revisa los filtros aplicados y vuelve a intentar»;
+- error del servidor: «Intenta de nuevo en un momento».
+
+Se actualizan también las pruebas que verifican esos textos: `sales-list-page.test.tsx:239` y `sale-detail-page.test.tsx:164,179`. Va en su propio commit en `qep-frontend`.
 
 ### Medición en producción: seed de carga
 
@@ -210,8 +218,8 @@ La forma de pago (`Efectivo`, `Transferencia`…) ya está en español y no camb
 
 **Limpieza.**
 
-- `ops/export-load-cleanup.sql` borra solo lo del tenant `carga-export` (ventas, ítems, cotizaciones, clientes, jobs de exportación, membresía y tenant), en el orden que exigen las relaciones.
-- Después se apaga el interruptor.
+- Primero se apaga el interruptor y se despliega. Si se limpiara antes, un reinicio del pod en el medio volvería a sembrar el tenant vacío.
+- Después, `ops/export-load-cleanup.sql` borra solo lo del tenant `carga-export` (ventas, ítems, cotizaciones, clientes, jobs de exportación, membresía y tenant), en el orden que exigen las relaciones.
 - Los `.xlsx` generados los borra la regla de lifecycle de R2 sobre `exports/`, que ya existe.
 
 **Qué queda en el repo.** El código del seed se commitea apagado por defecto, para reutilizarlo en futuras pruebas de carga.
@@ -240,7 +248,7 @@ La forma de pago (`Efectivo`, `Transferencia`…) ya está en español y no camb
 
 **Frontend**, en su propia rama:
 
-5. `fix(sales): tuteo en el error de permiso de ventas`
+5. `fix(sales): tuteo en los errores del listado de ventas`
 
 ## Verificación
 
