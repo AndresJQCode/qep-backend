@@ -55,7 +55,11 @@ internal sealed partial class ExportJobWorker(
     // Uno por uno hasta vaciar lo vencido, cada job en su scope: un DbContext por job no arrastra
     // entidades trackeadas de un export al siguiente. No hay loop infinito posible: un reintento
     // queda con next_attempt_at en el futuro y un lease perdido es de otro worker.
-    private async Task DrainAsync(CancellationToken cancellationToken)
+    //
+    // `internal` y no `private`: es el único punto de entrada que deja probar esta garantía sin
+    // el PeriodicTimer real de por medio (`ExportJobWorkerTests`, vía el `InternalsVisibleTo` que
+    // ya tiene este ensamblado hacia el de pruebas de integración). Nada más lo llama desde afuera.
+    internal async Task DrainAsync(CancellationToken cancellationToken)
     {
         while (true)
         {
