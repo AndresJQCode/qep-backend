@@ -34,15 +34,6 @@ internal sealed class QuotationsReportSource(
         return (await ToDtosAsync(criteria.TenantId, rows, cancellationToken), total);
     }
 
-    public async Task<IReadOnlyList<QuotationsReportItemDto>> ListForExportAsync(
-        QuotationsReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        var rows = await BuildQuery(criteria).Take(limit).ToListAsync(cancellationToken);
-        return await ToDtosAsync(criteria.TenantId, rows, cancellationToken);
-    }
-
     /// <summary>
     /// Todo se agrega en la base. Ver <see cref="SalesReportSource.SummarizeAsync"/> sobre por
     /// que se agrega sobre la entidad y no sobre <c>QuotationRow</c>: EF no ve a traves del
@@ -350,9 +341,9 @@ internal sealed class QuotationsReportSource(
         decimal Total);
 
     /// <summary>
-    /// El conjunto filtrado, sin ordenar ni proyectar. Lo comparten el listado, la
-    /// exportacion y el resumen: que los tres partan de la misma consulta es lo que hace
-    /// imposible que el panel sume sobre un conjunto y la tabla muestre otro.
+    /// El conjunto filtrado, sin ordenar ni proyectar. Lo comparten el listado y el resumen:
+    /// que los dos partan de la misma consulta es lo que hace imposible que el panel sume sobre
+    /// un conjunto y la tabla muestre otro.
     ///
     /// Devuelve la entidad y no <c>QuotationRow</c> porque EF no traduce un agregado sobre
     /// una proyeccion a un record: no ve a traves del constructor. Ver

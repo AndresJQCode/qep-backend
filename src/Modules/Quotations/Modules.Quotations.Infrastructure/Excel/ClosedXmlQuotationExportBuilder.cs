@@ -6,8 +6,7 @@ namespace Modules.Quotations.Infrastructure.Excel;
 /// <summary>
 /// Arma el <c>.xlsx</c> del listado de cotizaciones con ClosedXML.
 ///
-/// Misma forma de hoja que <c>ClosedXmlReportExcelBuilder</c> en Reporting, y por las mismas
-/// razones: cabecera congelada y en negrita para que sobreviva al scroll, anchos ajustados al
+/// Cabecera congelada y en negrita para que sobreviva al scroll, anchos ajustados al
 /// contenido con un piso para que la cabecera no quede pegada al borde, y **la fecha como texto
 /// ISO-8601** --una celda de fecha se muestra segun la configuracion regional de quien abre el
 /// archivo, y ahi 03/04 deja de ser una fecha sola--.

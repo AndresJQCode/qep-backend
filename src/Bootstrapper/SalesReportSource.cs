@@ -17,8 +17,8 @@ namespace Bootstrapper;
 /// ese acoplamiento es legitimo. Reporting es un caso extremo del patron: es lectura pura sobre
 /// datos ajenos, asi que **todos** sus origenes cruzan la frontera.
 ///
-/// **No decide nada.** Los limites de la exportacion, la normalizacion de la paginacion y la
-/// autorizacion son de los handlers de <c>reporting</c>; esto arma la consulta y devuelve filas.
+/// **No decide nada.** La normalizacion de la paginacion, los topes del resumen y la autorizacion
+/// son de los handlers de <c>reporting</c>; esto arma la consulta y devuelve filas.
 ///
 /// La venta no duplica cliente, importes ni numero de cotizacion: todo eso se lee de la
 /// <c>Quotation</c> asociada, que es 1:1 (modelo-datos-cotizaciones.md §1.2). Por eso la consulta
@@ -43,15 +43,6 @@ internal sealed class SalesReportSource(
             .ToListAsync(cancellationToken);
 
         return (await ToDtosAsync(criteria.TenantId, rows, cancellationToken), total);
-    }
-
-    public async Task<IReadOnlyList<SalesReportItemDto>> ListForExportAsync(
-        SalesReportCriteria criteria,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        var rows = await BuildQuery(criteria).Take(limit).ToListAsync(cancellationToken);
-        return await ToDtosAsync(criteria.TenantId, rows, cancellationToken);
     }
 
     /// <summary>
@@ -276,7 +267,7 @@ internal sealed class SalesReportSource(
     }
 
     /// <summary>
-    /// El conjunto ya ordenado, que es lo que necesitan el listado y la exportacion.
+    /// El conjunto ya ordenado, que es lo que necesita el listado.
     ///
     /// Orden explicito y total: sin el, dos paginas consecutivas pueden repetir u omitir filas,
     /// porque PostgreSQL no garantiza ningun orden sin <c>ORDER BY</c>. Lo mas nuevo primero, que

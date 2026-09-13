@@ -138,42 +138,4 @@ public sealed class CustomerReportApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
-
-    [Fact]
-    public async Task ExportReturnsAnExcelFile()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-        await CreateActiveCustomerAsync(client, tenant.TenantId);
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/customers/export",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(ExcelContentType, response.Content.Headers.ContentType?.MediaType);
-        var content = await response.Content.ReadAsByteArrayAsync(
-            TestContext.Current.CancellationToken);
-        Assert.Equal([0x50, 0x4B], content[..2]);
-    }
-
-    [Fact]
-    public async Task ExportWithNoMatchingRowsFails()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var client = tenant.Client;
-
-        var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/customers/export",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(
-            TestContext.Current.CancellationToken);
-        Assert.Equal("reporting.export.empty", problem?.Code);
-    }
 }

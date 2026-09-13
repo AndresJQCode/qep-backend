@@ -352,12 +352,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ConvertQuotationToSaleCommand, SaleDto>,
             ConvertQuotationToSaleHandler>();
-        // Reporting. Los doce van aca por la misma razon que el resto: el dispatcher resuelve por
+        // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
-        //
-        // Las cuatro exportaciones son IQueryHandler y no ICommandHandler: a diferencia de
-        // ExportCustomersCommand, que sube un archivo y encola un correo, estas solo leen.
         services.AddScoped<
             IQueryHandler<ListSalesReportQuery, ReportPage<SalesReportItemDto>>,
             ListSalesReportHandler>();
@@ -365,17 +362,11 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetSalesReportSummaryQuery, SalesReportSummaryDto>,
             GetSalesReportSummaryHandler>();
         services.AddScoped<
-            IQueryHandler<ExportSalesReportQuery, ReportFile>,
-            ExportSalesReportHandler>();
-        services.AddScoped<
             IQueryHandler<GetQuotationsReportSummaryQuery, QuotationsReportSummaryDto>,
             GetQuotationsReportSummaryHandler>();
         services.AddScoped<
             IQueryHandler<ListQuotationsReportQuery, ReportPage<QuotationsReportItemDto>>,
             ListQuotationsReportHandler>();
-        services.AddScoped<
-            IQueryHandler<ExportQuotationsReportQuery, ReportFile>,
-            ExportQuotationsReportHandler>();
         services.AddScoped<
             IQueryHandler<ListPriceChangeReportQuery, ReportPage<PriceChangeReportItemDto>>,
             ListPriceChangeReportHandler>();
@@ -383,17 +374,11 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetPriceChangeReportSummaryQuery, PriceChangeReportSummaryDto>,
             GetPriceChangeReportSummaryHandler>();
         services.AddScoped<
-            IQueryHandler<ExportPriceChangeReportQuery, ReportFile>,
-            ExportPriceChangeReportHandler>();
-        services.AddScoped<
             IQueryHandler<ListCustomerReportQuery, ReportPage<CustomerReportItemDto>>,
             ListCustomerReportHandler>();
         services.AddScoped<
             IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>,
             GetCustomerReportSummaryHandler>();
-        services.AddScoped<
-            IQueryHandler<ExportCustomerReportQuery, ReportFile>,
-            ExportCustomerReportHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -410,8 +395,8 @@ public static class QepServiceCollectionExtensions
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
-        // Sin AddDbContext y sin inicializador de base: Reporting no tiene tablas propias. Lo
-        // unico que registra es el armador de Excel.
+        // Sin AddDbContext y sin inicializador de base: Reporting no tiene tablas propias, y hoy
+        // no registra nada. Se llama igual para que el modulo se cablee como los demas.
         services.AddReportingInfrastructure(configuration);
         services.AddPlatformInfrastructure(configuration);
 
