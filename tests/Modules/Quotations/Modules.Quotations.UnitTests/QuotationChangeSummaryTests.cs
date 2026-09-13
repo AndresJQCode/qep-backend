@@ -14,7 +14,9 @@ public sealed class QuotationChangeSummaryTests
         string? shipping,
         bool isStorePickup,
         string? billing = null,
-        bool billsToFinalConsumer = false) => new(
+        bool billsToFinalConsumer = false,
+        bool? billingWithRetention = null,
+        bool? billingVatSurplus = null) => new(
         ValidUntil: new DateOnly(2026, 9, 30),
         PaymentMethod: "Efectivo",
         Notes: null,
@@ -23,7 +25,9 @@ public sealed class QuotationChangeSummaryTests
         BillingAccount: null,
         Currency: QuotationCurrencies.Default,
         IsStorePickup: isStorePickup,
-        BillsToFinalConsumer: billsToFinalConsumer);
+        BillsToFinalConsumer: billsToFinalConsumer,
+        BillingWithRetention: billingWithRetention,
+        BillingVatSurplus: billingVatSurplus);
 
     [Fact]
     public void TurningStorePickupOnSaysSoInsteadOfGoingBackToTheCustomer()
