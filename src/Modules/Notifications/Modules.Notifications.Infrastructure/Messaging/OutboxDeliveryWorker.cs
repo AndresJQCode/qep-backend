@@ -213,13 +213,16 @@ internal abstract partial class OutboxDeliveryWorker(
             notification = await DeliverAsync(record, context, stoppingToken);
         }
 
-        // Notificación y processed_at en un solo SaveChanges.
+        // Notificación y processed_at en un solo SaveChanges. Desde acá el correo ya salió (o el mensaje
+        // quedó envenenado), así que el cierre no mira el apagado: si un deploy detiene el pod justo
+        // después de enviar y este guardado se corta, el mensaje queda sin terminar y la otra réplica lo
+        // vuelve a mandar cuando vence el lease. El timeout de apagado del host lo sigue acotando.
         var entry = await dbContext.Inbox.SingleAsync(
             candidate => candidate.Consumer == Consumer && candidate.MessageId == record.Id,
-            stoppingToken);
+            CancellationToken.None);
         entry.ProcessedAt = context.Clock.UtcNow;
         dbContext.Notifications.Add(notification);
-        await dbContext.SaveChangesAsync(stoppingToken);
+        await dbContext.SaveChangesAsync(CancellationToken.None);
     }
 }
 

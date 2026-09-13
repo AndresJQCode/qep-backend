@@ -85,8 +85,48 @@ public sealed class OutboxDeliveryWorkerTests
         }
     }
 
+    // Un deploy detiene el pod justo después de que el correo salió. El cierre (notificación y
+    // processed_at) no se puede cortar por el apagado: si se corta, el mensaje queda sin terminar y la
+    // otra réplica lo vuelve a mandar cuando vence el lease.
     [Fact]
-    public async Task AClaimWhoseLeaseExpiredIsRetakenAndCountsTheAttempt()
+    public async Task AShutdownRightAfterTheSendStillClosesTheMessage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var stopping = new CancellationTokenSource();
+        var channel = new RecordingEmailChannel
+        {
+            // El apagado llega con el envío en vuelo, y el envío igual termina: el canal no mira el
+            // token, así que lo cuenta como enviado.
+            OnSend = _ =>
+            {
+                stopping.Cancel();
+                return Task.CompletedTask;
+            },
+        };
+        using var factory = new NotificationsApiFactory(database.GetConnectionString(), channel);
+        var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
+        var messageId = await InsertOutboxAsync(
+            database.GetConnectionString(), EventName, FailedPayload(tenantId, ownerUserId));
+
+        // Que DrainAsync termine o suba la cancelación da igual: con el apagado, el loop sale de todas
+        // formas. Lo que importa es cómo quedó el mensaje.
+        _ = await Record.ExceptionAsync(() => NewWorker(factory).DrainAsync(stopping.Token));
+
+        Assert.Single(channel.Sent);
+        var inbox = await FindInboxAsync(database.GetConnectionString(), Consumer, messageId);
+        Assert.NotNull(inbox?.ProcessedAt);
+        var notification = Assert.Single(
+            await NotificationsForAsync(database.GetConnectionString(), ownerUserId, TemplateRef));
+        Assert.Equal("Sent", notification.Status);
+    }
+
+    // El reclamo que retoma el mensaje suma un intento, así que el sembrado más uno es lo que ve el
+    // worker. El corte está en attempts > 3 (spec 2026-09-13, Sección 1): con 2 sembrado el reclamo
+    // llega a 3, justo en el borde, y todavía envía.
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AClaimWhoseLeaseExpiredIsRetakenAndCountsTheAttempt(int seededAttempts)
     {
         await using var database = await StartDatabaseAsync();
         var channel = new RecordingEmailChannel();
@@ -97,19 +137,22 @@ public sealed class OutboxDeliveryWorkerTests
         // Un worker que lo reclamó y murió antes de guardar: sin processed_at y con el lease vencido.
         await PutInboxAsync(
             database.GetConnectionString(), Consumer, messageId,
-            processedAt: null, claimedUntil: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 1);
+            processedAt: null, claimedUntil: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: seededAttempts);
 
         await NewWorker(factory).DrainAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(channel.Sent);
         var inbox = await FindInboxAsync(database.GetConnectionString(), Consumer, messageId);
-        Assert.Equal(2, inbox?.Attempts);
+        Assert.Equal(seededAttempts + 1, inbox?.Attempts);
         Assert.NotNull(inbox?.ProcessedAt);
     }
 
-    // Tres reclamos sin terminar: el cuarto no envía, registra el fallo y cierra el mensaje.
-    [Fact]
-    public async Task AMessageClaimedThreeTimesWithoutFinishingIsFailedWithoutSending()
+    // Tres reclamos sin terminar, o más: el siguiente no envía, registra el fallo y cierra el mensaje.
+    // Con 3 sembrado el reclamo llega a 4, el primer valor que se corta.
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task AMessageClaimedThreeTimesOrMoreWithoutFinishingIsFailedWithoutSending(int seededAttempts)
     {
         await using var database = await StartDatabaseAsync();
         var channel = new RecordingEmailChannel();
@@ -119,7 +162,7 @@ public sealed class OutboxDeliveryWorkerTests
             database.GetConnectionString(), EventName, FailedPayload(tenantId, ownerUserId));
         await PutInboxAsync(
             database.GetConnectionString(), Consumer, messageId,
-            processedAt: null, claimedUntil: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 3);
+            processedAt: null, claimedUntil: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: seededAttempts);
 
         await NewWorker(factory).DrainAsync(TestContext.Current.CancellationToken);
 
@@ -129,7 +172,7 @@ public sealed class OutboxDeliveryWorkerTests
             await NotificationsForAsync(database.GetConnectionString(), Guid.Empty, TemplateRef));
         Assert.Equal(("Failed", "delivery_attempts_exhausted"), (poisoned.Status, poisoned.FailureReason));
         var inbox = await FindInboxAsync(database.GetConnectionString(), Consumer, messageId);
-        Assert.Equal(4, inbox?.Attempts);
+        Assert.Equal(seededAttempts + 1, inbox?.Attempts);
         Assert.NotNull(inbox?.ProcessedAt);
     }
 
