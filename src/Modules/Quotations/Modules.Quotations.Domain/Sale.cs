@@ -4,8 +4,11 @@ namespace Modules.Quotations.Domain;
 /// Una venta, creada al convertir una cotización aprobada (US-13 a US-17,
 /// modelo-datos-cotizaciones.md §2.4). 1:1 con <see cref="Quotation"/> — no duplica cliente, CUC,
 /// productos ni totales; todo eso se referencia por <see cref="QuotationId"/>. Agregado raíz que
-/// incluye sus comprobantes de pago (<see cref="SalePaymentProof"/>), que nacen con ella y no se
-/// agregan ni se quitan después.
+/// incluye sus comprobantes de pago (<see cref="SalePaymentProof"/>): nacen con ella, pero
+/// mientras sigue <see cref="SaleStatus.Pending"/> se le pueden sumar más —ver
+/// <see cref="AddPaymentProofs"/>— para el caso real de que falte alguno al convertir, o el
+/// pago se complete después. No se quitan: no hay motivo de negocio para retirar un comprobante
+/// ya cargado, y menos borrarlo.
 ///
 /// Nunca tiene PDF ni envío propio (US-17): el único documento que el cliente recibe es la
 /// cotización original.
@@ -119,6 +122,55 @@ public sealed class Sale
         Status = SaleStatus.Approved;
         ApprovedBy = approvedBy;
         ApprovedAt = occurredAt;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>
+    /// Suma comprobantes a una venta ya creada, y actualiza el estado del pago con lo que
+    /// corresponda a lo cargado. Existe porque "Aprobar venta" se bloquea mientras el pago no
+    /// está completo (a pedido, 2026-09), y hasta ahora la única forma de cargar comprobantes
+    /// era al convertir — si faltó alguno, o el pago se terminó de cobrar después, no había
+    /// forma de agregarlo sin recrear la venta entera.
+    ///
+    /// Sólo sobre <see cref="SaleStatus.Pending"/>: aprobada, la venta es el respaldo de un
+    /// cobro que alguien ya revisó con lo que había en ese momento — sumarle comprobantes ahí
+    /// adentro cambiaría lo que esa persona dio por bueno.
+    ///
+    /// <paramref name="notes"/> reemplaza <see cref="Notes"/> entero (a pedido, 2026-09): la
+    /// pantalla que suma comprobantes la precarga con lo que ya había, así que lo normal es que
+    /// vuelva igual o corregida, nunca perdida. Null o vacío la borra, mismo criterio que al
+    /// crear la venta.
+    /// </summary>
+    public void AddPaymentProofs(
+        IReadOnlyCollection<SalePaymentProofInput> proofs,
+        SalePaymentStatus paymentStatus,
+        string? notes,
+        MemberId uploadedBy,
+        DateTimeOffset occurredAt)
+    {
+        if (Status != SaleStatus.Pending)
+        {
+            throw new QuotationsDomainException(
+                "sale.sale.not_pending",
+                "Payment proofs can only be added to a pending sale.");
+        }
+
+        if (proofs.Count == 0)
+        {
+            throw new QuotationsDomainException(
+                "sale.sale.payment_proof_required",
+                "At least one payment proof is required.");
+        }
+
+        foreach (var proof in proofs)
+        {
+            _paymentProofs.Add(SalePaymentProof.Create(
+                SalePaymentProofId.New(), Id, proof.FileId, proof.Amount, uploadedBy, occurredAt));
+        }
+
+        PaymentStatus = paymentStatus;
+        Notes = NormalizeNotes(notes);
         UpdatedAt = occurredAt;
         Version++;
     }

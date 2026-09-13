@@ -33,6 +33,17 @@ public sealed record ConvertQuotationToSaleRequest(
     string? Notes,
     IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs);
 
+/// <summary>Sumar comprobantes a una venta que ya existe (a pedido, 2026-09) — mismos dos
+/// campos que <see cref="ConvertQuotationToSaleRequest"/> le pide a los comprobantes, sin
+/// <c>Notes</c>: esto no vuelve a pedir lo que ya se cargó al convertir.</summary>
+public sealed record AddSalePaymentProofsRequest(
+    string PaymentStatus,
+    IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs,
+    /// <summary>Reemplaza <c>Sale.Notes</c> entero (a pedido, 2026-09). La pantalla la precarga
+    /// con lo que ya había, así que ausente o null la borra igual que al crear la venta — no es
+    /// un PATCH parcial.</summary>
+    string? Notes = null);
+
 public sealed record SalePaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 
 public sealed record SaleResponse(

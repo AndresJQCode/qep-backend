@@ -47,6 +47,15 @@ public sealed record QuotationDto(
     IReadOnlyCollection<QuotationPartyDto> Parties,
     /// <summary>Si la facturación sigue al cliente, si va con su razón social.</summary>
     bool BillingUsesBusinessName,
+    /// <summary>Si quien recibe la factura practica retención en la fuente, sólo cuando
+    /// <c>Parties</c> trae fila de facturación propia (<c>Quotation.PartyWithRetention</c>). Null
+    /// con los datos del cliente (ahí manda <c>CustomerVatSurplus</c>/lo que ya diga el cliente) o
+    /// mientras no se contestó con datos propios — la pantalla lo trata como "todavía sin elegir",
+    /// no como false.</summary>
+    bool? BillingWithRetention,
+    /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA
+    /// (<c>Quotation.PartyVatSurplus</c>).</summary>
+    bool? BillingVatSurplus,
     /// <summary>Si el cliente recoge en la tienda. Cuando es true <c>Parties</c> nunca trae la
     /// parte de entrega.</summary>
     bool IsStorePickup,
@@ -137,7 +146,15 @@ public sealed record QuotationPartiesRequest(
     /// <c>BillingUsesBusinessName</c> false; si no, 422
     /// <c>quotation.billing.final_consumer_conflict</c>. Como el PATCH reemplaza el encabezado
     /// entero, omitirlo lo apaga.</summary>
-    bool BillsToFinalConsumer = false);
+    bool BillsToFinalConsumer = false,
+    /// <summary>Sólo tiene sentido cuando <c>Billing</c> trae datos propios: si esa facturación
+    /// practica retención en la fuente. Con los datos del cliente se ignora — ahí manda lo que
+    /// diga el cliente. Null es "todavía no se contestó"; un <c>Billing</c> con datos propios y
+    /// esto en null deja la cotización inconvertible a venta
+    /// (<c>quotation.billing.tax_profile_required</c>).</summary>
+    bool? BillingWithRetention = null,
+    /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA.</summary>
+    bool? BillingVatSurplus = null);
 
 public sealed record CreateQuotationRequest(
     Guid ClientId,
@@ -284,6 +301,10 @@ public sealed record QuotationResponse(
     string? Notes,
     IReadOnlyCollection<QuotationPartyResponse> Parties,
     bool BillingUsesBusinessName,
+    // Mismo criterio que QuotationDto.BillingWithRetention/BillingVatSurplus: sólo tienen sentido
+    // con Parties trayendo fila de facturación propia, y null ahí es "todavía sin contestar".
+    bool? BillingWithRetention,
+    bool? BillingVatSurplus,
     // Viaja siempre, aunque sea false: la pantalla decide con esto si muestra el bloque de
     // entrega o "Recoger en tienda", y un campo ausente la obligaria a adivinar el default.
     bool IsStorePickup,

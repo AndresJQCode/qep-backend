@@ -501,6 +501,8 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.Notes,
             [],
             quotation.BillingUsesBusinessName,
+            quotation.BillingWithRetention,
+            quotation.BillingVatSurplus,
             quotation.IsStorePickup,
             quotation.BillsToFinalConsumer,
             null,

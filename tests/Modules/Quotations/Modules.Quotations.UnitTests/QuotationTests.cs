@@ -531,6 +531,85 @@ public sealed class QuotationTests
         Assert.Equal(97_500m, quotation.NetTotal);
     }
 
+    // Con datos propios de facturacion, quien responde retencion/excedente de IVA es esa
+    // respuesta y no el snapshot del cliente -- el cliente ya no es a quien se le factura.
+    [Fact]
+    public void AnOwnBillingPartyAnsweringYesAppliesRetentionAndVatSurplusRegardlessOfTheCustomer()
+    {
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa" };
+        var quotation = NewQuotation(
+            parties: new QuotationParties(
+                ownBilling, Shipping: null,
+                BillingWithRetention: true, BillingVatSurplus: true),
+            customerWithRetention: false,
+            customerVatSurplus: false);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        Assert.True(quotation.AppliesRetention);
+        Assert.True(quotation.AppliesVatSurplus);
+        Assert.Equal(2_500m, quotation.RetentionAmount);
+        Assert.Equal(0m, quotation.TaxAmount);
+    }
+
+    // Misma idea al reves: el cliente aplica retencion/excedente, pero la parte propia contesto
+    // que no -- lo que dice la parte gana porque a ella se le factura.
+    [Fact]
+    public void AnOwnBillingPartyAnsweringNoIgnoresACustomerThatDoesApply()
+    {
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa" };
+        var quotation = NewQuotation(
+            parties: new QuotationParties(
+                ownBilling, Shipping: null,
+                BillingWithRetention: false, BillingVatSurplus: false),
+            customerWithRetention: true,
+            customerVatSurplus: true);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        Assert.False(quotation.AppliesRetention);
+        Assert.False(quotation.AppliesVatSurplus);
+        Assert.Equal(0m, quotation.RetentionAmount);
+        Assert.Equal(19_000m, quotation.TaxAmount);
+    }
+
+    // Sin fila de facturacion propia, la pregunta ni se hace: manda el cliente, como antes.
+    [Fact]
+    public void WithoutAnOwnBillingPartyTheCustomerSnapshotStillDrivesTaxes()
+    {
+        var quotation = NewQuotation(customerWithRetention: true, customerVatSurplus: false);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        Assert.Null(quotation.PartyWithRetention);
+        Assert.Null(quotation.PartyVatSurplus);
+        Assert.True(quotation.AppliesRetention);
+        Assert.False(quotation.AppliesVatSurplus);
+    }
+
+    // ChangeClient borra la fila de facturacion propia (US-2): la pregunta de retencion/excedente
+    // que dependia de esa fila vuelve a "sin contestar" en vez de arrastrar la respuesta vieja.
+    [Fact]
+    public void ChangeClientResetsTheOwnBillingPartyTaxProfileAnswers()
+    {
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa" };
+        var quotation = NewQuotation(
+            parties: new QuotationParties(
+                ownBilling, Shipping: null,
+                BillingWithRetention: true, BillingVatSurplus: true));
+
+        quotation.ChangeClient(
+            Guid.CreateVersion7(), customerWithRetention: false, customerVatSurplus: false,
+            AdvisorId, Now);
+
+        Assert.Null(quotation.Billing);
+        Assert.Null(quotation.PartyWithRetention);
+        Assert.Null(quotation.PartyVatSurplus);
+    }
+
     // Nombre y NIT de consumidor final son fijos: una parte propia al lado diria otro nombre para
     // la misma factura. Se rechaza en vez de elegir una en silencio.
     [Fact]
@@ -962,7 +1041,9 @@ public sealed class QuotationTests
         };
         var quotation = NewQuotation(
             billingAccount: BillingAccount,
-            parties: new QuotationParties(completeParty, completeParty));
+            parties: new QuotationParties(
+                completeParty, completeParty,
+                BillingWithRetention: false, BillingVatSurplus: false));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -970,6 +1051,33 @@ public sealed class QuotationTests
         quotation.EnsureConvertibleToSale();
 
         Assert.True(quotation.CanBeConvertedToSale);
+    }
+
+    // Con datos propios de facturacion nadie mas dice si hay retencion/excedente de IVA: null
+    // es "todavia no se contesto", y eso deja la venta bloqueada aunque la parte este completa.
+    [Fact]
+    public void EnsureConvertibleToSaleRejectsAnOwnBillingPartyWithoutATaxProfileAnswer()
+    {
+        var completeParty = new QuotationPartyDetails
+        {
+            Name = "Sede administrativa",
+            Phone = "3105550134",
+            Email = "compras@sede.co",
+            Address = "Calle 10 # 45-12",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+        };
+        var quotation = NewQuotation(
+            billingAccount: BillingAccount,
+            parties: new QuotationParties(completeParty, completeParty));
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        var exception = Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToSale);
+
+        Assert.Equal("quotation.billing.tax_profile_required", exception.Code);
+        Assert.False(quotation.CanBeConvertedToSale);
     }
 
     /// <summary>Enviada y con los cuatro datos que la venta hereda: productos, vigencia, forma

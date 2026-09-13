@@ -135,6 +135,16 @@ public static class QuotationChangeSummary
         else
         {
             AppendParty(changes, "facturación", before.Billing, after.Billing);
+
+            // Cambiar la respuesta de retención/excedente de IVA no cambia el texto de la fila
+            // (Describe no las lee), así que sin esto una edición que sólo tocara estas dos
+            // preguntas quedaría sin fila de historial.
+            if (after.Billing is not null &&
+                (before.BillingWithRetention != after.BillingWithRetention ||
+                 before.BillingVatSurplus != after.BillingVatSurplus))
+            {
+                changes.Add("retención/excedente de IVA de facturación");
+            }
         }
 
         // Pasar a recoger en tienda borra la parte de envío. Contado por AppendParty eso diría
@@ -220,7 +230,9 @@ public sealed record QuotationHeaderSnapshot(
     QuotationBillingAccountSummary? BillingAccount,
     QuotationCurrency Currency,
     bool IsStorePickup,
-    bool BillsToFinalConsumer)
+    bool BillsToFinalConsumer,
+    bool? BillingWithRetention,
+    bool? BillingVatSurplus)
 {
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
@@ -234,7 +246,9 @@ public sealed record QuotationHeaderSnapshot(
             : null,
         quotation.Currency,
         quotation.IsStorePickup,
-        quotation.BillsToFinalConsumer);
+        quotation.BillsToFinalConsumer,
+        quotation.PartyWithRetention,
+        quotation.PartyVatSurplus);
 
     private static string? Describe(QuotationParty? party) =>
         party is null
