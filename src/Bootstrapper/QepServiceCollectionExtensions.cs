@@ -326,6 +326,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<RemoveQuotationItemCommand, QuotationDto>,
             RemoveQuotationItemHandler>();
         services.AddScoped<
+            ICommandHandler<BatchUpdateQuotationItemsCommand, QuotationDto>,
+            BatchUpdateQuotationItemsHandler>();
+        services.AddScoped<
             ICommandHandler<SendQuotationCommand, QuotationDto>,
             SendQuotationHandler>();
         services.AddScoped<
