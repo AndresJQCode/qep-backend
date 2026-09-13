@@ -62,8 +62,13 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return (items, total);
     }
 
-    // Sin Count ni paginacion: el Excel se lleva todo lo que el filtro deja pasar, en el mismo
-    // orden que la tabla.
+    // Keyset sobre (CreatedAt, QuotationNumber), los dos descendentes: el orden de la tabla con el
+    // número —único por tenant— como desempate. El lote siguiente es "lo que viene después de la
+    // última fila leída" y no un offset, así que una cotización creada o que sale del filtro
+    // durante el export no repite ni salta filas (spec 2026-09-12, D8). El corte es una comparación
+    // de filas de Postgres, `(created_at, quotation_number) < (@fecha, @numero)`, que Npgsql traduce
+    // desde EF.Functions.LessThan: IX_quotations_tenant_created_at_number la resuelve como un rango,
+    // y el número se compara con la collation de la columna, la misma del ORDER BY de abajo.
     public async Task<IReadOnlyList<Quotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -73,11 +78,44 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         DateOnly? createdFrom,
         DateOnly? createdTo,
         string? quotationNumber,
-        CancellationToken cancellationToken) =>
-        await FilteredQuery(
-                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber)
+        QuotationExportCursor? after,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var query = FilteredQuery(
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+
+        if (after is not null)
+        {
+            var createdAt = after.CreatedAt;
+            var number = after.QuotationNumber;
+            query = query.Where(quotation => EF.Functions.LessThan(
+                ValueTuple.Create(quotation.CreatedAt, quotation.QuotationNumber),
+                ValueTuple.Create(createdAt, number)));
+        }
+
+        return await query
             .OrderByDescending(quotation => quotation.CreatedAt)
+            .ThenByDescending(quotation => quotation.QuotationNumber)
+            .Take(limit)
             .ToListAsync(cancellationToken);
+    }
+
+    // Un EXISTS sobre el mismo FilteredQuery: el pedido de exportación pregunta si hay algo sin
+    // traerse ninguna fila.
+    public Task<bool> AnyForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        CancellationToken cancellationToken) =>
+        FilteredQuery(
+                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber)
+            .AnyAsync(cancellationToken);
 
     // Los filtros del listado y de su Excel salen de aca y de ningun otro lado: si cada camino
     // armara los suyos, tarde o temprano el archivo diria algo distinto de la pantalla.

@@ -9,6 +9,14 @@ namespace Modules.Quotations.Application;
 /// </summary>
 public sealed record SaleWithQuotation(Sale Sale, Quotation Quotation);
 
+/// <summary>
+/// Dónde quedó el export de ventas (spec 2026-09-12, D8): la fecha de conversión y el número de la
+/// última venta leída, el mismo orden que el listado. El número y no el id porque
+/// <see cref="SaleId"/> no se compara, y el número es único por tenant
+/// (<c>IX_sales_tenant_number</c>).
+/// </summary>
+public sealed record SaleExportCursor(DateTimeOffset ConvertedAt, string SaleNumber);
+
 public interface ISaleRepository
 {
     Task<Sale?> FindByQuotationIdAsync(
@@ -52,6 +60,38 @@ public interface ISaleRepository
         string? saleNumber,
         int page,
         int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>Si hay al menos una venta con los filtros del listado: el paso 3 de D4 antes de
+    /// encolar una exportación.</summary>
+    Task<bool> AnyForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber,
+        CancellationToken cancellationToken);
+
+    /// <summary>Un lote de las ventas del listado, en su mismo orden, para el Excel de
+    /// SalesExportProcessor (D8). Mismos filtros y semántica que <see cref="SearchAsync"/>. Keyset
+    /// y no offset: <paramref name="after"/> es la clave de la última venta del lote anterior
+    /// (<c>null</c> en el primero).</summary>
+    Task<IReadOnlyList<SaleWithQuotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber,
+        SaleExportCursor? after,
+        int limit,
         CancellationToken cancellationToken);
 
     void Add(Sale sale);

@@ -3,7 +3,8 @@
 **Fecha:** 2026-09-12
 **Módulos:** Quotations (cotizaciones y ventas), Notifications (backend) — listas de cotizaciones
 y ventas (frontend)
-**Estado:** aprobado, pendiente de plan de implementación
+**Estado:** aprobado, con plan de implementación (revisado el 2026-09-12: cuatro intentos, keyset,
+lifecycle de R2 existente)
 
 ## Problema
 
@@ -42,7 +43,7 @@ Infrastructure. Motivos para no usar Google Pub/Sub ni Azure Service Bus:
 - **Doble escritura.** Guardar la solicitud y publicar al broker son dos sistemas sin
   transacción común; la solución estándar es un outbox en Postgres que después publica. El broker
   se suma a la tabla, no la reemplaza.
-- **Estado.** El broker entrega mensajes; no dice que un export quedó `Failed` al tercer intento.
+- **Estado.** El broker entrega mensajes; no dice que un export quedó `Failed` al cuarto intento.
   Soporte y reintentos necesitan la tabla igual.
 - **Infraestructura y volumen.** Monolito modular, una réplica, Postgres ya presente, pocas
   exportaciones por día. Otra nube suma credenciales, red, costo y otro secreto que cuidar.
@@ -101,10 +102,15 @@ no existen. Tampoco el enlace: el canal de entrega es el correo, igual que en cl
 ### D6 — Toma exclusiva con `SKIP LOCKED` y lease
 
 Un solo `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *` toma un
-`Pending` con `next_attempt_at <= now()` **o** un `Processing` con `locked_until < now()` (worker
-muerto), suma un intento y fija un lease de 10 minutos. SQL crudo en el adaptador.
+`Pending` con `next_attempt_at` ya cumplido **o** un `Processing` con `locked_until` vencido
+(worker muerto), suma un intento y fija un lease de 10 minutos. Las dos comparaciones van contra el
+reloj de la aplicación (`IClock`), un solo reloj en el proceso, que el adaptador recibe como
+parámetro. SQL crudo en el adaptador.
 
-Hoy hay una réplica; `SKIP LOCKED` hace que escalar no genere el mismo export dos veces.
+Hoy hay una réplica; `SKIP LOCKED` hace que escalar no genere el mismo export dos veces. Esa
+garantía vale para los jobs que terminan dentro del lease de 10 minutos: no hay heartbeat, así que
+uno que tarda más puede ser retomado por otro worker. Antes de pasar a más de una réplica hace falta
+un heartbeat del lease.
 
 ### D7 — Un worker, un job a la vez
 
@@ -115,10 +121,38 @@ procesador por tipo (`QuotationsExportProcessor`, `SalesExportProcessor`).
 
 ### D8 — El Excel se escribe en streaming
 
-Con `OpenXmlWriter` a un archivo temporal, leyendo **por lotes de 1.000** con el mismo
-`FilteredQuery` del listado. No con ClosedXML: ClosedXML mantiene cada celda como objeto en
-memoria, y con un año de un tenant grande eso son cientos de MB dentro del pod de 1Gi (orden de
-magnitud, no medido). En streaming la memoria queda acotada al lote.
+Con `OpenXmlWriter` sobre un zip propio en modo `Create` (`System.IO.Compression.ZipArchive`) que
+escribe a un archivo temporal, leyendo **por lotes de 1.000 con keyset** y los mismos filtros del
+listado (`FilteredQuery` en cotizaciones, el filtro de `SaleRepository` en ventas). No con
+ClosedXML: ClosedXML mantiene cada celda como objeto en memoria, y con un año de un tenant grande
+eso son cientos de MB dentro del pod de 1Gi (orden de magnitud, no medido). Tampoco con
+`SpreadsheetDocument.Create`: abre el zip en modo update, que guarda cada parte sin comprimir en
+memoria hasta el `Dispose` (se midió cerca de 1 KB por fila). En modo `Create` cada fila sale
+comprimida al temporal apenas se escribe, así que la memoria queda acotada al lote. Las partes
+chicas (`[Content_Types].xml`, relaciones, `workbook.xml`, `styles.xml`) se escriben completas
+primero y la hoja va última, abierta hasta el final.
+
+**Keyset y no offset.** Cada lote pide lo que viene después de la última fila leída, en el orden
+del listado y con el número como desempate —único por tenant, así que la clave nunca empata—:
+
+| Export | Orden (los dos descendentes) | Lote siguiente | Índice nuevo |
+| --- | --- | --- | --- |
+| Cotizaciones | `created_at`, `quotation_number` | `(created_at, quotation_number) < (@fecha, @numero)` | `(tenant_id, created_at, quotation_number)` |
+| Ventas | `converted_at`, `sale_number` —el mismo del listado— | `(converted_at, sale_number) < (@fecha, @numero)` | `(tenant_id, converted_at, sale_number)` |
+
+El corte es una comparación de filas de Postgres, que Npgsql traduce desde
+`EF.Functions.LessThan(ValueTuple.Create(…), ValueTuple.Create(…))`. No la forma OR
+(`created_at < @fecha OR (created_at = @fecha AND …)`): con ella el índice no tiene un límite de
+rango y cada lote vuelve a recorrer desde el tope del período. La comparación de filas es un rango
+que el btree resuelve, y el número se compara con la collation de la columna, la misma del ORDER BY.
+
+Offset se descartó por exactitud, no sólo por rendimiento. El rango por defecto es el mes en curso
+con hoy adentro, así que el export corre mientras la gente sigue trabajando: una fila creada
+durante el export corre las páginas y repite la del borde, y una que sale del filtro hace
+desaparecer otra. Quien suma la columna Total recibe un número equivocado sin ninguna señal. Y
+offset además lee y descarta todas las filas que salta, así que cada lote cuesta más que el
+anterior. Con keyset, las filas que existían al empezar salen una vez cada una. El desempate es el
+número y no el id porque `QuotationId` y `SaleId` son value objects sin comparación.
 
 `DocumentFormat.OpenXml` 3.1.1 ya se resuelve hoy como dependencia de ClosedXML; pasa a
 referencia directa de `Modules.Quotations.Infrastructure` con la misma versión.
@@ -138,8 +172,11 @@ se generó.
 ### D9 — Subida a Storage con clave estable
 
 Puerto `IExportFileStorage` en Application, adaptador calcado de `ICustomerExportStorage`. La
-clave del objeto lleva el `jobId`: un reintento pisa el mismo objeto y no deja basura. La URL
-prefirmada usa la misma vigencia que el export de clientes.
+clave del objeto lleva el `jobId`: un reintento pisa el mismo objeto y no deja basura. Va **bajo
+`exports/`** —`exports/tenants/{tenantId}/jobs/{jobId}.xlsx`— para que la limpie la regla de
+lifecycle del bucket (D13). La URL prefirmada vence a las `Storage:ExportUrlHours` horas
+(`StorageOptions.cs:15`, 24 por defecto en `appsettings.json:27`): la misma opción que ya lee
+`CustomerExportStorage.cs:49`, no una nueva.
 
 ### D10 — Terminar es una sola transacción
 
@@ -150,8 +187,11 @@ Payload: `tenantId, subjectId, kind, downloadUrl, fileName, rowCount, expiresAt`
 
 ### D11 — Reintentos y fallos
 
-- **Transitorio** (R2, base, timeout): vuelve a `Pending` con backoff de 1, 5 y 15 minutos.
-  Al tercer intento fallido → `Failed` + `quotations.export-failed.v1`.
+- **Transitorio** (R2, base, timeout): vuelve a `Pending` con backoff. **Cuatro intentos:** después
+  del 1.º fallido espera 1 minuto, después del 2.º 5 y después del 3.º 15; el 4.º fallido →
+  `Failed` + `quotations.export-failed.v1`. Así se usan las tres esperas. El archivo llega por
+  correo y nadie está mirando la pantalla: una ventana de ~21 minutos que se recupera de una caída
+  corta de R2 o de la base cuesta menos que un correo de fallo.
 - **Definitivo** (filtros ilegibles, cero filas al procesar): `Failed` directo, sin reintentar.
 - **Worker muerto a mitad:** el lease vence y el siguiente tick lo retoma (D6).
 
@@ -167,8 +207,15 @@ colombiano, tuteando (`CLAUDE.md` § Cómo se escriben los mensajes).
 ### D13 — Retención
 
 El worker borra una vez al día los jobs `Completed` y `Failed` de más de 30 días. El enlace muere
-con la vigencia de la URL prefirmada. **Borrar los objetos de R2 necesita una lifecycle rule
-sobre el prefijo `exports/`: es infraestructura y va en el repo de plataforma, no acá.**
+con la vigencia de la URL prefirmada.
+
+Los objetos de R2 los borra una **regla de lifecycle que ya existe** sobre el prefijo `exports/`
+del bucket privado (`expire-exports`, `--expire-days 2`), configurada a mano en Cloudflare y
+documentada en el README (§ Reportes exportados, `README.md:846-860`). No está pendiente: sólo hay
+que verificar que sigue en el bucket (`npx wrangler r2 bucket lifecycle list <bucket-privado>`). Lo
+que este diseño tiene que cumplir es subir los archivos **bajo `exports/`** (D9); fuera de ese
+prefijo la regla no los ve. El README ya advierte que `--expire-days` tiene que cubrir
+`ExportUrlHours` con margen: 2 días contra 24 h.
 
 ### D14 — Frontend
 
@@ -186,7 +233,6 @@ sobre el prefijo `exports/`: es infraestructura y va en el repo de plataforma, n
 - Endpoint de estado del job y pantalla "mis exportaciones": la tabla lo permite, nadie lo pidió.
 - Pasar clientes y Catalog a este modelo. Recomendado como trabajo aparte: hoy siguen armando el
   Excel dentro del request.
-- La lifecycle rule de R2 (D13).
 
 ## Modelo de datos
 
@@ -210,14 +256,16 @@ sobre el prefijo `exports/`: es infraestructura y va en el repo de plataforma, n
 | `completed_at` | timestamptz null | `Completed` o `Failed` |
 
 Índices: parcial para tomar trabajo (`status`, `next_attempt_at`) y para el límite de pendientes
-(`tenant_id`, `requested_by`, `status`). Migración con el factory de diseño
+(`tenant_id`, `requested_by`, `status`). En la misma migración, los dos del keyset de D8 sobre
+tablas que ya existen: `quotations (tenant_id, created_at, quotation_number)` y
+`sales (tenant_id, converted_at, sale_number)`. Migración con el factory de diseño
 (`CLAUDE.md` § Gotchas).
 
 ## Flujo
 
 1. `POST …/export` → autoriza, valida, `EXISTS`, límite de pendientes → inserta `Pending` → `202`.
 2. `ExportJobWorker` toma el job (D6).
-3. El procesador del `kind` lee por lotes y escribe el `.xlsx` en streaming (D8).
+3. El procesador del `kind` lee por lotes con keyset y escribe el `.xlsx` en streaming (D8).
 4. Sube el archivo (D9).
 5. Una transacción: `Completed` + `quotations.export-ready.v1` + auditoría (D10).
 6. Notifications manda el correo con el enlace (D12).
@@ -234,7 +282,7 @@ El trabajo nuevo sale de `develop`, en `feature/export-asincrono` de cada repo, 
 encima:
 
 - **Se reutiliza:** `ExportQuotationsValidator` (el año), `QuotationListing`, `FilteredQuery`,
-  `ListForExportAsync`.
+  `ListForExportAsync` (que pasa de devolver todo a devolver un lote por keyset).
 - **Se va:** el `GET` que devuelve el archivo, `ClosedXmlQuotationExportBuilder` y la referencia
   a ClosedXML de Quotations (lock files regenerados en ese commit). Con el builder se va también
   el aviso de `AdjustToContents` de la revisión.
@@ -247,8 +295,8 @@ ventas) y sus pruebas; cambian `useExportQuotes` (de descarga a `POST` + toast) 
 Backend, rama `feature/export-asincrono` desde `develop`; cada commit compila y deja las pruebas
 en verde:
 
-1. `feat(quotations): cola de exportaciones con worker y reintentos` — tabla, migración,
-   `IExportJobQueue`, toma exclusiva, lease, backoff, `ExportJobWorker`.
+1. `feat(quotations): cola de exportaciones con worker y reintentos` — tabla, migración (con los
+   índices del keyset de D8), `IExportJobQueue`, toma exclusiva, lease, backoff, `ExportJobWorker`.
 2. `feat(notifications): correos de exportación lista y fallida`.
 3. `feat(quotations): exportar cotizaciones por correo` — `POST` + `202`, procesador, writer en
    streaming, `IExportFileStorage`; sale el `GET`.
@@ -271,15 +319,23 @@ TDD, RED antes que GREEN con evidencia literal.
 - **Integración (Testcontainers):** `POST` → `202` → el worker procesa → `Completed` + evento en
   el outbox + workbook con las filas correctas; `403`, `422` de rango, vacío y límite; dos tomas
   concurrentes no se llevan el mismo job; un lease vencido se retoma; los reintentos terminan en
-  `Failed` con su evento; Notifications entrega los dos correos.
+  `Failed` al cuarto intento con su evento; una fila creada o que sale del filtro entre dos lotes
+  no se repite ni hace saltar otra (keyset); Notifications entrega los dos correos.
 - **Frontend:** helper del rango, hooks (`POST` con los filtros sin paginación, toasts por
   código), botones (`aria-disabled` + texto visible).
 
 ## Riesgos y pendientes
 
-- **Memoria no medida.** La cifra de ClosedXML es un orden de magnitud; el streaming acota el
-  riesgo, pero conviene medir un export de un año real antes de dar el tema por cerrado.
-- **Paginación por offset.** Leer un año en lotes de 1.000 con offset se degrada en los últimos
-  lotes; si pesa, pasar a keyset sobre (`created_at`, `id`).
+- **Memoria medida en local, falta un export real.** La cifra de ClosedXML es un orden de
+  magnitud. Con el zip en streaming (D8), una prueba local de 50.000 filas de 8 columnas dejó el
+  heap en ~1 MB, contra ~48 MB con `SpreadsheetDocument.Create`. Conviene medir un export de un año
+  real en staging antes de dar el tema por cerrado.
+- **Sin snapshot transaccional.** El keyset (D8) evita filas repetidas o saltadas, pero cada lote
+  lee el estado de ese momento: una fila que cambia antes de que le toque sale con el valor nuevo,
+  o no sale si dejó el filtro. Leer todo en una transacción `REPEATABLE READ` lo cerraría a costa
+  de sostenerla minutos; por ahora no se paga.
+- **Se corre aunque quien lo pidió ya no tenga acceso.** El permiso y la membresía se revisan al
+  pedir, no al generar: si quien pidió el export los pierde antes de que el worker lo tome, el
+  export corre igual. La ventana es a lo sumo un ciclo de procesamiento más el lease, el archivo va
+  al correo de quien lo pidió y lo pidió cuando tenía acceso. Se acepta.
 - **Clientes y Catalog** siguen sincrónicos (D15).
-- **Lifecycle de R2** pendiente en el repo de plataforma (D13).

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Excel;
 using Modules.Quotations.Infrastructure.Expiration;
+using Modules.Quotations.Infrastructure.Exports;
 using Modules.Quotations.Infrastructure.Pdf;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Quotations.Infrastructure.Whatsapp;
@@ -36,13 +37,18 @@ public static class QuotationsInfrastructureExtensions
         // los DbContextOptions que registro AddDbContext. Ver IQuotationSendFailureLog.
         services.AddScoped<IQuotationSendFailureLog, QuotationSendFailureLog>();
         services.AddScoped<IQuotationAuditPublisher, QuotationAuditPublisher>();
+        // La cola de exportaciones (spec 2026-09-12): la tabla, la toma con SKIP LOCKED y los dos
+        // eventos para Notifications. El runner que los usa se registra en Bootstrapper.
+        services.AddScoped<IExportJobQueue, ExportJobQueue>();
+        services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
+        services.AddHostedService<ExportJobWorker>();
+        // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
+        services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();
         services.AddScoped<IQuotationNumberGenerator, QuotationNumberGenerator>();
         services.AddScoped<ISaleRepository, SaleRepository>();
         services.AddScoped<ISaleNumberGenerator, SaleNumberGenerator>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
-        // El Excel del listado. ClosedXML se queda en esta capa: Application solo ve el puerto.
-        services.AddScoped<IQuotationExportWorkbookBuilder, ClosedXmlQuotationExportBuilder>();
 
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();

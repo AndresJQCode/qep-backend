@@ -29,4 +29,64 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("bills_to_final_consumer", property.GetColumnName());
         Assert.False(property.IsNullable);
     }
+
+    /// <summary>
+    /// El SQL crudo de la toma (ExportJobQueue) nombra las columnas a mano, así que un nombre que
+    /// EF pusiera por convención rompería la toma sin que el compilador lo vea. Y `attempts` es
+    /// token de concurrencia: es lo que impide que un worker con el lease vencido cierre un job
+    /// que ya retomó otro.
+    /// </summary>
+    [Fact]
+    public void ExportJobMapsToItsTableWithAttemptsAsConcurrencyToken()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var job = model.FindEntityType(typeof(ExportJob));
+
+        Assert.NotNull(job);
+        Assert.Equal("export_jobs", job.GetTableName());
+        Assert.Equal("quotations", job.GetSchema());
+        Assert.Equal(
+            ["attempts", "completed_at", "file_name", "filters", "id", "kind", "last_error",
+             "locked_until", "next_attempt_at", "requested_at", "requested_by", "row_count",
+             "status", "tenant_id"],
+            job.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
+        Assert.Equal("jsonb", job.FindProperty(nameof(ExportJob.Filters))!.GetColumnType());
+        Assert.True(job.FindProperty(nameof(ExportJob.Attempts))!.IsConcurrencyToken);
+
+        var claim = job.GetIndexes().Single(index => index.GetDatabaseName() == "IX_export_jobs_claim");
+        Assert.Equal(["Status", "NextAttemptAt"], claim.Properties.Select(property => property.Name));
+        Assert.Equal("status IN ('Pending', 'Processing')", claim.GetFilter());
+
+        var requester = job.GetIndexes().Single(index => index.GetDatabaseName() == "IX_export_jobs_requester");
+        Assert.Equal(
+            ["TenantId", "RequestedBy", "Status"],
+            requester.Properties.Select(property => property.Name));
+        Assert.Equal("status IN ('Pending', 'Processing')", requester.GetFilter());
+    }
+
+    /// <summary>
+    /// Las exportaciones leen por keyset (spec 2026-09-12, D8): cada lote pide lo que viene
+    /// después de la última fila, en el orden del listado. Sin un índice que arranque por el
+    /// tenant y siga por la clave de orden, cada lote recorre todas las filas del tenant.
+    /// </summary>
+    [Fact]
+    public void QuotationsAndSalesHaveAnIndexForTheExportKeyset()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var quotations = model.FindEntityType(typeof(Quotation))!.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_quotations_tenant_created_at_number");
+        Assert.Equal(
+            ["TenantId", "CreatedAt", "QuotationNumber"],
+            quotations.Properties.Select(property => property.Name));
+
+        var sales = model.FindEntityType(typeof(Sale))!.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_sales_tenant_converted_at_number");
+        Assert.Equal(
+            ["TenantId", "ConvertedAt", "SaleNumber"],
+            sales.Properties.Select(property => property.Name));
+    }
 }

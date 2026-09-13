@@ -55,6 +55,16 @@ public static class NotificationsInfrastructureExtensions
             sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<ILogger<ProductExportDeliveryWorker>>()));
 
+        // La exportación asíncrona de Quotations (spec 2026-09-12, D12): un worker por evento,
+        // igual que clientes y productos. Sin IOptions: el enlace ya viene prefirmado.
+        services.AddHostedService(sp => new QuotationsExportReadyDeliveryWorker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<QuotationsExportReadyDeliveryWorker>>()));
+
+        services.AddHostedService(sp => new QuotationsExportFailedDeliveryWorker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<QuotationsExportFailedDeliveryWorker>>()));
+
         return services;
     }
 
