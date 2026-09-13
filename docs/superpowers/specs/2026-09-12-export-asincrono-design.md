@@ -102,10 +102,15 @@ no existen. Tampoco el enlace: el canal de entrega es el correo, igual que en cl
 ### D6 — Toma exclusiva con `SKIP LOCKED` y lease
 
 Un solo `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *` toma un
-`Pending` con `next_attempt_at <= now()` **o** un `Processing` con `locked_until < now()` (worker
-muerto), suma un intento y fija un lease de 10 minutos. SQL crudo en el adaptador.
+`Pending` con `next_attempt_at` ya cumplido **o** un `Processing` con `locked_until` vencido
+(worker muerto), suma un intento y fija un lease de 10 minutos. Las dos comparaciones van contra el
+reloj de la aplicación (`IClock`), un solo reloj en el proceso, que el adaptador recibe como
+parámetro. SQL crudo en el adaptador.
 
-Hoy hay una réplica; `SKIP LOCKED` hace que escalar no genere el mismo export dos veces.
+Hoy hay una réplica; `SKIP LOCKED` hace que escalar no genere el mismo export dos veces. Esa
+garantía vale para los jobs que terminan dentro del lease de 10 minutos: no hay heartbeat, así que
+uno que tarda más puede ser retomado por otro worker. Antes de pasar a más de una réplica hace falta
+un heartbeat del lease.
 
 ### D7 — Un worker, un job a la vez
 
@@ -116,25 +121,36 @@ procesador por tipo (`QuotationsExportProcessor`, `SalesExportProcessor`).
 
 ### D8 — El Excel se escribe en streaming
 
-Con `OpenXmlWriter` a un archivo temporal, leyendo **por lotes de 1.000 con keyset** y los mismos
-filtros del listado (`FilteredQuery` en cotizaciones, el filtro de `SaleRepository` en ventas). No
-con ClosedXML: ClosedXML mantiene cada celda como objeto en memoria, y con un año de un tenant
-grande eso son cientos de MB dentro del pod de 1Gi (orden de magnitud, no medido). En streaming la
-memoria queda acotada al lote.
+Con `OpenXmlWriter` sobre un zip propio en modo `Create` (`System.IO.Compression.ZipArchive`) que
+escribe a un archivo temporal, leyendo **por lotes de 1.000 con keyset** y los mismos filtros del
+listado (`FilteredQuery` en cotizaciones, el filtro de `SaleRepository` en ventas). No con
+ClosedXML: ClosedXML mantiene cada celda como objeto en memoria, y con un año de un tenant grande
+eso son cientos de MB dentro del pod de 1Gi (orden de magnitud, no medido). Tampoco con
+`SpreadsheetDocument.Create`: abre el zip en modo update, que guarda cada parte sin comprimir en
+memoria hasta el `Dispose` (se midió cerca de 1 KB por fila). En modo `Create` cada fila sale
+comprimida al temporal apenas se escribe, así que la memoria queda acotada al lote. Las partes
+chicas (`[Content_Types].xml`, relaciones, `workbook.xml`, `styles.xml`) se escriben completas
+primero y la hoja va última, abierta hasta el final.
 
 **Keyset y no offset.** Cada lote pide lo que viene después de la última fila leída, en el orden
 del listado y con el número como desempate —único por tenant, así que la clave nunca empata—:
 
 | Export | Orden (los dos descendentes) | Lote siguiente | Índice nuevo |
 | --- | --- | --- | --- |
-| Cotizaciones | `created_at`, `quotation_number` | `created_at < @fecha OR (created_at = @fecha AND quotation_number < @numero)` | `(tenant_id, created_at, quotation_number)` |
-| Ventas | `converted_at`, `sale_number` —el mismo del listado— | la misma condición sobre `converted_at` y `sale_number` | `(tenant_id, converted_at, sale_number)` |
+| Cotizaciones | `created_at`, `quotation_number` | `(created_at, quotation_number) < (@fecha, @numero)` | `(tenant_id, created_at, quotation_number)` |
+| Ventas | `converted_at`, `sale_number` —el mismo del listado— | `(converted_at, sale_number) < (@fecha, @numero)` | `(tenant_id, converted_at, sale_number)` |
+
+El corte es una comparación de filas de Postgres, que Npgsql traduce desde
+`EF.Functions.LessThan(ValueTuple.Create(…), ValueTuple.Create(…))`. No la forma OR
+(`created_at < @fecha OR (created_at = @fecha AND …)`): con ella el índice no tiene un límite de
+rango y cada lote vuelve a recorrer desde el tope del período. La comparación de filas es un rango
+que el btree resuelve, y el número se compara con la collation de la columna, la misma del ORDER BY.
 
 Offset se descartó por exactitud, no sólo por rendimiento. El rango por defecto es el mes en curso
 con hoy adentro, así que el export corre mientras la gente sigue trabajando: una fila creada
 durante el export corre las páginas y repite la del borde, y una que sale del filtro hace
 desaparecer otra. Quien suma la columna Total recibe un número equivocado sin ninguna señal. Y
-offset además lee y descarta todas las filas que saltea, así que cada lote cuesta más que el
+offset además lee y descarta todas las filas que salta, así que cada lote cuesta más que el
 anterior. Con keyset, las filas que existían al empezar salen una vez cada una. El desempate es el
 número y no el id porque `QuotationId` y `SaleId` son value objects sin comparación.
 
@@ -304,16 +320,22 @@ TDD, RED antes que GREEN con evidencia literal.
   el outbox + workbook con las filas correctas; `403`, `422` de rango, vacío y límite; dos tomas
   concurrentes no se llevan el mismo job; un lease vencido se retoma; los reintentos terminan en
   `Failed` al cuarto intento con su evento; una fila creada o que sale del filtro entre dos lotes
-  no se repite ni hace saltear otra (keyset); Notifications entrega los dos correos.
+  no se repite ni hace saltar otra (keyset); Notifications entrega los dos correos.
 - **Frontend:** helper del rango, hooks (`POST` con los filtros sin paginación, toasts por
   código), botones (`aria-disabled` + texto visible).
 
 ## Riesgos y pendientes
 
-- **Memoria no medida.** La cifra de ClosedXML es un orden de magnitud; el streaming acota el
-  riesgo, pero conviene medir un export de un año real antes de dar el tema por cerrado.
-- **Sin snapshot transaccional.** El keyset (D8) evita filas repetidas o salteadas, pero cada lote
+- **Memoria medida en local, falta un export real.** La cifra de ClosedXML es un orden de
+  magnitud. Con el zip en streaming (D8), una prueba local de 50.000 filas de 8 columnas dejó el
+  heap en ~1 MB, contra ~48 MB con `SpreadsheetDocument.Create`. Conviene medir un export de un año
+  real en staging antes de dar el tema por cerrado.
+- **Sin snapshot transaccional.** El keyset (D8) evita filas repetidas o saltadas, pero cada lote
   lee el estado de ese momento: una fila que cambia antes de que le toque sale con el valor nuevo,
   o no sale si dejó el filtro. Leer todo en una transacción `REPEATABLE READ` lo cerraría a costa
   de sostenerla minutos; por ahora no se paga.
+- **Se corre aunque quien lo pidió ya no tenga acceso.** El permiso y la membresía se revisan al
+  pedir, no al generar: si quien pidió el export los pierde antes de que el worker lo tome, el
+  export corre igual. La ventana es a lo sumo un ciclo de procesamiento más el lease, el archivo va
+  al correo de quien lo pidió y lo pidió cuando tenía acceso. Se acepta.
 - **Clientes y Catalog** siguen sincrónicos (D15).

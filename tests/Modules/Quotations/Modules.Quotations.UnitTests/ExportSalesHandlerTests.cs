@@ -36,12 +36,32 @@ public sealed class ExportSalesHandlerTests
     [Fact]
     public async Task ExportWithoutTheSaleReadPermissionIsForbidden()
     {
+        var repository = new StubSaleListRepository(NewRow());
         var handler = NewHandler(
-            new StubSaleListRepository(NewRow()),
+            repository,
             executionContext: new StubExecutionContext(SubjectId, TenantId, SalesPermissions.SaleRead));
 
         await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(0, repository.AnyCalls);
+    }
+
+    // El CUC que sí resuelve: los ids de esos clientes —y no "sin filtro"— son los que llegan a la
+    // pregunta por filas, igual que en el listado.
+    [Fact]
+    public async Task ExportWithAClientCucAsksForRowsOfTheClientsItResolvesTo()
+    {
+        var repository = new StubSaleListRepository(NewRow());
+        var customers = NewCustomerLookup();
+        customers.IdsByCuc.Add(ClientId);
+        var handler = NewHandler(repository, customerLookup: customers);
+
+        await handler.HandleAsync(NewCommand(From, To, clientCuc: "CUC-001"), TestContext.Current.CancellationToken);
+
+        Assert.Equal("CUC-001", customers.LastCucTerm);
+        Assert.Equal(1, repository.AnyCalls);
+        Assert.Equal([ClientId], repository.LastExportSearch!.ClientIds!);
     }
 
     [Fact]
@@ -168,15 +188,19 @@ public sealed class ExportSalesHandlerTests
         return new SaleWithQuotation(sale, quotation);
     }
 
+    private static StubQuotationCustomerLookup NewCustomerLookup() =>
+        new(new QuotationCustomerRef(
+            ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
+            "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false));
+
     private static ExportSalesHandler NewHandler(
         StubSaleListRepository repository,
         InMemoryExportJobQueue? queue = null,
         CountingQuotationsUnitOfWork? unitOfWork = null,
-        IExecutionContext? executionContext = null) =>
+        IExecutionContext? executionContext = null,
+        StubQuotationCustomerLookup? customerLookup = null) =>
         new(repository,
-            new StubQuotationCustomerLookup(new QuotationCustomerRef(
-                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
-                "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
+            customerLookup ?? NewCustomerLookup(),
             queue ?? new InMemoryExportJobQueue(),
             unitOfWork ?? new CountingQuotationsUnitOfWork(),
             new ExportSalesValidator(),

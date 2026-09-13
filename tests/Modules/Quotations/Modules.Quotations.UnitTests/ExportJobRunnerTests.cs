@@ -178,6 +178,27 @@ public sealed class ExportJobRunnerTests
         Assert.Equal(ExportJobRunOutcome.LeaseLost, outcome);
     }
 
+    // D10: si el guardado final falla por otra cosa que el lease, la excepción sube al worker y
+    // el scope se descarta. Convertirla en un reintento sobre el mismo contexto guardaría el evento
+    // de "listo" y la auditoría ya preparados junto con un Pending: un correo con el enlace y,
+    // después del reintento, otro.
+    [Fact]
+    public async Task AFailedCompletionSaveThatIsNotALostLeasePropagates()
+    {
+        var harness = new Harness();
+        var job = harness.Enqueue();
+        harness.UnitOfWork.Failure = new IOException("disk");
+
+        var error = await Assert.ThrowsAsync<IOException>(
+            () => harness.Runner(StubExportJobProcessor.Succeeding(ExportJobKind.Quotations))
+                .RunNextAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("disk", error.Message);
+        Assert.Equal(0, harness.UnitOfWork.Saves);
+        Assert.Null(job.LastError);
+        Assert.Empty(harness.Events.Failed);
+    }
+
     // Apagado del proceso: no es un fallo del job. Queda en Processing y el lease lo devuelve.
     [Fact]
     public async Task CancellationDuringProcessingLeavesTheJobClaimed()

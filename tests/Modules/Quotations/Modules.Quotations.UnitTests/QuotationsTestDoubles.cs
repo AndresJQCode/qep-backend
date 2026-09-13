@@ -77,14 +77,14 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
         Guid tenantId, Guid clientId, CancellationToken cancellationToken) =>
         Task.FromResult<QuotationCustomerRef?>(customer);
 
-    // Un NIT es numérico; un término que no lo es —como el que usan las pruebas para simular
-    // "no existe este cliente"— no matchea al cliente sembrado. Sin esta distinción, cualquier
-    // término resolvía siempre al mismo cliente o a ninguno, y una de las dos pruebas del filtro
-    // (la que sí matchea y la que no) quedaba sin poder expresarse con el mismo doble.
+    /// <summary>Los ids que el filtro por NIT debe resolver. Vacío por defecto, igual que
+    /// <see cref="IdsByCuc"/>: la prueba que ejerce ese filtro los siembra, y el doble no inventa
+    /// ninguna regla sobre cómo es un NIT.</summary>
+    public HashSet<Guid> IdsByIdentification { get; } = [];
+
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(
         Guid tenantId, string term, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlySet<Guid>>(
-            term.All(char.IsDigit) ? new HashSet<Guid> { customer.Id } : new HashSet<Guid>());
+        Task.FromResult<IReadOnlySet<Guid>>(IdsByIdentification);
 
     /// <summary>Los ids que el filtro por CUC debe resolver. Vacio por defecto: la prueba que
     /// ejerce ese filtro los siembra.</summary>

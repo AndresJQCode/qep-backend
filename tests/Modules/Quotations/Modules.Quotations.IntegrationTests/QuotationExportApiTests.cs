@@ -319,6 +319,60 @@ public sealed class QuotationExportApiTests
         Assert.Equal(1, updated);
     }
 
+    // El desempate del keyset (D8), contra Postgres: tres cotizaciones con el mismo instante de
+    // alta, leídas de a una hasta que no queda nada. Si el corte no mirara el número, o lo
+    // comparara con <= en vez de <, el lote siguiente saltaría las otras dos o repetiría la misma.
+    [Fact]
+    public async Task QuotationsThatShareTheCreationInstantComeOutOnceEachByNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        for (var created = 0; created < 3; created++)
+        {
+            await CreateQuotationAsync(client, tenantId, customerId);
+        }
+
+        await TieCreationInstantAsync(factory, tenantId, DateTimeOffset.UtcNow.AddHours(-1));
+        var expected = (await ReadDraftBatchAsync(factory, tenantId, after: null, limit: 100))
+            .Select(quotation => quotation.QuotationNumber)
+            .OrderDescending(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(3, expected.Length);
+
+        var read = new List<string>();
+        QuotationExportCursor? after = null;
+        // Con tope: un corte con <= devolvería la misma fila para siempre.
+        for (var batch = 0; batch < 10; batch++)
+        {
+            var rows = await ReadDraftBatchAsync(factory, tenantId, after, limit: 1);
+            if (rows.Count == 0)
+            {
+                break;
+            }
+
+            read.Add(rows.Single().QuotationNumber);
+            after = CursorOf(rows);
+        }
+
+        Assert.Equal(expected, read);
+    }
+
+    // Las tres del tenant al mismo instante, directo en la base: la API pone la fecha de alta sola.
+    private static async Task TieCreationInstantAsync(QepApiFactory factory, Guid tenantId, DateTimeOffset createdAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var updated = await dbContext.Quotations
+            .Where(quotation => quotation.TenantId == tenantId)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(quotation => quotation.CreatedAt, createdAt),
+                TestContext.Current.CancellationToken);
+        Assert.Equal(3, updated);
+    }
+
     private static string CurrentRange()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);

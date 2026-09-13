@@ -246,6 +246,60 @@ public sealed class SaleExportApiTests
         Assert.Equal(1, updated);
     }
 
+    // El desempate del keyset (D8) sobre el orden de ventas, contra Postgres: tres ventas con el
+    // mismo instante de conversión, leídas de a una hasta que no queda nada. Si el corte no mirara
+    // el número, o lo comparara con <= en vez de <, el lote siguiente saltaría las otras dos o
+    // repetiría la misma.
+    [Fact]
+    public async Task SalesThatShareTheConversionInstantComeOutOnceEachByNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        for (var converted = 0; converted < 3; converted++)
+        {
+            await CreateSaleAsync(client, factory, tenantId);
+        }
+
+        await TieConversionInstantAsync(factory, tenantId, DateTimeOffset.UtcNow.AddHours(-1));
+        var expected = (await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 100))
+            .Select(row => row.Sale.SaleNumber)
+            .OrderDescending(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(3, expected.Length);
+
+        var read = new List<string>();
+        SaleExportCursor? after = null;
+        // Con tope: un corte con <= devolvería la misma fila para siempre.
+        for (var batch = 0; batch < 10; batch++)
+        {
+            var rows = await ReadPendingBatchAsync(factory, tenantId, after, limit: 1);
+            if (rows.Count == 0)
+            {
+                break;
+            }
+
+            read.Add(rows.Single().Sale.SaleNumber);
+            after = CursorOf(rows);
+        }
+
+        Assert.Equal(expected, read);
+    }
+
+    // Las tres del tenant al mismo instante, directo en la base: la conversión pone la fecha sola.
+    private static async Task TieConversionInstantAsync(QepApiFactory factory, Guid tenantId, DateTimeOffset convertedAt)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var updated = await dbContext.Sales
+            .Where(sale => sale.TenantId == tenantId)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(sale => sale.ConvertedAt, convertedAt),
+                TestContext.Current.CancellationToken);
+        Assert.Equal(3, updated);
+    }
+
     private static string CurrentRange()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);

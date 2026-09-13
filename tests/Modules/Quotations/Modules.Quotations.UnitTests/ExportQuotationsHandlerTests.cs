@@ -171,11 +171,17 @@ public sealed class ExportQuotationsHandlerTests
     {
         var queue = new InMemoryExportJobQueue();
         var unitOfWork = new CountingQuotationsUnitOfWork();
-        var handler = NewHandler(new StubQuotationListRepository(NewQuotation()), queue, unitOfWork);
+        var repository = new StubQuotationListRepository(NewQuotation());
+        var customers = NewCustomerLookup();
+        customers.IdsByIdentification.Add(ClientId);
+        var handler = NewHandler(repository, queue, unitOfWork, customerLookup: customers);
 
         var accepted = await handler.HandleAsync(
             new ExportQuotationsCommand(TenantId, ClientId, AdvisorId.Value, "sent", From, To, "900", "0001"),
             TestContext.Current.CancellationToken);
+
+        // El NIT resolvió al cliente sembrado: la pregunta por filas va con sus ids, no sin filtro.
+        Assert.Equal([ClientId], repository.LastExportSearch!.ClientIds!);
 
         var job = Assert.Single(queue.Jobs);
         Assert.Equal(new ExportJobAccepted(job.Id, Now), accepted);
@@ -268,9 +274,10 @@ public sealed class ExportQuotationsHandlerTests
         StubQuotationListRepository repository,
         InMemoryExportJobQueue? queue = null,
         CountingQuotationsUnitOfWork? unitOfWork = null,
-        IExecutionContext? executionContext = null) =>
+        IExecutionContext? executionContext = null,
+        StubQuotationCustomerLookup? customerLookup = null) =>
         new(repository,
-            NewCustomerLookup(),
+            customerLookup ?? NewCustomerLookup(),
             queue ?? new InMemoryExportJobQueue(),
             unitOfWork ?? new CountingQuotationsUnitOfWork(),
             new ExportQuotationsValidator(),

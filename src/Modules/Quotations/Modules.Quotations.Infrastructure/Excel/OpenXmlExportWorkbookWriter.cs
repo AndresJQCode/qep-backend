@@ -1,18 +1,24 @@
 using System.Globalization;
+using System.IO.Compression;
 using System.Text;
 using System.Xml;
 using DocumentFormat.OpenXml;
-using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using Modules.Quotations.Application;
 
 namespace Modules.Quotations.Infrastructure.Excel;
 
 /// <summary>
-/// El Excel de las exportaciones asíncronas, en streaming (D8). ClosedXML guarda cada celda como
-/// objeto hasta el final; con un año de un tenant grande eso son cientos de MB en el pod de 1Gi
-/// que comparte con la API. Acá cada fila se escribe al temporal apenas llega y la memoria queda
-/// acotada al lote que el procesador tiene en la mano.
+/// El Excel de las exportaciones asíncronas, en streaming a disco (D8). ClosedXML guarda cada
+/// celda como objeto hasta el final; con un año de un tenant grande eso son cientos de MB en el pod
+/// de 1Gi que comparte con la API. Acá el paquete es un zip propio en modo Create: cada fila sale
+/// comprimida al temporal apenas llega, y la memoria queda acotada al lote que el procesador tiene
+/// en la mano.
+///
+/// No se usa <c>SpreadsheetDocument.Create</c>: abre el zip en modo update, que guarda cada parte
+/// sin comprimir en memoria hasta el Dispose —se midió cerca de 1 KB por fila, con el temporal en
+/// 0 bytes hasta el final—, y el SDK no tiene un camino de sólo escritura (rechaza un stream que no
+/// se puede leer).
 /// </summary>
 internal sealed class OpenXmlExportWorkbookWriter : IExportWorkbookWriter
 {
@@ -25,8 +31,30 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
     // Índice 1 de CellFormats: la fuente en negrita de BuildStylesheet.
     private const uint HeaderStyleIndex = 1;
 
+    // El id con que workbook.xml apunta a la hoja; lo resuelve xl/_rels/workbook.xml.rels.
+    private const string SheetRelationshipId = "rId1";
+
+    private const string ContentTypesXml =
+        """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>
+        """;
+
+    private const string PackageRelationshipsXml =
+        """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>
+        """;
+
+    private const string WorkbookRelationshipsXml =
+        """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>
+        """;
+
     private readonly string _path;
-    private readonly SpreadsheetDocument _document;
+    private readonly ZipArchive _archive;
+    private readonly Stream _sheetStream;
     private readonly OpenXmlWriter _writer;
     private readonly int _columnCount;
     private uint _nextRowIndex = 1;
@@ -38,10 +66,11 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
     internal string FilePath => _path;
 
     private OpenXmlExportWorkbook(
-        string path, SpreadsheetDocument document, OpenXmlWriter writer, int columnCount)
+        string path, ZipArchive archive, Stream sheetStream, OpenXmlWriter writer, int columnCount)
     {
         _path = path;
-        _document = document;
+        _archive = archive;
+        _sheetStream = sheetStream;
         _writer = writer;
         _columnCount = columnCount;
     }
@@ -49,28 +78,33 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
     public static OpenXmlExportWorkbook Start(string sheetName, IReadOnlyList<ExportColumn> columns)
     {
         var path = Path.Combine(Path.GetTempPath(), $"qep-export-{Guid.NewGuid():N}.xlsx");
-        var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
-        // Declarado afuera del try: si algo revienta después de crearlo, el catch necesita
-        // cerrarlo antes que el documento (mismo orden que Complete()), porque disponer el
-        // documento con el part writer todavía abierto es inseguro.
+        var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        // Declarados afuera del try: si algo revienta a mitad, el catch los cierra en el mismo
+        // orden que Complete() —writer, entrada, zip y archivo— antes de borrar el temporal.
+        ZipArchive? archive = null;
+        Stream? sheetStream = null;
         OpenXmlWriter? writer = null;
         try
         {
-            var workbookPart = document.AddWorkbookPart();
-            var stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
-            stylesPart.Stylesheet = BuildStylesheet();
-            var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
-            workbookPart.Workbook = new Workbook(new Sheets(new Sheet
+            // En modo Create cada entrada va directo al archivo mientras se escribe, pero sólo
+            // puede haber una abierta a la vez: las partes chicas van primero y completas, y la
+            // hoja queda última y abierta hasta Complete().
+            archive = new ZipArchive(file, ZipArchiveMode.Create);
+            WriteText(archive, "[Content_Types].xml", ContentTypesXml);
+            WriteText(archive, "_rels/.rels", PackageRelationshipsXml);
+            // Workbook y estilos van por DOM —son chicos— y se serializan con el propio SDK: así
+            // el nombre de la hoja sale escapado como cualquier atributo XML.
+            WritePart(archive, "xl/workbook.xml", new Workbook(new Sheets(new Sheet
             {
-                Id = workbookPart.GetIdOfPart(worksheetPart),
+                Id = SheetRelationshipId,
                 SheetId = 1U,
                 Name = sheetName,
-            }));
+            })));
+            WriteText(archive, "xl/_rels/workbook.xml.rels", WorkbookRelationshipsXml);
+            WritePart(archive, "xl/styles.xml", BuildStylesheet());
 
-            // La hoja se escribe con OpenXmlWriter y nunca se toca worksheetPart.Worksheet: el
-            // autoguardado del documento reescribiría la parte con un DOM vacío. Workbook y estilos
-            // sí van por DOM —son chicos— y se guardan solos al cerrar el documento.
-            writer = OpenXmlWriter.Create(worksheetPart);
+            sheetStream = archive.CreateEntry("xl/worksheets/sheet1.xml").Open();
+            writer = OpenXmlWriter.Create(sheetStream);
             writer.WriteStartElement(new Worksheet());
             writer.WriteElement(FrozenHeaderView());
             writer.WriteElement(new Columns(columns.Select((column, index) => new Column
@@ -82,7 +116,7 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
             })));
             writer.WriteStartElement(new SheetData());
 
-            var workbook = new OpenXmlExportWorkbook(path, document, writer, columns.Count);
+            var workbook = new OpenXmlExportWorkbook(path, archive, sheetStream, writer, columns.Count);
             workbook.WriteRow(columns.Select(column => ExportCell.OfText(column.Header)).ToArray(), HeaderStyleIndex);
             return workbook;
         }
@@ -103,7 +137,26 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
 
             try
             {
-                document.Dispose();
+                sheetStream?.Dispose();
+            }
+            catch
+            {
+                // Deliberado: ver el comentario de arriba.
+            }
+
+            try
+            {
+                archive?.Dispose();
+            }
+            catch
+            {
+                // Deliberado: ver el comentario de arriba.
+            }
+
+            try
+            {
+                // Si el zip no llegó a crearse, nadie cerró el archivo; si sí, esto no hace nada.
+                file.Dispose();
             }
             catch
             {
@@ -141,7 +194,9 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
             _writer.WriteEndElement(); // SheetData
             _writer.WriteEndElement(); // Worksheet
             _writer.Close();
-            _document.Dispose();
+            _sheetStream.Dispose();
+            // Escribe el directorio central del zip y cierra el archivo.
+            _archive.Dispose();
             _closed = true;
         }
 
@@ -153,12 +208,27 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
         if (!_closed)
         {
             _writer.Dispose();
-            _document.Dispose();
+            _sheetStream.Dispose();
+            _archive.Dispose();
             _closed = true;
         }
 
         // File.Delete no falla si el archivo no está.
         File.Delete(_path);
+    }
+
+    private static void WriteText(ZipArchive archive, string entryName, string xml)
+    {
+        using var stream = archive.CreateEntry(entryName).Open();
+        // Sin BOM: la declaración ya dice UTF-8.
+        using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        writer.Write(xml);
+    }
+
+    private static void WritePart(ZipArchive archive, string entryName, OpenXmlPartRootElement root)
+    {
+        using var stream = archive.CreateEntry(entryName).Open();
+        root.Save(stream);
     }
 
     private void WriteRow(IReadOnlyList<ExportCell> cells, uint? styleIndex)
@@ -198,7 +268,7 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
     }
 
     // Un dato de otro sistema puede traer un caracter de control que XML no admite (p. ej.
-    // "" colado en un nombre): OpenXmlWriter usa XmlWriter por debajo, que revienta con
+    // U+0001 colado en un nombre): OpenXmlWriter usa XmlWriter por debajo, que revienta con
     // ArgumentException al escribirlo, y eso agotaría los 4 intentos del job por una sola fila
     // sucia. Se descarta el caracter y se sigue: el archivo es más importante que ese byte.
     private static string RemoveInvalidXmlChars(string text)

@@ -849,7 +849,7 @@ public static class QepServiceCollectionExtensions
         // deliberadamente NO es el default y NO es alcanzable por ningún fallback que
         // olfatee headers: sólo lo pide explícitamente la política de autorización propia
         // de /auth/session (ver AuthSessionEndpoints). Un id token de Google todavía válido
-        // nunca debe servir para autenticar otro endpoint, o eso saltearía la revocación de
+        // nunca debe servir para autenticar otro endpoint, o eso saltaría la revocación de
         // sesión (suspender un tenant / quitar un miembro revoca la fila de sesión, no el
         // token de Google subyacente, que vive ~1h).
         services

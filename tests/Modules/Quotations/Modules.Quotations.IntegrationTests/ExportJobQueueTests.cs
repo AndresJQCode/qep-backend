@@ -51,7 +51,7 @@ public sealed class ExportJobQueueTests
         Assert.Null(claimed);
     }
 
-    // La toma de A queda sin commitear, con la fila bloqueada: B tiene que saltearla y llevarse
+    // La toma de A queda sin commitear, con la fila bloqueada: B tiene que saltarla y llevarse
     // la otra, no esperar ni tomar la misma. Es lo que hace que escalar a más réplicas no genere
     // el mismo export dos veces.
     [Fact]

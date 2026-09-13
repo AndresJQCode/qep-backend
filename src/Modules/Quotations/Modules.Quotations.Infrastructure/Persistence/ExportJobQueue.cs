@@ -17,7 +17,7 @@ internal sealed class ExportJobQueue(QuotationsDbContext dbContext) : IExportJob
             cancellationToken);
 
     /// <summary>
-    /// D6: un solo UPDATE que elige y toma. El SELECT interno bloquea la fila elegida y saltea
+    /// D6: un solo UPDATE que elige y toma. El SELECT interno bloquea la fila elegida y salta
     /// las que ya bloqueó otra transacción (SKIP LOCKED), así que dos workers nunca se llevan el
     /// mismo job ni se esperan entre sí. Toma un Pending vencido o un Processing con el lease
     /// vencido (worker muerto), suma un intento y fija el lease: la misma transición que

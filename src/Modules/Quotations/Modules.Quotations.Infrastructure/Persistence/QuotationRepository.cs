@@ -65,8 +65,10 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
     // Keyset sobre (CreatedAt, QuotationNumber), los dos descendentes: el orden de la tabla con el
     // número —único por tenant— como desempate. El lote siguiente es "lo que viene después de la
     // última fila leída" y no un offset, así que una cotización creada o que sale del filtro
-    // durante el export no repite ni saltea filas (spec 2026-09-12, D8). EF no compara tuplas: la
-    // condición va en su forma OR. La sirve IX_quotations_tenant_created_at_number.
+    // durante el export no repite ni salta filas (spec 2026-09-12, D8). El corte es una comparación
+    // de filas de Postgres, `(created_at, quotation_number) < (@fecha, @numero)`, que Npgsql traduce
+    // desde EF.Functions.LessThan: IX_quotations_tenant_created_at_number la resuelve como un rango,
+    // y el número se compara con la collation de la columna, la misma del ORDER BY de abajo.
     public async Task<IReadOnlyList<Quotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -87,18 +89,9 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         {
             var createdAt = after.CreatedAt;
             var number = after.QuotationNumber;
-            // `string.Compare` se traduce a `<` sobre la columna, con su collation: la misma que
-            // usa el ORDER BY de abajo, así que corte y orden no se contradicen.
-            // CA1309/CA1310: la expresión la traduce EF a SQL con la collation de la columna; no
-            // corre ninguna cultura de .NET, y un StringComparison la volvería intraducible.
-#pragma warning disable CA1309
-#pragma warning disable CA1310
-            query = query.Where(quotation =>
-                quotation.CreatedAt < createdAt
-                || (quotation.CreatedAt == createdAt
-                    && string.Compare(quotation.QuotationNumber, number) < 0));
-#pragma warning restore CA1310
-#pragma warning restore CA1309
+            query = query.Where(quotation => EF.Functions.LessThan(
+                ValueTuple.Create(quotation.CreatedAt, quotation.QuotationNumber),
+                ValueTuple.Create(createdAt, number)));
         }
 
         return await query

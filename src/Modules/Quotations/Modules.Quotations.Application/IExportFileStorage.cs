@@ -5,8 +5,9 @@ namespace Modules.Quotations.Application;
 /// adaptador en el composition root, igual que <c>ICustomerExportStorage</c>: Quotations no puede
 /// referenciar Storage (QuotationsLayerTests lo impide).
 ///
-/// Recibe la ruta del temporal y no los bytes: el procesador escribe a disco para no tener el
-/// archivo en memoria, y si algún día Storage acepta un stream, el cambio queda en el adaptador.
+/// Recibe la ruta del temporal y no los bytes: el writer arma el Excel en streaming a disco para
+/// no tener las filas en memoria, y si algún día Storage acepta un stream, el cambio queda en el
+/// adaptador —hoy lo lee entero, pero ya comprimido—.
 /// </summary>
 public interface IExportFileStorage
 {

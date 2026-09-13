@@ -100,7 +100,8 @@ public sealed class ExportSalesHandler(
                 "There are no sales matching the export filters.");
         }
 
-        // 4: el mismo cupo que cotizaciones, contando los dos tipos.
+        // 4: el mismo cupo que cotizaciones, contando los dos tipos. Es de mejor esfuerzo —cuenta
+        // y después inserta, sin bloqueo—: ver ExportJobLimits.PendingPerRequester.
         var pending = await queue.CountPendingAsync(
             command.TenantId, executionContext.SubjectId, cancellationToken);
         if (pending >= ExportJobLimits.PendingPerRequester)

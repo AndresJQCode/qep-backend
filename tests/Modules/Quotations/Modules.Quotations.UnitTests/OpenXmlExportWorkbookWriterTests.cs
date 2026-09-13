@@ -1,6 +1,7 @@
 using System.Globalization;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using DocumentFormat.OpenXml.Validation;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Excel;
 
@@ -117,6 +118,24 @@ public sealed class OpenXmlExportWorkbookWriterTests
         Assert.False(File.Exists(path));
     }
 
+    // D8: la memoria queda acotada al lote porque cada fila llega al temporal apenas se escribe.
+    // Si el paquete se armara en memoria hasta el Dispose —lo que hacía SpreadsheetDocument.Create,
+    // con el zip en modo update—, el archivo seguiría en 0 bytes después de miles de filas.
+    [Fact]
+    public void RowsReachTheTemporaryFileBeforeTheWorkbookIsCompleted()
+    {
+        using var workbook = (OpenXmlExportWorkbook)new OpenXmlExportWorkbookWriter().Create("Cotizaciones", Columns);
+        for (var index = 0; index < 10_000; index++)
+        {
+            workbook.AppendRow([
+                ExportCell.OfText($"QUO-2026-{index:D5}"),
+                ExportCell.OfText("2026-09-12T15:30:00.0000000+00:00"),
+                ExportCell.OfNumber(452000.50m)]);
+        }
+
+        Assert.True(new FileInfo(workbook.FilePath).Length > 0);
+    }
+
     // Riesgo 3 del spec: en es-CO el separador decimal es la coma. Si CellValue formateara según
     // la cultura del hilo, el importe llegaría corrupto ("452000,50" no es un número válido en
     // OOXML, que exige "." per ECMA-376) y Excel lo mostraría como texto o lo rechazaría.
@@ -157,13 +176,60 @@ public sealed class OpenXmlExportWorkbookWriterTests
     {
         using var workbook = new OpenXmlExportWorkbookWriter().Create("Cotizaciones", Columns);
         workbook.AppendRow([
-            ExportCell.OfText("ClienteMalo"),
+            ExportCell.OfText("Cliente\u0001Malo"),
             ExportCell.OfText(null),
             ExportCell.OfNumber(0m)]);
 
         var sheet = Read(workbook.Complete());
 
         Assert.Equal("ClienteMalo", sheet.Rows[1][0].Text);
+    }
+
+    // Un emoji es un par de surrogates válido y tiene que llegar entero; un surrogate suelto no es
+    // XML válido y se descarta como cualquier otro caracter prohibido. El primer caso fija también
+    // el orden de los argumentos de XmlConvert.IsXmlSurrogatePair (bajo, alto), fácil de invertir.
+    //
+    // MemberData sin enumerar en el descubrimiento, y no InlineData: xUnit serializa en UTF-8 los
+    // argumentos que descubre, y un surrogate suelto llega a la prueba convertido en U+FFFD.
+    public static TheoryData<string, string> SurrogateCases => new()
+    {
+        { "A\U0001F600B", "A\U0001F600B" },
+        { "A\uD800B", "AB" },
+    };
+
+    [Theory]
+    [MemberData(nameof(SurrogateCases), DisableDiscoveryEnumeration = true)]
+    public void SurrogatePairsSurviveAndLoneSurrogatesAreDropped(string text, string expected)
+    {
+        using var workbook = new OpenXmlExportWorkbookWriter().Create("Cotizaciones", Columns);
+        workbook.AppendRow([
+            ExportCell.OfText(text),
+            ExportCell.OfText(null),
+            ExportCell.OfNumber(0m)]);
+
+        var sheet = Read(workbook.Complete());
+
+        Assert.Equal(expected, sheet.Rows[1][0].Text);
+    }
+
+    // El paquete lo arma este writer a mano (content types, relaciones, workbook, estilos y hoja),
+    // así que además de leerlo con el SDK se valida contra el esquema: un error acá es un archivo
+    // que Excel puede abrir con "reparar" o no abrir.
+    [Fact]
+    public void TheCompletedFilePassesTheOpenXmlValidator()
+    {
+        using var workbook = new OpenXmlExportWorkbookWriter().Create("Cotizaciones", Columns);
+        workbook.AppendRow([
+            ExportCell.OfText("QUO-2026-0001"),
+            ExportCell.OfText("2026-09-12T15:30:00.0000000+00:00"),
+            ExportCell.OfNumber(452000.50m)]);
+
+        using var document = SpreadsheetDocument.Open(workbook.Complete(), isEditable: false);
+        var errors = new OpenXmlValidator().Validate(document, TestContext.Current.CancellationToken)
+            .Select(error => $"{error.ErrorType} {error.Part?.Uri} {error.Path?.XPath}: {error.Description}")
+            .ToArray();
+
+        Assert.Empty(errors);
     }
 
     private sealed record CellSnapshot(string Text, bool IsNumber, uint? StyleIndex);

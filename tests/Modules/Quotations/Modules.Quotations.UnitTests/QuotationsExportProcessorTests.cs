@@ -116,14 +116,17 @@ public sealed class QuotationsExportProcessorTests
     [Fact]
     public async Task NoRowsWhenItRunsIsDefinitiveAndUploadsNothing()
     {
+        var writer = new RecordingExportWorkbookWriter();
         var storage = new RecordingExportFileStorage();
-        var processor = NewProcessor(new StubQuotationListRepository(), storage: storage);
+        var processor = NewProcessor(new StubQuotationListRepository(), writer, storage);
 
         var error = await Assert.ThrowsAsync<ExportJobDefinitiveException>(() =>
             processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken));
 
         Assert.StartsWith("Empty:", error.Message, StringComparison.Ordinal);
         Assert.Null(storage.Upload);
+        // El temporal se borra también en este camino, que sale antes de Complete().
+        Assert.True(writer.Disposed);
     }
 
     [Fact]

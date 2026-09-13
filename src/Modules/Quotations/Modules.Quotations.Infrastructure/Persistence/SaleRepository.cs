@@ -86,7 +86,7 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
         var items = await joined
             // Por fecha de conversión, y el número como desempate: dos ventas del mismo instante
             // --el mismo segundo en una siembra de prueba-- tienen que paginar en un orden
-            // estable, o una fila puede repetirse o saltearse entre páginas.
+            // estable, o una fila puede repetirse o saltarse entre páginas.
             .OrderByDescending(row => row.sale.ConvertedAt)
             .ThenByDescending(row => row.sale.SaleNumber)
             .Skip((page - 1) * pageSize)
@@ -120,8 +120,10 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
     // Keyset sobre el orden exacto del listado —(ConvertedAt, SaleNumber), los dos descendentes—:
     // el lote siguiente es "lo que viene después de la última venta leída" y no un offset, así que
     // una venta convertida o que sale del filtro durante el export no repite ni salta filas
-    // (spec 2026-09-12, D8). El corte va sobre `sales`, antes del join, igual que los filtros. EF
-    // no compara tuplas: la condición va en su forma OR. La sirve IX_sales_tenant_converted_at_number.
+    // (spec 2026-09-12, D8). El corte va sobre `sales`, antes del join, igual que los filtros, y es
+    // una comparación de filas de Postgres, `(converted_at, sale_number) < (@fecha, @numero)`, que
+    // Npgsql traduce desde EF.Functions.LessThan: IX_sales_tenant_converted_at_number la resuelve
+    // como un rango, y el número se compara con la collation de la columna, la misma del ORDER BY.
     public async Task<IReadOnlyList<SaleWithQuotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -143,16 +145,9 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
         {
             var convertedAt = after.ConvertedAt;
             var number = after.SaleNumber;
-            // `string.Compare` se traduce a `<` sobre la columna, con la collation del ORDER BY.
-            // CA1309/CA1310: la expresión la traduce EF a SQL con la collation de la columna; no
-            // corre ninguna cultura de .NET, y un StringComparison la volvería intraducible.
-#pragma warning disable CA1309
-#pragma warning disable CA1310
-            sales = sales.Where(sale =>
-                sale.ConvertedAt < convertedAt
-                || (sale.ConvertedAt == convertedAt && string.Compare(sale.SaleNumber, number) < 0));
-#pragma warning restore CA1310
-#pragma warning restore CA1309
+            sales = sales.Where(sale => EF.Functions.LessThan(
+                ValueTuple.Create(sale.ConvertedAt, sale.SaleNumber),
+                ValueTuple.Create(convertedAt, number)));
         }
 
         return await (
