@@ -295,8 +295,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListQuotationsQuery, QuotationPage>,
             ListQuotationsHandler>();
+        // Comando y no query desde la exportación asíncrona: encola un job (spec 2026-09-12).
         services.AddScoped<
-            IQueryHandler<ExportQuotationsQuery, QuotationExportFile>,
+            ICommandHandler<ExportQuotationsCommand, ExportJobAccepted>,
             ExportQuotationsHandler>();
         services.AddScoped<
             IQueryHandler<ListQuotationHistoryQuery, IReadOnlyList<QuotationHistoryEntryDto>>,
@@ -343,6 +344,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListSalesQuery, SalePage>,
             ListSalesHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportSalesCommand, ExportJobAccepted>,
+            ExportSalesHandler>();
         services.AddScoped<
             IQueryHandler<GetSaleByIdQuery, SaleDetailDto>,
             GetSaleByIdHandler>();
@@ -415,6 +419,9 @@ public static class QepServiceCollectionExtensions
         // Y el mismo patrón entre `customers` y `storage`, para dejar el Excel exportado en el
         // bucket y firmar su enlace de descarga.
         services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
+
+        // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
+        services.AddScoped<IExportFileStorage, ExportFileStorage>();
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
         services.AddScoped<IQuotationPdfProvider, QuotationPdfProvider>();
 
@@ -437,6 +444,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
+
+        // El tick del worker de exportaciones. Scoped: ExportJobWorker abre un scope por job para
+        // que cada uno tenga su DbContext limpio. Los procesadores por kind se registran con él
+        // cuando existen (cotizaciones y ventas).
+        services.AddScoped<ExportJobRunner>();
+        services.AddScoped<IExportJobProcessor, QuotationsExportProcessor>();
+        services.AddScoped<IExportJobProcessor, SalesExportProcessor>();
 
         // Reporting es el caso extremo del mismo patron (CAT-05): el modulo no tiene tablas
         // propias, asi que **todos** sus origenes de datos cruzan una frontera de modulo. Van
@@ -838,7 +852,7 @@ public static class QepServiceCollectionExtensions
         // deliberadamente NO es el default y NO es alcanzable por ningún fallback que
         // olfatee headers: sólo lo pide explícitamente la política de autorización propia
         // de /auth/session (ver AuthSessionEndpoints). Un id token de Google todavía válido
-        // nunca debe servir para autenticar otro endpoint, o eso saltearía la revocación de
+        // nunca debe servir para autenticar otro endpoint, o eso saltaría la revocación de
         // sesión (suspender un tenant / quitar un miembro revoca la fila de sesión, no el
         // token de Google subyacente, que vive ~1h).
         services

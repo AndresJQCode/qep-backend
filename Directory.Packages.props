@@ -7,6 +7,10 @@
     <PackageVersion Include="AWSSDK.S3" Version="4.0.100.2" />
     <PackageVersion Include="ClosedXML" Version="0.105.1" />
     <PackageVersion Include="coverlet.collector" Version="8.0.1" />
+    <!-- Referencia directa de Quotations.Infrastructure para escribir el Excel en streaming
+         (spec 2026-09-12, D8). Misma versión que ya resolvía transitiva por ClosedXML: con el
+         pinning transitivo activado, declararla la fija también en Customers y Catalog. -->
+    <PackageVersion Include="DocumentFormat.OpenXml" Version="3.1.1" />
     <PackageVersion Include="FluentValidation" Version="12.1.1" />
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />

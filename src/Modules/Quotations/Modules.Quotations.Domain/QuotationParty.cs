@@ -56,6 +56,18 @@ public sealed class QuotationParty
 
     public Guid? CityId { get; private set; }
 
+    /// <summary>Si los seis campos están cargados. Existir con algunos vacíos es un estado
+    /// válido mientras se edita —cada campo es opcional por separado, ver la clase—, pero una
+    /// venta no puede heredar una dirección a medio llenar: <see cref="Quotation.EnsureConvertibleToSale"/>
+    /// es quien la exige completa.</summary>
+    public bool IsComplete =>
+        !string.IsNullOrWhiteSpace(Name)
+        && !string.IsNullOrWhiteSpace(Phone)
+        && !string.IsNullOrWhiteSpace(Email)
+        && !string.IsNullOrWhiteSpace(Address)
+        && DepartmentId is not null
+        && CityId is not null;
+
     internal static QuotationParty Create(
         QuotationId quotationId,
         QuotationPartyRole role,

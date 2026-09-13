@@ -57,6 +57,6 @@ public sealed class ExportQuotationsValidatorTests
     private static DateOnly Date(string value) =>
         DateOnly.ParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    private static ExportQuotationsQuery NewQuery(DateOnly? from, DateOnly? to) =>
+    private static ExportQuotationsCommand NewQuery(DateOnly? from, DateOnly? to) =>
         new(Guid.CreateVersion7(), null, null, null, from, to, null, null);
 }

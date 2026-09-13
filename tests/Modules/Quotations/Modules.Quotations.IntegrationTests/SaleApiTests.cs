@@ -288,12 +288,11 @@ public sealed class SaleApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    // Lo que se convierte en venta es lo que el cliente recibio. Editar una enviada sigue
-    // permitido -- sigue siendo editable --, pero deja la cotizacion y el PDF entregado
-    // diciendo cosas distintas: convertir ahi adentro registraria una venta por importes que
-    // nadie le mando. La salida es reenviarla.
+    // A pedido (2026-09), editar una enviada ya no la vuelve inconvertible: sigue siendo
+    // editable (US-10) y la venta hereda lo que la cotizacion tiene guardado ahora, sin exigir
+    // reenviarla primero.
     [Fact]
-    public async Task ConvertAQuotationEditedAfterBeingSentIsUnprocessable()
+    public async Task ConvertAQuotationEditedAfterBeingSentSucceeds()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -304,24 +303,20 @@ public sealed class SaleApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         await ChangeTheQuantityAsync(client, tenantId, quotation);
 
+        // Y la cotizacion lo dice al leerla: HasChangesSinceSent sigue en true -- se editó de
+        // verdad --, pero ya no es uno de los motivos de CanBeConvertedToSale.
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.True(fetched.HasChangesSinceSent);
+        Assert.True(fetched.CanBeConvertedToSale);
+
         var response = await client.PostAsJsonAsync(
             SaleUrl(tenantId, quotation.Id),
             new ConvertQuotationToSaleRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
-            TestContext.Current.CancellationToken);
-        Assert.NotNull(problem);
-        Assert.Equal("quotation.quotation.changed_since_sent", problem.Code);
-
-        // Y la cotizacion lo dice al leerla: de esos dos campos sale el boton apagado y el
-        // aviso que explica por que, sin que la pantalla compare fechas por su cuenta.
-        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
-        Assert.NotNull(fetched);
-        Assert.True(fetched.HasChangesSinceSent);
-        Assert.False(fetched.CanBeConvertedToSale);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     [Fact]
@@ -368,6 +363,4 @@ public sealed class SaleApiTests
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
     }
-
-    private sealed record ProblemPayload(string Code);
 }

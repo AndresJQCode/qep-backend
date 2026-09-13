@@ -879,12 +879,13 @@ public sealed class QuotationTests
         Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
     }
 
-    // Lo que se convierte en venta es lo que el cliente recibio, no lo que quedo en la pantalla
-    // despues. Editar una enviada es legitimo -- sigue siendo editable -- pero deja la
-    // cotizacion y el documento entregado diciendo cosas distintas, asi que hay que reenviarla
-    // antes de convertirla.
+    // A pedido (2026-09), editar una enviada ya no la vuelve inconvertible: la vieja regla
+    // exigia reenviarla antes de convertir para que la venta heredara lo mismo que el cliente
+    // vio, pero dejaba inconvertible a cualquier cotizacion que se corrigiera despues de
+    // enviarse sin que nadie se lo pidiera. Sigue editable (US-10) y ahora tambien convertible
+    // asi, sin reenviar.
     [Fact]
-    public void CanBeConvertedToSaleTurnsFalseAfterEditingASentQuotation()
+    public void CanBeConvertedToSaleStaysTrueAfterEditingASentQuotation()
     {
         var quotation = ConvertibleSentQuotation();
         Assert.True(quotation.CanBeConvertedToSale);
@@ -894,38 +895,81 @@ public sealed class QuotationTests
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
 
         Assert.True(quotation.HasChangesSinceSent);
-        Assert.False(quotation.CanBeConvertedToSale);
+        Assert.True(quotation.CanBeConvertedToSale);
     }
 
     [Fact]
-    public void EnsureConvertibleToSaleRejectsAQuotationEditedAfterBeingSent()
+    public void EnsureConvertibleToSaleDoesNotThrowAfterEditingASentQuotation()
     {
         var quotation = ConvertibleSentQuotation();
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 50_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
+
+        quotation.EnsureConvertibleToSale();
+    }
+
+    [Fact]
+    public void EnsureConvertibleToSaleRejectsAnIncompleteBillingParty()
+    {
+        var quotation = NewQuotation(
+            billingAccount: BillingAccount,
+            parties: new QuotationParties(
+                new QuotationPartyDetails { Name = "Sede administrativa" }, Shipping: null));
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
             () => quotation.EnsureConvertibleToSale());
 
-        Assert.Equal("quotation.quotation.changed_since_sent", error.Code);
+        Assert.Equal("quotation.billing.party_incomplete", error.Code);
+        Assert.False(quotation.CanBeConvertedToSale);
     }
 
-    // El reenvio es la salida: vuelve a dejar SentAt y UpdatedAt en el mismo instante, asi que
-    // la cotizacion y el documento entregado vuelven a coincidir.
     [Fact]
-    public void ResendingMakesAnEditedQuotationConvertibleAgain()
+    public void EnsureConvertibleToSaleRejectsAnIncompleteShippingParty()
     {
-        var quotation = ConvertibleSentQuotation();
+        var quotation = NewQuotation(
+            billingAccount: BillingAccount,
+            parties: new QuotationParties(
+                Billing: null, new QuotationPartyDetails { Name = "Bodega Fontibon" }));
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 50_000m,
-            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        quotation.Send(AdvisorId, Now.AddHours(2));
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => quotation.EnsureConvertibleToSale());
 
-        Assert.False(quotation.HasChangesSinceSent);
-        Assert.True(quotation.CanBeConvertedToSale);
+        Assert.Equal("quotation.shipping.party_incomplete", error.Code);
+        Assert.False(quotation.CanBeConvertedToSale);
+    }
+
+    // Los seis campos, no menos: es el mismo umbral que exige el editor antes de dejar mandar
+    // la cotizacion (quote-party-fields.tsx), y una venta no puede heredar una direccion a
+    // medio llenar.
+    [Fact]
+    public void EnsureConvertibleToSaleAcceptsACompleteOwnParty()
+    {
+        var completeParty = new QuotationPartyDetails
+        {
+            Name = "Sede administrativa",
+            Phone = "3105550134",
+            Email = "compras@sede.co",
+            Address = "Calle 10 # 45-12",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+        };
+        var quotation = NewQuotation(
+            billingAccount: BillingAccount,
+            parties: new QuotationParties(completeParty, completeParty));
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
         quotation.EnsureConvertibleToSale();
+
+        Assert.True(quotation.CanBeConvertedToSale);
     }
 
     /// <summary>Enviada y con los cuatro datos que la venta hereda: productos, vigencia, forma

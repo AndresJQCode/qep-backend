@@ -22,6 +22,84 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Modules.Quotations.Domain.ExportJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<string>("FileName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("Filters")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("filters");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by");
+
+                    b.Property<int?>("RowCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("row_count");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "NextAttemptAt")
+                        .HasDatabaseName("IX_export_jobs_claim")
+                        .HasFilter("status IN ('Pending', 'Processing')");
+
+                    b.HasIndex("TenantId", "RequestedBy", "Status")
+                        .HasDatabaseName("IX_export_jobs_requester")
+                        .HasFilter("status IN ('Pending', 'Processing')");
+
+                    b.ToTable("export_jobs", "quotations");
+                });
+
             modelBuilder.Entity("Modules.Quotations.Domain.Quotation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -175,6 +253,9 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "QuotationNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_quotations_tenant_number");
+
+                    b.HasIndex("TenantId", "CreatedAt", "QuotationNumber")
+                        .HasDatabaseName("IX_quotations_tenant_created_at_number");
 
                     b.ToTable("quotations", "quotations");
                 });
@@ -456,6 +537,9 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "SaleNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_sales_tenant_number");
+
+                    b.HasIndex("TenantId", "ConvertedAt", "SaleNumber")
+                        .HasDatabaseName("IX_sales_tenant_converted_at_number");
 
                     b.ToTable("sales", "quotations");
                 });

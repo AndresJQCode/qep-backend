@@ -26,6 +26,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<QuotationsOutboxMessage> Outbox => Set<QuotationsOutboxMessage>();
 
+    internal DbSet<ExportJob> ExportJobs => Set<ExportJob>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -37,6 +39,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureSale(modelBuilder);
         ConfigureSalePaymentProof(modelBuilder);
         ConfigureSaleNumberCounter(modelBuilder);
+        ConfigureExportJob(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -145,6 +148,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.HasIndex(value => value.AdvisorId).HasDatabaseName("IX_quotations_advisor");
         quotation.HasIndex(value => value.Status).HasDatabaseName("IX_quotations_status");
         quotation.HasIndex(value => value.CreatedAt).HasDatabaseName("IX_quotations_created_at");
+        // El keyset de la exportación (spec 2026-09-12, D8): tenant, fecha de alta y número
+        // —único por tenant, el desempate—. Postgres recorre el btree en los dos sentidos, así que
+        // sirve al ORDER BY descendente sin declararlo.
+        quotation.HasIndex(value => new { value.TenantId, value.CreatedAt, value.QuotationNumber })
+            .HasDatabaseName("IX_quotations_tenant_created_at_number");
         // La unicidad que promete el numero de cotizacion. Nombrado a proposito: la capa de
         // infraestructura discrimina la violacion de unicidad por nombre de indice, no solo por
         // SqlState -- la leccion de SDD-CT-06.
@@ -377,6 +385,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         sale.HasIndex(value => new { value.TenantId, value.SaleNumber })
             .IsUnique()
             .HasDatabaseName("IX_sales_tenant_number");
+        // El keyset de la exportación de ventas (spec 2026-09-12, D8): el orden exacto del listado
+        // —fecha de conversión y número como desempate, SaleRepository.SearchAsync— detrás del
+        // tenant.
+        sale.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.SaleNumber })
+            .HasDatabaseName("IX_sales_tenant_converted_at_number");
 
         // RESTRICT, no CASCADE: la venta es el registro que sobrevive -- borrar la cotizacion de
         // origen (si algun dia existiera un borrado duro) no deberia poder llevarse la venta
@@ -425,6 +438,53 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         counter.Property(value => value.TenantId).HasColumnName("tenant_id");
         counter.Property(value => value.Year).HasColumnName("year");
         counter.Property(value => value.NextValue).HasColumnName("next_value");
+    }
+
+    // Los dos índices sólo miran los jobs vivos: la toma y el límite de pendientes nunca buscan
+    // uno terminado, y los terminados se acumulan hasta la purga de 30 días.
+    private const string ActiveExportJobFilter = "status IN ('Pending', 'Processing')";
+
+    /// <summary>
+    /// La cola de exportaciones (spec 2026-09-12, D2). Los nombres de columna van a mano y no por
+    /// convención porque ExportJobQueue los escribe en SQL crudo para la toma con SKIP LOCKED.
+    /// </summary>
+    private static void ConfigureExportJob(ModelBuilder modelBuilder)
+    {
+        var job = modelBuilder.Entity<ExportJob>();
+        job.ToTable("export_jobs", "quotations");
+        job.HasKey(value => value.Id);
+        job.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        job.Property(value => value.TenantId).HasColumnName("tenant_id");
+        job.Property(value => value.RequestedBy).HasColumnName("requested_by");
+        // Texto y no entero, mismo criterio que Quotation.Status: soporte lee la tabla a mano.
+        job.Property(value => value.Kind)
+            .HasColumnName("kind")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        job.Property(value => value.Filters).HasColumnName("filters").HasColumnType("jsonb");
+        job.Property(value => value.Status)
+            .HasColumnName("status")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        // Token de concurrencia: la toma lo incrementa, así que un worker cuyo lease venció y otro
+        // retomó no puede cerrar el job con los intentos viejos (el UPDATE no encuentra la fila).
+        job.Property(value => value.Attempts).HasColumnName("attempts").IsConcurrencyToken();
+        job.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
+        job.Property(value => value.LockedUntil).HasColumnName("locked_until");
+        job.Property(value => value.LastError).HasColumnName("last_error").HasColumnType("text");
+        job.Property(value => value.FileName)
+            .HasColumnName("file_name")
+            .HasMaxLength(ExportJob.FileNameMaxLength);
+        job.Property(value => value.RowCount).HasColumnName("row_count");
+        job.Property(value => value.RequestedAt).HasColumnName("requested_at");
+        job.Property(value => value.CompletedAt).HasColumnName("completed_at");
+
+        job.HasIndex(value => new { value.Status, value.NextAttemptAt })
+            .HasDatabaseName("IX_export_jobs_claim")
+            .HasFilter(ActiveExportJobFilter);
+        job.HasIndex(value => new { value.TenantId, value.RequestedBy, value.Status })
+            .HasDatabaseName("IX_export_jobs_requester")
+            .HasFilter(ActiveExportJobFilter);
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

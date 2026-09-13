@@ -6,17 +6,15 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// El listado de cotizaciones en un <c>.xlsx</c>, para el boton de exportar de esa misma pantalla.
+/// Pide el listado de cotizaciones en un <c>.xlsx</c> por correo (spec 2026-09-12). Comando y no
+/// query: encola un job. El Excel lo arma <c>QuotationsExportProcessor</c> en el worker, nunca el
+/// request.
 ///
-/// **Los mismos filtros que <see cref="ListQuotationsQuery"/>, menos la paginacion**, porque el
-/// archivo tiene que ser lo que la tabla muestra: con un filtro de mas o de menos, quien exporta
-/// se lleva algo distinto de lo que estaba viendo.
-///
-/// **Rango de fechas obligatorio de a lo sumo un año en vez de un tope de filas.** Un tope castiga
-/// a quien mas vende y no dice que filtro tocar; el rango acota el volumen y, cuando falla, ya
-/// dice que corregir. Ver <see cref="ExportQuotationsValidator"/>.
+/// **Los mismos filtros que <see cref="ListQuotationsQuery"/>, menos la paginación**: el archivo
+/// tiene que ser lo que la tabla muestra. **Rango obligatorio de a lo sumo un año** en vez de un
+/// tope de filas (D3): un tope castiga a quien más vende y no dice qué filtro tocar.
 /// </summary>
-public sealed record ExportQuotationsQuery(
+public sealed record ExportQuotationsCommand(
     Guid TenantId,
     Guid? ClientId,
     Guid? AdvisorId,
@@ -24,33 +22,45 @@ public sealed record ExportQuotationsQuery(
     DateOnly? CreatedFrom,
     DateOnly? CreatedTo,
     string? ClientNit,
-    string? QuotationNumber) : IQuery<QuotationExportFile>;
+    string? QuotationNumber) : ICommand<ExportJobAccepted>;
+
+/// <summary>Lo que se acepta: el job y cuándo. Sin archivo ni filas —todavía no existen— ni
+/// enlace: el canal de entrega es el correo (D5).</summary>
+public sealed record ExportJobAccepted(Guid JobId, DateTimeOffset RequestedAt);
+
+/// <summary>Los filtros tal como quedan en <c>export_jobs.filters</c>. Las fechas ya no son
+/// opcionales: el validador las exigió antes de encolar.</summary>
+public sealed record QuotationsExportFilters(
+    Guid? ClientId,
+    Guid? AdvisorId,
+    string? Status,
+    DateOnly CreatedFrom,
+    DateOnly CreatedTo,
+    string? ClientNit,
+    string? QuotationNumber);
 
 /// <summary>
-/// El rango de fechas es la cota de volumen de la exportacion, asi que es obligatorio y de a lo
-/// sumo un año. Validador y no regla de dominio para que el 422 lleve el mapa <c>errors</c> y la
-/// pantalla marque el control de fecha que hay que corregir.
-///
-/// "Un año" es <c>AddYears(1)</c> y no 365 dias: vale igual en un año bisiesto, y un rango de
-/// exactamente un año se acepta.
+/// El rango es la cota de volumen, así que es obligatorio y de a lo sumo un año. Validador y no
+/// regla de dominio para que el 422 lleve el mapa <c>errors</c> y la pantalla marque la fecha.
+/// "Un año" es <c>AddYears(1)</c> y no 365 días: vale igual en un bisiesto, y un año exacto pasa.
 /// </summary>
-public sealed class ExportQuotationsValidator : AbstractValidator<ExportQuotationsQuery>
+public sealed class ExportQuotationsValidator : AbstractValidator<ExportQuotationsCommand>
 {
     public ExportQuotationsValidator()
     {
-        RuleFor(query => query.CreatedFrom)
+        RuleFor(command => command.CreatedFrom)
             .NotNull()
             .WithMessage("createdFrom is required.");
-        RuleFor(query => query.CreatedTo)
+        RuleFor(command => command.CreatedTo)
             .NotNull()
             .WithMessage("createdTo is required.");
-        RuleFor(query => query.CreatedTo)
-            .GreaterThanOrEqualTo(query => query.CreatedFrom!.Value)
-            .When(query => query.CreatedFrom is not null && query.CreatedTo is not null)
+        RuleFor(command => command.CreatedTo)
+            .GreaterThanOrEqualTo(command => command.CreatedFrom!.Value)
+            .When(command => command.CreatedFrom is not null && command.CreatedTo is not null)
             .WithMessage("createdTo must be on or after createdFrom.");
-        RuleFor(query => query.CreatedTo)
-            .LessThanOrEqualTo(query => query.CreatedFrom!.Value.AddYears(1))
-            .When(query => query.CreatedFrom is not null && query.CreatedTo is not null)
+        RuleFor(command => command.CreatedTo)
+            .LessThanOrEqualTo(command => command.CreatedFrom!.Value.AddYears(1))
+            .When(command => command.CreatedFrom is not null && command.CreatedTo is not null)
             .WithMessage("The range from createdFrom to createdTo cannot exceed one year.");
     }
 }
@@ -58,50 +68,75 @@ public sealed class ExportQuotationsValidator : AbstractValidator<ExportQuotatio
 public sealed class ExportQuotationsHandler(
     IQuotationRepository repository,
     IQuotationCustomerLookup customerLookup,
-    IQuotationAdvisorLookup advisorLookup,
-    IQuotationExportWorkbookBuilder workbookBuilder,
-    IValidator<ExportQuotationsQuery> validator,
+    IExportJobQueue queue,
+    IQuotationsUnitOfWork unitOfWork,
+    IValidator<ExportQuotationsCommand> validator,
     IExecutionContext executionContext,
     IClock clock)
-    : IQueryHandler<ExportQuotationsQuery, QuotationExportFile>
+    : ICommandHandler<ExportQuotationsCommand, ExportJobAccepted>
 {
-    public async Task<QuotationExportFile> HandleAsync(
-        ExportQuotationsQuery query,
+    public async Task<ExportJobAccepted> HandleAsync(
+        ExportQuotationsCommand command,
         CancellationToken cancellationToken)
     {
-        // Autorizar antes de validar, mismo criterio que CreateQuotationHandler: a quien no puede
-        // exportar no se le contesta que su rango estaba mal.
+        // D4, en este orden y todo antes de encolar. 1: tenant y permiso.
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, query.TenantId, QuotationsPermissions.QuotationRead);
-        await validator.ValidateAndThrowAsync(query, cancellationToken);
+            executionContext, command.TenantId, QuotationsPermissions.QuotationRead);
 
-        var status = QuotationListing.ParseStatus(query.Status);
-        var advisorId = query.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
+        // 2: filtros y rango.
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var status = QuotationListing.ParseStatus(command.Status);
+        var advisorId = command.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await QuotationListing.ResolveClientIdsByNitAsync(
-            customerLookup, query.TenantId, query.ClientNit, cancellationToken);
+            customerLookup, command.TenantId, command.ClientNit, cancellationToken);
 
-        var quotations = await repository.ListForExportAsync(
-            query.TenantId,
-            query.ClientId,
+        // 3: al menos una fila. Un EXISTS es barato, y enterarse de que no había nada después de
+        // esperar un correo es peor.
+        var anyRow = await repository.AnyForExportAsync(
+            command.TenantId,
+            command.ClientId,
             clientIds,
             advisorId,
             status,
-            query.CreatedFrom,
-            query.CreatedTo,
-            query.QuotationNumber,
+            command.CreatedFrom,
+            command.CreatedTo,
+            command.QuotationNumber,
             cancellationToken);
-
-        // Un archivo con solo la cabecera es peor que decir que no habia nada: mismo criterio que
-        // `reporting.export.empty` y `customers.export.empty`.
-        if (quotations.Count == 0)
+        if (!anyRow)
         {
             throw new QuotationsDomainException(
                 "quotation.export.empty",
                 "There are no quotations matching the export filters.");
         }
 
-        var rows = await QuotationListing.ToListItemsAsync(
-            customerLookup, advisorLookup, query.TenantId, quotations, cancellationToken);
-        return workbookBuilder.Build(rows, clock.UtcNow, cancellationToken);
+        // 4: el límite de pendientes, contando cotizaciones y ventas. Es de mejor esfuerzo —cuenta
+        // y después inserta, sin bloqueo—: ver ExportJobLimits.PendingPerRequester.
+        var pending = await queue.CountPendingAsync(
+            command.TenantId, executionContext.SubjectId, cancellationToken);
+        if (pending >= ExportJobLimits.PendingPerRequester)
+        {
+            throw new QuotationsDomainException(
+                "quotation.export.pending_limit",
+                $"There are already {ExportJobLimits.PendingPerRequester} exports in progress for this user.");
+        }
+
+        var job = ExportJob.Enqueue(
+            Guid.CreateVersion7(),
+            command.TenantId,
+            executionContext.SubjectId,
+            ExportJobKind.Quotations,
+            ExportJobFilters.Serialize(new QuotationsExportFilters(
+                command.ClientId,
+                command.AdvisorId,
+                command.Status,
+                command.CreatedFrom!.Value,
+                command.CreatedTo!.Value,
+                command.ClientNit,
+                command.QuotationNumber)),
+            clock.UtcNow);
+        queue.Add(job);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return new ExportJobAccepted(job.Id, job.RequestedAt);
     }
 }

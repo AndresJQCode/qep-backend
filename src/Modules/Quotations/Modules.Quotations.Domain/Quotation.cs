@@ -534,12 +534,18 @@ public sealed class Quotation
     }
 
     /// <summary>US-16: valida que se pueda convertir en venta. Ya no exige haberla enviado
-    /// primero (a pedido, 2026-09) — Draft o Sent alcanzan, mismo criterio de "sigue siendo un
-    /// documento abierto" que <see cref="EnsureSendable"/>; no se convierte una ya anulada ni
-    /// vencida. No muta nada: a diferencia de la vieja <c>Approve()</c>, convertir a venta ya no
-    /// cambia el estado de la cotización (no existe un estado "aprobada"/"convertida" — ver
+    /// primero, ni que siga sin cambios desde ese envío (a pedido, 2026-09) — Draft o Sent
+    /// alcanzan, mismo criterio de "sigue siendo un documento abierto" que
+    /// <see cref="EnsureSendable"/>; no se convierte una ya anulada ni vencida. No muta nada: a
+    /// diferencia de la vieja <c>Approve()</c>, convertir a venta ya no cambia el estado de la
+    /// cotización (no existe un estado "aprobada"/"convertida" — ver
     /// <see cref="QuotationStatus"/>), así que esto es sólo el guard de precondición que
-    /// <c>ConvertQuotationToSaleHandler</c> llama antes de crear el <see cref="Sale"/>.</summary>
+    /// <c>ConvertQuotationToSaleHandler</c> llama antes de crear el <see cref="Sale"/>.
+    ///
+    /// Que el cliente esté activo **no** se comprueba acá: este agregado no lo sabe, sólo tiene
+    /// su id (referencia blanda). Lo revalida <c>ConvertQuotationToSaleHandler</c> contra
+    /// <c>IQuotationCustomerLookup</c> justo antes de llamar a este método — mismo motivo que
+    /// <see cref="QuotationCustomerEligibility"/> al crear.</summary>
     public void EnsureConvertibleToSale()
     {
         if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))
@@ -547,18 +553,6 @@ public sealed class Quotation
             throw new QuotationsDomainException(
                 "quotation.quotation.status_not_convertible",
                 "Only a draft or sent quotation can be converted to a sale.");
-        }
-
-        // La venta hereda lo que el cliente aceptó, y lo que el cliente vio es el documento del
-        // último envío. Editar una enviada sigue siendo legítimo —sigue siendo editable—, pero
-        // deja la cotización diciendo una cosa y el PDF entregado otra: convertirla ahí adentro
-        // registraría una venta por importes que nadie le mandó. La salida es reenviarla, que
-        // vuelve a alinear las dos.
-        if (HasChangesSinceSent)
-        {
-            throw new QuotationsDomainException(
-                "quotation.quotation.changed_since_sent",
-                "A quotation edited after its last send must be sent again before it can be converted to a sale.");
         }
 
         // Lo que una venta necesita para existir y que la cotizacion puede no tener todavia. Se
@@ -592,19 +586,40 @@ public sealed class Quotation
                 "quotation.billing.account_required",
                 "A quotation must have a billing account before it can be converted to a sale.");
         }
+
+        // Una parte con datos propios a medio llenar es la misma condicion que ya exige
+        // EnsureBillingIsConsistent/Assign en otro momento (los seis campos o ninguno no se
+        // fuerza al guardar, asi que puede llegar hasta aca incompleta): la venta hereda lo que
+        // haya en la parte, y una direccion sin ciudad o un telefono vacio no es algo que
+        // Sale pueda completar por su cuenta.
+        if (Billing is { } billing && !billing.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.party_incomplete",
+                "The billing party must have all its fields filled before converting to a sale.");
+        }
+
+        if (Shipping is { } shipping && !shipping.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                "quotation.shipping.party_incomplete",
+                "The shipping party must have all its fields filled before converting to a sale.");
+        }
     }
 
     /// <summary>
-    /// Si convertir en venta es posible ahora. Misma regla que
-    /// <see cref="EnsureConvertibleToSale"/>, en forma de pregunta: la pantalla la usa para
-    /// habilitar el boton en vez de reimplementar las condiciones.
+    /// Si convertir en venta es posible ahora, salvo por si el cliente sigue activo (este
+    /// agregado no lo sabe — ver <see cref="EnsureConvertibleToSale"/>). Misma regla que ese
+    /// método, en forma de pregunta: la pantalla la usa para saber qué decir en vez de
+    /// reimplementar las condiciones, y el handler la revalida al convertir de verdad.
     /// </summary>
     public bool CanBeConvertedToSale =>
         Status is QuotationStatus.Draft or QuotationStatus.Sent
-        && !HasChangesSinceSent
         && _items.Count > 0
         && ValidUntil is not null
-        && BillingAccount is not null;
+        && BillingAccount is not null
+        && (Billing is not { } billing || billing.IsComplete)
+        && (Shipping is not { } shipping || shipping.IsComplete);
 
     /// <summary>
     /// Vuelve a tomar del cliente maestro <see cref="CustomerWithRetention"/> y
