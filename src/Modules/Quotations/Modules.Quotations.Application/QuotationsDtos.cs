@@ -379,3 +379,11 @@ public sealed record QuotationItemResponse(
     int TaxPercentage,
     decimal TaxAmount,
     int Position);
+
+/// <summary>
+/// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de ventas. No
+/// lleva nombre de archivo ni cantidad de filas porque todavía no existen, ni enlace porque el
+/// canal de entrega es el correo: con el enlace acá, la pantalla tomaría el atajo y el correo
+/// quedaría sin ejercitar. El jobId es para soporte y para una futura "mis exportaciones" (D15).
+/// </summary>
+public sealed record ExportJobAcceptedResponse(Guid JobId, DateTimeOffset RequestedAt);

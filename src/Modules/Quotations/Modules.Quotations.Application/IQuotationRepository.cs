@@ -32,12 +32,33 @@ public interface IQuotationRepository
         int pageSize,
         CancellationToken cancellationToken);
 
-    /// <summary>Todas las cotizaciones que pasan los filtros del listado, en su mismo orden y sin
-    /// paginar: el Excel de <c>ExportQuotationsHandler</c>. Mismos filtros y misma semantica que
-    /// <see cref="SearchAsync"/> -- <c>clientIds</c> incluido -- porque el archivo tiene que ser
-    /// lo que la tabla muestra. Sin tope de filas: la cota de volumen es el rango de fechas
-    /// obligatorio que exige <c>ExportQuotationsValidator</c>.</summary>
+    /// <summary>Un lote de las cotizaciones que pasan los filtros del listado, en su mismo orden:
+    /// lo que lee QuotationsExportProcessor para el Excel. Mismos filtros y misma semántica que
+    /// <see cref="SearchAsync"/> —<c>clientIds</c> incluido— porque el archivo tiene que ser lo que
+    /// la tabla muestra. Por lotes y no entero: la memoria del worker queda acotada al lote (D8).
+    /// El volumen total lo acota el rango obligatorio de a lo sumo un año.
+    ///
+    /// Keyset y no offset: <paramref name="after"/> es la clave de la última fila del lote
+    /// anterior (<c>null</c> en el primero), y el lote es lo que viene después en el orden
+    /// <c>(CreatedAt DESC, QuotationNumber DESC)</c>. Una cotización creada o que sale del filtro
+    /// durante el export no corre las filas.</summary>
     Task<IReadOnlyList<Quotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        QuotationExportCursor? after,
+        int limit,
+        CancellationToken cancellationToken);
+
+    /// <summary>Si hay al menos una cotización con esos filtros: el paso 3 de D4, antes de encolar
+    /// una exportación. Mismos filtros y misma semántica de <c>clientIds</c> que
+    /// <see cref="SearchAsync"/>.</summary>
+    Task<bool> AnyForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -86,3 +107,10 @@ public interface IQuotationRepository
     Task<IReadOnlyList<QuotationHistoryEntry>> ListHistoryAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Dónde quedó el export (spec 2026-09-12, D8): la fecha de alta y el número de la última fila
+/// leída. El número y no el id porque <see cref="QuotationId"/> no se compara, y el número es único
+/// por tenant (<c>IX_quotations_tenant_number</c>), así que la clave nunca empata.
+/// </summary>
+public sealed record QuotationExportCursor(DateTimeOffset CreatedAt, string QuotationNumber);

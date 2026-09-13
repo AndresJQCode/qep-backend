@@ -75,12 +75,108 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
     {
         // El join va acá adentro y no en el composition root --como sí lo hace el reporte de
         // ventas-- porque las dos tablas son de este módulo y viven en el mismo DbContext.
-        //
-        // Sin comprobantes ni líneas: la fila no las muestra, y traerlas sería el mismo N+1 que
-        // QuotationRepository.SearchAsync evita no trayendo lo que la tabla no pinta.
-        // Los filtros se aplican sobre cada tabla por separado y el join se arma recien al final,
-        // proyectando ahi mismo. Filtrar despues de proyectar a un tipo propio es lo que hacia
-        // que el proveedor no tradujera la consulta y el endpoint respondiera 500.
+        var (sales, quotations) = Filtered(
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+        var joined =
+            from sale in sales
+            join quotation in quotations on sale.QuotationId equals quotation.Id
+            select new { sale, quotation };
+
+        var total = await joined.CountAsync(cancellationToken);
+        var items = await joined
+            // Por fecha de conversión, y el número como desempate: dos ventas del mismo instante
+            // --el mismo segundo en una siembra de prueba-- tienen que paginar en un orden
+            // estable, o una fila puede repetirse o saltarse entre páginas.
+            .OrderByDescending(row => row.sale.ConvertedAt)
+            .ThenByDescending(row => row.sale.SaleNumber)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(row => new SaleWithQuotation(row.sale, row.quotation))
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    public Task<bool> AnyForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber,
+        CancellationToken cancellationToken)
+    {
+        var (sales, quotations) = Filtered(
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+        return (from sale in sales
+                join quotation in quotations on sale.QuotationId equals quotation.Id
+                select sale.Id)
+            .AnyAsync(cancellationToken);
+    }
+
+    // Keyset sobre el orden exacto del listado —(ConvertedAt, SaleNumber), los dos descendentes—:
+    // el lote siguiente es "lo que viene después de la última venta leída" y no un offset, así que
+    // una venta convertida o que sale del filtro durante el export no repite ni salta filas
+    // (spec 2026-09-12, D8). El corte va sobre `sales`, antes del join, igual que los filtros, y es
+    // una comparación de filas de Postgres, `(converted_at, sale_number) < (@fecha, @numero)`, que
+    // Npgsql traduce desde EF.Functions.LessThan: IX_sales_tenant_converted_at_number la resuelve
+    // como un rango, y el número se compara con la collation de la columna, la misma del ORDER BY.
+    public async Task<IReadOnlyList<SaleWithQuotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber,
+        SaleExportCursor? after,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var (sales, quotations) = Filtered(
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+
+        if (after is not null)
+        {
+            var convertedAt = after.ConvertedAt;
+            var number = after.SaleNumber;
+            sales = sales.Where(sale => EF.Functions.LessThan(
+                ValueTuple.Create(sale.ConvertedAt, sale.SaleNumber),
+                ValueTuple.Create(convertedAt, number)));
+        }
+
+        return await (
+                from sale in sales
+                join quotation in quotations on sale.QuotationId equals quotation.Id
+                select new { sale, quotation })
+            .OrderByDescending(row => row.sale.ConvertedAt)
+            .ThenByDescending(row => row.sale.SaleNumber)
+            .Take(limit)
+            .Select(row => new SaleWithQuotation(row.sale, row.quotation))
+            .ToListAsync(cancellationToken);
+    }
+
+    // Los filtros del listado y de su Excel salen de acá y de ningún otro lado. Se aplican sobre
+    // cada tabla por separado y el join se arma recién al final, proyectando ahí mismo: filtrar
+    // después de proyectar a un tipo propio es lo que hacía que el proveedor no tradujera la
+    // consulta y el endpoint respondiera 500. Sin comprobantes ni líneas: la fila no los muestra, y
+    // traerlos sería el mismo N+1 que QuotationRepository.SearchAsync evita.
+    private (IQueryable<Sale> Sales, IQueryable<Quotation> Quotations) Filtered(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber)
+    {
         var sales = dbContext.Sales
             .AsNoTracking()
             .Where(sale => sale.TenantId == tenantId);
@@ -137,24 +233,7 @@ internal sealed class SaleRepository(QuotationsDbContext dbContext) : ISaleRepos
             quotations = quotations.Where(quotation => quotation.AdvisorId == advisor);
         }
 
-        var joined =
-            from sale in sales
-            join quotation in quotations on sale.QuotationId equals quotation.Id
-            select new { sale, quotation };
-
-        var total = await joined.CountAsync(cancellationToken);
-        var items = await joined
-            // Por fecha de conversión, y el número como desempate: dos ventas del mismo instante
-            // --el mismo segundo en una siembra de prueba-- tienen que paginar en un orden
-            // estable, o una fila puede repetirse o saltearse entre páginas.
-            .OrderByDescending(row => row.sale.ConvertedAt)
-            .ThenByDescending(row => row.sale.SaleNumber)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(row => new SaleWithQuotation(row.sale, row.quotation))
-            .ToListAsync(cancellationToken);
-
-        return (items, total);
+        return (sales, quotations);
     }
 
     public void Add(Sale sale) => dbContext.Sales.Add(sale);

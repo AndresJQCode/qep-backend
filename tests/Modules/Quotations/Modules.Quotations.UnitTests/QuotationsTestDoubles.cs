@@ -77,9 +77,14 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
         Guid tenantId, Guid clientId, CancellationToken cancellationToken) =>
         Task.FromResult<QuotationCustomerRef?>(customer);
 
+    /// <summary>Los ids que el filtro por NIT debe resolver. Vacío por defecto, igual que
+    /// <see cref="IdsByCuc"/>: la prueba que ejerce ese filtro los siembra, y el doble no inventa
+    /// ninguna regla sobre cómo es un NIT.</summary>
+    public HashSet<Guid> IdsByIdentification { get; } = [];
+
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(
         Guid tenantId, string term, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid>());
+        Task.FromResult<IReadOnlySet<Guid>>(IdsByIdentification);
 
     /// <summary>Los ids que el filtro por CUC debe resolver. Vacio por defecto: la prueba que
     /// ejerce ese filtro los siembra.</summary>
@@ -172,8 +177,22 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         DateOnly? createdFrom,
         DateOnly? createdTo,
         string? quotationNumber,
+        QuotationExportCursor? after,
+        int limit,
         CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<Quotation>>([quotation]);
+        Task.FromResult<IReadOnlyList<Quotation>>(after is null ? [quotation] : []);
+
+    public Task<bool> AnyForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(true);
 
     public void Add(Quotation quotation)
     {
@@ -265,8 +284,7 @@ internal sealed class FixedClock(DateTimeOffset now) : IClock
     public DateTimeOffset UtcNow { get; } = now;
 }
 
-/// <summary>Los filtros que <see cref="StubQuotationListRepository.ListForExportAsync"/>
-/// recibio.</summary>
+/// <summary>Los filtros con que se preguntó por filas o se leyó para exportar.</summary>
 internal sealed record RecordedExportSearch(
     Guid? ClientId,
     IReadOnlyCollection<Guid>? ClientIds,
@@ -275,28 +293,6 @@ internal sealed record RecordedExportSearch(
     DateOnly? CreatedFrom,
     DateOnly? CreatedTo,
     string? QuotationNumber);
-
-/// <summary>Registra las filas que le llegan en vez de armar un Excel: lo que las pruebas del
-/// handler verifican es que datos salen hacia el archivo, no como se ve -- eso lo cubren las
-/// pruebas de integracion, que abren el workbook.</summary>
-internal sealed class RecordingQuotationExportWorkbookBuilder : IQuotationExportWorkbookBuilder
-{
-    public QuotationExportFile Result { get; } = new([0x50, 0x4B], "cotizaciones-prueba.xlsx");
-
-    public IReadOnlyList<QuotationListItemDto>? Rows { get; private set; }
-
-    public DateTimeOffset? GeneratedAt { get; private set; }
-
-    public QuotationExportFile Build(
-        IReadOnlyList<QuotationListItemDto> rows,
-        DateTimeOffset generatedAt,
-        CancellationToken cancellationToken)
-    {
-        Rows = rows;
-        GeneratedAt = generatedAt;
-        return Result;
-    }
-}
 
 /// <summary>Varias cotizaciones para el listado — <see cref="StubQuotationRepository"/> devuelve
 /// siempre una sola, y lo que verifica <c>ListQuotationsHandlerTests</c> es justamente cómo se
@@ -330,10 +326,51 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
     /// filtra con lo mismo que el listado.</summary>
     public RecordedExportSearch? LastExportSearch { get; private set; }
 
+    /// <summary>La clave con que se pidió cada lote, en orden: el primero sin clave y cada uno de
+    /// los siguientes con la de la última fila del anterior (keyset, D8).</summary>
+    public List<QuotationExportCursor?> ExportCursors { get; } = [];
+
     // Honra el contrato de `clientIds` (vacio = ninguna fila) porque es lo que hace que un NIT
-    // sin cliente termine en un Excel vacio; el resto de los filtros son de la consulta SQL y los
-    // cubren las pruebas de integracion.
+    // sin cliente termine en un Excel vacio, y el orden y la condición del keyset porque es lo que
+    // hace que el procesador corte. El resto de los filtros son de la consulta SQL y los cubren
+    // las pruebas de integracion.
     public Task<IReadOnlyList<Quotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        QuotationExportCursor? after,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        ExportCalls++;
+        ExportCursors.Add(after);
+        LastExportSearch = new RecordedExportSearch(
+            clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+        IReadOnlyList<Quotation> rows = (clientIds is null
+                ? quotations
+                : quotations.Where(quotation => clientIds.Contains(quotation.ClientId)))
+            .Where(quotation => after is null
+                || quotation.CreatedAt < after.CreatedAt
+                || (quotation.CreatedAt == after.CreatedAt
+                    && string.CompareOrdinal(quotation.QuotationNumber, after.QuotationNumber) < 0))
+            .OrderByDescending(quotation => quotation.CreatedAt)
+            .ThenByDescending(quotation => quotation.QuotationNumber, StringComparer.Ordinal)
+            .Take(limit)
+            .ToArray();
+        return Task.FromResult(rows);
+    }
+
+    /// <summary>Cuántas veces se preguntó si había filas. Un pedido rechazado por permiso o
+    /// rango no llega a preguntar, y el conteo es la aserción.</summary>
+    public int AnyCalls { get; private set; }
+
+    // Mismo contrato de `clientIds` que ListForExportAsync: un NIT sin cliente es "ninguna fila".
+    public Task<bool> AnyForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -344,13 +381,12 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         string? quotationNumber,
         CancellationToken cancellationToken)
     {
-        ExportCalls++;
+        AnyCalls++;
         LastExportSearch = new RecordedExportSearch(
             clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
-        IReadOnlyList<Quotation> rows = clientIds is null
-            ? quotations
-            : quotations.Where(quotation => clientIds.Contains(quotation.ClientId)).ToArray();
-        return Task.FromResult(rows);
+        return Task.FromResult(clientIds is null
+            ? quotations.Length > 0
+            : quotations.Any(quotation => clientIds.Contains(quotation.ClientId)));
     }
 
     /// <summary>Contesta desde las cotizaciones sembradas, igual que la consulta real: la fila
@@ -479,11 +515,31 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             []));
 }
 
+/// <summary>Los filtros con que se preguntó por ventas o se leyó para exportarlas.</summary>
+internal sealed record RecordedSaleExportSearch(
+    Guid? ClientId,
+    IReadOnlyCollection<Guid>? ClientIds,
+    MemberId? AdvisorId,
+    SaleStatus? Status,
+    SalePaymentStatus? PaymentStatus,
+    DateOnly? ConvertedFrom,
+    DateOnly? ConvertedTo,
+    string? SaleNumber);
+
 /// <summary>Devuelve las filas sembradas y anota con que filtro se la llamo — lo que las pruebas
 /// del listado de ventas necesitan comprobar es el camino del handler, no la consulta SQL.</summary>
 internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : ISaleRepository
 {
     public IReadOnlyCollection<Guid>? LastClientIds { get; private set; }
+
+    public int AnyCalls { get; private set; }
+
+    public int ExportCalls { get; private set; }
+
+    /// <summary>La clave con que se pidió cada lote, en orden (keyset, D8).</summary>
+    public List<SaleExportCursor?> ExportCursors { get; } = [];
+
+    public RecordedSaleExportSearch? LastExportSearch { get; private set; }
 
     public Task<Sale?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
@@ -519,6 +575,63 @@ internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : 
         LastClientIds = clientIds;
         return Task.FromResult<(IReadOnlyList<SaleWithQuotation>, int)>((rows, rows.Length));
     }
+
+    // Honra el contrato de `clientIds` (vacío = ninguna fila): es lo que hace que un CUC sin
+    // cliente termine en "no hay ventas". El resto de los filtros son SQL y los cubre integración.
+    public Task<bool> AnyForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber,
+        CancellationToken cancellationToken)
+    {
+        AnyCalls++;
+        LastExportSearch = new RecordedSaleExportSearch(
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+        return Task.FromResult(Matching(clientIds).Any());
+    }
+
+    public Task<IReadOnlyList<SaleWithQuotation>> ListForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        SaleStatus? status,
+        SalePaymentStatus? paymentStatus,
+        DateOnly? convertedFrom,
+        DateOnly? convertedTo,
+        string? saleNumber,
+        SaleExportCursor? after,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        ExportCalls++;
+        ExportCursors.Add(after);
+        LastExportSearch = new RecordedSaleExportSearch(
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+        // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
+        // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
+        // keyset real contra Postgres lo prueba
+        // SalesCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip.
+        IReadOnlyList<SaleWithQuotation> page = Matching(clientIds)
+            .Where(row => after is null
+                || row.Sale.ConvertedAt < after.ConvertedAt
+                || (row.Sale.ConvertedAt == after.ConvertedAt
+                    && string.CompareOrdinal(row.Sale.SaleNumber, after.SaleNumber) < 0))
+            .OrderByDescending(row => row.Sale.ConvertedAt)
+            .ThenByDescending(row => row.Sale.SaleNumber, StringComparer.Ordinal)
+            .Take(limit)
+            .ToArray();
+        return Task.FromResult(page);
+    }
+
+    private IEnumerable<SaleWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
+        clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
 
     public void Add(Sale sale) { }
 }
