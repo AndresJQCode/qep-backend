@@ -674,6 +674,11 @@ internal static class QuotationsApiHarness
             // este proyecto mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
 
+            // Fijado, nunca heredado: con un número en los user-secrets de quien corre las pruebas,
+            // cada host de este proyecto sembraría la carga de exportación. Las pruebas de la carga lo
+            // prenden con WithWebHostBuilder, que se aplica después y gana.
+            builder.UseSetting("Seed:ExportLoad:Quotations", "0");
+
             // Mismo criterio, y por el mismo motivo: `WebApplicationFactory` corre en
             // Development y ahí `CreateBuilder` carga los user-secrets del developer. Si esa
             // persona configuró Zenvia para probar el envío a mano, el registro condicional ve

@@ -102,6 +102,25 @@ public sealed class ExportJobWorkerTests
         });
     }
 
+    // La medición de la exportación (spec 2026-09-13) lee la duración de cada job en el log del pod.
+    [Fact]
+    public async Task DrainAsyncLogsHowLongEachJobTook()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var baseFactory = new QepApiFactory(database.GetConnectionString());
+        using var factory = baseFactory.WithExportProcessors(
+            new SucceedingExportProcessor(ExportJobKind.Quotations));
+        await EnqueueExportJobAsync(factory, Guid.CreateVersion7(), Guid.CreateVersion7());
+        var logger = new RecordingLogger<ExportJobWorker>();
+
+        await new ExportJobWorker(factory.Services.GetRequiredService<IServiceScopeFactory>(), logger)
+            .DrainAsync(TestContext.Current.CancellationToken);
+
+        var entry = Assert.Single(logger.Entries, candidate => candidate.Level == LogLevel.Information);
+        Assert.Equal("Completed", entry.State["Outcome"]?.ToString());
+        Assert.IsType<long>(entry.State["ElapsedMilliseconds"]);
+    }
+
     // Mismo mecanismo que InvitationNotificationTests: sondeo con plazo, porque el tick es del
     // worker y no de la prueba.
     private static async Task<ExportJobStatus?> WaitForStatusAsync(

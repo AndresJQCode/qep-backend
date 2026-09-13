@@ -476,6 +476,10 @@ public static class QepServiceCollectionExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<SeedOptions>, SeedOptionsValidator>();
 
+        // La carga sintética de la exportación (spec 2026-09-13): no hace nada con
+        // Seed:ExportLoad:Quotations en 0, que es el default.
+        services.AddHostedService<ExportLoadSeedWorker>();
+
         AddAuthorizationCapability(services, configuration);
         services.AddQepObservability(configuration, environment);
         AddAuthentication(services, configuration, environment);

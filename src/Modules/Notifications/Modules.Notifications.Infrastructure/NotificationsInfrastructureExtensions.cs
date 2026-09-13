@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Notifications.Application;
 using Modules.Notifications.Infrastructure.Channels;
@@ -40,30 +39,16 @@ public static class NotificationsInfrastructureExtensions
             ?? NotificationsOptions.LogProvider;
         AddEmailChannel(services, provider);
 
-        services.AddHostedService(sp => new InvitationDeliveryWorker(
-            sp.GetRequiredService<IServiceScopeFactory>(),
-            sp.GetRequiredService<IOptions<NotificationsOptions>>(),
-            sp.GetRequiredService<ILogger<InvitationDeliveryWorker>>()));
-
-        // Sin IOptions, a diferencia del de invitaciones: ese arma el enlace con
-        // NotificationsOptions.InvitationUrl, y acá el enlace ya viene prefirmado en el evento.
-        services.AddHostedService(sp => new CustomerExportDeliveryWorker(
-            sp.GetRequiredService<IServiceScopeFactory>(),
-            sp.GetRequiredService<ILogger<CustomerExportDeliveryWorker>>()));
-
-        services.AddHostedService(sp => new ProductExportDeliveryWorker(
-            sp.GetRequiredService<IServiceScopeFactory>(),
-            sp.GetRequiredService<ILogger<ProductExportDeliveryWorker>>()));
-
-        // La exportación asíncrona de Quotations (spec 2026-09-12, D12): un worker por evento,
-        // igual que clientes y productos. Sin IOptions: el enlace ya viene prefirmado.
-        services.AddHostedService(sp => new QuotationsExportReadyDeliveryWorker(
-            sp.GetRequiredService<IServiceScopeFactory>(),
-            sp.GetRequiredService<ILogger<QuotationsExportReadyDeliveryWorker>>()));
-
-        services.AddHostedService(sp => new QuotationsExportFailedDeliveryWorker(
-            sp.GetRequiredService<IServiceScopeFactory>(),
-            sp.GetRequiredService<ILogger<QuotationsExportFailedDeliveryWorker>>()));
+        // Por tipo y no por factoría: así el descriptor lleva ImplementationType y el harness de
+        // pruebas puede sacarlos (spec 2026-09-13). Mismo registro que ExportJobWorker. El de
+        // invitaciones recibe IOptions<NotificationsOptions> por constructor, porque arma el enlace
+        // con InvitationUrl; los de exportación no, porque su enlace ya viene prefirmado en el evento.
+        services.AddHostedService<InvitationDeliveryWorker>();
+        services.AddHostedService<CustomerExportDeliveryWorker>();
+        services.AddHostedService<ProductExportDeliveryWorker>();
+        // La exportación asíncrona de Quotations (spec 2026-09-12, D12): un worker por evento.
+        services.AddHostedService<QuotationsExportReadyDeliveryWorker>();
+        services.AddHostedService<QuotationsExportFailedDeliveryWorker>();
 
         return services;
     }
@@ -74,7 +59,7 @@ public static class NotificationsInfrastructureExtensions
         {
             services.AddSingleton<IEmailChannel>(sp =>
                 new InfobipEmailChannel(
-                    new HttpClient(),
+                    InfobipEmailChannel.CreateHttpClient(),
                     sp.GetRequiredService<IOptions<NotificationsOptions>>()));
         }
         else

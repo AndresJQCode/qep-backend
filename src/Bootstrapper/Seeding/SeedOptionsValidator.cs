@@ -10,15 +10,25 @@ internal sealed class SeedOptionsValidator : IValidateOptions<SeedOptions>
 {
     public ValidateOptionsResult Validate(string? name, SeedOptions options)
     {
-        if (!options.Enabled)
+        if (options.ExportLoad.Quotations < 0)
+        {
+            return ValidateOptionsResult.Fail("Seed:ExportLoad:Quotations cannot be negative.");
+        }
+
+        // Las dos semillas le conceden admin a OwnerEmail: cualquiera de las dos prendida lo exige.
+        var requiredBy = options.Enabled
+            ? "Seed:Enabled is true"
+            : options.ExportLoad.Quotations > 0
+                ? "Seed:ExportLoad:Quotations is greater than 0"
+                : null;
+        if (requiredBy is null)
         {
             return ValidateOptionsResult.Success;
         }
 
         if (string.IsNullOrWhiteSpace(options.OwnerEmail))
         {
-            return ValidateOptionsResult.Fail(
-                "Seed:OwnerEmail is required when Seed:Enabled is true.");
+            return ValidateOptionsResult.Fail($"Seed:OwnerEmail is required when {requiredBy}.");
         }
 
         // Se normaliza con la misma regla del dominio de Identity, no con una propia: si el

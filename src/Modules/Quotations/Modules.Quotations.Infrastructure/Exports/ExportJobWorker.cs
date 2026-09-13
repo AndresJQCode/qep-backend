@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,11 @@ internal sealed partial class ExportJobWorker(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Purged {Count} finished export jobs.")]
     private static partial void LogPurged(ILogger logger, int count);
+
+    // La duración de cada job, para medir la exportación en producción (spec 2026-09-13). Las filas ya
+    // llegan en el correo y el tamaño se lee del archivo descargado.
+    [LoggerMessage(Level = LogLevel.Information, Message = "Export job run finished as {Outcome} in {ElapsedMilliseconds} ms.")]
+    private static partial void LogRunFinished(ILogger logger, ExportJobRunOutcome outcome, long elapsedMilliseconds);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -64,6 +70,7 @@ internal sealed partial class ExportJobWorker(
         while (true)
         {
             await using var scope = scopeFactory.CreateAsyncScope();
+            var startedAt = Stopwatch.GetTimestamp();
             var outcome = await scope.ServiceProvider.GetRequiredService<ExportJobRunner>()
                 .RunNextAsync(cancellationToken);
 
@@ -71,6 +78,9 @@ internal sealed partial class ExportJobWorker(
             {
                 return;
             }
+
+            var elapsedMilliseconds = (long)Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+            LogRunFinished(logger, outcome, elapsedMilliseconds);
 
             if (outcome == ExportJobRunOutcome.LeaseLost)
             {

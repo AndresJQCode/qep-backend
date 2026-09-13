@@ -60,6 +60,10 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
         inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(200);
         inbox.Property(value => value.MessageId).HasColumnName("message_id");
         inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        // Los nombres van a mano porque InboxClaims los escribe en SQL crudo.
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        // Default 1 en la base: las filas que ya existen quedan con un intento, sin tocarlas.
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

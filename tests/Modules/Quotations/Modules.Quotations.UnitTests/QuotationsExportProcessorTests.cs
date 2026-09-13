@@ -36,7 +36,8 @@ public sealed class QuotationsExportProcessorTests
         Assert.Equal("Ferretería El Tornillo", row[2].Text);
         // El correo y no el nombre, igual que la tabla (spec 2026-09-11, D1).
         Assert.Equal("asesora@qcode.co", row[3].Text);
-        Assert.Equal("Draft", row[4].Text);
+        // La etiqueta de la tabla, no el nombre del enum (spec 2026-09-13, A7).
+        Assert.Equal("Borrador", row[4].Text);
         Assert.Equal("COP", row[5].Text);
         Assert.Equal(0m, row[6].Number);
         Assert.Null(row[6].Text);

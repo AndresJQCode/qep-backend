@@ -20,4 +20,10 @@ public sealed class SeedOptions
     /// administra un tenant, y eso es una decisión del ambiente.
     /// </summary>
     public string? OwnerEmail { get; set; }
+
+    /// <summary>
+    /// La carga sintética de la exportación. También le concede admin a <see cref="OwnerEmail"/>,
+    /// sobre su propio tenant, así que prenderla exige el email igual que <see cref="Enabled"/>.
+    /// </summary>
+    public ExportLoadSeedOptions ExportLoad { get; set; } = new();
 }
