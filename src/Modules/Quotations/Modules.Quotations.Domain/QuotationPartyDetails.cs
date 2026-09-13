@@ -106,7 +106,19 @@ public sealed record QuotationParties(
     /// <see cref="IsStorePickup"/>, que descarta la parte de entrega, acá el agregado rechaza la
     /// combinación — son dos nombres distintos para la misma factura y no hay uno que gane.
     /// </summary>
-    bool BillsToFinalConsumer = false)
+    bool BillsToFinalConsumer = false,
+    /// <summary>
+    /// Si quien recibe la factura —cuando <see cref="Billing"/> trae datos propios— practica
+    /// retención en la fuente. Con los datos del cliente, ese hecho lo dice el cliente
+    /// (<c>Customer.WithRetention</c>, ver <see cref="Quotation.CustomerWithRetention"/>); con
+    /// datos propios nadie más lo sabe, así que hay que preguntarlo — <c>null</c> mientras no se
+    /// contestó no es "no aplica", es "todavía no se sabe" (ver <see cref="Quotation.EnsureConvertibleToSale"/>).
+    /// Se ignora cuando <see cref="Billing"/> es null: ahí manda el cliente.
+    /// </summary>
+    bool? BillingWithRetention = null,
+    /// <summary>Mismo criterio que <see cref="BillingWithRetention"/> pero para el excedente de
+    /// IVA (<c>Customer.VatSurplus</c> / <see cref="Quotation.CustomerVatSurplus"/>).</summary>
+    bool? BillingVatSurplus = null)
 {
     /// <summary>Las dos partes tomadas del cliente: ninguna fila. El estado por defecto de una
     /// cotización nueva.</summary>
