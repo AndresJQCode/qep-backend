@@ -26,8 +26,8 @@ public sealed class SalesExportProcessor(
     /// <summary>
     /// Las de la tabla de ventas en su orden (sale-table.tsx: Venta, Cliente, Asesora, Fecha, Pago,
     /// Estado, Total), con la moneda aparte del total y "Asesor" como en el Excel de cotizaciones.
-    /// "Pago" replica el respaldo de la tabla: la forma de pago, o el estado del pago mientras la
-    /// forma llegue vacía.
+    /// "Pago" replica el respaldo de la tabla: la forma de pago o, mientras llegue vacía, la etiqueta del
+    /// estado del pago. Los estados van con la etiqueta de la pantalla (spec 2026-09-13, A7).
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
@@ -111,8 +111,11 @@ public sealed class SalesExportProcessor(
         // Texto ISO y no celda de fecha: una fecha se muestra según la configuración regional de
         // quien abre el archivo, mismo criterio que cotizaciones.
         ExportCell.OfText(row.ConvertedAt.ToString("O", CultureInfo.InvariantCulture)),
-        ExportCell.OfText(row.PaymentMethod ?? row.PaymentStatus),
-        ExportCell.OfText(row.Status),
+        // El DTO trae los nombres de los enums, que son contrato de la API (SaleMapping.cs:35-36);
+        // acá se vuelven al enum sólo para etiquetarlos.
+        ExportCell.OfText(row.PaymentMethod
+            ?? ExportStatusLabels.For(Enum.Parse<SalePaymentStatus>(row.PaymentStatus))),
+        ExportCell.OfText(ExportStatusLabels.For(Enum.Parse<SaleStatus>(row.Status))),
         ExportCell.OfText(row.Currency),
         ExportCell.OfNumber(row.Total),
     ];

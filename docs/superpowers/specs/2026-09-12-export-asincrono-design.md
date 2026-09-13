@@ -169,6 +169,11 @@ obligaría a recorrerlo dos veces).
 Nombres: `cotizaciones-yyyy-MM-dd-HHmm.xlsx` y `ventas-yyyy-MM-dd-HHmm.xlsx`, con la hora en que
 se generó.
 
+> **Complemento (2026-09-13).** Las columnas de estado del Excel —«Estado» y el respaldo de «Pago»—
+> usan las etiquetas en español de las tablas de los listados, no el nombre del enum. La API sigue
+> mandando el enum. Ver [2026-09-13-ajustes-post-export-design.md](2026-09-13-ajustes-post-export-design.md)
+> (A7, A8).
+
 ### D9 — Subida a Storage con clave estable
 
 Puerto `IExportFileStorage` en Application, adaptador calcado de `ICustomerExportStorage`. La
