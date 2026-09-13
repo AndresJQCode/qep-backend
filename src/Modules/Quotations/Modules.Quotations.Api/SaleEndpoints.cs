@@ -34,6 +34,15 @@ public static class SaleEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // El listado de ventas en un .xlsx por correo (spec 2026-09-12): mismo contrato que
+        // `POST /quotations/export` —202, filtros del listado por query string, sin paginación—.
+        // "export" no choca con "/{saleId:guid}": no es un guid.
+        collection.MapPost("/export", ExportSalesAsync)
+            .RequireAuthorization(SalesPermissions.SaleRead)
+            .Produces<ExportJobAcceptedResponse>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/sale")
             .WithTags("Sales");
@@ -93,6 +102,28 @@ public static class SaleEndpoints
             result.Total,
             result.Page,
             result.PageSize));
+    }
+
+    private static async Task<IResult> ExportSalesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        Guid? clientId = null,
+        Guid? advisorId = null,
+        string? status = null,
+        string? paymentStatus = null,
+        DateOnly? convertedFrom = null,
+        DateOnly? convertedTo = null,
+        string? clientCuc = null,
+        string? saleNumber = null)
+    {
+        var accepted = await dispatcher.SendAsync(
+            new ExportSalesCommand(
+                tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
+                clientCuc, saleNumber),
+            cancellationToken);
+
+        return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));
     }
 
     private static async Task<IResult> GetSaleByIdAsync(

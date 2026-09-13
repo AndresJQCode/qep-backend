@@ -7,7 +7,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
-using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -248,39 +247,10 @@ public sealed class QuotationExportApiTests
         Assert.Equal(1, updated);
     }
 
-    // Los workers de Notifications sí corren en el host de pruebas: el correo sale solo, y se
-    // espera con plazo, como en InvitationNotificationTests.
-    private static async Task<string?> WaitForEmailStatusAsync(
-        string connectionString, Guid recipientId, string templateRef)
-    {
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            await using var command = new NpgsqlCommand(
-                """
-                SELECT status FROM notifications.notifications
-                WHERE recipient_id = @recipientId AND template_ref = @templateRef
-                """,
-                connection);
-            command.Parameters.AddWithValue("recipientId", recipientId);
-            command.Parameters.AddWithValue("templateRef", templateRef);
-            if (await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) is string status)
-            {
-                return status;
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
-        }
-
-        return null;
-    }
-
     // Keyset y no offset (D8, hallazgo 11). Se lee de a una fila para tener un borde por
     // cotización, y entre lotes pasan los dos cambios que rompen el offset: una cotización nueva
     // (con offset, el lote siguiente repetiría la del borde) y una ya leída que sale del filtro
-    // (con offset, el lote siguiente saltearía una). Lo esperado son las que existían al empezar,
+    // (con offset, el lote siguiente saltaría una). Lo esperado son las que existían al empezar,
     // en el orden del export, una vez cada una.
     [Fact]
     public async Task RowsCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip()

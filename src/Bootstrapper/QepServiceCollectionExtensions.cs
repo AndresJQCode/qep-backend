@@ -342,6 +342,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListSalesQuery, SalePage>,
             ListSalesHandler>();
         services.AddScoped<
+            ICommandHandler<ExportSalesCommand, ExportJobAccepted>,
+            ExportSalesHandler>();
+        services.AddScoped<
             IQueryHandler<GetSaleByIdQuery, SaleDetailDto>,
             GetSaleByIdHandler>();
         services.AddScoped<
@@ -444,6 +447,7 @@ public static class QepServiceCollectionExtensions
         // cuando existen (cotizaciones y ventas).
         services.AddScoped<ExportJobRunner>();
         services.AddScoped<IExportJobProcessor, QuotationsExportProcessor>();
+        services.AddScoped<IExportJobProcessor, SalesExportProcessor>();
 
         // Reporting es el caso extremo del mismo patron (CAT-05): el modulo no tiene tablas
         // propias, asi que **todos** sus origenes de datos cruzan una frontera de modulo. Van

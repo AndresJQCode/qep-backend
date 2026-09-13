@@ -50,13 +50,9 @@ public sealed class QuotationsExportProcessor(
         var generatedAt = clock.UtcNow;
 
         using var workbook = writer.Create(SheetName, Columns);
-        var rowCount = 0;
-        QuotationExportCursor? after = null;
-        while (true)
-        {
-            // Keyset (D8): el lote siguiente arranca después de la última fila leída, no en un
-            // offset que una cotización nueva o anulada durante el export correría.
-            var batch = await repository.ListForExportAsync(
+        var rowCount = await ExportBatchLoop.WriteAllAsync<Quotation, QuotationExportCursor>(
+            workbook,
+            (after, limit, ct) => repository.ListForExportAsync(
                 job.TenantId,
                 filters.ClientId,
                 clientIds,
@@ -66,28 +62,16 @@ public sealed class QuotationsExportProcessor(
                 filters.CreatedTo,
                 filters.QuotationNumber,
                 after,
-                ExportJobLimits.BatchSize,
-                cancellationToken);
-
-            if (batch.Count > 0)
+                limit,
+                ct),
+            async (batch, ct) =>
             {
-                // Nombres y correos por lote: dos idas por cada mil filas, no una por fila.
                 var rows = await QuotationListing.ToListItemsAsync(
-                    customerLookup, advisorLookup, job.TenantId, batch, cancellationToken);
-                foreach (var row in rows)
-                {
-                    workbook.AppendRow(ToCells(row));
-                }
-
-                after = new QuotationExportCursor(batch[^1].CreatedAt, batch[^1].QuotationNumber);
-            }
-
-            rowCount += batch.Count;
-            if (batch.Count < ExportJobLimits.BatchSize)
-            {
-                break;
-            }
-        }
+                    customerLookup, advisorLookup, job.TenantId, batch, ct);
+                return rows.Select(ToCells);
+            },
+            quotation => new QuotationExportCursor(quotation.CreatedAt, quotation.QuotationNumber),
+            cancellationToken);
 
         // Había filas cuando se pidió (el EXISTS del request) y ya no: reintentar da lo mismo.
         if (rowCount == 0)

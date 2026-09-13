@@ -14,6 +14,7 @@ using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Exports;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Storage.Application;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -561,6 +562,35 @@ internal static class QuotationsApiHarness
             .Where(message => message.EventName == eventName)
             .OrderBy(message => message.OccurredAt)
             .ToListAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Los workers de Notifications sí corren en el host de pruebas: el correo sale solo, y se
+    // espera con plazo, como en InvitationNotificationTests.
+    public static async Task<string?> WaitForEmailStatusAsync(
+        string connectionString, Guid recipientId, string templateRef)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            await using var command = new NpgsqlCommand(
+                """
+                SELECT status FROM notifications.notifications
+                WHERE recipient_id = @recipientId AND template_ref = @templateRef
+                """,
+                connection);
+            command.Parameters.AddWithValue("recipientId", recipientId);
+            command.Parameters.AddWithValue("templateRef", templateRef);
+            if (await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) is string status)
+            {
+                return status;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return null;
     }
 
     private static async Task UpdateExportJobAsync(

@@ -837,11 +837,12 @@ Para AWS CLI se incluye la variante envuelta en `CORSRules` en
 
 ### Reportes exportados (`exports/`)
 
-La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y la del
-listado de cotizaciones (`POST /tenants/{tenantId}/quotations/export`) no devuelven el archivo:
-lo suben bajo el prefijo `exports/` del **bucket privado** y le mandan a quien la pidió un correo
-con una URL prefirmada. Clientes arma el Excel dentro del request; cotizaciones contesta `202` y
-lo encola en `quotations.export_jobs`, y `ExportJobWorker` lo arma en segundo plano con la clave
+La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y las de los
+listados de cotizaciones y ventas (`POST /tenants/{tenantId}/quotations/export`,
+`POST /tenants/{tenantId}/sales/export`) no devuelven el archivo: lo suben bajo el prefijo
+`exports/` del **bucket privado** y le mandan a quien la pidió un correo con una URL prefirmada.
+Clientes arma el Excel dentro del request; cotizaciones y ventas contestan `202` y lo encolan en
+`quotations.export_jobs`, y `ExportJobWorker` lo arma en segundo plano con la clave
 `exports/tenants/{tenantId}/jobs/{jobId}.xlsx` —un reintento pisa el mismo objeto—. La vigencia
 del enlace es `Storage:ExportUrlHours` (24 h por defecto), propia y no
 `Storage:PresignedUrlMinutes`: aquellas URLs las consume un navegador que ya está en pantalla, y
