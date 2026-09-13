@@ -21,24 +21,36 @@ public static class TenancySeeder
     public const string SeedTenantSlug = "origen-botanico";
     public const string SeedTenantDisplayName = "Origen botánico";
 
+    public static Task SeedTenantAsync(
+        this IServiceProvider services,
+        CancellationToken cancellationToken = default) =>
+        services.SeedTenantAsync(SeedTenantId, SeedTenantSlug, SeedTenantDisplayName, cancellationToken);
+
+    /// <summary>
+    /// Crea el tenant por id si no existe, por el dominio: rigen las mismas reglas de slug que en un
+    /// registro. La usan la semilla de arranque y la carga de exportación (spec 2026-09-13), cada una
+    /// con su id.
+    /// </summary>
     public static async Task SeedTenantAsync(
         this IServiceProvider services,
+        Guid tenantId,
+        string slug,
+        string displayName,
         CancellationToken cancellationToken = default)
     {
         await using var scope = services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
 
-        var tenantId = new TenantId(SeedTenantId);
-        if (await dbContext.Tenants.AnyAsync(
-            tenant => tenant.Id == tenantId, cancellationToken))
+        var id = new TenantId(tenantId);
+        if (await dbContext.Tenants.AnyAsync(tenant => tenant.Id == id, cancellationToken))
         {
             return;
         }
 
         dbContext.Tenants.Add(Tenant.Create(
-            tenantId,
-            SeedTenantSlug,
-            SeedTenantDisplayName,
+            id,
+            slug,
+            displayName,
             "es-CO",
             "America/Bogota",
             "yyyy-MM-dd",
@@ -59,24 +71,42 @@ public static class TenancySeeder
         Guid ownerUserId,
         CancellationToken cancellationToken = default)
     {
+        await services.SeedAdminMembershipAsync(
+            SeedTenantId, ownerUserId, Membership.RegistrationOrigin, cancellationToken);
+    }
+
+    /// <summary>
+    /// Crea una membresía admin ya en <c>Active</c> si ese usuario no tiene una en ese tenant, y
+    /// devuelve su id: es el <c>MemberId</c> al que apuntan advisor_id, created_by y converted_by.
+    /// </summary>
+    public static async Task<Guid> SeedAdminMembershipAsync(
+        this IServiceProvider services,
+        Guid tenantId,
+        Guid userId,
+        string origin,
+        CancellationToken cancellationToken = default)
+    {
         await using var scope = services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
 
-        var tenantId = new TenantId(SeedTenantId);
-        if (await dbContext.Memberships.AnyAsync(
-            membership => membership.TenantId == tenantId && membership.UserId == ownerUserId,
-            cancellationToken))
+        var tenant = new TenantId(tenantId);
+        var existing = await dbContext.Memberships.SingleOrDefaultAsync(
+            membership => membership.TenantId == tenant && membership.UserId == userId,
+            cancellationToken);
+        if (existing is not null)
         {
-            return;
+            return existing.Id.Value;
         }
 
-        dbContext.Memberships.Add(Membership.CreateActive(
+        var created = Membership.CreateActive(
             MembershipId.New(),
-            ownerUserId,
-            tenantId,
+            userId,
+            tenant,
             ["admin"],
-            Membership.RegistrationOrigin,
-            DateTimeOffset.UtcNow));
+            origin,
+            DateTimeOffset.UtcNow);
+        dbContext.Memberships.Add(created);
         await dbContext.SaveChangesAsync(cancellationToken);
+        return created.Id.Value;
     }
 }
