@@ -362,7 +362,9 @@ pero también exige `Seed:OwnerEmail`.
   `carga-export`: con 50 000 cotizaciones son unas 137 por día. El script de limpieza borra el
   historial, pero no la auditoría ni el outbox, que son un log inmutable. Por eso conviene apagar y
   limpiar apenas termines de medir.
-- **Es idempotente.** Si el tenant ya tiene cotizaciones, no siembra.
+- **Es idempotente.** Si el tenant ya tiene cotizaciones, no siembra. Por eso subir el número después
+  de una siembra completa no hace nada: el log sólo dice `skipped`. Para sembrar otra cantidad,
+  apágala y despliega, corre la limpieza y vuelve a prenderla con el número nuevo.
 
 Para probarla en local:
 
@@ -370,6 +372,13 @@ Para probarla en local:
 $env:Seed__ExportLoad__Quotations = "2000"
 $env:Seed__OwnerEmail = "<tu-email>"
 dotnet run --project src/Api --launch-profile http
+```
+
+Cuando termines, quita la variable de esa sesión de PowerShell. Si la dejas, un `dotnet test` que
+corras desde la misma sesión siembra en cada host de pruebas que no fije la clave:
+
+```powershell
+Remove-Item Env:Seed__ExportLoad__Quotations
 ```
 
 En producción se prende y se apaga con `Seed__ExportLoad__Quotations` en `k8s/prod-configMap.yaml`,

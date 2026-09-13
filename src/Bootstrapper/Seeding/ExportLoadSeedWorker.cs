@@ -36,7 +36,10 @@ public sealed partial class ExportLoadSeedWorker(
         Message = "Export load seed skipped: tenant '{TenantSlug}' already has quotations.")]
     private static partial void LogSkipped(ILogger logger, string tenantSlug);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Export load seed failed; nothing was committed.")]
+    // El tenant, el usuario, la membresía y el catálogo se commitean antes de la transacción masiva
+    // (ExportLoadSeeder), así que una falla sí puede dejarlos: el mensaje no puede decir que no quedó nada.
+    [LoggerMessage(Level = LogLevel.Error,
+        Message = "Export load seed failed; the bulk insert was rolled back (the tenant, user, membership and catalog may already exist). The next start retries.")]
     private static partial void LogFailed(ILogger logger, Exception exception);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

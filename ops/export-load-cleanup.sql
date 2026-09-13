@@ -7,6 +7,7 @@
 -- No borra:
 --   * el usuario dueño, que es la cuenta real de quien midió;
 --   * las filas de audit.entries, porque el log es inmutable;
+--   * las de tenancy.tenant_settings_change_log, que es un historial de cambios, igual que audit.entries;
 --   * los correos registrados en notifications.notifications ni los eventos del outbox;
 --   * los .xlsx de R2, que los borra la regla de lifecycle de exports/.
 --

@@ -74,6 +74,6 @@ data:
   # Seed__OwnerEmail. Repite el default de la imagen a propósito, igual que
   # Registration__PublicTenantSignupEnabled: es el interruptor que se prende para medir, y tenerlo acá
   # hace que prenderlo y apagarlo sean un diff de una línea que queda en la historia. Después de medir
-  # vuelve a "0" y RECIÉN AHÍ se corre ops/export-load-cleanup.sql
+  # vuelve a "0" y SÓLO ENTONCES se corre ops/export-load-cleanup.sql
   # (README § Carga sintética para medir la exportación).
   Seed__ExportLoad__Quotations: "0"
