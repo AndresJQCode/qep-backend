@@ -62,8 +62,11 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return (items, total);
     }
 
-    // Sin Count ni paginacion: el Excel se lleva todo lo que el filtro deja pasar, en el mismo
-    // orden que la tabla.
+    // Keyset sobre (CreatedAt, QuotationNumber), los dos descendentes: el orden de la tabla con el
+    // número —único por tenant— como desempate. El lote siguiente es "lo que viene después de la
+    // última fila leída" y no un offset, así que una cotización creada o que sale del filtro
+    // durante el export no repite ni saltea filas (spec 2026-09-12, D8). EF no compara tuplas: la
+    // condición va en su forma OR. La sirve IX_quotations_tenant_created_at_number.
     public async Task<IReadOnlyList<Quotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -73,11 +76,53 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         DateOnly? createdFrom,
         DateOnly? createdTo,
         string? quotationNumber,
-        CancellationToken cancellationToken) =>
-        await FilteredQuery(
-                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber)
+        QuotationExportCursor? after,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var query = FilteredQuery(
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+
+        if (after is not null)
+        {
+            var createdAt = after.CreatedAt;
+            var number = after.QuotationNumber;
+            // `string.Compare` se traduce a `<` sobre la columna, con su collation: la misma que
+            // usa el ORDER BY de abajo, así que corte y orden no se contradicen.
+            // CA1309/CA1310: la expresión la traduce EF a SQL con la collation de la columna; no
+            // corre ninguna cultura de .NET, y un StringComparison la volvería intraducible.
+#pragma warning disable CA1309
+#pragma warning disable CA1310
+            query = query.Where(quotation =>
+                quotation.CreatedAt < createdAt
+                || (quotation.CreatedAt == createdAt
+                    && string.Compare(quotation.QuotationNumber, number) < 0));
+#pragma warning restore CA1310
+#pragma warning restore CA1309
+        }
+
+        return await query
             .OrderByDescending(quotation => quotation.CreatedAt)
+            .ThenByDescending(quotation => quotation.QuotationNumber)
+            .Take(limit)
             .ToListAsync(cancellationToken);
+    }
+
+    // Un EXISTS sobre el mismo FilteredQuery: el pedido de exportación pregunta si hay algo sin
+    // traerse ninguna fila.
+    public Task<bool> AnyForExportAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        QuotationStatus? status,
+        DateOnly? createdFrom,
+        DateOnly? createdTo,
+        string? quotationNumber,
+        CancellationToken cancellationToken) =>
+        FilteredQuery(
+                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber)
+            .AnyAsync(cancellationToken);
 
     // Los filtros del listado y de su Excel salen de aca y de ningun otro lado: si cada camino
     // armara los suyos, tarde o temprano el archivo diria algo distinto de la pantalla.

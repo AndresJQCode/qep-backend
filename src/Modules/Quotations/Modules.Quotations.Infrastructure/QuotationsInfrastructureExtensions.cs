@@ -42,13 +42,13 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IExportJobQueue, ExportJobQueue>();
         services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
         services.AddHostedService<ExportJobWorker>();
+        // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
+        services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();
         services.AddScoped<IQuotationNumberGenerator, QuotationNumberGenerator>();
         services.AddScoped<ISaleRepository, SaleRepository>();
         services.AddScoped<ISaleNumberGenerator, SaleNumberGenerator>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
-        // El Excel del listado. ClosedXML se queda en esta capa: Application solo ve el puerto.
-        services.AddScoped<IQuotationExportWorkbookBuilder, ClosedXmlQuotationExportBuilder>();
 
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();

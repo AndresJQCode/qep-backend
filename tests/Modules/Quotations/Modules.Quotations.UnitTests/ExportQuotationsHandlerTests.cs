@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Application;
@@ -7,9 +8,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El Excel del listado de cotizaciones: los mismos filtros que la pantalla, sin paginar, y un
-/// rango de fechas obligatorio de a lo sumo un año como cota de volumen en lugar de un tope de
-/// filas.
+/// El pedido de exportación de cotizaciones (spec 2026-09-12, D4): valida en orden —permiso,
+/// rango, que haya filas, límite de pendientes— y recién entonces encola. Nada pesado pasa en el
+/// request: el Excel lo arma el worker.
 /// </summary>
 public sealed class ExportQuotationsHandlerTests
 {
@@ -22,35 +23,37 @@ public sealed class ExportQuotationsHandlerTests
     private static readonly DateOnly To = new(2026, 9, 12);
 
     [Fact]
-    public async Task ExportForAnotherTenantIsForbiddenAndReadsNothing()
+    public async Task ExportForAnotherTenantIsForbiddenAndEnqueuesNothing()
     {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
+        var repository = new StubQuotationListRepository(NewQuotation());
+        var queue = new InMemoryExportJobQueue();
         var handler = NewHandler(
-            repository, executionContext: new StubExecutionContext(SubjectId, Guid.CreateVersion7()));
+            repository, queue, executionContext: new StubExecutionContext(SubjectId, Guid.CreateVersion7()));
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken));
+            handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
 
         Assert.Equal("authorization.denied", error.Code);
-        Assert.Equal(0, repository.ExportCalls);
+        Assert.Equal(0, repository.AnyCalls);
+        Assert.Empty(queue.Jobs);
     }
 
     [Fact]
-    public async Task ExportWithoutTheReadPermissionIsForbiddenAndReadsNothing()
+    public async Task ExportWithoutTheReadPermissionIsForbiddenAndEnqueuesNothing()
     {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
+        var repository = new StubQuotationListRepository(NewQuotation());
+        var queue = new InMemoryExportJobQueue();
         var handler = NewHandler(
-            repository, executionContext: new PermissionlessExecutionContext(SubjectId, TenantId));
+            repository, queue, executionContext: new PermissionlessExecutionContext(SubjectId, TenantId));
 
-        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
 
-        Assert.Equal("authorization.denied", error.Code);
-        Assert.Equal(0, repository.ExportCalls);
+        Assert.Equal(0, repository.AnyCalls);
+        Assert.Empty(queue.Jobs);
     }
 
-    // Autorizar antes de validar, mismo criterio que el resto del modulo: a quien no puede
-    // exportar no se le contesta que su rango estaba mal.
+    // D4, paso 1 antes que el 2: a quien no puede exportar no se le contesta que su rango estaba mal.
     [Fact]
     public async Task ExportChecksThePermissionBeforeTheRange()
     {
@@ -59,198 +62,196 @@ public sealed class ExportQuotationsHandlerTests
             executionContext: new PermissionlessExecutionContext(SubjectId, TenantId));
 
         await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            handler.HandleAsync(
-                NewQuery(createdFrom: null, createdTo: null),
-                TestContext.Current.CancellationToken));
+            handler.HandleAsync(NewCommand(createdFrom: null, createdTo: null), TestContext.Current.CancellationToken));
     }
 
+    // D4, paso 2 antes que el 3: un rango inválido no llega a consultar la base.
     [Fact]
-    public async Task ExportWithoutCreatedFromIsRejectedOnThatField()
+    public async Task ExportWithARangeLongerThanOneYearIsRejectedBeforeReading()
     {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
+        var repository = new StubQuotationListRepository(NewQuotation());
         var handler = NewHandler(repository);
 
         var error = await Assert.ThrowsAsync<ValidationException>(() =>
             handler.HandleAsync(
-                NewQuery(createdFrom: null, To), TestContext.Current.CancellationToken));
-
-        Assert.Contains(error.Errors, failure => failure.PropertyName == "CreatedFrom");
-        Assert.Equal(0, repository.ExportCalls);
-    }
-
-    [Fact]
-    public async Task ExportWithoutCreatedToIsRejectedOnThatField()
-    {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
-        var handler = NewHandler(repository);
-
-        var error = await Assert.ThrowsAsync<ValidationException>(() =>
-            handler.HandleAsync(
-                NewQuery(From, createdTo: null), TestContext.Current.CancellationToken));
-
-        Assert.Contains(error.Errors, failure => failure.PropertyName == "CreatedTo");
-        Assert.Equal(0, repository.ExportCalls);
-    }
-
-    [Fact]
-    public async Task ExportWithCreatedFromAfterCreatedToIsRejected()
-    {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
-        var handler = NewHandler(repository);
-
-        var error = await Assert.ThrowsAsync<ValidationException>(() =>
-            handler.HandleAsync(
-                NewQuery(createdFrom: new DateOnly(2026, 9, 12), createdTo: new DateOnly(2026, 9, 11)),
+                NewCommand(createdFrom: new DateOnly(2025, 1, 1), createdTo: new DateOnly(2026, 1, 2)),
                 TestContext.Current.CancellationToken));
 
         Assert.Contains(error.Errors, failure => failure.PropertyName == "CreatedTo");
-        Assert.Equal(0, repository.ExportCalls);
-    }
-
-    [Fact]
-    public async Task ExportWithARangeLongerThanOneYearIsRejected()
-    {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
-        var handler = NewHandler(repository);
-
-        var error = await Assert.ThrowsAsync<ValidationException>(() =>
-            handler.HandleAsync(
-                NewQuery(createdFrom: new DateOnly(2025, 1, 1), createdTo: new DateOnly(2026, 1, 2)),
-                TestContext.Current.CancellationToken));
-
-        Assert.Contains(error.Errors, failure => failure.PropertyName == "CreatedTo");
-        Assert.Equal(0, repository.ExportCalls);
-    }
-
-    [Fact]
-    public async Task ExportAcceptsARangeOfExactlyOneYear()
-    {
-        var builder = new RecordingQuotationExportWorkbookBuilder();
-        var handler = NewHandler(
-            new StubQuotationListRepository(NewQuotation("QUO-2026-0001")), builder);
-
-        var file = await handler.HandleAsync(
-            NewQuery(createdFrom: new DateOnly(2025, 1, 1), createdTo: new DateOnly(2026, 1, 1)),
-            TestContext.Current.CancellationToken);
-
-        Assert.Same(builder.Result, file);
-    }
-
-    // Un archivo con solo la cabecera es peor que decir que no habia nada: mismo criterio que
-    // `reporting.export.empty` y `customers.export.empty`.
-    [Fact]
-    public async Task ExportWithNoMatchingRowsFailsAndBuildsNothing()
-    {
-        var builder = new RecordingQuotationExportWorkbookBuilder();
-        var handler = NewHandler(new StubQuotationListRepository(), builder);
-
-        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken));
-
-        Assert.Equal("quotation.export.empty", error.Code);
-        Assert.Null(builder.Rows);
-    }
-
-    // El NIT no vive en Quotation: si no resuelve a ningun cliente, la busqueda recibe una
-    // coleccion vacia -- "ninguna fila", no "sin filtro" -- y el Excel sale vacio.
-    [Fact]
-    public async Task ExportWithAClientNitThatMatchesNoCustomerFailsAsEmpty()
-    {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
-        var handler = NewHandler(repository);
-
-        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            handler.HandleAsync(
-                NewQuery(From, To, clientNit: "no-existe-este-nit"),
-                TestContext.Current.CancellationToken));
-
-        Assert.Equal("quotation.export.empty", error.Code);
-        var clientIds = repository.LastExportSearch?.ClientIds;
-        Assert.NotNull(clientIds);
-        Assert.Empty(clientIds);
-    }
-
-    [Fact]
-    public async Task ExportFiltersWithTheSameCriteriaAsTheList()
-    {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
-        var handler = NewHandler(repository);
-
-        await handler.HandleAsync(
-            new ExportQuotationsQuery(
-                TenantId, ClientId, AdvisorId.Value, "sent", From, To, ClientNit: null, "0001"),
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(
-            new RecordedExportSearch(
-                ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, From, To, "0001"),
-            repository.LastExportSearch);
+        Assert.Equal(0, repository.AnyCalls);
     }
 
     [Fact]
     public async Task ExportWithAnInvalidStatusFailsLikeTheList()
     {
-        var repository = new StubQuotationListRepository(NewQuotation("QUO-2026-0001"));
+        var repository = new StubQuotationListRepository(NewQuotation());
         var handler = NewHandler(repository);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            handler.HandleAsync(
-                NewQuery(From, To, status: "NotAStatus"), TestContext.Current.CancellationToken));
+            handler.HandleAsync(NewCommand(From, To, status: "NotAStatus"), TestContext.Current.CancellationToken));
 
         Assert.Equal("quotation.quotation.status_invalid", error.Code);
-        Assert.Equal(0, repository.ExportCalls);
+        Assert.Equal(0, repository.AnyCalls);
     }
 
-    // Cada fila del Excel dice el cliente y la asesora por nombre y correo, igual que la tabla:
-    // un id en una planilla no le sirve a nadie.
+    // D4, paso 3: enterarse de que no había nada después de esperar un correo es peor.
     [Fact]
-    public async Task ExportHandsTheBuilderRowsWithTheCustomerNameAndTheAdvisorEmail()
+    public async Task ExportWithNoMatchingRowsIsRejectedAndEnqueuesNothing()
     {
-        var builder = new RecordingQuotationExportWorkbookBuilder();
-        var handler = NewHandler(
-            new StubQuotationListRepository(NewQuotation("QUO-2026-0001")),
-            builder,
-            advisors: new StubQuotationAdvisorLookup("asesora@example.com"));
+        var queue = new InMemoryExportJobQueue();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var handler = NewHandler(new StubQuotationListRepository(), queue, unitOfWork);
 
-        var file = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
 
-        var row = Assert.Single(builder.Rows!);
-        Assert.Equal("QUO-2026-0001", row.QuotationNumber);
-        Assert.Equal("Ferretería El Tornillo", row.ClientName);
-        Assert.Equal("asesora@example.com", row.AdvisorEmail);
-        Assert.Equal(Now, builder.GeneratedAt);
-        Assert.Same(builder.Result, file);
+        Assert.Equal("quotation.export.empty", error.Code);
+        Assert.Empty(queue.Jobs);
+        Assert.Equal(0, unitOfWork.Saves);
     }
 
-    private static ExportQuotationsQuery NewQuery() => NewQuery(From, To);
+    // El NIT no vive en Quotation: si no resuelve a ningún cliente, la pregunta recibe una
+    // colección vacía —"ninguna fila", no "sin filtro"— y el pedido sale como vacío.
+    [Fact]
+    public async Task ExportWithAClientNitThatMatchesNoCustomerIsRejectedAsEmpty()
+    {
+        var repository = new StubQuotationListRepository(NewQuotation());
+        var handler = NewHandler(repository);
 
-    // Las fechas sin default a proposito: un `null` explicito es justo lo que ejercen las pruebas
-    // del rango obligatorio, y un default lo confundiria con "no lo pasaron".
-    private static ExportQuotationsQuery NewQuery(
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewCommand(From, To, clientNit: "no-existe-este-nit"), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.export.empty", error.Code);
+        Assert.NotNull(repository.LastExportSearch?.ClientIds);
+        Assert.Empty(repository.LastExportSearch.ClientIds);
+    }
+
+    // D4, paso 3 antes que el 4: sin filas se dice eso, aunque además esté en el límite.
+    [Fact]
+    public async Task ExportChecksForRowsBeforeThePendingLimit()
+    {
+        var queue = QueueWithPendingJobsOf(SubjectId, 3);
+        var handler = NewHandler(new StubQuotationListRepository(), queue);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.export.empty", error.Code);
+    }
+
+    // D4, paso 4: tres pendientes de la misma persona, contando los dos tipos.
+    [Fact]
+    public async Task ExportBeyondThePendingLimitIsRejectedAndEnqueuesNothing()
+    {
+        var queue = QueueWithPendingJobsOf(SubjectId, 3);
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var handler = NewHandler(new StubQuotationListRepository(NewQuotation()), queue, unitOfWork);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.export.pending_limit", error.Code);
+        Assert.Equal(3, queue.Jobs.Count);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task PendingExportsOfSomeoneElseDoNotCount()
+    {
+        var queue = QueueWithPendingJobsOf(Guid.CreateVersion7(), 3);
+        var handler = NewHandler(new StubQuotationListRepository(NewQuotation()), queue);
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, queue.Jobs.Count);
+    }
+
+    [Fact]
+    public async Task ExportEnqueuesAPendingJobWithTheValidatedFilters()
+    {
+        var queue = new InMemoryExportJobQueue();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var handler = NewHandler(new StubQuotationListRepository(NewQuotation()), queue, unitOfWork);
+
+        var accepted = await handler.HandleAsync(
+            new ExportQuotationsCommand(TenantId, ClientId, AdvisorId.Value, "sent", From, To, "900", "0001"),
+            TestContext.Current.CancellationToken);
+
+        var job = Assert.Single(queue.Jobs);
+        Assert.Equal(new ExportJobAccepted(job.Id, Now), accepted);
+        Assert.Equal(ExportJobKind.Quotations, job.Kind);
+        Assert.Equal(ExportJobStatus.Pending, job.Status);
+        Assert.Equal(TenantId, job.TenantId);
+        Assert.Equal(SubjectId, job.RequestedBy);
+        Assert.Equal(
+            new QuotationsExportFilters(ClientId, AdvisorId.Value, "sent", From, To, "900", "0001"),
+            JsonSerializer.Deserialize<QuotationsExportFilters>(job.Filters));
+        Assert.Equal(1, unitOfWork.Saves);
+    }
+
+    // Un año exacto vale (D3).
+    [Fact]
+    public async Task ExportAcceptsARangeOfExactlyOneYear()
+    {
+        var queue = new InMemoryExportJobQueue();
+        var handler = NewHandler(new StubQuotationListRepository(NewQuotation()), queue);
+
+        await handler.HandleAsync(
+            NewCommand(createdFrom: new DateOnly(2025, 1, 1), createdTo: new DateOnly(2026, 1, 1)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Single(queue.Jobs);
+    }
+
+    [Fact]
+    public async Task ExportAsksForRowsWithTheSameCriteriaAsTheList()
+    {
+        var repository = new StubQuotationListRepository(NewQuotation());
+        var handler = NewHandler(repository);
+
+        await handler.HandleAsync(
+            new ExportQuotationsCommand(TenantId, ClientId, AdvisorId.Value, "sent", From, To, ClientNit: null, "0001"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new RecordedExportSearch(ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, From, To, "0001"),
+            repository.LastExportSearch);
+    }
+
+    private static ExportQuotationsCommand NewCommand() => NewCommand(From, To);
+
+    // Las fechas sin default a propósito: un `null` explícito es justo lo que ejercen las pruebas
+    // del rango obligatorio.
+    private static ExportQuotationsCommand NewCommand(
         DateOnly? createdFrom,
         DateOnly? createdTo,
         string? status = null,
         string? clientNit = null) =>
-        new(
-            TenantId,
-            ClientId: null,
-            AdvisorId: null,
-            status,
-            createdFrom,
-            createdTo,
-            clientNit,
-            QuotationNumber: null);
+        new(TenantId, ClientId: null, AdvisorId: null, status, createdFrom, createdTo, clientNit, QuotationNumber: null);
+
+    private static InMemoryExportJobQueue QueueWithPendingJobsOf(Guid requestedBy, int count)
+    {
+        var queue = new InMemoryExportJobQueue();
+        for (var index = 0; index < count; index++)
+        {
+            // Alternados a propósito: el límite cuenta cotizaciones y ventas juntas.
+            var kind = index % 2 == 0 ? ExportJobKind.Quotations : ExportJobKind.Sales;
+            queue.Add(ExportJob.Enqueue(Guid.CreateVersion7(), TenantId, requestedBy, kind, "{}", Now));
+        }
+
+        return queue;
+    }
 
     private static StubQuotationCustomerLookup NewCustomerLookup() =>
         new(new QuotationCustomerRef(
             ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
             "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false));
 
-    private static Quotation NewQuotation(string number) =>
+    private static Quotation NewQuotation() =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
-            number,
+            "QUO-2026-0001",
             ClientId,
             AdvisorId,
             validUntil: null,
@@ -265,13 +266,13 @@ public sealed class ExportQuotationsHandlerTests
 
     private static ExportQuotationsHandler NewHandler(
         StubQuotationListRepository repository,
-        RecordingQuotationExportWorkbookBuilder? builder = null,
-        IExecutionContext? executionContext = null,
-        StubQuotationAdvisorLookup? advisors = null) =>
+        InMemoryExportJobQueue? queue = null,
+        CountingQuotationsUnitOfWork? unitOfWork = null,
+        IExecutionContext? executionContext = null) =>
         new(repository,
             NewCustomerLookup(),
-            advisors ?? new StubQuotationAdvisorLookup(),
-            builder ?? new RecordingQuotationExportWorkbookBuilder(),
+            queue ?? new InMemoryExportJobQueue(),
+            unitOfWork ?? new CountingQuotationsUnitOfWork(),
             new ExportQuotationsValidator(),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));

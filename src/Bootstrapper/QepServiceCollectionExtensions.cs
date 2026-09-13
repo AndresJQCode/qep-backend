@@ -295,8 +295,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListQuotationsQuery, QuotationPage>,
             ListQuotationsHandler>();
+        // Comando y no query desde la exportación asíncrona: encola un job (spec 2026-09-12).
         services.AddScoped<
-            IQueryHandler<ExportQuotationsQuery, QuotationExportFile>,
+            ICommandHandler<ExportQuotationsCommand, ExportJobAccepted>,
             ExportQuotationsHandler>();
         services.AddScoped<
             IQueryHandler<ListQuotationHistoryQuery, IReadOnlyList<QuotationHistoryEntryDto>>,
@@ -412,6 +413,9 @@ public static class QepServiceCollectionExtensions
         // Y el mismo patrón entre `customers` y `storage`, para dejar el Excel exportado en el
         // bucket y firmar su enlace de descarga.
         services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
+
+        // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
+        services.AddScoped<IExportFileStorage, ExportFileStorage>();
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
         services.AddScoped<IQuotationPdfProvider, QuotationPdfProvider>();
 
@@ -439,6 +443,7 @@ public static class QepServiceCollectionExtensions
         // que cada uno tenga su DbContext limpio. Los procesadores por kind se registran con él
         // cuando existen (cotizaciones y ventas).
         services.AddScoped<ExportJobRunner>();
+        services.AddScoped<IExportJobProcessor, QuotationsExportProcessor>();
 
         // Reporting es el caso extremo del mismo patron (CAT-05): el modulo no tiene tablas
         // propias, asi que **todos** sus origenes de datos cruzan una frontera de modulo. Van

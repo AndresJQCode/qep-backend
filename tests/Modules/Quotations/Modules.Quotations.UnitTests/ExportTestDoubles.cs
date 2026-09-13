@@ -115,3 +115,58 @@ internal sealed class MutableClock(DateTimeOffset now) : IClock
 {
     public DateTimeOffset UtcNow { get; set; } = now;
 }
+
+/// <summary>Anota lo que se escribe en vez de armar un Excel: lo que verifican las pruebas de los
+/// procesadores es qué filas y en qué orden; la forma de la hoja la cubre
+/// OpenXmlExportWorkbookWriterTests.</summary>
+internal sealed class RecordingExportWorkbookWriter : IExportWorkbookWriter
+{
+    public const string CompletedPath = "recorded-export.xlsx";
+
+    public string? SheetName { get; private set; }
+
+    public IReadOnlyList<ExportColumn> Columns { get; private set; } = [];
+
+    public List<IReadOnlyList<ExportCell>> Rows { get; } = [];
+
+    public bool Disposed { get; private set; }
+
+    public IExportWorkbook Create(string sheetName, IReadOnlyList<ExportColumn> columns)
+    {
+        SheetName = sheetName;
+        Columns = columns;
+        return new RecordingWorkbook(this);
+    }
+
+    private sealed class RecordingWorkbook(RecordingExportWorkbookWriter owner) : IExportWorkbook
+    {
+        public void AppendRow(IReadOnlyList<ExportCell> cells) => owner.Rows.Add(cells);
+
+        public string Complete() => CompletedPath;
+
+        public void Dispose() => owner.Disposed = true;
+    }
+}
+
+internal sealed record RecordedUpload(Guid TenantId, Guid JobId, string FileName, string FilePath);
+
+internal sealed class RecordingExportFileStorage : IExportFileStorage
+{
+    public RecordedUpload? Upload { get; private set; }
+
+    public Exception? Failure { get; set; }
+
+    public Task<ExportFileUpload> UploadAsync(
+        Guid tenantId, Guid jobId, string fileName, string filePath, CancellationToken cancellationToken)
+    {
+        if (Failure is not null)
+        {
+            return Task.FromException<ExportFileUpload>(Failure);
+        }
+
+        Upload = new RecordedUpload(tenantId, jobId, fileName, filePath);
+        return Task.FromResult(new ExportFileUpload(
+            $"https://r2.test/exports/tenants/{tenantId:N}/jobs/{jobId:N}.xlsx",
+            StubExportJobProcessor.LinkExpiresAt));
+    }
+}
