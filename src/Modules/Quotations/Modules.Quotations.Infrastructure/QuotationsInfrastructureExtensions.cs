@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Excel;
 using Modules.Quotations.Infrastructure.Expiration;
+using Modules.Quotations.Infrastructure.Exports;
 using Modules.Quotations.Infrastructure.Pdf;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Quotations.Infrastructure.Whatsapp;
@@ -36,6 +37,11 @@ public static class QuotationsInfrastructureExtensions
         // los DbContextOptions que registro AddDbContext. Ver IQuotationSendFailureLog.
         services.AddScoped<IQuotationSendFailureLog, QuotationSendFailureLog>();
         services.AddScoped<IQuotationAuditPublisher, QuotationAuditPublisher>();
+        // La cola de exportaciones (spec 2026-09-12): la tabla, la toma con SKIP LOCKED y los dos
+        // eventos para Notifications. El runner que los usa se registra en Bootstrapper.
+        services.AddScoped<IExportJobQueue, ExportJobQueue>();
+        services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
+        services.AddHostedService<ExportJobWorker>();
         services.AddScoped<IQuotationNumberGenerator, QuotationNumberGenerator>();
         services.AddScoped<ISaleRepository, SaleRepository>();
         services.AddScoped<ISaleNumberGenerator, SaleNumberGenerator>();

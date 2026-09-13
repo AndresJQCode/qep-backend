@@ -435,6 +435,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
 
+        // El tick del worker de exportaciones. Scoped: ExportJobWorker abre un scope por job para
+        // que cada uno tenga su DbContext limpio. Los procesadores por kind se registran con él
+        // cuando existen (cotizaciones y ventas).
+        services.AddScoped<ExportJobRunner>();
+
         // Reporting es el caso extremo del mismo patron (CAT-05): el modulo no tiene tablas
         // propias, asi que **todos** sus origenes de datos cruzan una frontera de modulo. Van
         // despues de AddQuotationsInfrastructure, AddCustomersInfrastructure,

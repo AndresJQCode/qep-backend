@@ -2,13 +2,17 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Modules.Catalog.Application;
 using Modules.Companies.Application;
 using Modules.Customers.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Quotations.Infrastructure.Exports;
+using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Storage.Application;
 using Testcontainers.PostgreSql;
 
@@ -488,6 +492,90 @@ internal static class QuotationsApiHarness
         return body;
     }
 
+    /// <summary>Reemplaza los procesadores de exportación por los de la prueba. Los reales se
+    /// sacan primero: dos del mismo kind hacen explotar al runner al construirse.</summary>
+    public static WebApplicationFactory<Program> WithExportProcessors(
+        this WebApplicationFactory<Program> factory, params IExportJobProcessor[] processors) =>
+        factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IExportJobProcessor>();
+            foreach (var processor in processors)
+            {
+                services.AddSingleton(processor);
+            }
+        }));
+
+    public static async Task<Guid> EnqueueExportJobAsync(
+        WebApplicationFactory<Program> factory,
+        Guid tenantId,
+        Guid requestedBy,
+        ExportJobKind kind = ExportJobKind.Quotations,
+        string filters = "{}")
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var job = ExportJob.Enqueue(
+            Guid.CreateVersion7(), tenantId, requestedBy, kind, filters, DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IExportJobQueue>().Add(job);
+        await scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+        return job.Id;
+    }
+
+    /// <summary>Un tick del worker, a mano: el hosted service no corre en las pruebas (ver
+    /// <see cref="QepApiFactory"/>), así que el orden de los ticks lo decide la prueba.</summary>
+    public static async Task<ExportJobRunOutcome> RunExportJobAsync(WebApplicationFactory<Program> factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<ExportJobRunner>()
+            .RunNextAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static async Task<ExportJob> FindExportJobAsync(
+        WebApplicationFactory<Program> factory, Guid jobId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return await dbContext.ExportJobs
+            .AsNoTracking()
+            .SingleAsync(job => job.Id == jobId, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Mueve el próximo intento al pasado directo en la base: el backoff es de minutos y
+    /// el reloj del host no se corre por prueba. Mismo criterio que BackdateAsync.</summary>
+    public static Task MakeExportJobDueAsync(WebApplicationFactory<Program> factory, Guid jobId) =>
+        UpdateExportJobAsync(factory, jobId, setters =>
+            setters.SetProperty(job => job.NextAttemptAt, DateTimeOffset.UtcNow.AddSeconds(-1)));
+
+    /// <summary>Simula un worker muerto: el lease queda vencido sin que nadie cierre el job.</summary>
+    public static Task ExpireExportLeaseAsync(WebApplicationFactory<Program> factory, Guid jobId) =>
+        UpdateExportJobAsync(factory, jobId, setters =>
+            setters.SetProperty(job => job.LockedUntil, DateTimeOffset.UtcNow.AddSeconds(-1)));
+
+    public static async Task<IReadOnlyList<QuotationsOutboxMessage>> OutboxMessagesAsync(
+        WebApplicationFactory<Program> factory, string eventName)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return await dbContext.Outbox
+            .AsNoTracking()
+            .Where(message => message.EventName == eventName)
+            .OrderBy(message => message.OccurredAt)
+            .ToListAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task UpdateExportJobAsync(
+        WebApplicationFactory<Program> factory,
+        Guid jobId,
+        Action<Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder<ExportJob>> setters)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var updated = await dbContext.ExportJobs
+            .Where(job => job.Id == jobId)
+            .ExecuteUpdateAsync(setters, TestContext.Current.CancellationToken);
+        Assert.Equal(1, updated);
+    }
+
     private sealed record RegisterTenantResponseDto(Guid TenantId, Guid OwnerUserId);
 
     private sealed record GeographyDepartmentDto(Guid Id, string DivipolaCode, string Name);
@@ -533,7 +621,7 @@ internal static class QuotationsApiHarness
 
     private sealed record UploadSessionResponseDto(Guid FileResourceId, string UploadUrl, string StorageKey);
 
-    public sealed class QepApiFactory(string connectionString)
+    public sealed class QepApiFactory(string connectionString, bool runExportWorker = false)
         : WebApplicationFactory<Program>
     {
         /// <summary>Doble de <c>IObjectStorage</c> en memoria, mismo mecanismo que
@@ -583,6 +671,21 @@ internal static class QuotationsApiHarness
                 // publicar el PDF no debe darse por bueno. Estas pruebas no ejercitan R2.
                 services.RemoveAll<IQuotationPdfStorage>();
                 services.AddSingleton<IQuotationPdfStorage, StubPdfStorage>();
+
+                // El worker de exportaciones toma jobs cada 5 s por su cuenta: en una prueba
+                // competiría con el tick que la prueba corre a mano (RunExportJobAsync) y la
+                // volvería no determinista. Sólo lo deja la prueba que ejerce el worker.
+                if (!runExportWorker)
+                {
+                    var exportWorkers = services
+                        .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                            && descriptor.ImplementationType == typeof(ExportJobWorker))
+                        .ToList();
+                    foreach (var descriptor in exportWorkers)
+                    {
+                        services.Remove(descriptor);
+                    }
+                }
             });
         }
     }
