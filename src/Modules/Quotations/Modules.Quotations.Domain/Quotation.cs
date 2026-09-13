@@ -62,6 +62,8 @@ public sealed class Quotation
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
+        PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
+        PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         Currency = BillingAccount is null
             ? QuotationCurrencies.Default
@@ -239,15 +241,31 @@ public sealed class Quotation
     /// </summary>
     public bool BillsToFinalConsumer { get; private set; }
 
-    /// <summary>Si la retención en la fuente se aplica a esta cotización: el cliente la practica
-    /// y la factura no sale a consumidor final, que no la lleva. Es lo que usa
-    /// <see cref="RecalculateTotals"/>; el snapshot del cliente queda aparte.</summary>
-    public bool AppliesRetention => CustomerWithRetention && !BillsToFinalConsumer;
+    /// <summary>Si quien recibe la factura practica retención en la fuente, cuando
+    /// <see cref="Billing"/> trae datos propios — nadie más lo sabe con datos propios, así que se
+    /// pregunta al armar la cotización (<see cref="QuotationParties.BillingWithRetention"/>). Null
+    /// mientras <see cref="Billing"/> sigue los del cliente (ahí manda
+    /// <see cref="CustomerWithRetention"/>) o mientras no se contestó. Es lo que usa
+    /// <see cref="AppliesRetention"/> cuando hay parte propia.</summary>
+    public bool? PartyWithRetention { get; private set; }
 
-    /// <summary>Si el excedente de IVA exime a esta cotización: el cliente lo tiene y la factura
-    /// no sale a consumidor final, que paga el IVA. Es lo que usa <see cref="RecalculateTotals"/>
-    /// y lo que tiene que leer quien imprima "exento".</summary>
-    public bool AppliesVatSurplus => CustomerVatSurplus && !BillsToFinalConsumer;
+    /// <summary>Mismo criterio que <see cref="PartyWithRetention"/> pero para el excedente de IVA
+    /// (<see cref="QuotationParties.BillingVatSurplus"/> / <see cref="CustomerVatSurplus"/>).</summary>
+    public bool? PartyVatSurplus { get; private set; }
+
+    /// <summary>Si la retención en la fuente se aplica a esta cotización. Con datos propios de
+    /// facturación manda lo que se contestó ahí (<see cref="PartyWithRetention"/>, false mientras
+    /// no se conteste); con los datos del cliente, manda <see cref="CustomerWithRetention"/>. En
+    /// ambos casos, no a consumidor final. Es lo que usa <see cref="RecalculateTotals"/>.</summary>
+    public bool AppliesRetention =>
+        (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention) && !BillsToFinalConsumer;
+
+    /// <summary>Si el excedente de IVA exime a esta cotización, con el mismo criterio de fuente
+    /// que <see cref="AppliesRetention"/> pero para <see cref="PartyVatSurplus"/> /
+    /// <see cref="CustomerVatSurplus"/>. Es lo que usa <see cref="RecalculateTotals"/> y lo que
+    /// tiene que leer quien imprima "exento".</summary>
+    public bool AppliesVatSurplus =>
+        (Billing is not null ? PartyVatSurplus ?? false : CustomerVatSurplus) && !BillsToFinalConsumer;
 
     /// <summary>
     /// Si la cotización se editó desde la última vez que se envió. <see cref="Send"/> deja
@@ -388,6 +406,8 @@ public sealed class Quotation
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
+        PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
+        PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         ApplyBillingAccount(billingAccount, repricing, occurredAt);
         Touch(updatedBy, occurredAt);
     }
@@ -463,6 +483,10 @@ public sealed class Quotation
         // Facturar a consumidor final se decidió mirando al cliente anterior: el nuevo arranca
         // con la facturación por defecto, y con su retención/excedente de IVA aplicados.
         BillsToFinalConsumer = false;
+        // Las partes se resetean a Empty arriba: sin fila de facturación propia, estos dos
+        // vuelven a "sin contestar" — lo que responda el cliente nuevo lo trae CustomerWithRetention.
+        PartyWithRetention = null;
+        PartyVatSurplus = null;
         CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
         Touch(updatedBy, occurredAt);
@@ -605,6 +629,17 @@ public sealed class Quotation
                 "quotation.shipping.party_incomplete",
                 "The shipping party must have all its fields filled before converting to a sale.");
         }
+
+        // Con datos propios de facturación nadie más dice si hay retención o excedente de IVA:
+        // null es "todavía no se contestó", y una venta no puede nacer con esa pregunta abierta
+        // (a diferencia de con los datos del cliente, donde CustomerWithRetention/VatSurplus ya
+        // la responden).
+        if (Billing is not null && (PartyWithRetention is null || PartyVatSurplus is null))
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.tax_profile_required",
+                "The billing party must state whether it applies withholding tax and VAT surplus before converting to a sale.");
+        }
     }
 
     /// <summary>
@@ -619,7 +654,8 @@ public sealed class Quotation
         && ValidUntil is not null
         && BillingAccount is not null
         && (Billing is not { } billing || billing.IsComplete)
-        && (Shipping is not { } shipping || shipping.IsComplete);
+        && (Shipping is not { } shipping || shipping.IsComplete)
+        && (Billing is null || (PartyWithRetention is not null && PartyVatSurplus is not null));
 
     /// <summary>
     /// Vuelve a tomar del cliente maestro <see cref="CustomerWithRetention"/> y

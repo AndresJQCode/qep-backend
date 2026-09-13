@@ -99,6 +99,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("customer_with_retention");
         quotation.Property(value => value.CustomerVatSurplus)
             .HasColumnName("customer_vat_surplus");
+        quotation.Property(value => value.PartyWithRetention)
+            .HasColumnName("party_with_retention");
+        quotation.Property(value => value.PartyVatSurplus)
+            .HasColumnName("party_vat_surplus");
         quotation.Property(value => value.RetentionAmount)
             .HasColumnName("retention_amount")
             .HasPrecision(14, 2);

@@ -12,6 +12,9 @@ public sealed class SaleApiTests
     private static string SaleUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/sale";
 
+    private static string SaleProofsUrl(Guid tenantId, Guid quotationId) =>
+        $"{SaleUrl(tenantId, quotationId)}/proofs";
+
     // Bug real, 2026-09-12: el editor de cotizaciones dejo de pedir la forma de pago hace
     // rato (ver `UpdateQuotationRequest` en el frontend), asi que toda cotizacion nueva la
     // tiene en null -- pero `EnsureConvertibleToSale` seguia exigiendola, y con eso "Convertir
@@ -349,6 +352,79 @@ public sealed class SaleApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    // A pedido (2026-09): "Aprobar venta" se bloquea mientras el pago no esta completo, y esta
+    // ruta es la forma de destrabarlo sin recrear la venta -- cargar lo que falto al convertir.
+    [Fact]
+    public async Task AddPaymentProofsAddsThemAndUpdatesThePaymentStatus()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            SaleProofsUrl(tenantId, quotation.Id),
+            new AddSalePaymentProofsRequest(
+                "FullPaymentReceived",
+                [new SalePaymentProofRequest(proofFileId, quotation.Total)],
+                "Pago completado por transferencia"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var sale = await response.Content.ReadFromJsonAsync<SaleResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(sale);
+        Assert.Equal("FullPaymentReceived", sale.PaymentStatus);
+        Assert.Equal("Pago completado por transferencia", sale.Notes);
+        var proof = Assert.Single(sale.PaymentProofs);
+        Assert.Equal(proofFileId, proof.FileId);
+        Assert.Equal(quotation.Total, proof.Amount);
+    }
+
+    // Aprobada, la venta es el respaldo de un cobro que alguien ya reviso con lo que habia en
+    // ese momento: sumarle comprobantes ahi adentro cambiaria lo que esa persona dio por bueno.
+    [Fact]
+    public async Task AddPaymentProofsRejectsAnAlreadyApprovedSale()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var firstProofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest(
+                "FullPaymentReceived", null, [new SalePaymentProofRequest(firstProofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+        var approve = await client.PostAsync(
+            $"{SaleUrl(tenantId, quotation.Id)}/approve",
+            null,
+            TestContext.Current.CancellationToken);
+        approve.EnsureSuccessStatusCode();
+
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            SaleProofsUrl(tenantId, quotation.Id),
+            new AddSalePaymentProofsRequest(
+                "FullPaymentReceived", [new SalePaymentProofRequest(proofFileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
     /// <summary>Una edicion cualquiera sobre la cotizacion ya enviada: mueve UpdatedAt por

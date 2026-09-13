@@ -11,6 +11,7 @@ public sealed class SaleTests
 
     private static Sale NewSale(
         SalePaymentStatus paymentStatus = SalePaymentStatus.FullPaymentReceived,
+        string? notes = null,
         IReadOnlyCollection<SalePaymentProofInput>? proofs = null) =>
         Sale.Create(
             SaleId.New(),
@@ -18,7 +19,7 @@ public sealed class SaleTests
             "VEN-2026-0001",
             QuotationId,
             paymentStatus,
-            notes: null,
+            notes,
             ConvertedBy,
             proofs ?? [new SalePaymentProofInput(Guid.CreateVersion7(), 100_000m)],
             Now);
@@ -106,5 +107,101 @@ public sealed class SaleTests
         ]);
 
         Assert.Equal(2, sale.PaymentProofs.Count);
+    }
+
+    // A pedido (2026-09): "Aprobar venta" se bloquea mientras el pago no está completo, y esto
+    // es la forma de destrabarlo sin recrear la venta.
+    [Fact]
+    public void AddPaymentProofsSumsProofsAndUpdatesThePaymentStatus()
+    {
+        var sale = NewSale(
+            paymentStatus: SalePaymentStatus.PaymentPending, proofs: []);
+        var newFileId = Guid.CreateVersion7();
+        var later = Now.AddDays(1);
+
+        sale.AddPaymentProofs(
+            [new SalePaymentProofInput(newFileId, 80_000m)],
+            SalePaymentStatus.FullPaymentReceived,
+            "Pago completado por transferencia",
+            ConvertedBy,
+            later);
+
+        var proof = Assert.Single(sale.PaymentProofs);
+        Assert.Equal(newFileId, proof.FileId);
+        Assert.Equal(80_000m, proof.Amount);
+        Assert.Equal(SalePaymentStatus.FullPaymentReceived, sale.PaymentStatus);
+        Assert.Equal("Pago completado por transferencia", sale.Notes);
+        Assert.Equal(later, sale.UpdatedAt);
+        Assert.Equal(2, sale.Version);
+    }
+
+    // La pantalla precarga la nota con lo que ya había: mandar null (nadie tocó el campo) no
+    // tiene por qué borrarla, pero tampoco hay forma de que este método lo sepa -- reemplaza
+    // entero, como el resto de sus datos. Se deja explícito para que un cambio futuro no lo
+    // convierta sin querer en "conservar si es null".
+    [Fact]
+    public void AddPaymentProofsReplacesTheNotesEntirelyEvenToNull()
+    {
+        var sale = NewSale(
+            paymentStatus: SalePaymentStatus.PaymentPending,
+            notes: "Nota original",
+            proofs: []);
+
+        sale.AddPaymentProofs(
+            [new SalePaymentProofInput(Guid.CreateVersion7(), 50_000m)],
+            SalePaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1));
+
+        Assert.Null(sale.Notes);
+    }
+
+    [Fact]
+    public void AddPaymentProofsKeepsProofsAlreadyThere()
+    {
+        var existingFileId = Guid.CreateVersion7();
+        var sale = NewSale(proofs: [new SalePaymentProofInput(existingFileId, 50_000m)]);
+
+        sale.AddPaymentProofs(
+            [new SalePaymentProofInput(Guid.CreateVersion7(), 50_000m)],
+            SalePaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1));
+
+        Assert.Equal(2, sale.PaymentProofs.Count);
+        Assert.Contains(sale.PaymentProofs, proof => proof.FileId == existingFileId);
+    }
+
+    [Fact]
+    public void AddPaymentProofsRejectsAnEmptyBatch()
+    {
+        var sale = NewSale();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.AddPaymentProofs(
+                [], SalePaymentStatus.FullPaymentReceived, null, ConvertedBy, Now));
+
+        Assert.Equal("sale.sale.payment_proof_required", error.Code);
+    }
+
+    // Aprobada, la venta es el respaldo de un cobro que alguien ya revisó: sumarle
+    // comprobantes ahí adentro cambiaría lo que esa persona dio por bueno.
+    [Fact]
+    public void AddPaymentProofsRejectsAnAlreadyApprovedSale()
+    {
+        var sale = NewSale();
+        sale.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.AddPaymentProofs(
+                [new SalePaymentProofInput(Guid.CreateVersion7(), 10_000m)],
+                SalePaymentStatus.FullPaymentReceived,
+                null,
+                ConvertedBy,
+                Now.AddDays(1)));
+
+        Assert.Equal("sale.sale.not_pending", error.Code);
     }
 }

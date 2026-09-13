@@ -272,6 +272,8 @@ public sealed class QuotationPdfDocumentMapperTests
         null,
         [],
         false,
+        null,
+        null,
         false,
         false,
         null,
