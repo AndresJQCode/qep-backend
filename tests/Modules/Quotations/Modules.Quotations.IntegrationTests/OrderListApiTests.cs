@@ -15,7 +15,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 public sealed class OrderListApiTests
 {
-    private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/sales";
+    private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
     [Fact]
     public async Task ListReturnsTheOrderWithItsClientAdvisorAndTotalsResolved()
@@ -35,7 +35,7 @@ public sealed class OrderListApiTests
         Assert.NotNull(page);
         Assert.Equal(1, page.Total);
         var row = Assert.Single(page.Items);
-        Assert.StartsWith($"VEN-{DateTime.UtcNow.Year}-", row.SaleNumber, StringComparison.Ordinal);
+        Assert.StartsWith($"VEN-{DateTime.UtcNow.Year}-", row.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(quotation.Id, row.QuotationId);
         Assert.Equal(quotation.QuotationNumber, row.QuotationNumber);
         Assert.Equal(clientId, row.ClientId);
@@ -90,11 +90,11 @@ public sealed class OrderListApiTests
         await ConvertToOrderAsync(client, tenantId, second.Id);
 
         var page = await client.GetFromJsonAsync<OrdersPageResponse>(
-            $"{OrdersUrl(tenantId)}?saleNumber={firstOrder.SaleNumber}",
+            $"{OrdersUrl(tenantId)}?orderNumber={firstOrder.OrderNumber}",
             TestContext.Current.CancellationToken);
 
         Assert.NotNull(page);
-        Assert.Equal(firstOrder.SaleNumber, Assert.Single(page.Items).SaleNumber);
+        Assert.Equal(firstOrder.OrderNumber, Assert.Single(page.Items).OrderNumber);
     }
 
     // El CUC no vive en el pedido ni en la cotizacion: el handler lo resuelve a ids contra
@@ -134,7 +134,7 @@ public sealed class OrderListApiTests
         var approved = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         await ConvertToOrderAsync(client, tenantId, approved.Id);
         (await client.PostAsync(
-            $"{QuotationsUrl(tenantId)}/{approved.Id}/sale/approve",
+            $"{QuotationsUrl(tenantId)}/{approved.Id}/order/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         var pending = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
@@ -164,7 +164,7 @@ public sealed class OrderListApiTests
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(problem);
-        Assert.Equal("sale.sale.status_invalid", problem.Code);
+        Assert.Equal("order.order.status_invalid", problem.Code);
     }
 
     [Fact]
@@ -201,9 +201,9 @@ public sealed class OrderListApiTests
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
 
         Assert.NotNull(detail);
-        Assert.Equal(order.Id, detail.Sale.Id);
-        Assert.Equal(order.SaleNumber, detail.Sale.SaleNumber);
-        Assert.Equal("Pending", detail.Sale.Status);
+        Assert.Equal(order.Id, detail.Order.Id);
+        Assert.Equal(order.OrderNumber, detail.Order.OrderNumber);
+        Assert.Equal("Pending", detail.Order.Status);
         // La cotizacion llega compuesta, igual que en su propio detalle: cliente resuelto y
         // lineas con el nombre del producto, que es lo que la pantalla pinta.
         Assert.Equal(quotation.Id, detail.Quotation.Id);
@@ -235,7 +235,7 @@ public sealed class OrderListApiTests
         HttpClient client, Guid tenantId, Guid quotationId)
     {
         var response = await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotationId}/sale",
+            $"{QuotationsUrl(tenantId)}/{quotationId}/order",
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();

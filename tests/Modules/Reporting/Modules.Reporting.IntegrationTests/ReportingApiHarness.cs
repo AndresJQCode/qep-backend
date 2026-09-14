@@ -362,7 +362,7 @@ internal static class ReportingApiHarness
     {
         var proofFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/sale",
+            $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest(
                 paymentStatus,
                 "Pago verificado",

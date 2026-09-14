@@ -115,8 +115,8 @@ public sealed class Order
         if (Status != OrderStatus.Pending)
         {
             throw new QuotationsDomainException(
-                "sale.sale.not_pending",
-                "Only a pending sale can be approved.");
+                "order.order.not_pending",
+                "Only a pending order can be approved.");
         }
 
         Status = OrderStatus.Approved;
@@ -160,14 +160,14 @@ public sealed class Order
         if (Status != OrderStatus.Pending)
         {
             throw new QuotationsDomainException(
-                "sale.sale.not_pending",
-                "Payment proofs can only be added to a pending sale.");
+                "order.order.not_pending",
+                "Payment proofs can only be added to a pending order.");
         }
 
         if (proofs.Count == 0 && updatedProofs.Count == 0)
         {
             throw new QuotationsDomainException(
-                "sale.sale.payment_proof_required",
+                "order.order.payment_proof_required",
                 "At least one payment proof is required.");
         }
 
@@ -175,8 +175,8 @@ public sealed class Order
         {
             var proof = _paymentProofs.FirstOrDefault(candidate => candidate.Id == update.ProofId)
                 ?? throw new QuotationsDomainException(
-                    "sale.payment_proof.not_found",
-                    $"Payment proof '{update.ProofId}' was not found on this sale.");
+                    "order.payment_proof.not_found",
+                    $"Payment proof '{update.ProofId}' was not found on this order.");
 
             proof.UpdateAmount(update.Amount);
         }
@@ -202,7 +202,7 @@ public sealed class Order
         if (proofs.Count == 0 && PaymentStatus != OrderPaymentStatus.PaymentPending)
         {
             throw new QuotationsDomainException(
-                "sale.sale.payment_proof_required",
+                "order.order.payment_proof_required",
                 "At least one payment proof is required unless the payment status is pending.");
         }
 
@@ -218,15 +218,15 @@ public sealed class Order
         if (string.IsNullOrWhiteSpace(orderNumber))
         {
             throw new QuotationsDomainException(
-                "sale.sale.number_required",
-                "The sale number is required.");
+                "order.order.number_required",
+                "The order number is required.");
         }
 
         var trimmed = orderNumber.Trim();
         return trimmed.Length > OrderNumberMaxLength
             ? throw new QuotationsDomainException(
-                "sale.sale.number_too_long",
-                $"The sale number cannot exceed {OrderNumberMaxLength} characters.")
+                "order.order.number_too_long",
+                $"The order number cannot exceed {OrderNumberMaxLength} characters.")
             : trimmed;
     }
 
@@ -240,8 +240,8 @@ public sealed class Order
         var trimmed = notes.Trim();
         return trimmed.Length > NotesMaxLength
             ? throw new QuotationsDomainException(
-                "sale.sale.notes_too_long",
-                $"The sale notes cannot exceed {NotesMaxLength} characters.")
+                "order.order.notes_too_long",
+                $"The order notes cannot exceed {NotesMaxLength} characters.")
             : trimmed;
     }
 }

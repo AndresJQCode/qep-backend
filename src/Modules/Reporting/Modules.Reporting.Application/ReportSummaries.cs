@@ -15,7 +15,7 @@ namespace Modules.Reporting.Application;
 /// tabla hablen de conjuntos distintos.
 /// </summary>
 public sealed record OrdersReportSummaryDto(
-    int SaleCount,
+    int OrderCount,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total,

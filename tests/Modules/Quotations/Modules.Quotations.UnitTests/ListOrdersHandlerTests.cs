@@ -109,7 +109,7 @@ public sealed class ListOrdersHandlerTests
     // Texto libre por query string: un estado que no existe es un 422 con código de dominio, no
     // un filtro que en silencio no devuelve nada.
     [Theory]
-    [InlineData("NotAStatus", "sale.sale.status_invalid")]
+    [InlineData("NotAStatus", "order.order.status_invalid")]
     public async Task ListRejectsAnUnknownStatus(string status, string code)
     {
         var handler = NewHandler(NewCustomerLookup(), NewRow("VEN-2026-0001", ClientId));
@@ -131,7 +131,7 @@ public sealed class ListOrdersHandlerTests
                 NewQuery() with { PaymentStatus = "Whatever" },
                 TestContext.Current.CancellationToken));
 
-        Assert.Equal("sale.sale.payment_status_invalid", error.Code);
+        Assert.Equal("order.order.payment_status_invalid", error.Code);
     }
 
     private static ListOrdersQuery NewQuery() =>

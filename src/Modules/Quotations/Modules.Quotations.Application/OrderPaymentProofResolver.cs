@@ -29,28 +29,28 @@ internal static class OrderPaymentProofResolver
         if (file is null || file.TenantId != tenantId)
         {
             throw new QuotationsDomainException(
-                "sale.payment_proof.file_not_found",
+                "order.payment_proof.file_not_found",
                 $"File '{fileId}' was not found in this tenant.");
         }
 
         if (!file.IsAvailable)
         {
             throw new QuotationsDomainException(
-                "sale.payment_proof.file_not_available",
+                "order.payment_proof.file_not_available",
                 "The payment proof file has not finished uploading yet.");
         }
 
         if (!AllowedMimeTypes.Contains(file.MimeType, StringComparer.OrdinalIgnoreCase))
         {
             throw new QuotationsDomainException(
-                "sale.payment_proof.file_type_not_allowed",
+                "order.payment_proof.file_type_not_allowed",
                 "The payment proof must be a PDF, JPG or PNG file.");
         }
 
         if (file.SizeBytes > MaxSizeBytes)
         {
             throw new QuotationsDomainException(
-                "sale.payment_proof.file_too_large",
+                "order.payment_proof.file_too_large",
                 "The payment proof cannot exceed 10 MB.");
         }
     }

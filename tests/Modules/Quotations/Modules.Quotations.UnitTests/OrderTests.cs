@@ -55,7 +55,7 @@ public sealed class OrderTests
                 OrderId.New(), TenantId, number, QuotationId, OrderPaymentStatus.FullPaymentReceived,
                 null, ConvertedBy, [new OrderPaymentProofInput(Guid.CreateVersion7(), 1m)], Now));
 
-        Assert.Equal("sale.sale.number_required", error.Code);
+        Assert.Equal("order.order.number_required", error.Code);
     }
 
     // US-14: se requiere al menos un comprobante, salvo que el pago quede pendiente.
@@ -65,7 +65,7 @@ public sealed class OrderTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             NewOrder(paymentStatus: OrderPaymentStatus.PartialPaymentReceived, proofs: []));
 
-        Assert.Equal("sale.sale.payment_proof_required", error.Code);
+        Assert.Equal("order.order.payment_proof_required", error.Code);
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public sealed class OrderTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             NewOrder(proofs: [new OrderPaymentProofInput(Guid.Empty, 100m)]));
 
-        Assert.Equal("sale.payment_proof.file_required", error.Code);
+        Assert.Equal("order.payment_proof.file_required", error.Code);
     }
 
     [Theory]
@@ -94,7 +94,7 @@ public sealed class OrderTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), amount)]));
 
-        Assert.Equal("sale.payment_proof.amount_invalid", error.Code);
+        Assert.Equal("order.payment_proof.amount_invalid", error.Code);
     }
 
     [Fact]
@@ -183,7 +183,7 @@ public sealed class OrderTests
             order.AddPaymentProofs(
                 [], OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy, Now));
 
-        Assert.Equal("sale.sale.payment_proof_required", error.Code);
+        Assert.Equal("order.order.payment_proof_required", error.Code);
     }
 
     // Aprobado, el pedido es el respaldo de un cobro que alguien ya revisó: sumarle
@@ -202,7 +202,7 @@ public sealed class OrderTests
                 ConvertedBy,
                 Now.AddDays(1)));
 
-        Assert.Equal("sale.sale.not_pending", error.Code);
+        Assert.Equal("order.order.not_pending", error.Code);
     }
 
     // A pedido (2026-09): corregir un monto mal tipeado sin recrear el pedido ni el
@@ -272,7 +272,7 @@ public sealed class OrderTests
                 Now.AddDays(1),
                 [new OrderPaymentProofAmountUpdate(unknownProofId, 10_000m)]));
 
-        Assert.Equal("sale.payment_proof.not_found", error.Code);
+        Assert.Equal("order.payment_proof.not_found", error.Code);
     }
 
     [Theory]
@@ -292,7 +292,7 @@ public sealed class OrderTests
                 Now.AddDays(1),
                 [new OrderPaymentProofAmountUpdate(proofId, amount)]));
 
-        Assert.Equal("sale.payment_proof.amount_invalid", error.Code);
+        Assert.Equal("order.payment_proof.amount_invalid", error.Code);
     }
 
     // Correcciones solas, sin sumar ningun comprobante nuevo, siguen siendo "algo para hacer" --
@@ -332,6 +332,6 @@ public sealed class OrderTests
                 Now.AddDays(1),
                 [new OrderPaymentProofAmountUpdate(proofId, 5_000m)]));
 
-        Assert.Equal("sale.sale.not_pending", error.Code);
+        Assert.Equal("order.order.not_pending", error.Code);
     }
 }

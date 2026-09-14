@@ -11,7 +11,7 @@ namespace Modules.Quotations.IntegrationTests;
 public sealed class OrderApiTests
 {
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
-        $"{QuotationsUrl(tenantId)}/{quotationId}/sale";
+        $"{QuotationsUrl(tenantId)}/{quotationId}/order";
 
     private static string OrderProofsUrl(Guid tenantId, Guid quotationId) =>
         $"{OrderUrl(tenantId, quotationId)}/proofs";
@@ -73,7 +73,7 @@ public sealed class OrderApiTests
         Assert.Equal("FullPaymentReceived", order.PaymentStatus);
         Assert.Equal(quotation.Id, order.QuotationId);
         Assert.StartsWith(
-            $"VEN-{DateTime.UtcNow.Year}-", order.SaleNumber, StringComparison.Ordinal);
+            $"VEN-{DateTime.UtcNow.Year}-", order.OrderNumber, StringComparison.Ordinal);
         Assert.Null(order.RitualCollectionSyncId);
         var proof = Assert.Single(order.PaymentProofs);
         Assert.Equal(proofFileId, proof.FileId);
@@ -85,7 +85,7 @@ public sealed class OrderApiTests
             $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
         Assert.NotNull(fetchedQuotation);
         Assert.Equal("Converted", fetchedQuotation.Status);
-        Assert.False(fetchedQuotation.CanBeConvertedToSale);
+        Assert.False(fetchedQuotation.CanBeConvertedToOrder);
 
         // Y el listado la filtra por ese estado (QuotationListing.ParseStatus, contra la base):
         // ya no aparece entre las enviadas.
@@ -358,7 +358,7 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(fetched);
         Assert.Equal(created.Id, fetched.Id);
-        Assert.Equal(created.SaleNumber, fetched.SaleNumber);
+        Assert.Equal(created.OrderNumber, fetched.OrderNumber);
     }
 
     [Fact]
@@ -415,12 +415,12 @@ public sealed class OrderApiTests
         await ChangeTheQuantityAsync(client, tenantId, quotation);
 
         // Y la cotizacion lo dice al leerla: HasChangesSinceSent sigue en true -- se editó de
-        // verdad --, pero ya no es uno de los motivos de CanBeConvertedToSale.
+        // verdad --, pero ya no es uno de los motivos de CanBeConvertedToOrder.
         var fetched = await client.GetFromJsonAsync<QuotationResponse>(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
         Assert.NotNull(fetched);
         Assert.True(fetched.HasChangesSinceSent);
-        Assert.True(fetched.CanBeConvertedToSale);
+        Assert.True(fetched.CanBeConvertedToOrder);
 
         var response = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
@@ -452,7 +452,7 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(afterResend);
         Assert.False(afterResend.HasChangesSinceSent);
-        Assert.True(afterResend.CanBeConvertedToSale);
+        Assert.True(afterResend.CanBeConvertedToOrder);
 
         var response = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),

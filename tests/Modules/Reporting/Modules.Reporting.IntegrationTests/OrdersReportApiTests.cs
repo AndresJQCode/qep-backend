@@ -28,7 +28,7 @@ public sealed class OrdersReportApiTests
         var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales", TestContext.Current.CancellationToken);
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var page = await response.Content.ReadFromJsonAsync<ReportPageDto<OrdersReportItem>>(
@@ -39,8 +39,8 @@ public sealed class OrdersReportApiTests
         Assert.Equal(50, page.PageSize);
 
         var item = Assert.Single(page.Items);
-        Assert.Equal(order.Id, item.SaleId);
-        Assert.Equal(order.SaleNumber, item.SaleNumber);
+        Assert.Equal(order.Id, item.OrderId);
+        Assert.Equal(order.OrderNumber, item.OrderNumber);
         Assert.Equal(quotation.Id, item.QuotationId);
         Assert.Equal(quotation.QuotationNumber, item.QuotationNumber);
         // Todo pedido nace Pending y otro rol lo aprueba (aa020a8): recién convertido, así sale.
@@ -67,7 +67,7 @@ public sealed class OrdersReportApiTests
         using var client = tenant.Client;
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales", TestContext.Current.CancellationToken);
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var page = await response.Content.ReadFromJsonAsync<ReportPageDto<OrdersReportItem>>(
@@ -88,7 +88,7 @@ public sealed class OrdersReportApiTests
         var otherTenantId = Guid.CreateVersion7();
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(otherTenantId)}/sales", TestContext.Current.CancellationToken);
+            $"{ReportsUrl(otherTenantId)}/orders", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(
@@ -107,7 +107,7 @@ public sealed class OrdersReportApiTests
         using var client = tenant.Client;
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales", TestContext.Current.CancellationToken);
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -121,7 +121,7 @@ public sealed class OrdersReportApiTests
         using var client = tenant.Client;
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales?paymentStatus=Refunded",
+            $"{ReportsUrl(tenant.TenantId)}/orders?paymentStatus=Refunded",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -144,10 +144,10 @@ public sealed class OrdersReportApiTests
         await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
 
         var matching = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
-            $"{ReportsUrl(tenant.TenantId)}/sales?paymentStatus=FullPaymentReceived",
+            $"{ReportsUrl(tenant.TenantId)}/orders?paymentStatus=FullPaymentReceived",
             TestContext.Current.CancellationToken);
         var other = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
-            $"{ReportsUrl(tenant.TenantId)}/sales?paymentStatus=PaymentPending",
+            $"{ReportsUrl(tenant.TenantId)}/orders?paymentStatus=PaymentPending",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(1, matching?.Total);
@@ -171,7 +171,7 @@ public sealed class OrdersReportApiTests
         var range =
             $"from={to.AddYears(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}"
             + $"&to={to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
-        string[] reports = ["sales", "quotations", "price-changes", "customers"];
+        string[] reports = ["orders", "quotations", "price-changes", "customers"];
 
         var answered = new List<string>();
         foreach (var report in reports)

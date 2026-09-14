@@ -100,7 +100,7 @@ public sealed class OrdersReportSummaryHandlerTests
 
         Assert.Single(source.SummarizedCriteria);
         Assert.Null(summary.Previous);
-        Assert.Equal(12, summary.SaleCount);
+        Assert.Equal(12, summary.OrderCount);
         Assert.Equal(1_200m, summary.Total);
     }
 

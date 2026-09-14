@@ -58,14 +58,14 @@ public sealed class OrderPaymentProof
         if (fileId == Guid.Empty)
         {
             throw new QuotationsDomainException(
-                "sale.payment_proof.file_required",
+                "order.payment_proof.file_required",
                 "The payment proof file is required.");
         }
 
         if (amount <= 0)
         {
             throw new QuotationsDomainException(
-                "sale.payment_proof.amount_invalid",
+                "order.payment_proof.amount_invalid",
                 "The payment proof amount must be greater than zero.");
         }
 
@@ -81,7 +81,7 @@ public sealed class OrderPaymentProof
         if (amount <= 0)
         {
             throw new QuotationsDomainException(
-                "sale.payment_proof.amount_invalid",
+                "order.payment_proof.amount_invalid",
                 "The payment proof amount must be greater than zero.");
         }
 

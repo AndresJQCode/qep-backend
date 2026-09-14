@@ -591,7 +591,7 @@ public sealed class Quotation
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.status_not_convertible",
-                "Only a draft or sent quotation can be converted to a sale.");
+                "Only a draft or sent quotation can be converted to an order.");
         }
 
         // Lo que un pedido necesita para existir y que la cotizacion puede no tener todavia. Se
@@ -607,14 +607,14 @@ public sealed class Quotation
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.items_required",
-                "A quotation without products cannot be converted to a sale.");
+                "A quotation without products cannot be converted to an order.");
         }
 
         if (ValidUntil is null)
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.valid_until_required",
-                "A quotation must have a validity date before it can be converted to a sale.");
+                "A quotation must have a validity date before it can be converted to an order.");
         }
 
         // Sin cuenta de cobro el pedido no sabe a donde se paga, que es justo lo que un pedido
@@ -623,7 +623,7 @@ public sealed class Quotation
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
-                "A quotation must have a billing account before it can be converted to a sale.");
+                "A quotation must have a billing account before it can be converted to an order.");
         }
 
         // Una parte con datos propios a medio llenar es la misma condicion que ya exige
@@ -635,14 +635,14 @@ public sealed class Quotation
         {
             throw new QuotationsDomainException(
                 "quotation.billing.party_incomplete",
-                "The billing party must have all its fields filled before converting to a sale.");
+                "The billing party must have all its fields filled before converting to an order.");
         }
 
         if (Shipping is { } shipping && !shipping.IsComplete)
         {
             throw new QuotationsDomainException(
                 "quotation.shipping.party_incomplete",
-                "The shipping party must have all its fields filled before converting to a sale.");
+                "The shipping party must have all its fields filled before converting to an order.");
         }
 
         // Con datos propios de facturación nadie más dice si hay retención o excedente de IVA:
@@ -653,7 +653,7 @@ public sealed class Quotation
         {
             throw new QuotationsDomainException(
                 "quotation.billing.tax_profile_required",
-                "The billing party must state whether it applies withholding tax and VAT surplus before converting to a sale.");
+                "The billing party must state whether it applies withholding tax and VAT surplus before converting to an order.");
         }
     }
 

@@ -17,14 +17,14 @@ public static class ReportingEndpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/reports")
             .WithTags("Reporting");
 
-        group.MapGet("/sales", ListOrdersAsync)
+        group.MapGet("/orders", ListOrdersAsync)
             .RequireAuthorization(ReportingPermissions.SalesRead)
             .Produces<ReportPage<OrdersReportItemDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Mismo permiso que el listado: expone exactamente los mismos datos, sumados.
-        group.MapGet("/sales/summary", GetOrdersSummaryAsync)
+        group.MapGet("/orders/summary", GetOrdersSummaryAsync)
             .RequireAuthorization(ReportingPermissions.SalesRead)
             .Produces<OrdersReportSummaryDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)

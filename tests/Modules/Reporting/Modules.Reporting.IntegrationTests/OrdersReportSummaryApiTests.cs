@@ -5,7 +5,7 @@ using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 namespace Modules.Reporting.IntegrationTests;
 
 /// <summary>
-/// El resumen agregado de pedidos: <c>GET /reports/sales/summary</c>.
+/// El resumen agregado de pedidos: <c>GET /reports/orders/summary</c>.
 ///
 /// Estas pruebas existen sobre todo por una razon que ninguna unitaria puede cubrir: **que los
 /// agregados se traduzcan a SQL**. Sumas, <c>GROUP BY</c> por mes sobre una columna
@@ -29,7 +29,7 @@ public sealed class OrdersReportSummaryApiTests
         await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales/summary",
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -37,7 +37,7 @@ public sealed class OrdersReportSummaryApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(summary);
 
-        Assert.Equal(1, summary.SaleCount);
+        Assert.Equal(1, summary.OrderCount);
         Assert.Equal(quotation.Subtotal, summary.Subtotal);
         Assert.Equal(quotation.TaxAmount, summary.TaxAmount);
         Assert.Equal(quotation.Total, summary.Total);
@@ -80,14 +80,14 @@ public sealed class OrdersReportSummaryApiTests
         using var client = tenant.Client;
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales/summary",
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var summary = await response.Content.ReadFromJsonAsync<OrdersReportSummary>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(summary);
-        Assert.Equal(0, summary.SaleCount);
+        Assert.Equal(0, summary.OrderCount);
         Assert.Equal(0m, summary.Total);
         Assert.Empty(summary.Monthly);
         Assert.Empty(summary.ByAdvisor);
@@ -116,14 +116,14 @@ public sealed class OrdersReportSummaryApiTests
         var from = today.AddDays(-29);
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales/summary?from={from:yyyy-MM-dd}&to={today:yyyy-MM-dd}",
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?from={from:yyyy-MM-dd}&to={today:yyyy-MM-dd}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var summary = await response.Content.ReadFromJsonAsync<OrdersReportSummary>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(summary);
-        Assert.Equal(1, summary.SaleCount);
+        Assert.Equal(1, summary.OrderCount);
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(0, summary.Previous.Count);
@@ -140,7 +140,7 @@ public sealed class OrdersReportSummaryApiTests
         using var client = tenant.Client;
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(Guid.CreateVersion7())}/sales/summary",
+            $"{ReportsUrl(Guid.CreateVersion7())}/orders/summary",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -160,7 +160,7 @@ public sealed class OrdersReportSummaryApiTests
         using var client = tenant.Client;
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales/summary",
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -177,7 +177,7 @@ public sealed class OrdersReportSummaryApiTests
         using var client = tenant.Client;
 
         var response = await client.GetAsync(
-            $"{ReportsUrl(tenant.TenantId)}/sales/summary?paymentStatus=Refunded",
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?paymentStatus=Refunded",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);

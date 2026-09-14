@@ -169,7 +169,7 @@ public sealed class ExportLoadSeedTests
         });
 
         var orders = await client.GetFromJsonAsync<OrdersPageResponse>(
-            $"/api/v1/tenants/{ExportLoadSeeder.TenantId}/sales", TestContext.Current.CancellationToken);
+            $"/api/v1/tenants/{ExportLoadSeeder.TenantId}/orders", TestContext.Current.CancellationToken);
         Assert.NotNull(orders);
         Assert.Equal(result.Orders, orders.Total);
         Assert.All(orders.Items, item =>

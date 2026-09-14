@@ -96,8 +96,8 @@ public sealed class ExportOrdersHandler(
         if (!anyRow)
         {
             throw new QuotationsDomainException(
-                "sale.export.empty",
-                "There are no sales matching the export filters.");
+                "order.export.empty",
+                "There are no orders matching the export filters.");
         }
 
         // 4: el mismo cupo que cotizaciones, contando los dos tipos. Es de mejor esfuerzo —cuenta
@@ -107,7 +107,7 @@ public sealed class ExportOrdersHandler(
         if (pending >= ExportJobLimits.PendingPerRequester)
         {
             throw new QuotationsDomainException(
-                "sale.export.pending_limit",
+                "order.export.pending_limit",
                 $"There are already {ExportJobLimits.PendingPerRequester} exports in progress for this user.");
         }
 

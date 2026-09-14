@@ -320,7 +320,7 @@ public sealed record QuotationResponse(
     Guid? PdfFileId,
     bool CanBeSent,
     bool HasChangesSinceSent,
-    bool CanBeConvertedToSale,
+    bool CanBeConvertedToOrder,
     IReadOnlyCollection<QuotationItemResponse> Items);
 
 /// <summary>
@@ -369,10 +369,10 @@ public sealed record QuotationListItemResponse(
     /// <summary>Si ya es un documento presentable: al menos una linea, vigencia y cuenta de
     /// cobro.</summary>
     bool IsComplete,
-    /// <summary>La venta que salio de esta cotizacion. <c>null</c> es "sin convertir".</summary>
-    Guid? SaleId,
-    /// <summary><c>Pending</c> o <c>Approved</c>; <c>null</c> sin venta.</summary>
-    string? SaleStatus);
+    /// <summary>El pedido que salió de esta cotización. <c>null</c> es "sin convertir".</summary>
+    Guid? OrderId,
+    /// <summary><c>Pending</c> o <c>Approved</c>; <c>null</c> sin pedido.</summary>
+    string? OrderStatus);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>

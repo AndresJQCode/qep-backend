@@ -21,8 +21,8 @@ internal static class OrderListing
         return Enum.TryParse<OrderStatus>(status, ignoreCase: true, out var parsed)
             ? parsed
             : throw new QuotationsDomainException(
-                "sale.sale.status_invalid",
-                $"'{status}' is not a valid sale status.");
+                "order.order.status_invalid",
+                $"'{status}' is not a valid order status.");
     }
 
     public static OrderPaymentStatus? ParsePaymentStatus(string? paymentStatus)
@@ -35,8 +35,8 @@ internal static class OrderListing
         return Enum.TryParse<OrderPaymentStatus>(paymentStatus, ignoreCase: true, out var parsed)
             ? parsed
             : throw new QuotationsDomainException(
-                "sale.sale.payment_status_invalid",
-                $"'{paymentStatus}' is not a valid sale payment status.");
+                "order.order.payment_status_invalid",
+                $"'{paymentStatus}' is not a valid order payment status.");
     }
 
     // Sin término, null ("sin filtro"); con término que no resolvió a ningún cliente, vacío, y la

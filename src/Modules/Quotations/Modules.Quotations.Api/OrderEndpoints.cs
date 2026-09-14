@@ -17,8 +17,8 @@ public static class OrderEndpoints
         // pedido se sigue creando y leyendo como sub-recurso de la suya --sigue siendo 1:1-- pero
         // "los pedidos del tenant" no son de ninguna cotizacion en particular.
         var collection = endpoints
-            .MapGroup("/api/v1/tenants/{tenantId:guid}/sales")
-            .WithTags("Sales");
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/orders")
+            .WithTags("Orders");
 
         collection.MapGet("/", ListOrdersAsync)
             .RequireAuthorization(OrdersPermissions.SaleRead)
@@ -28,7 +28,7 @@ public static class OrderEndpoints
 
         // SALE-04: por el id del pedido. Desde una fila del listado no hay por donde entrar si
         // la unica ruta cuelga de la cotizacion.
-        collection.MapGet("/{saleId:guid}", GetOrderByIdAsync)
+        collection.MapGet("/{orderId:guid}", GetOrderByIdAsync)
             .RequireAuthorization(OrdersPermissions.SaleRead)
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -36,7 +36,7 @@ public static class OrderEndpoints
 
         // El listado de pedidos en un .xlsx por correo (spec 2026-09-12): mismo contrato que
         // `POST /quotations/export` —202, filtros del listado por query string, sin paginación—.
-        // "export" no choca con "/{saleId:guid}": no es un guid.
+        // "export" no choca con "/{orderId:guid}": no es un guid.
         collection.MapPost("/export", ExportOrdersAsync)
             .RequireAuthorization(OrdersPermissions.SaleRead)
             .Produces<ExportJobAcceptedResponse>(StatusCodes.Status202Accepted)
@@ -44,8 +44,8 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         var group = endpoints
-            .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/sale")
-            .WithTags("Sales");
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/order")
+            .WithTags("Orders");
 
         group.MapGet("/", GetOrderAsync)
             .RequireAuthorization(OrdersPermissions.SaleRead)
@@ -99,14 +99,14 @@ public static class OrderEndpoints
         DateOnly? convertedFrom = null,
         DateOnly? convertedTo = null,
         string? clientCuc = null,
-        string? saleNumber = null,
+        string? orderNumber = null,
         int page = 1,
         int pageSize = QuotationPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersQuery(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, saleNumber, page, pageSize),
+                clientCuc, orderNumber, page, pageSize),
             cancellationToken);
 
         return Results.Ok(new OrdersPageResponse(
@@ -127,12 +127,12 @@ public static class OrderEndpoints
         DateOnly? convertedFrom = null,
         DateOnly? convertedTo = null,
         string? clientCuc = null,
-        string? saleNumber = null)
+        string? orderNumber = null)
     {
         var accepted = await dispatcher.SendAsync(
             new ExportOrdersCommand(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, saleNumber),
+                clientCuc, orderNumber),
             cancellationToken);
 
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));
@@ -140,13 +140,13 @@ public static class OrderEndpoints
 
     private static async Task<IResult> GetOrderByIdAsync(
         Guid tenantId,
-        Guid saleId,
+        Guid orderId,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var detail = await dispatcher.QueryAsync(
-            new GetOrderByIdQuery(tenantId, saleId), cancellationToken);
+            new GetOrderByIdQuery(tenantId, orderId), cancellationToken);
 
         // La cotizacion se compone igual que en su propio detalle: el mismo composer, para que
         // las dos pantallas no puedan mostrar cosas distintas de la misma cotizacion.
@@ -196,7 +196,7 @@ public static class OrderEndpoints
             cancellationToken);
 
         return Results.Created(
-            $"/api/v1/tenants/{tenantId}/quotations/{quotationId}/sale",
+            $"/api/v1/tenants/{tenantId}/quotations/{quotationId}/order",
             ToResponse(order));
     }
 

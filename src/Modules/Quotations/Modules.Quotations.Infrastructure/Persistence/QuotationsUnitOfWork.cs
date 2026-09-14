@@ -62,7 +62,7 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.already_converted",
-                "This quotation was already converted to a sale.");
+                "This quotation was already converted to an order.");
         }
     }
 }

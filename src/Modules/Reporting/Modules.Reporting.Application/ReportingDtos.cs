@@ -13,8 +13,8 @@ namespace Modules.Reporting.Application;
 /// <c>ClientName</c> sí es un nombre real: sale de <c>Customer.Name</c>.
 /// </summary>
 public sealed record OrdersReportItemDto(
-    Guid SaleId,
-    string SaleNumber,
+    Guid OrderId,
+    string OrderNumber,
     Guid QuotationId,
     string QuotationNumber,
     DateTimeOffset ConvertedAt,

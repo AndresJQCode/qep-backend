@@ -10,8 +10,8 @@ internal sealed record ReportPageDto<TItem>(
     IReadOnlyList<TItem> Items, int Total, int Page, int PageSize);
 
 internal sealed record OrdersReportItem(
-    Guid SaleId,
-    string SaleNumber,
+    Guid OrderId,
+    string OrderNumber,
     Guid QuotationId,
     string QuotationNumber,
     DateTimeOffset ConvertedAt,
@@ -78,7 +78,7 @@ internal sealed record ProblemDto(string? Code, string? Title, int? Status);
 /// <summary>El resumen agregado de ventas, tal como el contrato lo fija. Redeclarado igual que
 /// el resto — ver la nota del encabezado de este archivo.</summary>
 internal sealed record OrdersReportSummary(
-    int SaleCount,
+    int OrderCount,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total,

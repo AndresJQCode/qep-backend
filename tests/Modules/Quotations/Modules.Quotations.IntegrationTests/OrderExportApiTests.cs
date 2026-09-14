@@ -15,7 +15,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// de pedidos (SALE-01) y con `SaleRead`.</summary>
 public sealed class OrderExportApiTests
 {
-    private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/sales";
+    private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
     [Fact]
     public async Task ExportIsAcceptedAndLeavesAPendingOrdersJob()
@@ -68,7 +68,7 @@ public sealed class OrderExportApiTests
 
         var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("sale.export.empty", problem?.Code);
+        Assert.Equal("order.export.empty", problem?.Code);
     }
 
     // El cupo es por persona y cuenta los dos tipos: tres de cotizaciones frenan un pedido.
@@ -94,7 +94,7 @@ public sealed class OrderExportApiTests
 
         var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("sale.export.pending_limit", problem?.Code);
+        Assert.Equal("order.export.pending_limit", problem?.Code);
     }
 
     [Fact]
@@ -162,7 +162,7 @@ public sealed class OrderExportApiTests
         var items = list!.Items.ToArray();
         Assert.Equal("Ventas", sheet.Name);
         Assert.Equal(["Venta", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total"], sheet.Rows[0]);
-        Assert.Equal(items.Select(item => item.SaleNumber), sheet.Rows.Skip(1).Select(row => row[0]));
+        Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[0]));
         var first = sheet.Rows[1];
         Assert.Equal(items[0].ClientName, first[1]);
         Assert.Equal(items[0].AdvisorEmail ?? string.Empty, first[2]);
@@ -319,7 +319,7 @@ public sealed class OrderExportApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, customerId, productId);
         var response = await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}/sale",
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();

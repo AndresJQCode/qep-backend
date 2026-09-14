@@ -58,7 +58,7 @@ public sealed record OrderPaymentProofResponse(Guid Id, Guid FileId, decimal Amo
 
 public sealed record OrderResponse(
     Guid Id,
-    string SaleNumber,
+    string OrderNumber,
     Guid QuotationId,
     string Status,
     string PaymentStatus,
@@ -80,7 +80,7 @@ public sealed record OrderResponse(
 /// </summary>
 public sealed record OrderListItemResponse(
     Guid Id,
-    string SaleNumber,
+    string OrderNumber,
     /// <summary>La cotizacion de origen, para poder abrirla desde la fila.</summary>
     Guid QuotationId,
     string QuotationNumber,
@@ -115,7 +115,7 @@ public sealed record OrderListItemResponse(
 /// productos, asi que la pantalla necesita las dos para dibujarse.
 /// </summary>
 public sealed record OrderDetailResponse(
-    OrderResponse Sale,
+    OrderResponse Order,
     QuotationResponse Quotation);
 
 public sealed record OrdersPageResponse(

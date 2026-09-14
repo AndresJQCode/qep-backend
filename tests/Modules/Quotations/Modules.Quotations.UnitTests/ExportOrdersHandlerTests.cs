@@ -80,8 +80,8 @@ public sealed class ExportOrdersHandlerTests
     }
 
     [Theory]
-    [InlineData("NotAStatus", null, "sale.sale.status_invalid")]
-    [InlineData(null, "NotAPaymentStatus", "sale.sale.payment_status_invalid")]
+    [InlineData("NotAStatus", null, "order.order.status_invalid")]
+    [InlineData(null, "NotAPaymentStatus", "order.order.payment_status_invalid")]
     public async Task ExportWithAnInvalidStatusFailsLikeTheList(
         string? status, string? paymentStatus, string expectedCode)
     {
@@ -102,7 +102,7 @@ public sealed class ExportOrdersHandlerTests
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
 
-        Assert.Equal("sale.export.empty", error.Code);
+        Assert.Equal("order.export.empty", error.Code);
         Assert.Empty(queue.Jobs);
     }
 
@@ -116,7 +116,7 @@ public sealed class ExportOrdersHandlerTests
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             handler.HandleAsync(NewCommand(From, To, clientCuc: "CUC-NO-EXISTE"), TestContext.Current.CancellationToken));
 
-        Assert.Equal("sale.export.empty", error.Code);
+        Assert.Equal("order.export.empty", error.Code);
         Assert.Empty(repository.LastExportSearch!.ClientIds!);
     }
 
@@ -135,7 +135,7 @@ public sealed class ExportOrdersHandlerTests
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
 
-        Assert.Equal("sale.export.pending_limit", error.Code);
+        Assert.Equal("order.export.pending_limit", error.Code);
         Assert.Equal(3, queue.Jobs.Count);
     }
 
