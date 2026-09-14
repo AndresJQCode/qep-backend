@@ -7,13 +7,13 @@ namespace Modules.Quotations.Domain;
 /// <c>Product</c>/<c>PriceScale</c> en Catalog.
 ///
 /// Cubre el borrador (crear, agregar/editar/quitar líneas, editar encabezado), el envío (US-12),
-/// la anulación (US-11), la conversión a venta (US-16, vía <see cref="EnsureConvertibleToSale"/>
-/// — no cambia el estado) y el vencimiento automático (US-19).
+/// la anulación (US-11), la conversión a venta (US-16, vía <see cref="ConvertToSale"/>, que la
+/// deja en <see cref="QuotationStatus.Converted"/>) y el vencimiento automático (US-19).
 ///
 /// Editar (líneas o encabezado) exige <see cref="QuotationStatus.Draft"/> o
 /// <see cref="QuotationStatus.Sent"/> — US-10: "se puede editar en Draft y Sent... se bloquea
-/// una vez convertida a venta, anulada o vencida". <see cref="Send"/> sólo sale de Draft; <see cref="Void"/> sale de Draft o
-/// de Sent.
+/// una vez convertida a venta, anulada o vencida". <see cref="Send"/> sale de Draft o de Sent
+/// (reenvío); <see cref="Void"/> y <see cref="ConvertToSale"/> también.
 /// </summary>
 public sealed class Quotation
 {
@@ -557,14 +557,29 @@ public sealed class Quotation
         }
     }
 
-    /// <summary>US-16: valida que se pueda convertir en venta. Ya no exige haberla enviado
-    /// primero, ni que siga sin cambios desde ese envío (a pedido, 2026-09) — Draft o Sent
-    /// alcanzan, mismo criterio de "sigue siendo un documento abierto" que
-    /// <see cref="EnsureSendable"/>; no se convierte una ya anulada ni vencida. No muta nada: a
-    /// diferencia de la vieja <c>Approve()</c>, convertir a venta ya no cambia el estado de la
-    /// cotización (no existe un estado "aprobada"/"convertida" — ver
-    /// <see cref="QuotationStatus"/>), así que esto es sólo el guard de precondición que
-    /// <c>ConvertQuotationToSaleHandler</c> llama antes de crear el <see cref="Sale"/>.
+    /// <summary>US-16: convierte la cotización en venta. Comprueba lo mismo que
+    /// <see cref="EnsureConvertibleToSale"/> y la deja en <see cref="QuotationStatus.Converted"/>,
+    /// de sólo lectura desde ahí. El <see cref="Sale"/> lo crea
+    /// <c>ConvertQuotationToSaleHandler</c> justo después y en la misma unidad de trabajo: si
+    /// guardar falla, no queda ni la venta ni el cambio de estado. Mismo patrón que
+    /// <see cref="Void"/> y <see cref="Expire"/>.</summary>
+    public void ConvertToSale(MemberId convertedBy, DateTimeOffset occurredAt)
+    {
+        EnsureConvertibleToSale();
+
+        Status = QuotationStatus.Converted;
+        UpdatedBy = convertedBy;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>US-16: valida que se pueda convertir en venta, sin mutar nada. Ya no exige
+    /// haberla enviado primero, ni que siga sin cambios desde ese envío (a pedido, 2026-09) —
+    /// Draft o Sent alcanzan, mismo criterio de "sigue siendo un documento abierto" que
+    /// <see cref="EnsureSendable"/>; no se convierte una anulada, una vencida ni una ya
+    /// convertida. Quien cambia el estado es <see cref="ConvertToSale"/>, que llama esto primero:
+    /// existe aparte porque <see cref="CanBeConvertedToSale"/> y la pantalla necesitan preguntar
+    /// sin convertir.
     ///
     /// Que el cliente esté activo **no** se comprueba acá: este agregado no lo sabe, sólo tiene
     /// su id (referencia blanda). Lo revalida <c>ConvertQuotationToSaleHandler</c> contra
@@ -661,8 +676,9 @@ public sealed class Quotation
     /// Vuelve a tomar del cliente maestro <see cref="CustomerWithRetention"/> y
     /// <see cref="CustomerVatSurplus"/> mientras la cotización sigue editable (Draft o Sent).
     /// Silencioso a propósito (no valida ni lanza) para poder llamarse también desde una
-    /// lectura: una vez Voided o Expired la cotización queda tal cual quedó, sin excepción, y
-    /// nada la vuelve a tocar.
+    /// lectura: una vez Voided, Expired o Converted la cotización queda tal cual quedó, sin
+    /// excepción, y nada la vuelve a tocar. En Converted eso importa doble: sus totales son los
+    /// que heredó la venta.
     ///
     /// **No pasa por <c>Touch</c>, y eso es carga estructural, no un olvido:** mover
     /// <see cref="UpdatedAt"/> acá dejaría <see cref="HasChangesSinceSent"/> en <c>true</c> por
@@ -703,10 +719,9 @@ public sealed class Quotation
         Version++;
     }
 
-    // US-10: "se puede editar en Draft y Sent... se bloquea una vez convertida a venta". Cubre
-    // también Voided (US-11: "quedan de sólo lectura") y Expired — convertir a venta (US-16) no
-    // suma un estado propio, así que lo único que EnsureEditable necesita bloquear además de
-    // Sent/Draft es Voided y Expired.
+    // US-10: "se puede editar en Draft y Sent... se bloquea una vez convertida a venta". Bloquea
+    // todo lo que no sea Draft o Sent: Converted (US-16), Voided (US-11: "quedan de sólo
+    // lectura") y Expired. Void pasa por acá, así que una convertida tampoco se anula.
     private void EnsureEditable()
     {
         if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))

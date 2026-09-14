@@ -108,8 +108,8 @@ public sealed class ListQuotationsHandlerTests
         Assert.Equal(sale.Id.Value, convertedRow.SaleId);
         Assert.Equal("Pending", convertedRow.SaleStatus);
 
-        // Sin convertir no hay estado que mirar: la cotizacion se queda en Sent igual, y la
-        // ausencia de venta es la unica senal.
+        // Sin venta, la fila no trae nada que aprobar: SaleId y SaleStatus en null. El estado
+        // Converted dice que ya se convirtio, pero no a que venta ir ni si ya se aprobo.
         var openRow = Assert.Single(page.Items, item => item.QuotationNumber == "QUO-2026-0002");
         Assert.Null(openRow.SaleId);
         Assert.Null(openRow.SaleStatus);
