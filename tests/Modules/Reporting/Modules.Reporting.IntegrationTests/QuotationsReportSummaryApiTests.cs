@@ -45,16 +45,17 @@ public sealed class QuotationsReportSummaryApiTests
         Assert.Equal(1, month.Count);
         Assert.Equal(quotation.Total, month.Total);
 
-        // Los cuatro estados vienen siempre, incluso en cero: la pantalla no tiene que saber
+        // Los cinco estados vienen siempre, incluso en cero: la pantalla no tiene que saber
         // cuáles existen para dibujar el que falta.
-        Assert.Equal(4, summary.ByStatus.Count);
+        Assert.Equal(5, summary.ByStatus.Count);
         var sent = Assert.Single(summary.ByStatus, slice => slice.Status == "Sent");
         Assert.Equal(1, sent.Count);
         Assert.Equal(quotation.Total, sent.Total);
         Assert.All(
             summary.ByStatus.Where(slice => slice.Status != "Sent"),
             slice => Assert.Equal(0, slice.Count));
-        // Y ninguno es "Approved": convertir deja la cotización en Sent.
+        // Y ninguno es "Approved": ése es un estado de la venta. Convertir deja la cotización en
+        // Converted.
         Assert.DoesNotContain(summary.ByStatus, slice => slice.Status == "Approved");
 
         var advisor = Assert.Single(summary.ByAdvisor);
@@ -127,8 +128,8 @@ public sealed class QuotationsReportSummaryApiTests
         Assert.Empty(summary.Monthly);
         Assert.Empty(summary.ByAdvisor);
         Assert.Empty(summary.Expiring);
-        // Los cuatro estados en cero, no una lista vacía: ver la prueba de arriba.
-        Assert.Equal(4, summary.ByStatus.Count);
+        // Los cinco estados en cero, no una lista vacía: ver la prueba de arriba.
+        Assert.Equal(5, summary.ByStatus.Count);
         Assert.All(summary.ByStatus, slice => Assert.Equal(0, slice.Count));
         Assert.Equal(0, summary.Validity.WithoutExpiry);
     }

@@ -34,9 +34,10 @@ public sealed class SalesExportProcessorTests
         Assert.Equal("Ferretería El Tornillo", row[1].Text);
         Assert.Equal("asesora@qcode.co", row[2].Text);
         Assert.Equal(Now.ToString("O", CultureInfo.InvariantCulture), row[3].Text);
-        // Sin forma de pago, la columna cae al estado del pago, igual que la tabla.
-        Assert.Equal("PaymentPending", row[4].Text);
-        Assert.Equal("Pending", row[5].Text);
+        // Sin forma de pago, la columna cae a la etiqueta del estado del pago, igual que la tabla
+        // (spec 2026-09-13, A7).
+        Assert.Equal("Pago pendiente", row[4].Text);
+        Assert.Equal("Pendiente", row[5].Text);
         Assert.Equal(0m, row[7].Number);
     }
 

@@ -300,10 +300,11 @@ catálogo de diecinueve productos con la tasa `IVA 19%`. Pensada para el ambient
 desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
 de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
 
-| Clave              | Por defecto | Qué hace                                              |
-| ------------------ | ----------- | ----------------------------------------------------- |
-| `Seed__Enabled`    | `false`     | Interruptor único. Apagado, no se siembra nada        |
-| `Seed__OwnerEmail` | sin valor   | Email que recibe la membresía con rol `admin`         |
+| Clave                          | Por defecto | Qué hace                                                                      |
+| ------------------------------ | ----------- | ----------------------------------------------------------------------------- |
+| `Seed__Enabled`                | `false`     | Interruptor de la semilla de arranque. Apagado, no se siembra nada            |
+| `Seed__OwnerEmail`             | sin valor   | Email que recibe la membresía con rol `admin`                                 |
+| `Seed__ExportLoad__Quotations` | `0`         | Cotizaciones de la [carga sintética](#carga-sintética-para-medir-la-exportación). `0` la apaga |
 
 El usuario se siembra **sólo con su email**, sin proveedor vinculado: el primer login
 con Google lo vincula solo, porque `ProviderLinkingService` busca por email verificado.
@@ -335,6 +336,77 @@ $env:Seed__Enabled = "true"
 $env:Seed__OwnerEmail = "<tu-email>"
 dotnet run --project src/Api --launch-profile http
 ```
+
+### Carga sintética para medir la exportación
+
+Con `Seed:ExportLoad:Quotations` mayor que 0, la aplicación siembra, **después** de arrancar, el
+tenant **Carga de exportación** (`carga-export`). Lleva:
+
+- esa cantidad de cotizaciones repartidas en los últimos 12 meses;
+- un cliente cada 25 cotizaciones;
+- el 30 % convertidas en venta;
+- el catálogo de la semilla;
+- una membresía `admin` para `Seed:OwnerEmail`.
+
+Existe para medir en el pod real cuánto cuesta exportar un año (spec
+`docs/superpowers/specs/2026-09-13-ajustes-post-export-design.md`). No depende de `Seed:Enabled`,
+pero también exige `Seed:OwnerEmail`.
+
+- **No corre dentro del arranque.** El `startupProbe` le da al pod 60 s, y sembrar decenas de miles
+  de filas ahí haría que Kubernetes lo matara. La siembra termina con la línea
+  `Export load seed finished: …` en el log.
+- **Va con SQL masivo en una transacción.** No pasa por los handlers, así que la siembra no deja
+  outbox, auditoría, correos ni WhatsApp.
+- **Los vencimientos sí dejan rastro.** Las cotizaciones sembradas como `Sent` vencen en los días
+  siguientes, y cada vencimiento escribe historial y un evento de auditoría del tenant
+  `carga-export`: con 50 000 cotizaciones son unas 137 por día. El script de limpieza borra el
+  historial, pero no la auditoría ni el outbox, que son un log inmutable. Por eso conviene apagar y
+  limpiar apenas termines de medir.
+- **Es idempotente.** Si el tenant ya tiene cotizaciones, no siembra. Por eso subir el número después
+  de una siembra completa no hace nada: el log sólo dice `skipped`. Para sembrar otra cantidad,
+  apágala y despliega, corre la limpieza y vuelve a prenderla con el número nuevo.
+
+Para probarla en local:
+
+```powershell
+$env:Seed__ExportLoad__Quotations = "2000"
+$env:Seed__OwnerEmail = "<tu-email>"
+dotnet run --project src/Api --launch-profile http
+```
+
+Cuando termines, quita la variable de esa sesión de PowerShell. Si la dejas, un `dotnet test` que
+corras desde la misma sesión siembra en cada host de pruebas que no fije la clave:
+
+```powershell
+Remove-Item Env:Seed__ExportLoad__Quotations
+```
+
+En producción se prende y se apaga con `Seed__ExportLoad__Quotations` en `k8s/prod-configMap.yaml`,
+que se despliega desde `main`:
+
+1. Pon el número (por ejemplo `"50000"`), commitea y despliega.
+2. Espera la línea del final:
+
+   ```powershell
+   kubectl --context contabo-prod -n prod-qep-backend logs deploy/qep-backend --since=30m | Select-String "Export load seed"
+   ```
+
+3. Entra con tu cuenta, cambia al tenant **Carga de exportación** y exporta desde la pantalla.
+4. **Primero apaga:** vuelve a `"0"`, commitea y despliega. Con el interruptor prendido, cualquier
+   reinicio del pod vuelve a sembrar un tenant vacío.
+5. **Después limpia**, con la conexión de administración que ya usas para la base de producción:
+
+   ```powershell
+   psql -h <host> -p <puerto> -U <usuario> -d <base> -v ON_ERROR_STOP=1 -f ops/export-load-cleanup.sql
+   ```
+
+   El script borra sólo el tenant `carga-export`, en el orden que piden las FK, y aborta si el tenant
+   no está. No saques la contraseña del Secret con `kubectl get secret`: imprime los valores.
+
+> [!WARNING]
+> Mientras la carga está sembrada, los datos sintéticos conviven con los de desarrollo en la misma
+> base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
+> tenant.
 
 ## API implementada
 

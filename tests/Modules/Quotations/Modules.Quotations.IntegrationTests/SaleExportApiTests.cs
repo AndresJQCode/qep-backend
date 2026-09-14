@@ -167,8 +167,10 @@ public sealed class SaleExportApiTests
         Assert.Equal(items[0].ClientName, first[1]);
         Assert.Equal(items[0].AdvisorEmail ?? string.Empty, first[2]);
         Assert.Equal(items[0].ConvertedAt, DateTimeOffset.Parse(first[3], CultureInfo.InvariantCulture));
-        Assert.Equal(items[0].PaymentMethod ?? items[0].PaymentStatus, first[4]);
-        Assert.Equal(items[0].Status, first[5]);
+        // La API sigue mandando el enum (A8); el archivo, la etiqueta de la tabla (A7).
+        Assert.Equal("Pending", items[0].Status);
+        Assert.Equal(items[0].PaymentMethod ?? "Pago pendiente", first[4]);
+        Assert.Equal("Pendiente", first[5]);
         Assert.Equal(items[0].Currency, first[6]);
         Assert.True(sheet.NumericCells[1][7]);
         Assert.Equal(items[0].Total, decimal.Parse(first[7], CultureInfo.InvariantCulture));

@@ -45,7 +45,7 @@ public sealed class SaleApiTests
     }
 
     [Fact]
-    public async Task ConvertCreatesTheSaleAndLeavesTheQuotationSent()
+    public async Task ConvertCreatesTheSaleAndLeavesTheQuotationConverted()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -78,18 +78,76 @@ public sealed class SaleApiTests
         Assert.Equal(proofFileId, proof.FileId);
         Assert.Equal(quotation.Total, proof.Amount);
 
-        // No hay estado "aprobada": convertir a venta deja la cotizacion en Sent -- la Sale
-        // creada, referenciando este QuotationId, es la unica senal de que ya se convirtio.
+        // Convertir deja la cotizacion en Converted, en la misma unidad de trabajo que crea la
+        // venta: de ahi en adelante es de solo lectura y ya no ofrece convertirse otra vez.
         var fetchedQuotation = await client.GetFromJsonAsync<QuotationResponse>(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
         Assert.NotNull(fetchedQuotation);
-        Assert.Equal("Sent", fetchedQuotation.Status);
+        Assert.Equal("Converted", fetchedQuotation.Status);
+        Assert.False(fetchedQuotation.CanBeConvertedToSale);
+
+        // Y el listado la filtra por ese estado (QuotationListing.ParseStatus, contra la base):
+        // ya no aparece entre las enviadas.
+        var converted = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(tenantId)}?status=Converted", TestContext.Current.CancellationToken);
+        var sent = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(tenantId)}?status=Sent", TestContext.Current.CancellationToken);
+        Assert.NotNull(converted);
+        Assert.NotNull(sent);
+        Assert.Equal(quotation.Id, Assert.Single(converted.Items).Id);
+        Assert.Equal(0, sent.Total);
     }
 
-    // Como la cotizacion se queda en Sent despues de convertirse (no hay estado "aprobada" que
-    // bloquee una segunda conversion), la unica red es el indice unico de Sale.QuotationId --
-    // esta prueba confirma que un segundo intento da un 422 legible, no un 500 con el nombre de
-    // la constraint adentro.
+    // US-10/US-11: convertida, la cotizacion queda de solo lectura. Mientras se quedaba en Sent
+    // despues de convertirse, todo esto seguia permitido: se podia editar, anular o reenviar una
+    // cotizacion cuya venta ya existia.
+    [Fact]
+    public async Task AConvertedQuotationCanNoLongerBeEditedVoidedOrResent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var itemId = Assert.Single(quotation.Items).Id;
+        var edited = await client.PutAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
+            new UpdateQuotationItemRequest(2m),
+            TestContext.Current.CancellationToken);
+        var voided = await client.PostAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/void",
+            content: null,
+            TestContext.Current.CancellationToken);
+        var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
+        var resent = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(pdfFileId),
+            TestContext.Current.CancellationToken);
+
+        await AssertUnprocessableAsync(edited, "quotation.quotation.not_editable");
+        await AssertUnprocessableAsync(voided, "quotation.quotation.not_editable");
+        await AssertUnprocessableAsync(resent, "quotation.quotation.not_draft");
+
+        static async Task AssertUnprocessableAsync(HttpResponseMessage response, string code)
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(code, body, StringComparison.Ordinal);
+        }
+    }
+
+    // Una segunda conversion la corta el estado: la cotizacion ya quedo en Converted, y
+    // EnsureConvertibleToSale solo deja pasar Draft y Sent, asi que el 422 es
+    // status_not_convertible. El indice unico de Sale.QuotationId (que QuotationsUnitOfWork
+    // traduce a already_converted) y el token de concurrencia de la cotizacion quedan como red de
+    // abajo para dos conversiones simultaneas.
     [Fact]
     public async Task ConvertingAnAlreadyConvertedQuotationIsRejected()
     {
@@ -116,7 +174,7 @@ public sealed class SaleApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.Contains("quotation.quotation.already_converted", body, StringComparison.Ordinal);
+        Assert.Contains("quotation.quotation.status_not_convertible", body, StringComparison.Ordinal);
     }
 
     // US-14: sin comprobantes se permite unicamente cuando el pago queda pendiente.

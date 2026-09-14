@@ -1,129 +1,55 @@
 using System.Text.Json;
-using BuildingBlocks.Application;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Modules.Identity.Application;
 using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
 using Modules.Notifications.Infrastructure.Persistence;
 
 namespace Modules.Notifications.Infrastructure.Messaging;
 
-// Consume del Outbox de plataforma el evento de integración de membresía invitada y
-// entrega el email de invitación. Es idempotente por el inbox propio de este módulo, con
-// clave (consumidor, id de mensaje de outbox): un mensaje reentregado se saltea. Cada
-// mensaje se commitea independiente, así que una falla no bloquea el lote.
-internal sealed partial class InvitationDeliveryWorker(
+// Consume del outbox de plataforma el evento de membresía invitada y entrega el email de invitación.
+// El reclamo, el lote y la cancelación son de OutboxDeliveryWorker.
+internal sealed class InvitationDeliveryWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<NotificationsOptions> options,
-    ILogger<InvitationDeliveryWorker> logger) : BackgroundService
+    ILogger<InvitationDeliveryWorker> logger)
+    : OutboxDeliveryWorker(scopeFactory, logger)
 {
-    private const string Consumer = "notifications.invitation-email";
-    private const string EventName = "tenancy.membership-invited.v1";
-    private const int BatchSize = 20;
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    protected override string Consumer => "notifications.invitation-email";
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Invitation delivery tick failed.")]
-    private static partial void LogTickFailed(ILogger logger, Exception exception);
+    protected override string EventName => "tenancy.membership-invited.v1";
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
-            {
-                await ProcessBatchAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
+    protected override string TemplateRef => InvitationEmailTemplate.TemplateRef;
 
-    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
-    {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
-        var channel = scope.ServiceProvider.GetRequiredService<IEmailChannel>();
-        var userDirectory = scope.ServiceProvider.GetRequiredService<IUserDirectory>();
-        var clock = scope.ServiceProvider.GetRequiredService<IClock>();
-
-        var pending = await dbContext.Outbox
-            .Where(record => record.EventName == EventName)
-            .Where(record => !dbContext.Inbox.Any(entry =>
-                entry.Consumer == Consumer && entry.MessageId == record.Id))
-            .OrderBy(record => record.OccurredAt)
-            .Take(BatchSize)
-            .ToListAsync(cancellationToken);
-
-        foreach (var record in pending)
-        {
-            await DeliverAsync(dbContext, channel, userDirectory, clock, record, cancellationToken);
-        }
-    }
-
-    private async Task DeliverAsync(
-        NotificationsDbContext dbContext,
-        IEmailChannel channel,
-        IUserDirectory userDirectory,
-        IClock clock,
-        OutboxRecord record,
-        CancellationToken cancellationToken)
+    protected override async Task<Notification> DeliverAsync(
+        OutboxRecord record, DeliveryContext context, CancellationToken stoppingToken)
     {
         var (userId, tenantId, token) = ParsePayload(record.PayloadJson);
-        var email = await userDirectory.GetEmailAsync(userId, cancellationToken);
-        var notification = Notification.CreateEmail(
-            tenantId,
-            userId,
-            email ?? string.Empty,
-            InvitationEmailTemplate.TemplateRef,
-            clock.UtcNow);
-
-        if (string.IsNullOrWhiteSpace(email))
+        var (notification, email) = await ResolveRecipientAsync(context, tenantId, userId, TemplateRef, stoppingToken);
+        if (email is null)
         {
-            notification.MarkFailed("recipient_email_unavailable", clock.UtcNow);
-        }
-        else if (string.IsNullOrWhiteSpace(token))
-        {
-            // Un evento anterior al token de invitación (encolado antes del despliegue) no
-            // tiene link que armar. Se marca fallido y se registra en el inbox en vez de
-            // tirar: una excepción acá aborta el lote entero y lo reintenta para siempre.
-            notification.MarkFailed("invitation_token_unavailable", clock.UtcNow);
-        }
-        else
-        {
-            try
-            {
-                var message = InvitationEmailTemplate.Render(
-                    email,
-                    InvitationLink.Compose(options.Value.InvitationUrl, token));
-                await channel.SendAsync(message, cancellationToken);
-                notification.MarkSent(clock.UtcNow);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                notification.MarkFailed(exception.Message, clock.UtcNow);
-            }
+            return notification;
         }
 
-        dbContext.Notifications.Add(notification);
-        dbContext.Inbox.Add(new NotificationInboxMessage
+        if (string.IsNullOrWhiteSpace(token))
         {
-            Consumer = Consumer,
-            MessageId = record.Id,
-            ProcessedAt = clock.UtcNow,
-        });
-        await dbContext.SaveChangesAsync(cancellationToken);
+            // Un evento anterior al token de invitación (encolado antes del despliegue) no tiene link
+            // que armar. Se marca fallido en vez de tirar: una excepción lo reintentaría hasta cortarlo
+            // por intentos, y el resultado sería el mismo tres ticks más tarde.
+            notification.MarkFailed("invitation_token_unavailable", context.Clock.UtcNow);
+            return notification;
+        }
+
+        string recipient = email;
+        string invitationToken = token;
+        await SendAsync(
+            context,
+            notification,
+            () => InvitationEmailTemplate.Render(
+                recipient, InvitationLink.Compose(options.Value.InvitationUrl, invitationToken)),
+            stoppingToken);
+        return notification;
     }
 
     private static (Guid UserId, Guid TenantId, string? Token) ParsePayload(string payloadJson)
@@ -132,8 +58,8 @@ internal sealed partial class InvitationDeliveryWorker(
         var root = document.RootElement;
         var userId = root.GetProperty("userId").GetGuid();
         var tenantId = root.GetProperty("tenantId").GetProperty("value").GetGuid();
-        // TryGetProperty y no GetProperty: los mensajes encolados antes del despliegue del
-        // token no lo traen, y esos se resuelven como fallo marcado, no como poison message.
+        // TryGetProperty y no GetProperty: los mensajes encolados antes del despliegue del token no lo
+        // traen, y esos se resuelven como fallo marcado, no como mensaje envenenado.
         var token = root.TryGetProperty("token", out var tokenElement)
             ? tokenElement.GetString()
             : null;

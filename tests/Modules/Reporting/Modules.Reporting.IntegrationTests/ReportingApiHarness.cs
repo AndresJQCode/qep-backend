@@ -5,8 +5,10 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Application;
+using Modules.Companies.Application;
 using Modules.Customers.Application;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 using Modules.Reporting.Application;
 using Modules.Storage.Application;
 using Testcontainers.PostgreSql;
@@ -49,6 +51,10 @@ internal static class ReportingApiHarness
         CustomersPermissions.ClassificationManage,
         CatalogPermissions.ProductRead,
         CatalogPermissions.ProductManage,
+        // Convertir en venta exige cuenta de cobro, y la cuenta sale de una empresa: sembrar una
+        // venta pasa por la API de Companies.
+        CompaniesPermissions.CompanyRead,
+        CompaniesPermissions.CompanyManage,
         StoragePermissions.FileUpload,
         StoragePermissions.FileRead,
         ReportingPermissions.SalesRead,
@@ -272,6 +278,10 @@ internal static class ReportingApiHarness
         Guid productId,
         DateOnly? validUntil = null)
     {
+        // Sin cuenta de cobro la cotización se envía igual, pero convertirla en venta devuelve 422
+        // `quotation.billing.account_required`: toda prueba del reporte de ventas se caería en
+        // `ConvertToSaleAsync`, lejos de lo que mide.
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations",
             new CreateQuotationRequest(
@@ -280,7 +290,8 @@ internal static class ReportingApiHarness
                 null,
                 null,
                 null,
-                null),
+                new QuotationBillingAccountRequest(
+                    billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency)),
             TestContext.Current.CancellationToken);
         created.EnsureSuccessStatusCode();
         var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(
@@ -303,6 +314,42 @@ internal static class ReportingApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(body);
         return body;
+    }
+
+    /// <summary>
+    /// Una empresa con una cuenta bancaria, que es de donde la cotización copia su cuenta de
+    /// cobro: <c>QuotationBillingAccountRequest</c> la valida contra las cuentas de la empresa,
+    /// así que no alcanza con inventar un banco. Mismo helper que el harness de Quotations.
+    /// </summary>
+    private static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId)
+    {
+        var cityId = await EnsureCityIdAsync(client);
+        const string bankName = "Bancolombia";
+        var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
+        const string currency = "COP";
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name = "QEP Comercial S.A.S.",
+                bankAccounts = new[]
+                {
+                    new { bankName, accountNumber, currency },
+                },
+                taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                cityId,
+                phone = "6015550000",
+                email = "facturacion@qep.example.co",
+                address = "Carrera 7 # 71-21",
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CompanyResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return (body.Id, bankName, accountNumber, currency);
     }
 
     public static async Task<SaleResponse> ConvertToSaleAsync(
@@ -377,6 +424,8 @@ internal static class ReportingApiHarness
 
     private sealed record ProductResponseDto(Guid Id);
 
+    private sealed record CompanyResponseDto(Guid Id, string Name);
+
     private sealed record ProductDetailResponseDto(Guid Id, string Name, string Code);
 
     private sealed record UploadSessionResponseDto(
@@ -400,12 +449,57 @@ internal static class ReportingApiHarness
             // NotificationsOptionsValidator falla al arrancar y todas las pruebas de este archivo
             // mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+
+            // Vaciadas, nunca heredadas: `WebApplicationFactory` corre en Development y ahí
+            // `CreateBuilder` carga los user-secrets de quien corre las pruebas. Con Zenvia
+            // configurado, `CreateSentQuotationAsync` le mandaría un WhatsApp de verdad a un
+            // cliente de prueba. Vacías fuerzan `LogWhatsAppSender`, igual que en el harness de
+            // Quotations.
+            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
+            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
+            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
+
+                // Enviar genera el PDF y lo publica en el bucket público (desde edf3796). Sin
+                // estos dos dobles, el renderer real le hace POST a `qcode-pdf` con la API key de
+                // los user-secrets, y el storage real falla porque el bucket público no está
+                // configurado: el envío responde 422 `quotation.send.failed (Publish)` y tumba
+                // toda prueba que siembra una cotización enviada.
+                services.RemoveAll<IQuotationPdfRenderer>();
+                services.AddSingleton<IQuotationPdfRenderer, StubPdfRenderer>();
+                services.RemoveAll<IQuotationPdfStorage>();
+                services.AddSingleton<IQuotationPdfStorage, StubPdfStorage>();
             });
         }
+    }
+
+    /// <summary>Una cabecera de PDF y nada más: estas pruebas miden reportes, no el documento.
+    /// El contenido del PDF lo cubre <c>QCodePdfRendererTests</c>.</summary>
+    private sealed class StubPdfRenderer : IQuotationPdfRenderer
+    {
+        public Task<byte[]> RenderAsync(
+            QuotationPdfDocument document, CancellationToken cancellationToken) =>
+            Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+    }
+
+    private sealed class StubPdfStorage : IQuotationPdfStorage
+    {
+        public Task<string> SaveAsync(
+            Guid tenantId,
+            QuotationId quotationId,
+            byte[] content,
+            CancellationToken cancellationToken) =>
+            Task.FromResult($"quotations/tenants/{tenantId:N}/{Guid.CreateVersion7():N}.pdf");
+
+        public Task<string> PublishAsync(string storageKey, CancellationToken cancellationToken) =>
+            Task.FromResult($"https://assets.example.co/{storageKey}");
+
+        public Task<string> CreateDownloadUrlAsync(
+            string storageKey, string downloadFileName, CancellationToken cancellationToken) =>
+            Task.FromResult($"https://r2.example.com/{storageKey}?X-Amz-Signature=stub");
     }
 
     public sealed class InMemoryObjectStorage : IObjectStorage

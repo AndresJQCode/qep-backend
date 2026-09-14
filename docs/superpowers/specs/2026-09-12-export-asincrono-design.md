@@ -169,6 +169,11 @@ obligaría a recorrerlo dos veces).
 Nombres: `cotizaciones-yyyy-MM-dd-HHmm.xlsx` y `ventas-yyyy-MM-dd-HHmm.xlsx`, con la hora en que
 se generó.
 
+> **Complemento (2026-09-13).** Las columnas de estado del Excel —«Estado» y el respaldo de «Pago»—
+> usan las etiquetas en español de las tablas de los listados, no el nombre del enum. La API sigue
+> mandando el enum. Ver [2026-09-13-ajustes-post-export-design.md](2026-09-13-ajustes-post-export-design.md)
+> (A7, A8).
+
 ### D9 — Subida a Storage con clave estable
 
 Puerto `IExportFileStorage` en Application, adaptador calcado de `ICustomerExportStorage`. La
@@ -326,10 +331,24 @@ TDD, RED antes que GREEN con evidencia literal.
 
 ## Riesgos y pendientes
 
-- **Memoria medida en local, falta un export real.** La cifra de ClosedXML es un orden de
-  magnitud. Con el zip en streaming (D8), una prueba local de 50.000 filas de 8 columnas dejó el
-  heap en ~1 MB, contra ~48 MB con `SpreadsheetDocument.Create`. Conviene medir un export de un año
-  real en staging antes de dar el tema por cerrado.
+- **Memoria medida en producción (2026-09-13).** Un año del tenant sintético `carga-export`
+  (spec 2026-09-13), exportado desde la pantalla, en el pod real (1 réplica, límite 1Gi, 500m de
+  CPU), con el zip en streaming (D8):
+
+  | Export | Filas | Duración del job | Archivo | Memoria del pod, reposo → pico | CPU pico | Reinicios |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Cotizaciones | 50.000 | 13.111 ms | 2 MB | 172 Mi → 178 Mi | 222m | 0 |
+  | Ventas | 15.000 | 6.952 ms | 647 KB | 193 Mi → ≥ 222 Mi | sin muestra | 0 |
+
+  La siembra de 50.000 cotizaciones tardó 9.487 ms. Una primera exportación de cotizaciones, del
+  1 de enero al 13 de septiembre (35.152 filas, 1,37 MB), tardó 24.628 ms y llegó a 163 Mi: corrió
+  a los dos minutos de arrancar el pod, con la JIT en frío, así que la cifra representativa es la
+  del pod caliente. Los picos salen de `kubectl top` cada 5 s, que promedia la ventana del
+  metrics-server, así que son aproximados. El de ventas no se alcanzó a muestrear durante el job:
+  terminó antes de la primera muestra, y 222 Mi es la lectura de justo después. La medición no es
+  un banco de pruebas: con una réplica, la API atendió en el mismo pod mientras tanto. **El riesgo
+  queda cerrado**: ningún export pasó de unos 220 Mi de 1 Gi. Después de medir se apagó el
+  interruptor, y la carga se borra con `ops/export-load-cleanup.sql`.
 - **Sin snapshot transaccional.** El keyset (D8) evita filas repetidas o saltadas, pero cada lote
   lee el estado de ese momento: una fila que cambia antes de que le toque sale con el valor nuevo,
   o no sale si dejó el filtro. Leer todo en una transacción `REPEATABLE READ` lo cerraría a costa

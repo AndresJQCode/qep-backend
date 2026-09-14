@@ -69,3 +69,11 @@ data:
   # al cliente. Sin ellas la semilla no corre.
   Seed__Enabled: "true"
   Seed__OwnerEmail: "#{SEED_OWNER_EMAIL}#"
+  # Carga sintética para medir la exportación (spec 2026-09-13). Con un número mayor que 0 siembra,
+  # después del arranque, el tenant "carga-export" con esa cantidad de cotizaciones, y le da admin a
+  # Seed__OwnerEmail. Repite el default de la imagen a propósito, igual que
+  # Registration__PublicTenantSignupEnabled: es el interruptor que se prende para medir, y tenerlo acá
+  # hace que prenderlo y apagarlo sean un diff de una línea que queda en la historia. Después de medir
+  # vuelve a "0" y SÓLO ENTONCES se corre ops/export-load-cleanup.sql
+  # (README § Carga sintética para medir la exportación).
+  Seed__ExportLoad__Quotations: "0"

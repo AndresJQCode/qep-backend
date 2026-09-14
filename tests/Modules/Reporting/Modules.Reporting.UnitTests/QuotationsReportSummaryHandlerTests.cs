@@ -71,13 +71,14 @@ public sealed class QuotationsReportSummaryHandlerTests
         Assert.Empty(source.SummarizedCriteria);
     }
 
-    /// <summary>«Aprobada» no existe: convertir una cotizacion la deja en <c>Sent</c>. Que el
-    /// validador la rechace es lo que evita que alguien filtre por un estado inventado y lea un
-    /// cero como "no hubo".</summary>
+    /// <summary>Los cinco estados reales, <c>Converted</c> incluido. «Aprobada» sigue sin existir
+    /// para una cotizacion (ver <see cref="SummarizingRejectsAnUnknownStatus"/>): que el validador
+    /// la rechace es lo que evita que alguien filtre por un estado inventado y lea un cero como
+    /// "no hubo".</summary>
     [Fact]
-    public async Task SummarizingAcceptsTheFourRealStatuses()
+    public async Task SummarizingAcceptsTheFiveRealStatuses()
     {
-        foreach (var status in new[] { "Draft", "Sent", "Expired", "Voided" })
+        foreach (var status in new[] { "Draft", "Sent", "Expired", "Voided", "Converted" })
         {
             var source = new FakeQuotationsReportSource();
             var handler = Handler(source, Tenant, ReportingPermissions.QuotationRead);

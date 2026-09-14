@@ -304,6 +304,10 @@ public sealed class InvitationServiceTests
             Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<TenantId>>([]);
 
+        public Task<IReadOnlyList<ActiveTenantSummary>> ListActiveTenantSummariesByUserAsync(
+            Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ActiveTenantSummary>>([]);
+
         public Task<IReadOnlyList<Membership>> ListByUserAsync(
             Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Membership>>([]);
