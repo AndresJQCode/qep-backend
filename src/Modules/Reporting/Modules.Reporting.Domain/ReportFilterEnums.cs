@@ -14,20 +14,21 @@ public enum SalePaymentStatusFilter
 }
 
 /// <summary>
-/// Los cuatro estados de <c>QuotationStatus</c>. Ver <see cref="SalePaymentStatusFilter"/> sobre
+/// Los cinco estados de <c>QuotationStatus</c>. Ver <see cref="SalePaymentStatusFilter"/> sobre
 /// por qué se redeclaran.
 ///
-/// **No hay "Approved"**: convertir una cotización en venta la deja en <see cref="Sent"/>, y la
-/// única señal de que se convirtió es que exista una <c>Sale</c> apuntándola 1:1. Para "las
-/// cotizaciones que terminaron en venta" el reporte a usar es el de ventas, no un filtro de
-/// estado acá.
+/// <see cref="Converted"/> es la cotización que ya terminó en venta. **No hay "Approved"**: ése
+/// es un estado de la venta, no de la cotización. Las que se convirtieron antes de que existiera
+/// <see cref="Converted"/> siguen en <see cref="Sent"/> (no hubo backfill), así que para "las
+/// cotizaciones que terminaron en venta" el reporte que no se equivoca sigue siendo el de ventas.
 /// </summary>
 public enum QuotationStatusFilter
 {
     Draft,
     Sent,
     Expired,
-    Voided
+    Voided,
+    Converted
 }
 
 /// <summary>Los tres valores de <c>ProductPriceField</c> en Catalog. Ver

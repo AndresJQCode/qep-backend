@@ -85,11 +85,12 @@ public sealed class ConvertQuotationToSaleHandler(
         var saleNumber = SaleNumberFormatter.Format(now.Year, sequence);
         var paymentStatus = Enum.Parse<SalePaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
-        // Validar que se pueda convertir y crear la venta en la misma unidad de trabajo
-        // (modelo-datos-cotizaciones.md §3). La cotización se queda en Sent — no existe un
-        // estado "aprobada"/"convertida" (ver QuotationStatus); la Sale que se crea, con su
-        // QuotationId 1:1, es la única señal de que ya se convirtió.
-        quotation.EnsureConvertibleToSale();
+        // Pasar la cotización a Converted y crear la venta en la misma unidad de trabajo
+        // (modelo-datos-cotizaciones.md §3): si guardar falla, no queda ninguna de las dos cosas.
+        // ConvertToSale valida las precondiciones antes de mutar. El historial (Approved) y la
+        // auditoría (quotation.quotation.approved) no cambian de nombre: son contrato, no el
+        // nombre del estado.
+        quotation.ConvertToSale(convertedBy, now);
         var sale = Sale.Create(
             SaleId.New(),
             command.TenantId,

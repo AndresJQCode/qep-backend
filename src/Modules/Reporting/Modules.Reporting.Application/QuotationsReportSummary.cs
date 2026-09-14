@@ -9,15 +9,16 @@ namespace Modules.Reporting.Application;
 /// menos la paginación, mismo permiso, mismo motivo para existir— pero con dos cosas propias que
 /// una venta no tiene.
 ///
-/// La primera es <see cref="ByStatus"/>: una cotización vive en cuatro estados y una venta en
+/// La primera es <see cref="ByStatus"/>: una cotización vive en cinco estados y una venta en
 /// uno, así que acá el reparto por estado **es** el reporte, no un detalle.
 ///
 /// La segunda es <see cref="Validity"/> y <see cref="Expiring"/>: una cotización enviada tiene
 /// fecha de vencimiento, y lo que el negocio necesita saber no es cuántas hay sino **cuánta plata
 /// se vence esta semana**. Eso no sale de un listado ordenado por fecha de creación.
 ///
-/// **No hay estado «Aprobada».** Convertir una cotización en venta la deja en <c>Sent</c>; cuántas
-/// terminaron en venta se lee en el reporte de ventas, no acá.
+/// **No hay estado «Aprobada».** Convertir una cotización en venta la deja en <c>Converted</c>.
+/// Las que se convirtieron antes de que ese estado existiera siguen en <c>Sent</c> (no hubo
+/// backfill), así que cuántas terminaron en venta se lee en el reporte de ventas, no acá.
 /// </summary>
 public sealed record QuotationsReportSummaryDto(
     int QuotationCount,
@@ -36,7 +37,7 @@ public sealed record QuotationsReportSummaryDto(
 ///
 /// <c>Status</c> viaja como el nombre del enum (<c>Sent</c>), igual que en
 /// <see cref="QuotationsReportItemDto"/>: la traducción es del frontend, que ya tiene el
-/// diccionario. **Vienen los cuatro siempre**, incluso en cero: un estado que desaparece de la
+/// diccionario. **Vienen los cinco siempre**, incluso en cero: un estado que desaparece de la
 /// respuesta obligaría a la pantalla a saber cuáles existen para dibujar el que falta.
 /// </summary>
 public sealed record ReportStatusSliceDto(string Status, int Count, decimal Total);

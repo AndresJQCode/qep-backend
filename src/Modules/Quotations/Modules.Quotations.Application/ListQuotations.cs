@@ -49,9 +49,10 @@ public sealed record QuotationListItemDto(
     /// de cobro. Es lo que el detalle enumera como "lo que le falta" antes de dejar enviar, y
     /// viaja resuelto porque las lineas no vienen en la fila.</summary>
     bool IsComplete,
-    /// <summary>La venta que salio de esta cotizacion, si ya se convirtio. <c>null</c> es "sin
-    /// convertir": no hay un estado "convertida" que mirar --la cotizacion se queda en
-    /// <c>Sent</c>-- y la existencia de la venta es la unica senal.</summary>
+    /// <summary>La venta que salio de esta cotizacion, si ya se convirtio. El estado
+    /// <c>Converted</c> dice que se convirtio; esto dice a que venta ir. <c>null</c> es "sin
+    /// convertir". Las convertidas antes de que existiera <c>Converted</c> siguen en <c>Sent</c>
+    /// (no hubo backfill): para esas, este campo es la unica senal.</summary>
     Guid? SaleId,
     /// <summary><c>Pending</c> mientras esa venta espera el visto bueno, <c>Approved</c> despues.
     /// <c>null</c> cuando no hay venta.</summary>

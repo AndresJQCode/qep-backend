@@ -20,6 +20,7 @@ public sealed class ExportStatusLabelsTests
                 [QuotationStatus.Sent] = "Enviada",
                 [QuotationStatus.Voided] = "Anulada",
                 [QuotationStatus.Expired] = "Vencida",
+                [QuotationStatus.Converted] = "Convertida",
             },
             ExportStatusLabels.For);
 

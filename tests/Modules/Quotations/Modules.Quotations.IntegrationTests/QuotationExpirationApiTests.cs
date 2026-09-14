@@ -1,7 +1,10 @@
 using System.Net.Http.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Expiration;
+using Modules.Quotations.Infrastructure.Persistence;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -97,10 +100,55 @@ public sealed class QuotationExpirationApiTests
         Assert.Equal("Draft", fetched.Status);
     }
 
+    // Una convertida no vence: la venta ya salió de ahí. Mientras se quedaba en Sent después de
+    // convertirse, el barrido la movía a Expired en cuanto pasaba su vigencia, con la venta
+    // viva. La vigencia se corre al pasado directo en la base, después de convertir: es el paso
+    // del tiempo lo que se simula, y por la API una convertida ya no se puede editar.
+    [Fact]
+    public async Task SweepDoesNotTouchAConvertedQuotationPastItsValidUntil()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/sale",
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        await SetValidUntilAsync(
+            factory,
+            new QuotationId(quotation.Id),
+            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)));
+
+        await RunExpirationSweepAsync(factory);
+
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.Equal("Converted", fetched.Status);
+    }
+
     private static async Task<int> RunExpirationSweepAsync(QepApiFactory factory)
     {
         using var scope = factory.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<IQuotationExpirationProcessor>();
         return await processor.ExpirePastDueQuotationsAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Directo en la base, mismo criterio que SetQuotationStatusAsync en QuotationExportApiTests.
+    private static async Task SetValidUntilAsync(
+        QepApiFactory factory, QuotationId quotationId, DateOnly validUntil)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var updated = await dbContext.Quotations
+            .Where(quotation => quotation.Id == quotationId)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(quotation => quotation.ValidUntil, validUntil),
+                TestContext.Current.CancellationToken);
+        Assert.Equal(1, updated);
     }
 }
