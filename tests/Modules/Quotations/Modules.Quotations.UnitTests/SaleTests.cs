@@ -204,4 +204,134 @@ public sealed class SaleTests
 
         Assert.Equal("sale.sale.not_pending", error.Code);
     }
+
+    // A pedido (2026-09): corregir un monto mal tipeado sin recrear la venta ni el
+    // comprobante -- el archivo y quien lo subio no cambian.
+    [Fact]
+    public void AddPaymentProofsCorrectsAnExistingProofAmount()
+    {
+        var existingFileId = Guid.CreateVersion7();
+        var sale = NewSale(
+            paymentStatus: SalePaymentStatus.PartialPaymentReceived,
+            proofs: [new SalePaymentProofInput(existingFileId, 50_000m)]);
+        var proofId = Assert.Single(sale.PaymentProofs).Id;
+        var later = Now.AddDays(1);
+
+        sale.AddPaymentProofs(
+            [],
+            SalePaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            later,
+            [new SalePaymentProofAmountUpdate(proofId, 80_000m)]);
+
+        var proof = Assert.Single(sale.PaymentProofs);
+        Assert.Equal(proofId, proof.Id);
+        Assert.Equal(existingFileId, proof.FileId);
+        Assert.Equal(80_000m, proof.Amount);
+        Assert.Equal(ConvertedBy, proof.UploadedBy);
+        Assert.Equal(SalePaymentStatus.FullPaymentReceived, sale.PaymentStatus);
+        Assert.Equal(2, sale.Version);
+    }
+
+    // Sumar y corregir en el mismo llamado: un solo viaje de red para las dos cosas.
+    [Fact]
+    public void AddPaymentProofsAddsNewOnesAndCorrectsExistingOnesTogether()
+    {
+        var sale = NewSale(proofs: [new SalePaymentProofInput(Guid.CreateVersion7(), 50_000m)]);
+        var existingProofId = Assert.Single(sale.PaymentProofs).Id;
+        var newFileId = Guid.CreateVersion7();
+
+        sale.AddPaymentProofs(
+            [new SalePaymentProofInput(newFileId, 20_000m)],
+            SalePaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1),
+            [new SalePaymentProofAmountUpdate(existingProofId, 60_000m)]);
+
+        Assert.Equal(2, sale.PaymentProofs.Count);
+        Assert.Contains(
+            sale.PaymentProofs, proof => proof.Id == existingProofId && proof.Amount == 60_000m);
+        Assert.Contains(
+            sale.PaymentProofs, proof => proof.FileId == newFileId && proof.Amount == 20_000m);
+    }
+
+    [Fact]
+    public void AddPaymentProofsRejectsCorrectingAProofThatIsNotOnThisSale()
+    {
+        var sale = NewSale();
+        var unknownProofId = SalePaymentProofId.New();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.AddPaymentProofs(
+                [],
+                sale.PaymentStatus,
+                null,
+                ConvertedBy,
+                Now.AddDays(1),
+                [new SalePaymentProofAmountUpdate(unknownProofId, 10_000m)]));
+
+        Assert.Equal("sale.payment_proof.not_found", error.Code);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void AddPaymentProofsRejectsCorrectingAProofToANonPositiveAmount(decimal amount)
+    {
+        var sale = NewSale();
+        var proofId = Assert.Single(sale.PaymentProofs).Id;
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.AddPaymentProofs(
+                [],
+                sale.PaymentStatus,
+                null,
+                ConvertedBy,
+                Now.AddDays(1),
+                [new SalePaymentProofAmountUpdate(proofId, amount)]));
+
+        Assert.Equal("sale.payment_proof.amount_invalid", error.Code);
+    }
+
+    // Correcciones solas, sin sumar ningun comprobante nuevo, siguen siendo "algo para hacer" --
+    // el chequeo de lote vacio no debe pedir tambien un comprobante nuevo.
+    [Fact]
+    public void AddPaymentProofsAllowsOnlyCorrectingWithoutAddingAnyNewProof()
+    {
+        var sale = NewSale();
+        var proofId = Assert.Single(sale.PaymentProofs).Id;
+
+        sale.AddPaymentProofs(
+            [],
+            sale.PaymentStatus,
+            null,
+            ConvertedBy,
+            Now.AddDays(1),
+            [new SalePaymentProofAmountUpdate(proofId, 5_000m)]);
+
+        Assert.Equal(5_000m, Assert.Single(sale.PaymentProofs).Amount);
+    }
+
+    // Aprobada, la venta es el respaldo de un cobro que alguien ya reviso con esos montos:
+    // corregirlos ahi adentro cambiaria lo que esa persona dio por bueno.
+    [Fact]
+    public void AddPaymentProofsRejectsCorrectingAProofOnAnAlreadyApprovedSale()
+    {
+        var sale = NewSale();
+        var proofId = Assert.Single(sale.PaymentProofs).Id;
+        sale.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.AddPaymentProofs(
+                [],
+                sale.PaymentStatus,
+                null,
+                ConvertedBy,
+                Now.AddDays(1),
+                [new SalePaymentProofAmountUpdate(proofId, 5_000m)]));
+
+        Assert.Equal("sale.sale.not_pending", error.Code);
+    }
 }

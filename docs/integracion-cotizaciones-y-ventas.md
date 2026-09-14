@@ -127,8 +127,10 @@ No hace falta publicar (paso 5 de esa guía) — estos archivos no necesitan URL
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
-| `sale.sale.payment_proof_required` | 422 | Falta al menos un comprobante y el pago no es `PaymentPending` |
-| `sale.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante |
+| `sale.sale.payment_proof_required` | 422 | `POST /sale` sin comprobantes y el pago no es `PaymentPending`; en `POST /sale/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
+| `sale.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
+| `sale.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |
+| `sale.payment_proof.not_found` | 422 | `updatedProofs` referencia un `proofId` que no es de esta venta |
 | `validation.failed` | 422 | Errores de campo, viene con `errors` |
 
 ---

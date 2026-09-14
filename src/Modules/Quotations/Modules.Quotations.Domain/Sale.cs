@@ -5,10 +5,10 @@ namespace Modules.Quotations.Domain;
 /// modelo-datos-cotizaciones.md §2.4). 1:1 con <see cref="Quotation"/> — no duplica cliente, CUC,
 /// productos ni totales; todo eso se referencia por <see cref="QuotationId"/>. Agregado raíz que
 /// incluye sus comprobantes de pago (<see cref="SalePaymentProof"/>): nacen con ella, pero
-/// mientras sigue <see cref="SaleStatus.Pending"/> se le pueden sumar más —ver
-/// <see cref="AddPaymentProofs"/>— para el caso real de que falte alguno al convertir, o el
-/// pago se complete después. No se quitan: no hay motivo de negocio para retirar un comprobante
-/// ya cargado, y menos borrarlo.
+/// mientras sigue <see cref="SaleStatus.Pending"/> se le pueden sumar más, y corregir el monto
+/// de los que ya tiene —ver <see cref="AddPaymentProofs"/>— para el caso real de que falte
+/// alguno al convertir, el pago se complete después, o alguien haya tipeado mal un monto. No se
+/// quitan ni se les cambia el archivo: no hay motivo de negocio para eso.
 ///
 /// Nunca tiene PDF ni envío propio (US-17): el único documento que el cliente recibe es la
 /// cotización original.
@@ -127,28 +127,36 @@ public sealed class Sale
     }
 
     /// <summary>
-    /// Suma comprobantes a una venta ya creada, y actualiza el estado del pago con lo que
-    /// corresponda a lo cargado. Existe porque "Aprobar venta" se bloquea mientras el pago no
-    /// está completo (a pedido, 2026-09), y hasta ahora la única forma de cargar comprobantes
-    /// era al convertir — si faltó alguno, o el pago se terminó de cobrar después, no había
-    /// forma de agregarlo sin recrear la venta entera.
+    /// Suma comprobantes a una venta ya creada, corrige el monto de los que ya tenía cargados
+    /// (a pedido, 2026-09), y actualiza el estado del pago con lo que corresponda a lo cargado.
+    /// Existe porque "Aprobar venta" se bloquea mientras el pago no está completo, y hasta ahora
+    /// la única forma de cargar comprobantes era al convertir — si faltó alguno, el pago se
+    /// terminó de cobrar después, o alguien tipeó mal un monto, no había forma de arreglarlo sin
+    /// recrear la venta entera.
     ///
     /// Sólo sobre <see cref="SaleStatus.Pending"/>: aprobada, la venta es el respaldo de un
-    /// cobro que alguien ya revisó con lo que había en ese momento — sumarle comprobantes ahí
+    /// cobro que alguien ya revisó con lo que había en ese momento — tocar sus comprobantes ahí
     /// adentro cambiaría lo que esa persona dio por bueno.
     ///
     /// <paramref name="notes"/> reemplaza <see cref="Notes"/> entero (a pedido, 2026-09): la
     /// pantalla que suma comprobantes la precarga con lo que ya había, así que lo normal es que
     /// vuelva igual o corregida, nunca perdida. Null o vacío la borra, mismo criterio que al
     /// crear la venta.
+    ///
+    /// <paramref name="updatedProofs"/> corrige comprobantes que ya existen —el archivo y quién
+    /// lo subió no cambian, sólo el monto—, en la misma llamada que suma los nuevos: un solo
+    /// viaje de red para las dos cosas, en vez de uno por cada comprobante que se toca.
     /// </summary>
     public void AddPaymentProofs(
         IReadOnlyCollection<SalePaymentProofInput> proofs,
         SalePaymentStatus paymentStatus,
         string? notes,
         MemberId uploadedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        IReadOnlyCollection<SalePaymentProofAmountUpdate>? updatedProofs = null)
     {
+        updatedProofs ??= [];
+
         if (Status != SaleStatus.Pending)
         {
             throw new QuotationsDomainException(
@@ -156,11 +164,21 @@ public sealed class Sale
                 "Payment proofs can only be added to a pending sale.");
         }
 
-        if (proofs.Count == 0)
+        if (proofs.Count == 0 && updatedProofs.Count == 0)
         {
             throw new QuotationsDomainException(
                 "sale.sale.payment_proof_required",
                 "At least one payment proof is required.");
+        }
+
+        foreach (var update in updatedProofs)
+        {
+            var proof = _paymentProofs.FirstOrDefault(candidate => candidate.Id == update.ProofId)
+                ?? throw new QuotationsDomainException(
+                    "sale.payment_proof.not_found",
+                    $"Payment proof '{update.ProofId}' was not found on this sale.");
+
+            proof.UpdateAmount(update.Amount);
         }
 
         foreach (var proof in proofs)
@@ -232,3 +250,8 @@ public sealed class Sale
 /// asigna un <see cref="SalePaymentProofId"/> nuevo a cada uno — mismo criterio que
 /// <c>PriceScaleInput</c> en Catalog.</summary>
 public sealed record SalePaymentProofInput(Guid FileId, decimal Amount);
+
+/// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
+/// <see cref="SalePaymentProofInput"/>, sí lleva id — es el que dice cuál comprobante corregir,
+/// no uno nuevo que agregar.</summary>
+public sealed record SalePaymentProofAmountUpdate(SalePaymentProofId ProofId, decimal Amount);
