@@ -73,7 +73,7 @@ public sealed record PriceChangeProductEntryDto(
 public sealed record PriceChangeComparisonDto(int ChangeCount);
 
 /// <summary>Lo que devuelve el origen: el resumen de **una** ventana, sin comparación. Ver
-/// <see cref="SalesReportAggregate"/>.</summary>
+/// <see cref="OrdersReportAggregate"/>.</summary>
 public sealed record PriceChangeReportAggregate(
     int ChangeCount,
     int ProductCount,
@@ -84,7 +84,7 @@ public sealed record PriceChangeReportAggregate(
     IReadOnlyList<PriceChangeProductEntryDto> ByProduct);
 
 /// <summary>El resumen agregado del reporte de cambios de precio. Ver
-/// <see cref="GetSalesReportSummaryQuery"/>.</summary>
+/// <see cref="GetOrdersReportSummaryQuery"/>.</summary>
 public sealed record GetPriceChangeReportSummaryQuery(PriceChangeReportFilter Filter)
     : IQuery<PriceChangeReportSummaryDto>;
 
@@ -124,7 +124,7 @@ public sealed class GetPriceChangeReportSummaryHandler(
 
     /// <summary>
     /// El periodo anterior, con los mismos filtros y otra ventana. Ver
-    /// <c>GetSalesReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
+    /// <c>GetOrdersReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
     /// cambiando sólo las fechas, para que producto, usuario y campo viajen igual.
     ///
     /// Sin ranking: de la ventana anterior sólo se lee el conteo, y "los productos más retocados

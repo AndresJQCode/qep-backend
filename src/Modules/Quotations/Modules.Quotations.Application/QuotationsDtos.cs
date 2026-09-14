@@ -73,13 +73,13 @@ public sealed record QuotationDto(
     /// cambiado o no — reenviar sin cambios es un caso legítimo.</summary>
     bool CanBeSent,
     /// <summary>Si se editó después del último envío. Viaja aunque
-    /// <see cref="CanBeConvertedToSale"/> ya lo incluya: es el único de los motivos de ese
+    /// <see cref="CanBeConvertedToOrder"/> ya lo incluya: es el único de los motivos de ese
     /// false que la pantalla no puede deducir de los otros campos, y sin él "Convertir en
-    /// venta" desaparece sin decir por qué (la pantalla enumera los otros tres).</summary>
+    /// pedido" desaparece sin decir por qué (la pantalla enumera los otros tres).</summary>
     bool HasChangesSinceSent,
-    /// <summary>Si convertir en venta es posible: enviada, sin cambios desde ese envío, con
+    /// <summary>Si convertir en pedido es posible: enviada, sin cambios desde ese envío, con
     /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
-    bool CanBeConvertedToSale,
+    bool CanBeConvertedToOrder,
     IReadOnlyCollection<QuotationItemDto> Items);
 
 /// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto

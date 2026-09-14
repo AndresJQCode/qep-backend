@@ -1,20 +1,20 @@
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// El resumen del reporte de ventas: lo que hace falta para dibujar el panel entero sin bajarse
+/// El resumen del reporte de pedidos: lo que hace falta para dibujar el panel entero sin bajarse
 /// una sola fila.
 ///
-/// Existe porque el listado paginado **no puede** contestar esto. Sumar 418 ventas del lado del
+/// Existe porque el listado paginado **no puede** contestar esto. Sumar 418 pedidos del lado del
 /// cliente serían nueve peticiones de 50 filas y seguiría estando mal en cuanto cambie un filtro;
 /// y con el tope de <c>MaxPageSize</c> ni siquiera hay forma de pedir el periodo completo. Un
 /// total que se calcula sobre la página que se está mirando es un número equivocado con cara de
 /// número correcto.
 ///
 /// Toma **exactamente los mismos filtros que el listado**, menos la paginación. Que los dos
-/// caminos compartan <see cref="SalesReportFilter"/> es lo que hace imposible que el panel y la
+/// caminos compartan <see cref="OrdersReportFilter"/> es lo que hace imposible que el panel y la
 /// tabla hablen de conjuntos distintos.
 /// </summary>
-public sealed record SalesReportSummaryDto(
+public sealed record OrdersReportSummaryDto(
     int SaleCount,
     decimal Subtotal,
     decimal TaxAmount,
@@ -28,7 +28,7 @@ public sealed record SalesReportSummaryDto(
 /// Un mes de la serie, con su año: sin el año, doce puntos de un rango de dos años se pisan de a
 /// pares y la serie miente.
 ///
-/// **Sólo vienen los meses con ventas.** Rellenar los vacíos con cero es una decisión de
+/// **Sólo vienen los meses con pedidos.** Rellenar los vacíos con cero es una decisión de
 /// presentación —depende del rango que el eje dibuje— y se toma en el frontend, no acá.
 /// </summary>
 public sealed record ReportMonthlyPointDto(int Year, int Month, int Count, decimal Total);
@@ -41,7 +41,7 @@ public sealed record ReportMonthlyPointDto(int Year, int Month, int Count, decim
 /// la de "Otros"), que es lo que le permite al frontend escribir "Otros (7)" sin adivinar.
 ///
 /// <c>Label</c> del asesor es su **email**, no un nombre propio — ver
-/// <see cref="SalesReportItemDto"/>. <c>Secondary</c> lleva el CUC en el ranking de clientes y
+/// <see cref="OrdersReportItemDto"/>. <c>Secondary</c> lleva el CUC en el ranking de clientes y
 /// viene nulo en el de asesores: un solo record para los dos porque tienen exactamente la misma
 /// forma y ninguna razón para divergir.
 /// </summary>
@@ -62,10 +62,10 @@ public sealed record ReportComparisonDto(int Count, decimal Total);
 ///
 /// Separado del DTO a propósito. Comparar contra el periodo anterior es una decisión del handler
 /// —qué ventana, con qué filtros, y si existe siquiera—, y el adaptador no decide nada: le pasan
-/// un criterio y devuelve números. Ver <see cref="ISalesReportSource"/>.
+/// un criterio y devuelve números. Ver <see cref="IOrdersReportSource"/>.
 /// </summary>
-public sealed record SalesReportAggregate(
-    int SaleCount,
+public sealed record OrdersReportAggregate(
+    int OrderCount,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total,

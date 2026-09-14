@@ -23,24 +23,24 @@ internal sealed class FixedClock(DateTimeOffset now) : IClock
 }
 
 /// <summary>
-/// Un origen de ventas que devuelve lo que se le cargue y **recuerda con que argumentos lo
+/// Un origen de pedidos que devuelve lo que se le cargue y **recuerda con que argumentos lo
 /// llamaron**: la mitad de lo que se prueba de un handler de listado es justamente que la pagina
 /// que le llega al origen sea la normalizada, no la cruda.
 /// </summary>
-internal sealed class FakeSalesReportSource : ISalesReportSource
+internal sealed class FakeOrdersReportSource : IOrdersReportSource
 {
-    public IReadOnlyList<SalesReportItemDto> Items { get; set; } = [];
+    public IReadOnlyList<OrdersReportItemDto> Items { get; set; } = [];
 
     public int Total { get; set; }
 
-    public SalesReportCriteria? LastCriteria { get; private set; }
+    public OrdersReportCriteria? LastCriteria { get; private set; }
 
     public int? LastPage { get; private set; }
 
     public int? LastPageSize { get; private set; }
 
     /// <summary>Lo que devuelve el primer <c>SummarizeAsync</c>: el periodo pedido.</summary>
-    public SalesReportAggregate Aggregate { get; set; } = new(0, 0m, 0m, 0m, [], [], []);
+    public OrdersReportAggregate Aggregate { get; set; } = new(0, 0m, 0m, 0m, [], [], []);
 
     /// <summary>
     /// Lo que devuelve el segundo: la ventana anterior. Nulo significa que la prueba no espera
@@ -48,16 +48,16 @@ internal sealed class FakeSalesReportSource : ISalesReportSource
     /// delata la consulta de mas es el conteo de <see cref="SummarizedCriteria"/> y no un nulo
     /// explotando a mitad del handler.
     /// </summary>
-    public SalesReportAggregate? PrecedingAggregate { get; set; }
+    public OrdersReportAggregate? PrecedingAggregate { get; set; }
 
     /// <summary>Los criterios de cada <c>SummarizeAsync</c>, en orden: el resumen consulta una o
     /// dos veces segun haya periodo anterior, y cual es cual importa.</summary>
-    public List<SalesReportCriteria> SummarizedCriteria { get; } = [];
+    public List<OrdersReportCriteria> SummarizedCriteria { get; } = [];
 
     public int? LastRankSize { get; private set; }
 
-    public Task<SalesReportAggregate> SummarizeAsync(
-        SalesReportCriteria criteria,
+    public Task<OrdersReportAggregate> SummarizeAsync(
+        OrdersReportCriteria criteria,
         int rankSize,
         CancellationToken cancellationToken)
     {
@@ -67,8 +67,8 @@ internal sealed class FakeSalesReportSource : ISalesReportSource
         return Task.FromResult(isPreceding ? PrecedingAggregate ?? Aggregate : Aggregate);
     }
 
-    public Task<(IReadOnlyList<SalesReportItemDto> Items, int Total)> ListAsync(
-        SalesReportCriteria criteria,
+    public Task<(IReadOnlyList<OrdersReportItemDto> Items, int Total)> ListAsync(
+        OrdersReportCriteria criteria,
         int page,
         int pageSize,
         CancellationToken cancellationToken)

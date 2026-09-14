@@ -25,7 +25,7 @@ public interface IQuotationCustomerLookup
 
     /// <summary>
     /// Lo mismo que <see cref="SearchIdsByIdentificationAsync"/> pero contra el CUC — lo usa el
-    /// filtro del listado de ventas (ListSales.cs). Son dos metodos y no uno con un campo a
+    /// filtro del listado de pedidos (ListOrders.cs). Son dos metodos y no uno con un campo a
     /// elegir porque son dos filtros distintos de la pantalla: el CUC es el codigo que emite el
     /// sistema y el NIT es el documento que trae el cliente, y buscar "900" en el equivocado
     /// devuelve otra cosa.

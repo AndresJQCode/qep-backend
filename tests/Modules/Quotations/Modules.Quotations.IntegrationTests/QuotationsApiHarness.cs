@@ -77,8 +77,8 @@ internal static class QuotationsApiHarness
     [
         QuotationsPermissions.QuotationRead,
         QuotationsPermissions.QuotationManage,
-        SalesPermissions.SaleRead,
-        SalesPermissions.SaleManage,
+        OrdersPermissions.SaleRead,
+        OrdersPermissions.SaleManage,
         CustomersPermissions.CustomerRead,
         CustomersPermissions.CustomerManage,
         CustomersPermissions.ClassificationRead,
@@ -377,7 +377,7 @@ internal static class QuotationsApiHarness
             client, factory, tenantId, "application/pdf", "%PDF-1.7\nquotation"u8.ToArray(), "quotation.pdf");
 
     /// <summary>US-14: un comprobante de pago disponible. PDF y no JPG/PNG a propósito -- los
-    /// tres tipos son válidos para <c>SalePaymentProofResolver</c>, pero construir un JPG/PNG
+    /// tres tipos son válidos para <c>OrderPaymentProofResolver</c>, pero construir un JPG/PNG
     /// minúsculo que además pase la verificación de firma binaria real de Storage es frágil; un
     /// PDF mínimo válido ya lo tiene <see cref="CreateAvailablePdfFileAsync"/>.</summary>
     public static Task<Guid> CreateAvailablePaymentProofFileAsync(

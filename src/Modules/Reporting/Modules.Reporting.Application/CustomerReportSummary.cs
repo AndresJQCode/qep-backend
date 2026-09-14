@@ -56,7 +56,7 @@ public sealed record CustomerGroupEntryDto(
 public sealed record CustomerComparisonDto(int CustomerCount);
 
 /// <summary>Lo que devuelve el origen: el resumen de **una** ventana, sin comparación. Ver
-/// <see cref="SalesReportAggregate"/>.</summary>
+/// <see cref="OrdersReportAggregate"/>.</summary>
 public sealed record CustomerReportAggregate(
     int CustomerCount,
     int ActiveCount,
@@ -65,7 +65,7 @@ public sealed record CustomerReportAggregate(
     IReadOnlyList<CustomerGroupEntryDto> ByDepartment);
 
 /// <summary>El resumen agregado del reporte de clientes. Ver
-/// <see cref="GetSalesReportSummaryQuery"/>.</summary>
+/// <see cref="GetOrdersReportSummaryQuery"/>.</summary>
 public sealed record GetCustomerReportSummaryQuery(CustomerReportFilter Filter)
     : IQuery<CustomerReportSummaryDto>;
 
@@ -103,7 +103,7 @@ public sealed class GetCustomerReportSummaryHandler(
 
     /// <summary>
     /// El periodo anterior, con los mismos filtros y otra ventana. Ver
-    /// <c>GetSalesReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
+    /// <c>GetOrdersReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
     /// cambiando sólo las fechas, para que estado, clasificación y departamento viajen igual.
     ///
     /// Sin rankings: de la ventana anterior sólo se lee el conteo, y "los departamentos del periodo

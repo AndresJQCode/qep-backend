@@ -2,7 +2,7 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// El lote de lectura y escritura que comparten <see cref="QuotationsExportProcessor"/> y
-/// <see cref="SalesExportProcessor"/> (D8): cada procesador trae su propio lector, ya cerrado
+/// <see cref="OrdersExportProcessor"/> (D8): cada procesador trae su propio lector, ya cerrado
 /// sobre sus filtros, y este método hace el resto —leer, resolver nombres/correos por lote,
 /// escribir en streaming y calcular la clave del próximo lote—.
 /// </summary>

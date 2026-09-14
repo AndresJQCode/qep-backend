@@ -7,13 +7,13 @@ namespace Modules.Quotations.Domain;
 /// <c>Product</c>/<c>PriceScale</c> en Catalog.
 ///
 /// Cubre el borrador (crear, agregar/editar/quitar líneas, editar encabezado), el envío (US-12),
-/// la anulación (US-11), la conversión a venta (US-16, vía <see cref="ConvertToSale"/>, que la
+/// la anulación (US-11), la conversión a pedido (US-16, vía <see cref="ConvertToOrder"/>, que la
 /// deja en <see cref="QuotationStatus.Converted"/>) y el vencimiento automático (US-19).
 ///
 /// Editar (líneas o encabezado) exige <see cref="QuotationStatus.Draft"/> o
 /// <see cref="QuotationStatus.Sent"/> — US-10: "se puede editar en Draft y Sent... se bloquea
-/// una vez convertida a venta, anulada o vencida". <see cref="Send"/> sale de Draft o de Sent
-/// (reenvío); <see cref="Void"/> y <see cref="ConvertToSale"/> también.
+/// una vez convertida a pedido, anulada o vencida". <see cref="Send"/> sale de Draft o de Sent
+/// (reenvío); <see cref="Void"/> y <see cref="ConvertToOrder"/> también.
 /// </summary>
 public sealed class Quotation
 {
@@ -528,15 +528,15 @@ public sealed class Quotation
 
     /// <summary>
     /// Precondiciones de <see cref="Send"/>, sin mutar nada — mismo criterio que
-    /// <see cref="EnsureConvertibleToSale"/>. Existe aparte para que el caso de uso pueda
+    /// <see cref="EnsureConvertibleToOrder"/>. Existe aparte para que el caso de uso pueda
     /// comprobarlas **antes** de firmar la URL del PDF y de entregarle el mensaje a WhatsApp:
     /// esos dos son efectos externos que no se deshacen, y una cotización que no puede pasar a
     /// Sent no puede haberle llegado al cliente.
     ///
     /// Sin vigencia la cotización nunca vence: <c>QuotationExpirationProcessor</c> filtra por
-    /// <see cref="ValidUntil"/> no nulo, así que una Sent sin fecha quedaría convertible a venta
+    /// <see cref="ValidUntil"/> no nulo, así que una Sent sin fecha quedaría convertible a pedido
     /// para siempre, con los precios congelados el día que se envió. Se exige acá **y también**
-    /// en <see cref="EnsureConvertibleToSale"/>, que desde que ésta dejó de exigir haber
+    /// en <see cref="EnsureConvertibleToOrder"/>, que desde que ésta dejó de exigir haber
     /// enviado (a pedido, 2026-09) ya no puede apoyarse en que toda cotización pasó por acá
     /// antes de convertirse.
     /// </summary>
@@ -557,15 +557,15 @@ public sealed class Quotation
         }
     }
 
-    /// <summary>US-16: convierte la cotización en venta. Comprueba lo mismo que
-    /// <see cref="EnsureConvertibleToSale"/> y la deja en <see cref="QuotationStatus.Converted"/>,
-    /// de sólo lectura desde ahí. El <see cref="Sale"/> lo crea
-    /// <c>ConvertQuotationToSaleHandler</c> justo después y en la misma unidad de trabajo: si
-    /// guardar falla, no queda ni la venta ni el cambio de estado. Mismo patrón que
+    /// <summary>US-16: convierte la cotización en pedido. Comprueba lo mismo que
+    /// <see cref="EnsureConvertibleToOrder"/> y la deja en <see cref="QuotationStatus.Converted"/>,
+    /// de sólo lectura desde ahí. El <see cref="Order"/> lo crea
+    /// <c>ConvertQuotationToOrderHandler</c> justo después y en la misma unidad de trabajo: si
+    /// guardar falla, no queda ni el pedido ni el cambio de estado. Mismo patrón que
     /// <see cref="Void"/> y <see cref="Expire"/>.</summary>
-    public void ConvertToSale(MemberId convertedBy, DateTimeOffset occurredAt)
+    public void ConvertToOrder(MemberId convertedBy, DateTimeOffset occurredAt)
     {
-        EnsureConvertibleToSale();
+        EnsureConvertibleToOrder();
 
         Status = QuotationStatus.Converted;
         UpdatedBy = convertedBy;
@@ -573,19 +573,19 @@ public sealed class Quotation
         Version++;
     }
 
-    /// <summary>US-16: valida que se pueda convertir en venta, sin mutar nada. Ya no exige
+    /// <summary>US-16: valida que se pueda convertir en pedido, sin mutar nada. Ya no exige
     /// haberla enviado primero, ni que siga sin cambios desde ese envío (a pedido, 2026-09) —
     /// Draft o Sent alcanzan, mismo criterio de "sigue siendo un documento abierto" que
     /// <see cref="EnsureSendable"/>; no se convierte una anulada, una vencida ni una ya
-    /// convertida. Quien cambia el estado es <see cref="ConvertToSale"/>, que llama esto primero:
-    /// existe aparte porque <see cref="CanBeConvertedToSale"/> y la pantalla necesitan preguntar
+    /// convertida. Quien cambia el estado es <see cref="ConvertToOrder"/>, que llama esto primero:
+    /// existe aparte porque <see cref="CanBeConvertedToOrder"/> y la pantalla necesitan preguntar
     /// sin convertir.
     ///
     /// Que el cliente esté activo **no** se comprueba acá: este agregado no lo sabe, sólo tiene
-    /// su id (referencia blanda). Lo revalida <c>ConvertQuotationToSaleHandler</c> contra
+    /// su id (referencia blanda). Lo revalida <c>ConvertQuotationToOrderHandler</c> contra
     /// <c>IQuotationCustomerLookup</c> justo antes de llamar a este método — mismo motivo que
     /// <see cref="QuotationCustomerEligibility"/> al crear.</summary>
-    public void EnsureConvertibleToSale()
+    public void EnsureConvertibleToOrder()
     {
         if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent))
         {
@@ -594,15 +594,15 @@ public sealed class Quotation
                 "Only a draft or sent quotation can be converted to a sale.");
         }
 
-        // Lo que una venta necesita para existir y que la cotizacion puede no tener todavia. Se
+        // Lo que un pedido necesita para existir y que la cotizacion puede no tener todavia. Se
         // comprueba aca y no en la pantalla porque es la condicion del negocio, no del formulario:
-        // la venta se crea desde este agregado y estos datos son los que hereda.
+        // el pedido se crea desde este agregado y estos datos son los que hereda.
         //
         // La forma de pago NO esta en esta lista a proposito: el editor de cotizaciones dejo de
         // pedirla (queda `null` en todo lo creado desde entonces -- ver `UpdateQuotationRequest`
         // en el frontend, que ya no tiene campo que la escriba), asi que exigirla aca dejaba
         // inconvertible a cualquier cotizacion nueva sin que hubiera forma de arreglarlo desde la
-        // pantalla. `Sale` tampoco la usa para nada al crearse.
+        // pantalla. `Order` tampoco la usa para nada al crearse.
         if (_items.Count == 0)
         {
             throw new QuotationsDomainException(
@@ -617,7 +617,7 @@ public sealed class Quotation
                 "A quotation must have a validity date before it can be converted to a sale.");
         }
 
-        // Sin cuenta de cobro la venta no sabe a donde se paga, que es justo lo que una venta
+        // Sin cuenta de cobro el pedido no sabe a donde se paga, que es justo lo que un pedido
         // tiene que decir.
         if (BillingAccount is null)
         {
@@ -628,9 +628,9 @@ public sealed class Quotation
 
         // Una parte con datos propios a medio llenar es la misma condicion que ya exige
         // EnsureBillingIsConsistent/Assign en otro momento (los seis campos o ninguno no se
-        // fuerza al guardar, asi que puede llegar hasta aca incompleta): la venta hereda lo que
+        // fuerza al guardar, asi que puede llegar hasta aca incompleta): el pedido hereda lo que
         // haya en la parte, y una direccion sin ciudad o un telefono vacio no es algo que
-        // Sale pueda completar por su cuenta.
+        // Order pueda completar por su cuenta.
         if (Billing is { } billing && !billing.IsComplete)
         {
             throw new QuotationsDomainException(
@@ -646,7 +646,7 @@ public sealed class Quotation
         }
 
         // Con datos propios de facturación nadie más dice si hay retención o excedente de IVA:
-        // null es "todavía no se contestó", y una venta no puede nacer con esa pregunta abierta
+        // null es "todavía no se contestó", y un pedido no puede nacer con esa pregunta abierta
         // (a diferencia de con los datos del cliente, donde CustomerWithRetention/VatSurplus ya
         // la responden).
         if (Billing is not null && (PartyWithRetention is null || PartyVatSurplus is null))
@@ -658,12 +658,12 @@ public sealed class Quotation
     }
 
     /// <summary>
-    /// Si convertir en venta es posible ahora, salvo por si el cliente sigue activo (este
-    /// agregado no lo sabe — ver <see cref="EnsureConvertibleToSale"/>). Misma regla que ese
+    /// Si convertir en pedido es posible ahora, salvo por si el cliente sigue activo (este
+    /// agregado no lo sabe — ver <see cref="EnsureConvertibleToOrder"/>). Misma regla que ese
     /// método, en forma de pregunta: la pantalla la usa para saber qué decir en vez de
     /// reimplementar las condiciones, y el handler la revalida al convertir de verdad.
     /// </summary>
-    public bool CanBeConvertedToSale =>
+    public bool CanBeConvertedToOrder =>
         Status is QuotationStatus.Draft or QuotationStatus.Sent
         && _items.Count > 0
         && ValidUntil is not null
@@ -678,12 +678,12 @@ public sealed class Quotation
     /// Silencioso a propósito (no valida ni lanza) para poder llamarse también desde una
     /// lectura: una vez Voided, Expired o Converted la cotización queda tal cual quedó, sin
     /// excepción, y nada la vuelve a tocar. En Converted eso importa doble: sus totales son los
-    /// que heredó la venta.
+    /// que heredó el pedido.
     ///
     /// **No pasa por <c>Touch</c>, y eso es carga estructural, no un olvido:** mover
     /// <see cref="UpdatedAt"/> acá dejaría <see cref="HasChangesSinceSent"/> en <c>true</c> por
     /// el solo hecho de abrir la cotización después de que su cliente cambió de perfil fiscal,
-    /// y el gate de <see cref="EnsureConvertibleToSale"/> pediría reenviarla sin que nadie la
+    /// y el gate de <see cref="EnsureConvertibleToOrder"/> pediría reenviarla sin que nadie la
     /// haya editado.
     /// </summary>
     public void RefreshCustomerTaxProfile(bool customerWithRetention, bool customerVatSurplus)

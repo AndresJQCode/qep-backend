@@ -45,10 +45,10 @@ internal sealed class QuotationUserReferenceProbe(
                 await dbContext.QuotationHistoryEntries.AnyAsync(
                     entry => entry.MemberId == member,
                     cancellationToken) ||
-                await dbContext.Sales.AnyAsync(
-                    sale => sale.ConvertedBy == member,
+                await dbContext.Orders.AnyAsync(
+                    order => order.ConvertedBy == member,
                     cancellationToken) ||
-                await dbContext.SalePaymentProofs.AnyAsync(
+                await dbContext.OrderPaymentProofs.AnyAsync(
                     proof => proof.UploadedBy == member,
                     cancellationToken))
             {

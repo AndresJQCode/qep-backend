@@ -7,7 +7,7 @@ using Modules.Reporting.Domain;
 namespace Bootstrapper;
 
 /// <summary>
-/// El origen del reporte de cotizaciones. Ver <see cref="SalesReportSource"/> sobre por que los
+/// El origen del reporte de cotizaciones. Ver <see cref="OrdersReportSource"/> sobre por que los
 /// adaptadores de <c>reporting</c> viven en el composition root.
 ///
 /// A diferencia del de ventas, este no necesita join: <c>Quotation</c> ya tiene numero, fechas,
@@ -35,7 +35,7 @@ internal sealed class QuotationsReportSource(
     }
 
     /// <summary>
-    /// Todo se agrega en la base. Ver <see cref="SalesReportSource.SummarizeAsync"/> sobre por
+    /// Todo se agrega en la base. Ver <see cref="OrdersReportSource.SummarizeAsync"/> sobre por
     /// que se agrega sobre la entidad y no sobre <c>QuotationRow</c>: EF no ve a traves del
     /// constructor de un record y falla en tiempo de ejecucion.
     ///
@@ -348,7 +348,7 @@ internal sealed class QuotationsReportSource(
     ///
     /// Devuelve la entidad y no <c>QuotationRow</c> porque EF no traduce un agregado sobre
     /// una proyeccion a un record: no ve a traves del constructor. Ver
-    /// <see cref="SalesReportSource"/>.
+    /// <see cref="OrdersReportSource"/>.
     /// </summary>
     private IQueryable<Quotation> FilterQuotations(QuotationsReportCriteria criteria)
     {
@@ -388,7 +388,7 @@ internal sealed class QuotationsReportSource(
         return query;
     }
 
-    /// <summary>Ver SalesReportSource: sin ORDER BY total, dos paginas consecutivas pueden
+    /// <summary>Ver OrdersReportSource: sin ORDER BY total, dos paginas consecutivas pueden
     /// repetir u omitir filas.</summary>
     private IQueryable<QuotationRow> BuildQuery(QuotationsReportCriteria criteria) =>
         FilterQuotations(criteria)
@@ -443,7 +443,7 @@ internal sealed class QuotationsReportSource(
             .ToArray();
     }
 
-    // Sin default a proposito: ver MapPaymentStatus en SalesReportSource.
+    // Sin default a proposito: ver MapPaymentStatus en OrdersReportSource.
     private static QuotationStatus MapStatus(QuotationStatusFilter value) => value switch
     {
         QuotationStatusFilter.Draft => QuotationStatus.Draft,

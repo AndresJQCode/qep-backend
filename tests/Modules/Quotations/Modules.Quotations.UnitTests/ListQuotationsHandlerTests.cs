@@ -118,16 +118,16 @@ public sealed class ListQuotationsHandlerTests
     }
 
     // Las tres acciones que la fila ofrece y que no se deducen de su estado —editar, anular e
-    // ir a aprobar la venta— dependen de si ya se convirtio. Sin esto, quien pinta el listado
-    // tiene que pedir la venta de cada fila para saber cuales habilitar.
+    // ir a aprobar el pedido— dependen de si ya se convirtio. Sin esto, quien pinta el listado
+    // tiene que pedir el pedido de cada fila para saber cuales habilitar.
     [Fact]
-    public async Task ListCarriesTheSaleOfEachConvertedQuotation()
+    public async Task ListCarriesTheOrderOfEachConvertedQuotation()
     {
         var converted = NewQuotation("QUO-2026-0001", ClientId);
-        var sale = NewSale(converted);
+        var order = NewOrder(converted);
         var handler = NewHandler(
             NewCustomerLookup(),
-            [new SaleWithQuotation(sale, converted)],
+            [new OrderWithQuotation(order, converted)],
             converted,
             NewQuotation("QUO-2026-0002", ClientId));
 
@@ -135,14 +135,14 @@ public sealed class ListQuotationsHandlerTests
 
         var convertedRow = Assert.Single(
             page.Items, item => item.QuotationNumber == "QUO-2026-0001");
-        Assert.Equal(sale.Id.Value, convertedRow.SaleId);
-        Assert.Equal("Pending", convertedRow.SaleStatus);
+        Assert.Equal(order.Id.Value, convertedRow.OrderId);
+        Assert.Equal("Pending", convertedRow.OrderStatus);
 
-        // Sin venta, la fila no trae nada que aprobar: SaleId y SaleStatus en null. El estado
-        // Converted dice que ya se convirtio, pero no a que venta ir ni si ya se aprobo.
+        // Sin pedido, la fila no trae nada que aprobar: OrderId y OrderStatus en null. El estado
+        // Converted dice que ya se convirtio, pero no a que pedido ir ni si ya se aprobo.
         var openRow = Assert.Single(page.Items, item => item.QuotationNumber == "QUO-2026-0002");
-        Assert.Null(openRow.SaleId);
-        Assert.Null(openRow.SaleStatus);
+        Assert.Null(openRow.OrderId);
+        Assert.Null(openRow.OrderStatus);
     }
 
     // La busqueda del listado no trae las lineas a proposito, asi que "tiene productos" se
@@ -177,22 +177,22 @@ public sealed class ListQuotationsHandlerTests
         Assert.False(Assert.Single(page.Items).IsComplete);
     }
 
-    // Ver cotizaciones no es ver ventas. Sin el permiso, la fila viaja sin venta: es todo lo que
+    // Ver cotizaciones no es ver pedidos. Sin el permiso, la fila viaja sin pedido: es todo lo que
     // esa persona puede saber, y la pantalla no le ofrece ir a aprobar algo que tampoco podria.
     [Fact]
-    public async Task ListHidesTheSaleFromSomeoneWhoCannotReadSales()
+    public async Task ListHidesTheOrderFromSomeoneWhoCannotReadOrders()
     {
         var converted = NewQuotation("QUO-2026-0001", ClientId);
         var handler = new ListQuotationsHandler(
             new StubQuotationListRepository(converted),
-            new StubSaleListRepository(new SaleWithQuotation(NewSale(converted), converted)),
+            new StubOrderListRepository(new OrderWithQuotation(NewOrder(converted), converted)),
             NewCustomerLookup(),
             new StubQuotationAdvisorLookup(),
-            new StubExecutionContext(SubjectId, TenantId, SalesPermissions.SaleRead));
+            new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.SaleRead));
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
-        Assert.Null(Assert.Single(page.Items).SaleId);
+        Assert.Null(Assert.Single(page.Items).OrderId);
     }
 
     private static ListQuotationsQuery NewQuery() =>
@@ -242,13 +242,13 @@ public sealed class ListQuotationsHandlerTests
         return quotation;
     }
 
-    private static Sale NewSale(Quotation quotation) =>
-        Sale.Create(
-            SaleId.New(),
+    private static Order NewOrder(Quotation quotation) =>
+        Order.Create(
+            OrderId.New(),
             TenantId,
             "VEN-2026-0001",
             quotation.Id,
-            SalePaymentStatus.PaymentPending,
+            OrderPaymentStatus.PaymentPending,
             notes: null,
             AdvisorId,
             [],
@@ -260,7 +260,7 @@ public sealed class ListQuotationsHandlerTests
 
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers,
-        SaleWithQuotation[] sales,
+        OrderWithQuotation[] sales,
         params Quotation[] quotations) =>
         NewHandler(
             customers,
@@ -277,10 +277,10 @@ public sealed class ListQuotationsHandlerTests
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers,
         StubQuotationAdvisorLookup advisors,
-        SaleWithQuotation[] sales,
+        OrderWithQuotation[] sales,
         Quotation[] quotations) =>
         new(new StubQuotationListRepository(quotations),
-            new StubSaleListRepository(sales),
+            new StubOrderListRepository(sales),
             customers,
             advisors,
             new StubExecutionContext(SubjectId, TenantId));

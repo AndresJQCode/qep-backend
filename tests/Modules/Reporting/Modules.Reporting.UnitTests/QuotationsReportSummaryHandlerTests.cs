@@ -39,10 +39,10 @@ public sealed class QuotationsReportSummaryHandlerTests
         Assert.Empty(source.SummarizedCriteria);
     }
 
-    /// <summary>El permiso es el de cotizaciones, no el de ventas: tenerlos separados es lo unico
+    /// <summary>El permiso es el de cotizaciones, no el de pedidos: tenerlos separados es lo unico
     /// que hace que un asesor pueda ver uno y no el otro.</summary>
     [Fact]
-    public async Task SummarizingRejectsACallerWithOnlyTheSalesPermission()
+    public async Task SummarizingRejectsACallerWithOnlyTheOrdersPermission()
     {
         var source = new FakeQuotationsReportSource();
         var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);

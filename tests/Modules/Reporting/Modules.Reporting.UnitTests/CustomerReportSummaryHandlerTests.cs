@@ -38,10 +38,10 @@ public sealed class CustomerReportSummaryHandlerTests
         Assert.Empty(source.SummarizedCriteria);
     }
 
-    /// <summary>El reporte de clientes es sólo del Administrador: el permiso de ventas —que sí
+    /// <summary>El reporte de clientes es sólo del Administrador: el permiso de pedidos —que sí
     /// tiene un asesor— no alcanza para verlo.</summary>
     [Fact]
-    public async Task SummarizingRejectsACallerWithOnlyTheSalesPermission()
+    public async Task SummarizingRejectsACallerWithOnlyTheOrdersPermission()
     {
         var source = new FakeCustomerReportSource();
         var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);

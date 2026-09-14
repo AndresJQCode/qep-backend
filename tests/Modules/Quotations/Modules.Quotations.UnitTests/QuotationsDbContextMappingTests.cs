@@ -72,7 +72,7 @@ public sealed class QuotationsDbContextMappingTests
     /// tenant y siga por la clave de orden, cada lote recorre todas las filas del tenant.
     /// </summary>
     [Fact]
-    public void QuotationsAndSalesHaveAnIndexForTheExportKeyset()
+    public void QuotationsAndOrdersHaveAnIndexForTheExportKeyset()
     {
         using var context = new QuotationsDbContextFactory().CreateDbContext([]);
         var model = context.GetService<IDesignTimeModel>().Model;
@@ -83,10 +83,24 @@ public sealed class QuotationsDbContextMappingTests
             ["TenantId", "CreatedAt", "QuotationNumber"],
             quotations.Properties.Select(property => property.Name));
 
-        var sales = model.FindEntityType(typeof(Sale))!.GetIndexes()
+        var sales = model.FindEntityType(typeof(Order))!.GetIndexes()
             .Single(index => index.GetDatabaseName() == "IX_sales_tenant_converted_at_number");
         Assert.Equal(
-            ["TenantId", "ConvertedAt", "SaleNumber"],
+            ["TenantId", "ConvertedAt", "OrderNumber"],
             sales.Properties.Select(property => property.Name));
+    }
+
+    /// <summary>
+    /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
+    /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
+    /// generada y después escrita a mano tiene que dejar el snapshot al día (Tasks 2 y 5). No abre
+    /// conexión: compara el modelo con el snapshot, no con una base.
+    /// </summary>
+    [Fact]
+    public void TheModelHasNoChangesPendingAMigration()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+
+        Assert.False(context.Database.HasPendingModelChanges());
     }
 }

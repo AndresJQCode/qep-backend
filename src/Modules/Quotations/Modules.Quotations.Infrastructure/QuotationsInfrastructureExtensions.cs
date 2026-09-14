@@ -45,8 +45,8 @@ public static class QuotationsInfrastructureExtensions
         // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
         services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();
         services.AddScoped<IQuotationNumberGenerator, QuotationNumberGenerator>();
-        services.AddScoped<ISaleRepository, SaleRepository>();
-        services.AddScoped<ISaleNumberGenerator, SaleNumberGenerator>();
+        services.AddScoped<IOrderRepository, OrderRepository>();
+        services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
 

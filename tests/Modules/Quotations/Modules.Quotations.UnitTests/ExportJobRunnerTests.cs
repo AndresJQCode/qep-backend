@@ -51,7 +51,7 @@ public sealed class ExportJobRunnerTests
     }
 
     [Fact]
-    public async Task ASalesJobIsAuditedAsASaleExport()
+    public async Task AOrdersJobIsAuditedAsAOrderExport()
     {
         var harness = new Harness();
         harness.Enqueue(ExportJobKind.Sales);

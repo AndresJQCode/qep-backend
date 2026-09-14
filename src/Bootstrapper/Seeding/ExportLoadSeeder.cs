@@ -113,17 +113,17 @@ public static class ExportLoadSeeder
         }
 
         var seededItems = await ExecuteAsync(connection, transaction, ItemsSql, cancellationToken);
-        var seededSales = await ExecuteAsync(connection, transaction, SalesSql, cancellationToken,
+        var seededOrders = await ExecuteAsync(connection, transaction, OrdersSql, cancellationToken,
             ("tenant", TenantId), ("advisor", advisorId), ("now", now));
         await ExecuteAsync(connection, transaction, QuotationCountersSql, cancellationToken,
             ("tenant", TenantId));
-        await ExecuteAsync(connection, transaction, SaleCountersSql, cancellationToken,
+        await ExecuteAsync(connection, transaction, OrderCountersSql, cancellationToken,
             ("tenant", TenantId));
 
         await transaction.CommitAsync(cancellationToken);
 
         return new ExportLoadSeedResult(
-            true, seededCustomers, seededQuotations, seededItems, seededSales, Stopwatch.GetElapsedTime(startedAt));
+            true, seededCustomers, seededQuotations, seededItems, seededOrders, Stopwatch.GetElapsedTime(startedAt));
     }
 
     private static async Task<bool> AlreadySeededAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
@@ -337,7 +337,7 @@ public static class ExportLoadSeeder
 
     // Convertida un día después del envío, dentro de la vigencia. VEN-{año UTC de la conversión}-{n}.
     // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage.
-    private const string SalesSql = """
+    private const string OrdersSql = """
         INSERT INTO quotations.sales (
             id, tenant_id, sale_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
             approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
@@ -369,7 +369,7 @@ public static class ExportLoadSeeder
             SET next_value = greatest(quotation_number_counters.next_value, EXCLUDED.next_value)
         """;
 
-    private const string SaleCountersSql = """
+    private const string OrderCountersSql = """
         INSERT INTO quotations.sale_number_counters (tenant_id, year, next_value)
         SELECT @tenant, extract(year FROM converted_at AT TIME ZONE 'UTC')::int, count(*) + 1
         FROM quotations.sales
@@ -387,7 +387,7 @@ public sealed record ExportLoadSeedResult(
     int Customers,
     int Quotations,
     int Items,
-    int Sales,
+    int Orders,
     TimeSpan Duration)
 {
     public static ExportLoadSeedResult Skipped { get; } = new(false, 0, 0, 0, 0, TimeSpan.Zero);

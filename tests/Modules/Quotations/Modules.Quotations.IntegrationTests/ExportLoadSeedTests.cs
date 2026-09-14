@@ -78,7 +78,7 @@ public sealed class ExportLoadSeedTests
 
         Assert.True(result.Seeded);
         // Un cliente cada 25 cotizaciones, tres líneas por cotización, el 30 % convertido.
-        Assert.Equal((8, 200, 600, 60), (result.Customers, result.Quotations, result.Items, result.Sales));
+        Assert.Equal((8, 200, 600, 60), (result.Customers, result.Quotations, result.Items, result.Orders));
         Assert.Equal("carga-export", await ScalarAsync<string>(
             connectionString, "SELECT slug FROM tenancy.tenants WHERE id = @tenant"));
         Assert.Equal("seed-export-load", await ScalarAsync<string>(
@@ -164,15 +164,15 @@ public sealed class ExportLoadSeedTests
             Assert.NotNull(item.ClientName);
             // El owner sembrado nace con CreateActive, sin nombre: la fila cae a su correo.
             Assert.Equal(OwnerEmail, item.AdvisorName);
-            // Líneas, vigencia y cuenta de cobro: lo que hace que una venta haya podido salir de ahí.
+            // Líneas, vigencia y cuenta de cobro: lo que hace que un pedido haya podido salir de ahí.
             Assert.True(item.IsComplete);
         });
 
-        var sales = await client.GetFromJsonAsync<SalesPageResponse>(
+        var orders = await client.GetFromJsonAsync<OrdersPageResponse>(
             $"/api/v1/tenants/{ExportLoadSeeder.TenantId}/sales", TestContext.Current.CancellationToken);
-        Assert.NotNull(sales);
-        Assert.Equal(result.Sales, sales.Total);
-        Assert.All(sales.Items, item =>
+        Assert.NotNull(orders);
+        Assert.Equal(result.Orders, orders.Total);
+        Assert.All(orders.Items, item =>
         {
             Assert.NotNull(item.ClientName);
             Assert.Equal(OwnerEmail, item.AdvisorEmail);
@@ -187,11 +187,11 @@ public sealed class ExportLoadSeedTests
         Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
         Assert.Equal(result.Quotations, (await FindExportJobAsync(factory, quotationsJob)).RowCount);
 
-        var salesJob = await EnqueueExportJobAsync(
+        var ordersJob = await EnqueueExportJobAsync(
             factory, ExportLoadSeeder.TenantId, ownerUserId, ExportJobKind.Sales,
-            ExportJobFilters.Serialize(new SalesExportFilters(null, null, null, null, today.AddYears(-1), today, null, null)));
+            ExportJobFilters.Serialize(new OrdersExportFilters(null, null, null, null, today.AddYears(-1), today, null, null)));
         Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
-        Assert.Equal(result.Sales, (await FindExportJobAsync(factory, salesJob)).RowCount);
+        Assert.Equal(result.Orders, (await FindExportJobAsync(factory, ordersJob)).RowCount);
     }
 
     // Los tres contadores quedan en el siguiente al último sembrado: el primer alta real del tenant no

@@ -116,7 +116,7 @@ public sealed class QuotationExpirationApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         (await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/sale",
-            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         await SetValidUntilAsync(
             factory,

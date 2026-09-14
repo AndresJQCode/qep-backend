@@ -76,7 +76,7 @@ public sealed record ReportBucketDto(int Count, decimal Total);
 /// <param name="DaysLeft">Días entre hoy y el vencimiento. Cero es «vence hoy»; nunca es
 /// negativo, porque lo ya vencido no entra en esta lista.</param>
 /// <param name="AdvisorName">El <b>email</b> del asesor, no su nombre. Ver
-/// <see cref="SalesReportItemDto"/>.</param>
+/// <see cref="OrdersReportItemDto"/>.</param>
 public sealed record QuotationExpiringDto(
     Guid QuotationId,
     string QuotationNumber,
@@ -100,7 +100,7 @@ public sealed record QuotationsSummaryOptions(
     int ExpiringSize);
 
 /// <summary>Lo que devuelve el origen: el resumen de **una** ventana, sin comparación. Ver
-/// <see cref="SalesReportAggregate"/>.</summary>
+/// <see cref="OrdersReportAggregate"/>.</summary>
 public sealed record QuotationsReportAggregate(
     int QuotationCount,
     decimal Subtotal,
@@ -113,7 +113,7 @@ public sealed record QuotationsReportAggregate(
     IReadOnlyList<QuotationExpiringDto> Expiring);
 
 /// <summary>El resumen agregado del reporte de cotizaciones. Ver
-/// <see cref="GetSalesReportSummaryQuery"/>.</summary>
+/// <see cref="GetOrdersReportSummaryQuery"/>.</summary>
 public sealed record GetQuotationsReportSummaryQuery(QuotationsReportFilter Filter)
     : IQuery<QuotationsReportSummaryDto>;
 
@@ -160,7 +160,7 @@ public sealed class GetQuotationsReportSummaryHandler(
 
     /// <summary>
     /// El período anterior, con los mismos filtros y otra ventana. Ver
-    /// <c>GetSalesReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
+    /// <c>GetOrdersReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
     /// cambiando sólo las fechas, para que asesor, cliente y estado viajen igual.
     ///
     /// De la ventana anterior sólo se usan el conteo y el monto, pero se pide el resumen completo:

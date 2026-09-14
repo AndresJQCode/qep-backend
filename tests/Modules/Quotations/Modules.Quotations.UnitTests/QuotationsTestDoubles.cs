@@ -518,24 +518,24 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.PdfFileId,
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
-            quotation.CanBeConvertedToSale,
+            quotation.CanBeConvertedToOrder,
             []));
 }
 
-/// <summary>Los filtros con que se preguntó por ventas o se leyó para exportarlas.</summary>
-internal sealed record RecordedSaleExportSearch(
+/// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>
+internal sealed record RecordedOrderExportSearch(
     Guid? ClientId,
     IReadOnlyCollection<Guid>? ClientIds,
     MemberId? AdvisorId,
-    SaleStatus? Status,
-    SalePaymentStatus? PaymentStatus,
+    OrderStatus? Status,
+    OrderPaymentStatus? PaymentStatus,
     DateOnly? ConvertedFrom,
     DateOnly? ConvertedTo,
-    string? SaleNumber);
+    string? OrderNumber);
 
 /// <summary>Devuelve las filas sembradas y anota con que filtro se la llamo — lo que las pruebas
-/// del listado de ventas necesitan comprobar es el camino del handler, no la consulta SQL.</summary>
-internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : ISaleRepository
+/// del listado de pedidos necesitan comprobar es el camino del handler, no la consulta SQL.</summary>
+internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) : IOrderRepository
 {
     public IReadOnlyCollection<Guid>? LastClientIds { get; private set; }
 
@@ -544,101 +544,101 @@ internal sealed class StubSaleListRepository(params SaleWithQuotation[] rows) : 
     public int ExportCalls { get; private set; }
 
     /// <summary>La clave con que se pidió cada lote, en orden (keyset, D8).</summary>
-    public List<SaleExportCursor?> ExportCursors { get; } = [];
+    public List<OrderExportCursor?> ExportCursors { get; } = [];
 
-    public RecordedSaleExportSearch? LastExportSearch { get; private set; }
+    public RecordedOrderExportSearch? LastExportSearch { get; private set; }
 
-    public Task<Sale?> FindByQuotationIdAsync(
+    public Task<Order?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Sale);
+        Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Order);
 
-    public Task<Sale?> FindByIdAsync(
-        Guid tenantId, SaleId saleId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Sale.Id == saleId)?.Sale);
+    public Task<Order?> FindByIdAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Order.Id == orderId)?.Order);
 
-    public Task<IReadOnlyDictionary<Guid, Sale>> FindByQuotationIdsAsync(
+    public Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
         CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<Guid, Sale>>(
+        Task.FromResult<IReadOnlyDictionary<Guid, Order>>(
             rows
                 .Where(row => quotationIds.Contains(row.Quotation.Id))
-                .ToDictionary(row => row.Quotation.Id.Value, row => row.Sale));
+                .ToDictionary(row => row.Quotation.Id.Value, row => row.Order));
 
-    public Task<(IReadOnlyList<SaleWithQuotation> Items, int Total)> SearchAsync(
+    public Task<(IReadOnlyList<OrderWithQuotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
-        SaleStatus? status,
-        SalePaymentStatus? paymentStatus,
+        OrderStatus? status,
+        OrderPaymentStatus? paymentStatus,
         DateOnly? convertedFrom,
         DateOnly? convertedTo,
-        string? saleNumber,
+        string? orderNumber,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         LastClientIds = clientIds;
-        return Task.FromResult<(IReadOnlyList<SaleWithQuotation>, int)>((rows, rows.Length));
+        return Task.FromResult<(IReadOnlyList<OrderWithQuotation>, int)>((rows, rows.Length));
     }
 
     // Honra el contrato de `clientIds` (vacío = ninguna fila): es lo que hace que un CUC sin
-    // cliente termine en "no hay ventas". El resto de los filtros son SQL y los cubre integración.
+    // cliente termine en "no hay pedidos". El resto de los filtros son SQL y los cubre integración.
     public Task<bool> AnyForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
-        SaleStatus? status,
-        SalePaymentStatus? paymentStatus,
+        OrderStatus? status,
+        OrderPaymentStatus? paymentStatus,
         DateOnly? convertedFrom,
         DateOnly? convertedTo,
-        string? saleNumber,
+        string? orderNumber,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
-        LastExportSearch = new RecordedSaleExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+        LastExportSearch = new RecordedOrderExportSearch(
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, orderNumber);
         return Task.FromResult(Matching(clientIds).Any());
     }
 
-    public Task<IReadOnlyList<SaleWithQuotation>> ListForExportAsync(
+    public Task<IReadOnlyList<OrderWithQuotation>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
-        SaleStatus? status,
-        SalePaymentStatus? paymentStatus,
+        OrderStatus? status,
+        OrderPaymentStatus? paymentStatus,
         DateOnly? convertedFrom,
         DateOnly? convertedTo,
-        string? saleNumber,
-        SaleExportCursor? after,
+        string? orderNumber,
+        OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
         ExportCalls++;
         ExportCursors.Add(after);
-        LastExportSearch = new RecordedSaleExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, saleNumber);
+        LastExportSearch = new RecordedOrderExportSearch(
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, orderNumber);
         // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
         // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
         // keyset real contra Postgres lo prueba
-        // SalesCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip.
-        IReadOnlyList<SaleWithQuotation> page = Matching(clientIds)
+        // OrdersCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip.
+        IReadOnlyList<OrderWithQuotation> page = Matching(clientIds)
             .Where(row => after is null
-                || row.Sale.ConvertedAt < after.ConvertedAt
-                || (row.Sale.ConvertedAt == after.ConvertedAt
-                    && string.CompareOrdinal(row.Sale.SaleNumber, after.SaleNumber) < 0))
-            .OrderByDescending(row => row.Sale.ConvertedAt)
-            .ThenByDescending(row => row.Sale.SaleNumber, StringComparer.Ordinal)
+                || row.Order.ConvertedAt < after.ConvertedAt
+                || (row.Order.ConvertedAt == after.ConvertedAt
+                    && string.CompareOrdinal(row.Order.OrderNumber, after.OrderNumber) < 0))
+            .OrderByDescending(row => row.Order.ConvertedAt)
+            .ThenByDescending(row => row.Order.OrderNumber, StringComparer.Ordinal)
             .Take(limit)
             .ToArray();
         return Task.FromResult(page);
     }
 
-    private IEnumerable<SaleWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
+    private IEnumerable<OrderWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
         clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
 
-    public void Add(Sale sale) { }
+    public void Add(Order order) { }
 }

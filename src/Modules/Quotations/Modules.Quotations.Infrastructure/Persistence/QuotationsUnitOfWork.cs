@@ -12,8 +12,8 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // SDD-CT-06: 23505 solo dice que se violo algun indice unico.
     private const string QuotationNumberIndex = "IX_quotations_tenant_number";
 
-    // Sale.QuotationId es 1:1 (IX_sales_quotation, unico). En el camino normal no se alcanza:
-    // convertir deja la cotizacion en Converted y EnsureConvertibleToSale rechaza una segunda
+    // Order.QuotationId es 1:1 (IX_sales_quotation, unico). En el camino normal no se alcanza:
+    // convertir deja la cotizacion en Converted y EnsureConvertibleToOrder rechaza una segunda
     // conversion por estado. Queda de red para dos conversiones simultaneas que lean la
     // cotizacion antes de que cualquiera guarde, y para las convertidas antes de que existiera
     // Converted, que siguen en Sent (no hubo backfill) -- sin traducir, saldria como 500 con el

@@ -240,7 +240,7 @@ public sealed class ExportQuotationsHandlerTests
         var queue = new InMemoryExportJobQueue();
         for (var index = 0; index < count; index++)
         {
-            // Alternados a propósito: el límite cuenta cotizaciones y ventas juntas.
+            // Alternados a propósito: el límite cuenta cotizaciones y pedidos juntos.
             var kind = index % 2 == 0 ? ExportJobKind.Quotations : ExportJobKind.Sales;
             queue.Add(ExportJob.Enqueue(Guid.CreateVersion7(), TenantId, requestedBy, kind, "{}", Now));
         }
