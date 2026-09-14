@@ -77,8 +77,8 @@ internal static class QuotationsApiHarness
     [
         QuotationsPermissions.QuotationRead,
         QuotationsPermissions.QuotationManage,
-        OrdersPermissions.SaleRead,
-        OrdersPermissions.SaleManage,
+        OrdersPermissions.OrderRead,
+        OrdersPermissions.OrderManage,
         CustomersPermissions.CustomerRead,
         CustomersPermissions.CustomerManage,
         CustomersPermissions.ClassificationRead,

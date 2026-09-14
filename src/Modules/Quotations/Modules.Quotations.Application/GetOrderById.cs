@@ -34,7 +34,7 @@ public sealed class GetOrderByIdHandler(
         CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, query.TenantId, OrdersPermissions.SaleRead);
+            executionContext, query.TenantId, OrdersPermissions.OrderRead);
 
         var order = await orderRepository.FindByIdAsync(
             query.TenantId, new OrderId(query.OrderId), cancellationToken)

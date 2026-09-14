@@ -45,7 +45,7 @@ public sealed class QuotationsReportSummaryHandlerTests
     public async Task SummarizingRejectsACallerWithOnlyTheOrdersPermission()
     {
         var source = new FakeQuotationsReportSource();
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(

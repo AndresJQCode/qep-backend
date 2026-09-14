@@ -71,7 +71,7 @@ public sealed class ExportOrdersHandler(
     {
         // D4, mismo orden que cotizaciones. 1: tenant y permiso de pedidos.
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, command.TenantId, OrdersPermissions.SaleRead);
+            executionContext, command.TenantId, OrdersPermissions.OrderRead);
 
         // 2: filtros y rango.
         await validator.ValidateAndThrowAsync(command, cancellationToken);

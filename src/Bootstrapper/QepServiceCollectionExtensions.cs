@@ -541,12 +541,12 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.ClassificationManage,
                 QuotationsPermissions.QuotationRead,
                 QuotationsPermissions.QuotationManage,
-                OrdersPermissions.SaleRead,
-                OrdersPermissions.SaleManage,
+                OrdersPermissions.OrderRead,
+                OrdersPermissions.OrderManage,
                 // Los cuatro reportes. Admin es el unico rol que ve los de cambios de precio y
                 // padron de clientes: el primero expone el historial comercial completo del
                 // catalogo, y el segundo el padron entero con datos de identificacion.
-                ReportingPermissions.SalesRead,
+                ReportingPermissions.OrdersRead,
                 ReportingPermissions.QuotationRead,
                 ReportingPermissions.PriceChangeRead,
                 ReportingPermissions.CustomerRead,
@@ -593,11 +593,11 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileRead,
                 // Convertir una cotizacion aprobada en pedido (US-13 a US-16) es la continuacion
                 // natural de cotizar, no una operacion separada que administre otro rol.
-                OrdersPermissions.SaleRead,
-                OrdersPermissions.SaleManage,
+                OrdersPermissions.OrderRead,
+                OrdersPermissions.OrderManage,
                 // Solo los dos reportes de su trabajo diario. Cambios de precio y padron de
                 // clientes quedan en admin: son la vista agregada del negocio, no la operacion.
-                ReportingPermissions.SalesRead,
+                ReportingPermissions.OrdersRead,
                 ReportingPermissions.QuotationRead
             ]));
         services.AddSingleton(new RoleDefinition(
@@ -614,7 +614,7 @@ public static class QepServiceCollectionExtensions
                 // ver el estado del pago y los comprobantes, no aprobar conversiones ni editar
                 // cotizaciones -- eso sigue siendo trabajo de la asesora.
                 QuotationsPermissions.QuotationRead,
-                OrdersPermissions.SaleRead
+                OrdersPermissions.OrderRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -758,21 +758,21 @@ public static class QepServiceCollectionExtensions
             "Quotations",
             "medium"));
         services.AddSingleton(new PermissionDefinition(
-            OrdersPermissions.SaleRead,
-            "Leer ventas",
-            "Permite consultar la venta convertida de una cotizacion.",
+            OrdersPermissions.OrderRead,
+            "Leer pedidos",
+            "Permite consultar el pedido convertido de una cotización.",
             "Quotations",
             "low"));
         services.AddSingleton(new PermissionDefinition(
-            OrdersPermissions.SaleManage,
-            "Gestionar ventas",
-            "Permite convertir una cotizacion enviada en venta, con sus comprobantes de pago.",
+            OrdersPermissions.OrderManage,
+            "Gestionar pedidos",
+            "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
             "medium"));
         services.AddSingleton(new PermissionDefinition(
-            ReportingPermissions.SalesRead,
-            "Reporte de ventas",
-            "Permite consultar y exportar el reporte de ventas convertidas del tenant.",
+            ReportingPermissions.OrdersRead,
+            "Reporte de pedidos",
+            "Permite consultar y exportar el reporte de pedidos convertidos del tenant.",
             "Reporting",
             "low"));
         services.AddSingleton(new PermissionDefinition(
@@ -1002,18 +1002,18 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, QuotationsPermissions.QuotationManage))
             // La otra mitad del permiso, para los dos de Orders -- mismo gotcha.
             .AddPolicy(
-                OrdersPermissions.SaleRead,
-                policy => AddPermissionRequirement(policy, OrdersPermissions.SaleRead))
+                OrdersPermissions.OrderRead,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderRead))
             .AddPolicy(
-                OrdersPermissions.SaleManage,
-                policy => AddPermissionRequirement(policy, OrdersPermissions.SaleManage))
+                OrdersPermissions.OrderManage,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderManage))
             // La otra mitad del permiso, para los cuatro de Reporting. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 -- mismo gotcha que
             // TaxRateRead/TaxRateManage, ClassificationRead/ClassificationManage y los de
             // Quotations/Orders.
             .AddPolicy(
-                ReportingPermissions.SalesRead,
-                policy => AddPermissionRequirement(policy, ReportingPermissions.SalesRead))
+                ReportingPermissions.OrdersRead,
+                policy => AddPermissionRequirement(policy, ReportingPermissions.OrdersRead))
             .AddPolicy(
                 ReportingPermissions.QuotationRead,
                 policy => AddPermissionRequirement(policy, ReportingPermissions.QuotationRead))

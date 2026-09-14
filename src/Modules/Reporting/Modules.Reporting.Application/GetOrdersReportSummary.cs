@@ -26,7 +26,7 @@ public sealed class GetOrdersReportSummaryHandler(
     {
         // Autorizar primero, siempre: antes de validar y antes de tocar ningún origen de datos.
         ReportingAuthorization.EnsureAuthorized(
-            executionContext, query.Filter.TenantId, ReportingPermissions.SalesRead);
+            executionContext, query.Filter.TenantId, ReportingPermissions.OrdersRead);
         await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
 
         var criteria = query.Filter.ToCriteria();

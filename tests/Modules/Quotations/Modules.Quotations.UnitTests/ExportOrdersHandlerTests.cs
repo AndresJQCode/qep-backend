@@ -32,14 +32,14 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(0, repository.AnyCalls);
     }
 
-    // Poder ver cotizaciones no es poder ver pedidos: sin SaleRead no se exporta.
+    // Poder ver cotizaciones no es poder ver pedidos: sin OrderRead no se exporta.
     [Fact]
     public async Task ExportWithoutTheOrderReadPermissionIsForbidden()
     {
         var repository = new StubOrderListRepository(NewRow());
         var handler = NewHandler(
             repository,
-            executionContext: new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.SaleRead));
+            executionContext: new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.OrderRead));
 
         await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));

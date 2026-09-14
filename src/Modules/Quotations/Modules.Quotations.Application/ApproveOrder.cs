@@ -14,7 +14,7 @@ public sealed record ApproveOrderCommand(Guid TenantId, Guid QuotationId)
 /// sus comprobantes, y quien controla los revisa y aprueba. Mientras esa revisión no ocurre el
 /// pedido queda <c>Pending</c>, y ese estado es justamente lo que hace visible el paso.
 ///
-/// Hoy exige el mismo permiso que registrar (<see cref="OrdersPermissions.SaleManage"/>): separar
+/// Hoy exige el mismo permiso que registrar (<see cref="OrdersPermissions.OrderManage"/>): separar
 /// los dos roles es una decisión de permisos que este slice no toma. Cuando exista el permiso
 /// propio de aprobación, se cambia acá y en ningún otro lado.
 /// </summary>
@@ -32,7 +32,7 @@ public sealed class ApproveOrderHandler(
         CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, command.TenantId, OrdersPermissions.SaleManage);
+            executionContext, command.TenantId, OrdersPermissions.OrderManage);
 
         var order = await repository.FindByQuotationIdAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)

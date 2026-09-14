@@ -73,7 +73,7 @@ public sealed class ListOrdersHandler(
         CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, query.TenantId, OrdersPermissions.SaleRead);
+            executionContext, query.TenantId, OrdersPermissions.OrderRead);
 
         // Mismo tope y mismo default que el listado de cotizaciones. Dos clases de paginado con
         // los mismos números en el mismo módulo serían dos lugares para desincronizar.

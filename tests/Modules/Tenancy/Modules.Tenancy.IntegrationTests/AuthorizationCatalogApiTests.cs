@@ -32,6 +32,65 @@ public sealed class AuthorizationCatalogApiTests
         Guid UserId,
         IReadOnlyCollection<string> Permissions);
 
+    private sealed record CatalogPayload(
+        string CatalogVersion,
+        IReadOnlyCollection<CatalogRolePayload> Roles,
+        IReadOnlyCollection<CatalogPermissionPayload> Permissions);
+
+    private sealed record CatalogRolePayload(string Role, IReadOnlyCollection<string> Permissions);
+
+    private sealed record CatalogPermissionPayload(
+        string Permission, string DisplayName, string Description, string Category, string RiskLevel);
+
+    /// <summary>
+    /// Lo que la pantalla de roles muestra de los permisos de pedidos (spec 2026-09-14): códigos
+    /// nuevos, textos en masculino y con tilde, y los mismos permisos efectivos en los tres roles
+    /// de fábrica que antes tenían los de ventas.
+    /// </summary>
+    [Fact]
+    public async Task TheCatalogNamesTheOrderPermissions()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
+
+        var catalog = await client.GetFromJsonAsync<CatalogPayload>(
+            $"/api/v1/tenants/{TenantId}/authorization/catalog", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(catalog);
+        CatalogPermissionPayload[] expected =
+        [
+            new("quotations.order.manage", "Gestionar pedidos",
+                "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.", "Quotations", "medium"),
+            new("quotations.order.read", "Leer pedidos",
+                "Permite consultar el pedido convertido de una cotización.", "Quotations", "low"),
+            new("reporting.orders.read", "Reporte de pedidos",
+                "Permite consultar y exportar el reporte de pedidos convertidos del tenant.", "Reporting", "low"),
+        ];
+        Assert.Equal(
+            expected,
+            catalog.Permissions
+                .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal))
+                .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
+        Assert.DoesNotContain(
+            catalog.Permissions, permission => permission.Permission.Contains("sale", StringComparison.Ordinal));
+        Assert.Equal(
+            ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
+            OrderPermissionsOf(catalog, "admin"));
+        Assert.Equal(
+            ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
+            OrderPermissionsOf(catalog, "advisor"));
+        Assert.Equal(["quotations.order.read"], OrderPermissionsOf(catalog, "billing"));
+    }
+
+    private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
+    [
+        .. catalog.Roles.Single(item => item.Role == role).Permissions
+            .Where(permission => permission.Contains("order", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal),
+    ];
+
     [Fact]
     public async Task EffectivePermissionsReturnsWhatTheCallerActuallyHas()
     {

@@ -21,7 +21,7 @@ public static class OrderEndpoints
             .WithTags("Orders");
 
         collection.MapGet("/", ListOrdersAsync)
-            .RequireAuthorization(OrdersPermissions.SaleRead)
+            .RequireAuthorization(OrdersPermissions.OrderRead)
             .Produces<OrdersPageResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -29,7 +29,7 @@ public static class OrderEndpoints
         // SALE-04: por el id del pedido. Desde una fila del listado no hay por donde entrar si
         // la unica ruta cuelga de la cotizacion.
         collection.MapGet("/{orderId:guid}", GetOrderByIdAsync)
-            .RequireAuthorization(OrdersPermissions.SaleRead)
+            .RequireAuthorization(OrdersPermissions.OrderRead)
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -38,7 +38,7 @@ public static class OrderEndpoints
         // `POST /quotations/export` —202, filtros del listado por query string, sin paginación—.
         // "export" no choca con "/{orderId:guid}": no es un guid.
         collection.MapPost("/export", ExportOrdersAsync)
-            .RequireAuthorization(OrdersPermissions.SaleRead)
+            .RequireAuthorization(OrdersPermissions.OrderRead)
             .Produces<ExportJobAcceptedResponse>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -48,7 +48,7 @@ public static class OrderEndpoints
             .WithTags("Orders");
 
         group.MapGet("/", GetOrderAsync)
-            .RequireAuthorization(OrdersPermissions.SaleRead)
+            .RequireAuthorization(OrdersPermissions.OrderRead)
             .Produces<OrderResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -59,14 +59,14 @@ public static class OrderEndpoints
         // El visto bueno de quien revisa. Ruta propia y no un campo del POST: es otra persona,
         // en otro momento -- ver ApproveOrderHandler.
         group.MapPost("/approve", ApproveOrderAsync)
-            .RequireAuthorization(OrdersPermissions.SaleManage)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
             .Produces<OrderResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/", ConvertQuotationToOrderAsync)
-            .RequireAuthorization(OrdersPermissions.SaleManage)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<ConvertQuotationToOrderRequest>("application/json")
             .Produces<OrderResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -78,7 +78,7 @@ public static class OrderEndpoints
         // mientras el pago no está completo o correcto, y esto es la única forma de destrabarlo
         // sin recrear el pedido entero. Sólo sobre Pending — ver Order.AddPaymentProofs.
         group.MapPost("/proofs", AddOrderPaymentProofsAsync)
-            .RequireAuthorization(OrdersPermissions.SaleManage)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<AddOrderPaymentProofsRequest>("application/json")
             .Produces<OrderResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)

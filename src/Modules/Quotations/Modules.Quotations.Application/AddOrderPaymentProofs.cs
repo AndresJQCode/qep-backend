@@ -66,7 +66,7 @@ public sealed class AddOrderPaymentProofsHandler(
         CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, command.TenantId, OrdersPermissions.SaleManage);
+            executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var order = await repository.FindByQuotationIdAsync(

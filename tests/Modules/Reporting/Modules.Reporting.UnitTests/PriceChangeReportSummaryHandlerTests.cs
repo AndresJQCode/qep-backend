@@ -42,7 +42,7 @@ public sealed class PriceChangeReportSummaryHandlerTests
     public async Task SummarizingRejectsACallerWithOnlyTheOrdersPermission()
     {
         var source = new FakePriceChangeReportSource();
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(

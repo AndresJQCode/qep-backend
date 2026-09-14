@@ -388,7 +388,7 @@ public sealed class OrderApiTests
         var productId = await CreateProductWithScalesAsync(owner, tenantId);
         var quotation = await CreateSentQuotationAsync(owner, factory, tenantId, clientId, productId);
 
-        var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.SaleManage);
+        var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.OrderManage);
         using var __ = otherOwner;
 
         var response = await otherOwner.PostAsJsonAsync(

@@ -165,7 +165,7 @@ public sealed class ListQuotationsHandler(
         // cobraron. Sin ese permiso la fila viaja sin pedido --que es todo lo que esa persona
         // puede saber-- y la pantalla no le ofrece ir a aprobar nada, que tampoco podria.
         var orders = quotations.Count == 0
-            || !executionContext.HasPermission(OrdersPermissions.SaleRead)
+            || !executionContext.HasPermission(OrdersPermissions.OrderRead)
             ? new Dictionary<Guid, Order>()
             : await orderRepository.FindByQuotationIdsAsync(
                 query.TenantId, quotationIds, cancellationToken);

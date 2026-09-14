@@ -22,7 +22,7 @@ public sealed class OrdersReportHandlerTests
     public async Task ListingRejectsATenantThatIsNotTheCallersOne()
     {
         var source = new FakeOrdersReportSource();
-        var handler = ListHandler(source, OtherTenant, ReportingPermissions.SalesRead);
+        var handler = ListHandler(source, OtherTenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(
@@ -51,7 +51,7 @@ public sealed class OrdersReportHandlerTests
     public async Task ListingNormalizesThePagingBeforeQuerying()
     {
         var source = new FakeOrdersReportSource { Total = 0 };
-        var handler = ListHandler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = ListHandler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var page = await handler.HandleAsync(
             new ListOrdersReportQuery(Filter(), 0, 5_000), TestContext.Current.CancellationToken);
@@ -69,7 +69,7 @@ public sealed class OrdersReportHandlerTests
     public async Task ListingParsesThePaymentStatusFilter()
     {
         var source = new FakeOrdersReportSource();
-        var handler = ListHandler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = ListHandler(source, Tenant, ReportingPermissions.OrdersRead);
 
         await handler.HandleAsync(
             new ListOrdersReportQuery(Filter("PartialPaymentReceived"), 1, 50),
@@ -87,7 +87,7 @@ public sealed class OrdersReportHandlerTests
     public async Task ListingRejectsAnUnknownPaymentStatus()
     {
         var source = new FakeOrdersReportSource();
-        var handler = ListHandler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = ListHandler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<ValidationException>(() =>
             handler.HandleAsync(

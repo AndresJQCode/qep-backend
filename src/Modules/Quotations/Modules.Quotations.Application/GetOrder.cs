@@ -14,7 +14,7 @@ public sealed class GetOrderHandler(
     public async Task<OrderDto> HandleAsync(GetOrderQuery query, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, query.TenantId, OrdersPermissions.SaleRead);
+            executionContext, query.TenantId, OrdersPermissions.OrderRead);
 
         var order = await repository.FindByQuotationIdAsync(
             query.TenantId, new QuotationId(query.QuotationId), cancellationToken);

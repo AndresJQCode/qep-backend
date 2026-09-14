@@ -188,7 +188,7 @@ public sealed class ListQuotationsHandlerTests
             new StubOrderListRepository(new OrderWithQuotation(NewOrder(converted), converted)),
             NewCustomerLookup(),
             new StubQuotationAdvisorLookup(),
-            new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.SaleRead));
+            new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.OrderRead));
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 

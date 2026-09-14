@@ -23,7 +23,7 @@ public sealed class OrdersReportSummaryHandlerTests
     public async Task SummarizingRejectsATenantThatIsNotTheCallersOne()
     {
         var source = new FakeOrdersReportSource();
-        var handler = Handler(source, OtherTenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, OtherTenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(
@@ -56,7 +56,7 @@ public sealed class OrdersReportSummaryHandlerTests
     public async Task SummarizingRejectsAnUnknownPaymentStatus()
     {
         var source = new FakeOrdersReportSource();
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<ValidationException>(() =>
             handler.HandleAsync(
@@ -71,7 +71,7 @@ public sealed class OrdersReportSummaryHandlerTests
     public async Task SummarizingParsesThePaymentStatusFilter()
     {
         var source = new FakeOrdersReportSource();
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         await handler.HandleAsync(
             new GetOrdersReportSummaryQuery(Filter(paymentStatus: "PartialPaymentReceived")),
@@ -93,7 +93,7 @@ public sealed class OrdersReportSummaryHandlerTests
         {
             Aggregate = Aggregate(orderCount: 12, total: 1_200m),
         };
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var summary = await handler.HandleAsync(
             new GetOrdersReportSummaryQuery(Filter()), TestContext.Current.CancellationToken);
@@ -117,7 +117,7 @@ public sealed class OrdersReportSummaryHandlerTests
             Aggregate = Aggregate(orderCount: 30, total: 3_000m),
             PrecedingAggregate = Aggregate(orderCount: 20, total: 2_500m),
         };
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var summary = await handler.HandleAsync(
             new GetOrdersReportSummaryQuery(
@@ -147,7 +147,7 @@ public sealed class OrdersReportSummaryHandlerTests
             Aggregate = Aggregate(),
             PrecedingAggregate = Aggregate(),
         };
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         await handler.HandleAsync(
             new GetOrdersReportSummaryQuery(Filter(
@@ -169,7 +169,7 @@ public sealed class OrdersReportSummaryHandlerTests
     public async Task SummarizingCapsTheRankingItAsksFor()
     {
         var source = new FakeOrdersReportSource { Aggregate = Aggregate() };
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         await handler.HandleAsync(
             new GetOrdersReportSummaryQuery(Filter()), TestContext.Current.CancellationToken);

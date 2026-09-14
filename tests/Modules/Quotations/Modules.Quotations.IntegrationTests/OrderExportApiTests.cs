@@ -12,7 +12,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>La exportación de pedidos por correo: mismo contrato que cotizaciones, sobre el listado
-/// de pedidos (SALE-01) y con `SaleRead`.</summary>
+/// de pedidos (SALE-01) y con `OrderRead`.</summary>
 public sealed class OrderExportApiTests
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
@@ -118,7 +118,7 @@ public sealed class OrderExportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
-        var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.SaleRead);
+        var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.OrderRead);
         using var __ = otherOwner;
 
         var response = await otherOwner.PostAsync(

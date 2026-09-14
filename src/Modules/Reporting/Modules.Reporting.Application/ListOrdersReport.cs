@@ -27,7 +27,7 @@ public sealed class ListOrdersReportHandler(
     {
         // Autorizar primero, siempre: antes de validar y antes de tocar ningun origen de datos.
         ReportingAuthorization.EnsureAuthorized(
-            executionContext, query.Filter.TenantId, ReportingPermissions.SalesRead);
+            executionContext, query.Filter.TenantId, ReportingPermissions.OrdersRead);
         await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
 
         var page = ReportPaging.NormalizePage(query.Page);

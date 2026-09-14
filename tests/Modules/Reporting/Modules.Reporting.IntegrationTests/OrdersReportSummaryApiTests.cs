@@ -149,7 +149,7 @@ public sealed class OrdersReportSummaryApiTests
         Assert.Equal("authorization.denied", problem?.Code);
     }
 
-    /// <summary>El resumen no afloja el permiso: es el mismo <c>reporting.sales.read</c> del
+    /// <summary>El resumen no afloja el permiso: es el mismo <c>reporting.orders.read</c> del
     /// listado, porque expone los mismos datos sumados.</summary>
     [Fact]
     public async Task SummaryRejectsACallerWithoutTheReportingPermission()

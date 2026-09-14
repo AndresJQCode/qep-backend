@@ -58,7 +58,7 @@ public sealed class ConvertQuotationToOrderHandler(
         CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, command.TenantId, OrdersPermissions.SaleManage);
+            executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var quotation = await quotationRepository.FindAsync(

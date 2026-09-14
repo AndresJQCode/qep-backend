@@ -43,8 +43,8 @@ internal static class ReportingApiHarness
     [
         QuotationsPermissions.QuotationRead,
         QuotationsPermissions.QuotationManage,
-        OrdersPermissions.SaleRead,
-        OrdersPermissions.SaleManage,
+        OrdersPermissions.OrderRead,
+        OrdersPermissions.OrderManage,
         CustomersPermissions.CustomerRead,
         CustomersPermissions.CustomerManage,
         CustomersPermissions.ClassificationRead,
@@ -57,7 +57,7 @@ internal static class ReportingApiHarness
         CompaniesPermissions.CompanyManage,
         StoragePermissions.FileUpload,
         StoragePermissions.FileRead,
-        ReportingPermissions.SalesRead,
+        ReportingPermissions.OrdersRead,
         ReportingPermissions.QuotationRead,
         ReportingPermissions.PriceChangeRead,
         ReportingPermissions.CustomerRead
