@@ -3,7 +3,7 @@ using Modules.Notifications.Application;
 namespace Modules.Notifications.UnitTests;
 
 /// <summary>
-/// Los dos correos de la exportación asíncrona de cotizaciones y ventas (spec 2026-09-12, D12).
+/// Los dos correos de la exportación asíncrona de cotizaciones y pedidos (spec 2026-09-12, D12).
 /// El de "lista" sigue al de clientes —enlace escapado en el HTML, crudo en texto plano— y los dos
 /// nombran el tipo según el kind del evento.
 /// </summary>

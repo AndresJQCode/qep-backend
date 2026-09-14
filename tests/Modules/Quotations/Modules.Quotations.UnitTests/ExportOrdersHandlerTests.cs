@@ -7,7 +7,7 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.UnitTests;
 
-/// <summary>El pedido de exportación de pedidos: mismo orden de D4 que cotizaciones, con el permiso
+/// <summary>La solicitud de exportación de pedidos: mismo orden de D4 que cotizaciones, con el permiso
 /// de pedidos y los códigos `order.export.*`. El límite de pendientes cuenta los dos tipos.</summary>
 public sealed class ExportOrdersHandlerTests
 {

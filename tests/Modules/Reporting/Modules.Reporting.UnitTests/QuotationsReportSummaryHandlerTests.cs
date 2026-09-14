@@ -8,7 +8,7 @@ namespace Modules.Reporting.UnitTests;
 /// <summary>
 /// El handler del resumen de cotizaciones.
 ///
-/// Comparte con el de ventas el orden no negociable —autorizar, validar, recien despues tocar el
+/// Comparte con el de pedidos el orden no negociable —autorizar, validar, recien despues tocar el
 /// origen— y la regla de la ventana anterior. Lo suyo es el reloj: los tramos de vigencia y la
 /// cola de vencimientos dependen de que dia es hoy, y el handler es quien resuelve ese "hoy" para
 /// que el origen no consulte ningun reloj.

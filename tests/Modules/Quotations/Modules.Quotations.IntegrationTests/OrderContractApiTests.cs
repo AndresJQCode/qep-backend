@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
+using Modules.Reporting.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -19,7 +20,8 @@ public sealed class OrderContractApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, ReportingPermissions.OrdersRead]);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -72,6 +74,19 @@ public sealed class OrderContractApiTests
             Assert.Equal(orderId, row.GetProperty("orderId").GetGuid());
             Assert.Equal("Pending", row.GetProperty("orderStatus").GetString());
             Assert.False(row.TryGetProperty("saleId", out var ignoredSaleId));
+            Assert.False(row.TryGetProperty("saleStatus", out var ignoredSaleStatus));
+        }
+
+        using (var reportList = await GetJsonAsync(client, $"/api/v1/tenants/{tenantId}/reports/orders"))
+        {
+            var reportItem = Assert.Single(reportList.RootElement.GetProperty("items").EnumerateArray());
+            Assert.False(reportItem.TryGetProperty("saleId", out var ignoredReportSaleId));
+            Assert.False(reportItem.TryGetProperty("saleNumber", out var ignoredReportSaleNumber));
+        }
+
+        using (var reportSummary = await GetJsonAsync(client, $"/api/v1/tenants/{tenantId}/reports/orders/summary"))
+        {
+            Assert.False(reportSummary.RootElement.TryGetProperty("saleCount", out var ignoredSaleCount));
         }
     }
 
@@ -136,7 +151,9 @@ public sealed class OrderContractApiTests
         Assert.Contains("order.export.empty", body, StringComparison.Ordinal);
     }
 
-    // Corte duro (D3): ninguna ruta vieja queda como alias.
+    // Corte duro (D3): ninguna ruta vieja queda como alias. Cubre las nueve rutas de `sale(s)` que
+    // existían antes del rename -- listado, detalle, export, conversión, comprobantes, aprobación
+    // y los dos reportes -- cada una esperando 404, no sólo las tres más obvias.
     [Fact]
     public async Task TheSalesRoutesNoLongerExist()
     {
@@ -144,15 +161,34 @@ public sealed class OrderContractApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
+        var quotationId = Guid.CreateVersion7();
 
-        var list = await client.GetAsync($"/api/v1/tenants/{tenantId}/sales", TestContext.Current.CancellationToken);
-        var byQuotation = await client.GetAsync(
-            $"{QuotationsUrl(tenantId)}/{Guid.CreateVersion7()}/sale", TestContext.Current.CancellationToken);
-        var report = await client.GetAsync($"/api/v1/tenants/{tenantId}/reports/sales", TestContext.Current.CancellationToken);
+        string[] getRoutes =
+        [
+            $"/api/v1/tenants/{tenantId}/sales",
+            $"/api/v1/tenants/{tenantId}/sales/{Guid.CreateVersion7()}",
+            $"{QuotationsUrl(tenantId)}/{quotationId}/sale",
+            $"/api/v1/tenants/{tenantId}/reports/sales",
+            $"/api/v1/tenants/{tenantId}/reports/sales/summary",
+        ];
+        foreach (var url in getRoutes)
+        {
+            var response = await client.GetAsync(url, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
 
-        Assert.Equal(HttpStatusCode.NotFound, list.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, byQuotation.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, report.StatusCode);
+        string[] postRoutes =
+        [
+            $"/api/v1/tenants/{tenantId}/sales/export",
+            $"{QuotationsUrl(tenantId)}/{quotationId}/sale",
+            $"{QuotationsUrl(tenantId)}/{quotationId}/sale/approve",
+            $"{QuotationsUrl(tenantId)}/{quotationId}/sale/proofs",
+        ];
+        foreach (var url in postRoutes)
+        {
+            var response = await client.PostAsync(url, content: null, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
     }
 
     private static async Task<JsonDocument> GetJsonAsync(HttpClient client, string url)

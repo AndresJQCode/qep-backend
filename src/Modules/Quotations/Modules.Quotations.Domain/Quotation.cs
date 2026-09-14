@@ -719,7 +719,7 @@ public sealed class Quotation
         Version++;
     }
 
-    // US-10: "se puede editar en Draft y Sent... se bloquea una vez convertida a venta". Bloquea
+    // US-10: "se puede editar en Draft y Sent... se bloquea una vez convertida a pedido". Bloquea
     // todo lo que no sea Draft o Sent: Converted (US-16), Voided (US-11: "quedan de sólo
     // lectura") y Expired. Void pasa por acá, así que una convertida tampoco se anula.
     private void EnsureEditable()
