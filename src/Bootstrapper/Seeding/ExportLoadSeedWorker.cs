@@ -28,9 +28,9 @@ public sealed partial class ExportLoadSeedWorker(
     private static partial void LogStarting(ILogger logger, int quotations, string tenantSlug, string ownerEmail);
 
     [LoggerMessage(Level = LogLevel.Information,
-        Message = "Export load seed finished: {Customers} customers, {Quotations} quotations, {Items} items and {Sales} sales in {ElapsedMilliseconds} ms.")]
+        Message = "Export load seed finished: {Customers} customers, {Quotations} quotations, {Items} items and {Orders} orders in {ElapsedMilliseconds} ms.")]
     private static partial void LogFinished(
-        ILogger logger, int customers, int quotations, int items, int sales, long elapsedMilliseconds);
+        ILogger logger, int customers, int quotations, int items, int orders, long elapsedMilliseconds);
 
     [LoggerMessage(Level = LogLevel.Information,
         Message = "Export load seed skipped: tenant '{TenantSlug}' already has quotations.")]
@@ -71,9 +71,9 @@ public sealed partial class ExportLoadSeedWorker(
             var customers = result.Customers;
             var seededQuotations = result.Quotations;
             var items = result.Items;
-            var sales = result.Sales;
+            var orders = result.Orders;
             var elapsedMilliseconds = (long)result.Duration.TotalMilliseconds;
-            LogFinished(logger, customers, seededQuotations, items, sales, elapsedMilliseconds);
+            LogFinished(logger, customers, seededQuotations, items, orders, elapsedMilliseconds);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {

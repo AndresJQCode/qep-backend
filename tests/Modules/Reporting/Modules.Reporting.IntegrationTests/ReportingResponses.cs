@@ -9,9 +9,9 @@ namespace Modules.Reporting.IntegrationTests;
 internal sealed record ReportPageDto<TItem>(
     IReadOnlyList<TItem> Items, int Total, int Page, int PageSize);
 
-internal sealed record SalesReportItem(
-    Guid SaleId,
-    string SaleNumber,
+internal sealed record OrdersReportItem(
+    Guid OrderId,
+    string OrderNumber,
     Guid QuotationId,
     string QuotationNumber,
     DateTimeOffset ConvertedAt,
@@ -75,10 +75,10 @@ internal sealed record CustomerReportItem(
 /// por el texto ni por el status a secas.</summary>
 internal sealed record ProblemDto(string? Code, string? Title, int? Status);
 
-/// <summary>El resumen agregado de ventas, tal como el contrato lo fija. Redeclarado igual que
+/// <summary>El resumen agregado de pedidos, tal como el contrato lo fija. Redeclarado igual que
 /// el resto — ver la nota del encabezado de este archivo.</summary>
-internal sealed record SalesReportSummary(
-    int SaleCount,
+internal sealed record OrdersReportSummary(
+    int OrderCount,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total,

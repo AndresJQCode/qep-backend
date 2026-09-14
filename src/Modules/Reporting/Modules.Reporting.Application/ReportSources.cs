@@ -3,7 +3,7 @@ using Modules.Reporting.Domain;
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// De donde salen las ventas del reporte.
+/// De donde salen los pedidos del reporte.
 ///
 /// **Puerto aca, adaptador en <c>Bootstrapper</c>** — mismo patron que
 /// <c>IProductImageLookup</c> (CAT-05) y <c>ICustomerGeographyLookup</c>.
@@ -17,10 +17,10 @@ namespace Modules.Reporting.Application;
 /// cliente, resueltos en lote para la pagina entera— porque los datos con los que se arma viven
 /// del otro lado de la frontera.
 /// </summary>
-public interface ISalesReportSource
+public interface IOrdersReportSource
 {
-    Task<(IReadOnlyList<SalesReportItemDto> Items, int Total)> ListAsync(
-        SalesReportCriteria criteria,
+    Task<(IReadOnlyList<OrdersReportItemDto> Items, int Total)> ListAsync(
+        OrdersReportCriteria criteria,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
@@ -36,13 +36,13 @@ public interface ISalesReportSource
     /// Resume la ventana que le pasan y nada mas: si hay un periodo anterior contra el cual
     /// comparar, y cual es, lo decide el handler.
     /// </summary>
-    Task<SalesReportAggregate> SummarizeAsync(
-        SalesReportCriteria criteria,
+    Task<OrdersReportAggregate> SummarizeAsync(
+        OrdersReportCriteria criteria,
         int rankSize,
         CancellationToken cancellationToken);
 }
 
-/// <summary>Ver <see cref="ISalesReportSource"/>.</summary>
+/// <summary>Ver <see cref="IOrdersReportSource"/>.</summary>
 public interface IQuotationsReportSource
 {
     Task<(IReadOnlyList<QuotationsReportItemDto> Items, int Total)> ListAsync(
@@ -53,7 +53,7 @@ public interface IQuotationsReportSource
 
     /// <summary>
     /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
-    /// en la base. Ver <see cref="ISalesReportSource.SummarizeAsync"/>.
+    /// en la base. Ver <see cref="IOrdersReportSource.SummarizeAsync"/>.
     ///
     /// <paramref name="options"/> trae los topes y **la fecha de hoy**: los tramos de vigencia y
     /// la cola de vencimientos dependen del dia, y el origen no consulta ningun reloj — se lo
@@ -69,7 +69,7 @@ public interface IQuotationsReportSource
 }
 
 /// <summary>
-/// Ver <see cref="ISalesReportSource"/>.
+/// Ver <see cref="IOrdersReportSource"/>.
 ///
 /// **Este devuelve filas crudas y no el DTO**, a diferencia de los otros tres:
 /// <c>Difference</c> es un valor derivado con una regla propia —un lado nulo cuenta como cero,
@@ -86,7 +86,7 @@ public interface IPriceChangeReportSource
 
     /// <summary>
     /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
-    /// en la base. Ver <see cref="ISalesReportSource.SummarizeAsync"/>.
+    /// en la base. Ver <see cref="IOrdersReportSource.SummarizeAsync"/>.
     ///
     /// **Este si devuelve el resumen ya armado**, a diferencia de <see cref="ListAsync"/>: un
     /// agregado no tiene ninguna regla que calcular fila por fila. La direccion del cambio —que es
@@ -118,7 +118,7 @@ public sealed record PriceChangeReportRow(
     string? ChangedByName,
     DateTimeOffset ChangedAt);
 
-/// <summary>Ver <see cref="ISalesReportSource"/>.</summary>
+/// <summary>Ver <see cref="IOrdersReportSource"/>.</summary>
 public interface ICustomerReportSource
 {
     Task<(IReadOnlyList<CustomerReportItemDto> Items, int Total)> ListAsync(
@@ -129,7 +129,7 @@ public interface ICustomerReportSource
 
     /// <summary>
     /// Los agregados del mismo conjunto que <see cref="ListAsync"/> devolveria paginado, resueltos
-    /// **en la base**. Ver <see cref="ISalesReportSource.SummarizeAsync"/>.
+    /// **en la base**. Ver <see cref="IOrdersReportSource.SummarizeAsync"/>.
     ///
     /// <paramref name="rankSize"/> es cuantas entidades nombradas trae cada reparto —clasificacion
     /// y departamento— antes de plegar el resto en una fila con <c>Id</c> nulo. Un cero significa

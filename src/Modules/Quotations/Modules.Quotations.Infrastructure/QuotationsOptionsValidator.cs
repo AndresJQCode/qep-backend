@@ -22,7 +22,7 @@ internal sealed class QuotationsOptionsValidator(IHostEnvironment environment)
         // En producción es una trampa silenciosa: la API responde 200, la cotización pasa a
         // Sent y el cliente nunca recibe nada — sin excepción, sin log de error y sin forma de
         // distinguirlo de un envío real. Se prefiere que el arranque falle a que el negocio
-        // pierda ventas sin enterarse.
+        // pierda pedidos sin enterarse.
         if (environment.IsProduction())
         {
             failures.AddRange(MissingWhatsAppKeys(options.WhatsApp));

@@ -86,7 +86,7 @@ public sealed class QuotationResponseComposer(
             quotation.PdfFileId,
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
-            quotation.CanBeConvertedToSale,
+            quotation.CanBeConvertedToOrder,
             quotation.Items.Select(item => ToItemResponse(item, products)).ToArray());
     }
 

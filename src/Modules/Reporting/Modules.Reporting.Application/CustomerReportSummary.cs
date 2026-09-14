@@ -5,7 +5,7 @@ using Modules.Tenancy.Application;
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// El resumen del reporte de clientes. Cuarto hermano de los de ventas, cotizaciones y cambios de
+/// El resumen del reporte de clientes. Cuarto hermano de los de pedidos, cotizaciones y cambios de
 /// precio —mismos filtros que el listado menos la paginación, mismo permiso, mismo motivo para
 /// existir— y el que cierra el módulo: hasta acá clientes era el único que seguía siendo una tabla.
 ///
@@ -18,7 +18,7 @@ namespace Modules.Reporting.Application;
 ///
 /// **Los inactivos no viajan: son la resta.** <c>CustomerCount - ActiveCount</c>, y un campo más
 /// es un campo más que puede desincronizarse de los dos que lo definen — mismo criterio que el
-/// ticket promedio de ventas, que el panel deriva. Se puede porque el reparto es binario y
+/// ticket promedio de pedidos, que el panel deriva. Se puede porque el reparto es binario y
 /// exhaustivo, a diferencia de la dirección de un cambio de precio: ahí hay un tercer grupo —los
 /// que no se movieron— y por eso ese resumen sí manda las dos puntas.
 /// </summary>
@@ -56,7 +56,7 @@ public sealed record CustomerGroupEntryDto(
 public sealed record CustomerComparisonDto(int CustomerCount);
 
 /// <summary>Lo que devuelve el origen: el resumen de **una** ventana, sin comparación. Ver
-/// <see cref="SalesReportAggregate"/>.</summary>
+/// <see cref="OrdersReportAggregate"/>.</summary>
 public sealed record CustomerReportAggregate(
     int CustomerCount,
     int ActiveCount,
@@ -65,7 +65,7 @@ public sealed record CustomerReportAggregate(
     IReadOnlyList<CustomerGroupEntryDto> ByDepartment);
 
 /// <summary>El resumen agregado del reporte de clientes. Ver
-/// <see cref="GetSalesReportSummaryQuery"/>.</summary>
+/// <see cref="GetOrdersReportSummaryQuery"/>.</summary>
 public sealed record GetCustomerReportSummaryQuery(CustomerReportFilter Filter)
     : IQuery<CustomerReportSummaryDto>;
 
@@ -103,7 +103,7 @@ public sealed class GetCustomerReportSummaryHandler(
 
     /// <summary>
     /// El periodo anterior, con los mismos filtros y otra ventana. Ver
-    /// <c>GetSalesReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
+    /// <c>GetOrdersReportSummaryHandler.SummarizePrecedingAsync</c>: se copia el criterio entero
     /// cambiando sólo las fechas, para que estado, clasificación y departamento viajen igual.
     ///
     /// Sin rankings: de la ventana anterior sólo se lee el conteo, y "los departamentos del periodo

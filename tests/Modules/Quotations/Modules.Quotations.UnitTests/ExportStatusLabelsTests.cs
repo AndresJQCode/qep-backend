@@ -24,26 +24,26 @@ public sealed class ExportStatusLabelsTests
             },
             ExportStatusLabels.For);
 
-    // sale-list.ts, SALE_STATUS_LABELS
+    // order-list.ts (frontend), las etiquetas de estado del pedido
     [Fact]
-    public void EverySaleStatusHasTheLabelOfTheSalesTable() =>
+    public void EveryOrderStatusHasTheLabelOfTheOrdersTable() =>
         AssertLabels(
-            new Dictionary<SaleStatus, string>
+            new Dictionary<OrderStatus, string>
             {
-                [SaleStatus.Pending] = "Pendiente",
-                [SaleStatus.Approved] = "Aprobada",
+                [OrderStatus.Pending] = "Pendiente",
+                [OrderStatus.Approved] = "Aprobado",
             },
             ExportStatusLabels.For);
 
-    // sale-list.ts, SALE_PAYMENT_STATUS_LABELS
+    // order-list.ts (frontend), las etiquetas de estado del pago
     [Fact]
-    public void EveryPaymentStatusHasTheLabelOfTheSalesTable() =>
+    public void EveryPaymentStatusHasTheLabelOfTheOrdersTable() =>
         AssertLabels(
-            new Dictionary<SalePaymentStatus, string>
+            new Dictionary<OrderPaymentStatus, string>
             {
-                [SalePaymentStatus.FullPaymentReceived] = "Pago total",
-                [SalePaymentStatus.PartialPaymentReceived] = "Pago parcial",
-                [SalePaymentStatus.PaymentPending] = "Pago pendiente",
+                [OrderPaymentStatus.FullPaymentReceived] = "Pago total",
+                [OrderPaymentStatus.PartialPaymentReceived] = "Pago parcial",
+                [OrderPaymentStatus.PaymentPending] = "Pago pendiente",
             },
             ExportStatusLabels.For);
 

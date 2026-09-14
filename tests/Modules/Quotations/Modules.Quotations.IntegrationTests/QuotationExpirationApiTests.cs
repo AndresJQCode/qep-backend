@@ -100,9 +100,9 @@ public sealed class QuotationExpirationApiTests
         Assert.Equal("Draft", fetched.Status);
     }
 
-    // Una convertida no vence: la venta ya salió de ahí. Mientras se quedaba en Sent después de
-    // convertirse, el barrido la movía a Expired en cuanto pasaba su vigencia, con la venta
-    // viva. La vigencia se corre al pasado directo en la base, después de convertir: es el paso
+    // Una convertida no vence: el pedido ya salió de ahí. Mientras se quedaba en Sent después de
+    // convertirse, el barrido la movía a Expired en cuanto pasaba su vigencia, con el pedido
+    // vivo. La vigencia se corre al pasado directo en la base, después de convertir: es el paso
     // del tiempo lo que se simula, y por la API una convertida ya no se puede editar.
     [Fact]
     public async Task SweepDoesNotTouchAConvertedQuotationPastItsValidUntil()
@@ -115,8 +115,8 @@ public sealed class QuotationExpirationApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         (await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}/sale",
-            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         await SetValidUntilAsync(
             factory,

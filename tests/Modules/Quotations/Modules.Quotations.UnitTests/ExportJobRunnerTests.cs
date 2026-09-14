@@ -51,15 +51,15 @@ public sealed class ExportJobRunnerTests
     }
 
     [Fact]
-    public async Task ASalesJobIsAuditedAsASaleExport()
+    public async Task AOrdersJobIsAuditedAsAOrderExport()
     {
         var harness = new Harness();
-        harness.Enqueue(ExportJobKind.Sales);
+        harness.Enqueue(ExportJobKind.Orders);
 
-        await harness.Runner(StubExportJobProcessor.Succeeding(ExportJobKind.Sales))
+        await harness.Runner(StubExportJobProcessor.Succeeding(ExportJobKind.Orders))
             .RunNextAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal("quotation.sale.exported", Assert.Single(harness.Audit.Entries).Action);
+        Assert.Equal("quotation.order.exported", Assert.Single(harness.Audit.Entries).Action);
     }
 
     // R2 caído, la base, un timeout: puede no repetirse, así que vuelve a la cola sin correo.
@@ -132,7 +132,7 @@ public sealed class ExportJobRunnerTests
     public async Task AKindWithoutProcessorFailsDefinitively()
     {
         var harness = new Harness();
-        var job = harness.Enqueue(ExportJobKind.Sales);
+        var job = harness.Enqueue(ExportJobKind.Orders);
 
         var outcome = await harness.Runner(StubExportJobProcessor.Succeeding(ExportJobKind.Quotations))
             .RunNextAsync(TestContext.Current.CancellationToken);

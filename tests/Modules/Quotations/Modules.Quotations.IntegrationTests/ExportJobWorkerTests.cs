@@ -59,11 +59,11 @@ public sealed class ExportJobWorkerTests
         using var baseFactory = new QepApiFactory(database.GetConnectionString());
         var racedProcessor = new CallbackExportProcessor(ExportJobKind.Quotations);
         using var factory = baseFactory.WithExportProcessors(
-            racedProcessor, new SucceedingExportProcessor(ExportJobKind.Sales));
+            racedProcessor, new SucceedingExportProcessor(ExportJobKind.Orders));
 
         var racedJobId = await EnqueueExportJobAsync(factory, Guid.CreateVersion7(), Guid.CreateVersion7());
         var cleanJobId = await EnqueueExportJobAsync(
-            factory, Guid.CreateVersion7(), Guid.CreateVersion7(), ExportJobKind.Sales);
+            factory, Guid.CreateVersion7(), Guid.CreateVersion7(), ExportJobKind.Orders);
 
         // Se fija recién acá, con la factory ya construida, para poder cerrar sobre ella.
         racedProcessor.OnProcessing = async (job, cancellationToken) =>

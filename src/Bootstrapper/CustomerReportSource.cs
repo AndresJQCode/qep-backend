@@ -10,7 +10,7 @@ namespace Bootstrapper;
 /// El origen del reporte de clientes (Clientes CUC): <c>customers.customers</c>, con la
 /// clasificacion resuelta por join y la geografia por <c>ICustomerGeographyLookup</c> — el mismo
 /// puerto que ya usa el listado de <c>customers</c>, que el composition root cablea contra
-/// <c>Geography</c>. Ver <see cref="SalesReportSource"/> sobre por que este adaptador vive aca.
+/// <c>Geography</c>. Ver <see cref="OrdersReportSource"/> sobre por que este adaptador vive aca.
 ///
 /// **El departamento no esta en <c>Customer</c>**: la entidad solo guarda <c>CityId</c>. Por eso
 /// el filtro por departamento se traduce primero a que ciudades caen dentro (una consulta), y el
@@ -323,7 +323,7 @@ internal sealed class CustomerReportSource(
         // client_classifications no hay FK real, asi que una clasificacion borrada dejaria al
         // cliente fuera del reporte en vez de mostrarlo sin clasificacion.
         //
-        // Ver SalesReportSource sobre el orden total.
+        // Ver OrdersReportSource sobre el orden total.
         return joined
             .OrderBy(row => row.customer.Cuc)
             .Select(row => new CustomerRow(

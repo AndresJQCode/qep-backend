@@ -54,14 +54,14 @@ public sealed record QuotationListItemDto(
     /// de cobro. Es lo que el detalle enumera como "lo que le falta" antes de dejar enviar, y
     /// viaja resuelto porque las lineas no vienen en la fila.</summary>
     bool IsComplete,
-    /// <summary>La venta que salio de esta cotizacion, si ya se convirtio. El estado
-    /// <c>Converted</c> dice que se convirtio; esto dice a que venta ir. <c>null</c> es "sin
+    /// <summary>El pedido que salio de esta cotizacion, si ya se convirtio. El estado
+    /// <c>Converted</c> dice que se convirtio; esto dice a que pedido ir. <c>null</c> es "sin
     /// convertir". Las convertidas antes de que existiera <c>Converted</c> siguen en <c>Sent</c>
     /// (no hubo backfill): para esas, este campo es la unica senal.</summary>
-    Guid? SaleId,
-    /// <summary><c>Pending</c> mientras esa venta espera el visto bueno, <c>Approved</c> despues.
-    /// <c>null</c> cuando no hay venta.</summary>
-    string? SaleStatus);
+    Guid? OrderId,
+    /// <summary><c>Pending</c> mientras ese pedido espera el visto bueno, <c>Approved</c> despues.
+    /// <c>null</c> cuando no hay pedido.</summary>
+    string? OrderStatus);
 
 /// <summary>Una página del listado y el total que la UI necesita para paginar. Mismo criterio
 /// que <c>CustomerPage</c> en Customers.</summary>
@@ -92,7 +92,7 @@ public static class QuotationPaging
 
 public sealed class ListQuotationsHandler(
     IQuotationRepository repository,
-    ISaleRepository saleRepository,
+    IOrderRepository orderRepository,
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IExecutionContext executionContext)
@@ -157,17 +157,17 @@ public sealed class ListQuotationsHandler(
             : await repository.FindIdsWithItemsAsync(
                 query.TenantId, quotationIds, cancellationToken);
 
-        // La venta de cada cotizacion --1:1-- para que la fila sepa si ya se convirtio y si esa
-        // venta sigue esperando el visto bueno. Otra ida por pagina, mismo criterio que los
+        // El pedido de cada cotizacion --1:1-- para que la fila sepa si ya se convirtio y si ese
+        // pedido sigue esperando el visto bueno. Otra ida por pagina, mismo criterio que los
         // nombres de cliente y los de las asesoras.
         //
-        // Solo para quien puede leer ventas: poder ver cotizaciones no es poder saber cuales se
-        // cobraron. Sin ese permiso la fila viaja sin venta --que es todo lo que esa persona
+        // Solo para quien puede leer pedidos: poder ver cotizaciones no es poder saber cuales se
+        // cobraron. Sin ese permiso la fila viaja sin pedido --que es todo lo que esa persona
         // puede saber-- y la pantalla no le ofrece ir a aprobar nada, que tampoco podria.
-        var sales = quotations.Count == 0
-            || !executionContext.HasPermission(SalesPermissions.SaleRead)
-            ? new Dictionary<Guid, Sale>()
-            : await saleRepository.FindByQuotationIdsAsync(
+        var orders = quotations.Count == 0
+            || !executionContext.HasPermission(OrdersPermissions.OrderRead)
+            ? new Dictionary<Guid, Order>()
+            : await orderRepository.FindByQuotationIdsAsync(
                 query.TenantId, quotationIds, cancellationToken);
 
         var items = quotations
@@ -175,7 +175,7 @@ public sealed class ListQuotationsHandler(
                 clientNames.GetValueOrDefault(quotation.ClientId),
                 advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Label,
                 withItems.Contains(quotation.Id.Value),
-                sales.GetValueOrDefault(quotation.Id.Value)))
+                orders.GetValueOrDefault(quotation.Id.Value)))
             .ToArray();
         return new QuotationPage(items, total, page, pageSize);
     }

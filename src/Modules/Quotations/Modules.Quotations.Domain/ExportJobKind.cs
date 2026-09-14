@@ -5,5 +5,5 @@ namespace Modules.Quotations.Domain;
 public enum ExportJobKind
 {
     Quotations,
-    Sales,
+    Orders,
 }

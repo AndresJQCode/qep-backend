@@ -13,7 +13,7 @@ public sealed class ReportingLayerTests
     {
         AssertDoesNotReference(
             typeof(ReportingDomainException).Assembly,
-            typeof(ListSalesReportQuery).Assembly,
+            typeof(ListOrdersReportQuery).Assembly,
             typeof(ReportingInfrastructureExtensions).Assembly,
             typeof(ReportingEndpoints).Assembly);
     }
@@ -22,7 +22,7 @@ public sealed class ReportingLayerTests
     public void ApplicationDoesNotReferenceInfrastructureOrApi()
     {
         AssertDoesNotReference(
-            typeof(ListSalesReportQuery).Assembly,
+            typeof(ListOrdersReportQuery).Assembly,
             typeof(ReportingInfrastructureExtensions).Assembly,
             typeof(ReportingEndpoints).Assembly);
     }
@@ -44,7 +44,7 @@ public sealed class ReportingLayerTests
     [Fact]
     public void ApplicationDoesNotReferencePersistenceLibraries()
     {
-        var references = ReferencedAssemblyNames(typeof(ListSalesReportQuery).Assembly);
+        var references = ReferencedAssemblyNames(typeof(ListOrdersReportQuery).Assembly);
 
         Assert.DoesNotContain(references, name =>
             name is not null &&
@@ -79,7 +79,7 @@ public sealed class ReportingLayerTests
             "Modules.Identity"
         ];
 
-        var references = ReferencedAssemblyNames(typeof(ListSalesReportQuery).Assembly);
+        var references = ReferencedAssemblyNames(typeof(ListOrdersReportQuery).Assembly);
 
         Assert.DoesNotContain(references, name =>
             name is not null &&

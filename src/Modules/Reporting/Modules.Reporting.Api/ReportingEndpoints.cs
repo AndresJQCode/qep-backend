@@ -17,16 +17,16 @@ public static class ReportingEndpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/reports")
             .WithTags("Reporting");
 
-        group.MapGet("/sales", ListSalesAsync)
-            .RequireAuthorization(ReportingPermissions.SalesRead)
-            .Produces<ReportPage<SalesReportItemDto>>()
+        group.MapGet("/orders", ListOrdersAsync)
+            .RequireAuthorization(ReportingPermissions.OrdersRead)
+            .Produces<ReportPage<OrdersReportItemDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Mismo permiso que el listado: expone exactamente los mismos datos, sumados.
-        group.MapGet("/sales/summary", GetSalesSummaryAsync)
-            .RequireAuthorization(ReportingPermissions.SalesRead)
-            .Produces<SalesReportSummaryDto>()
+        group.MapGet("/orders/summary", GetOrdersSummaryAsync)
+            .RequireAuthorization(ReportingPermissions.OrdersRead)
+            .Produces<OrdersReportSummaryDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
@@ -69,7 +69,7 @@ public static class ReportingEndpoints
         return endpoints;
     }
 
-    private static async Task<IResult> ListSalesAsync(
+    private static async Task<IResult> ListOrdersAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
@@ -82,8 +82,8 @@ public static class ReportingEndpoints
         int pageSize = ReportPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
-            new ListSalesReportQuery(
-                new SalesReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus),
+            new ListOrdersReportQuery(
+                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus),
                 page,
                 pageSize),
             cancellationToken);
@@ -95,7 +95,7 @@ public static class ReportingEndpoints
     /// Los mismos filtros que el listado **menos la paginacion**: un resumen de la pagina que se
     /// esta mirando no seria un resumen de nada.
     /// </summary>
-    private static async Task<IResult> GetSalesSummaryAsync(
+    private static async Task<IResult> GetOrdersSummaryAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
@@ -106,8 +106,8 @@ public static class ReportingEndpoints
         string? paymentStatus = null)
     {
         var summary = await dispatcher.QueryAsync(
-            new GetSalesReportSummaryQuery(
-                new SalesReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus)),
+            new GetOrdersReportSummaryQuery(
+                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus)),
             cancellationToken);
 
         return Results.Ok(summary);
@@ -135,7 +135,7 @@ public static class ReportingEndpoints
         return Results.Ok(result);
     }
 
-    /// <summary>Ver <see cref="GetSalesSummaryAsync"/>: mismos filtros que el listado, sin
+    /// <summary>Ver <see cref="GetOrdersSummaryAsync"/>: mismos filtros que el listado, sin
     /// paginacion.</summary>
     private static async Task<IResult> GetQuotationsSummaryAsync(
         Guid tenantId,
@@ -177,7 +177,7 @@ public static class ReportingEndpoints
         return Results.Ok(result);
     }
 
-    /// <summary>Ver <see cref="GetSalesSummaryAsync"/>: mismos filtros que el listado, sin
+    /// <summary>Ver <see cref="GetOrdersSummaryAsync"/>: mismos filtros que el listado, sin
     /// paginacion.</summary>
     private static async Task<IResult> GetPriceChangesSummaryAsync(
         Guid tenantId,
@@ -222,7 +222,7 @@ public static class ReportingEndpoints
         return Results.Ok(result);
     }
 
-    /// <summary>Ver <see cref="GetSalesSummaryAsync"/>: mismos filtros que el listado, sin
+    /// <summary>Ver <see cref="GetOrdersSummaryAsync"/>: mismos filtros que el listado, sin
     /// paginacion.</summary>
     private static async Task<IResult> GetCustomersSummaryAsync(
         Guid tenantId,

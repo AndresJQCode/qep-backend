@@ -5,7 +5,7 @@ using Modules.Tenancy.Application;
 namespace Modules.Reporting.Application;
 
 /// <summary>El listado paginado del reporte de cotizaciones, en cualquiera de sus cinco estados.
-/// Ver <see cref="ListSalesReportQuery"/> sobre por que los filtros van en un record
+/// Ver <see cref="ListOrdersReportQuery"/> sobre por que los filtros van en un record
 /// aparte.</summary>
 public sealed record ListQuotationsReportQuery(
     QuotationsReportFilter Filter,

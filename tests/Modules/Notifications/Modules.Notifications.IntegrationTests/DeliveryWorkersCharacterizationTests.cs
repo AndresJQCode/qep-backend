@@ -120,7 +120,7 @@ public sealed class DeliveryWorkersCharacterizationTests
             rowCount = 3,
             expiresAt = DateTimeOffset.UtcNow.AddHours(24),
         }),
-        "quotations.export-failed.v1" => JsonSerializer.Serialize(new { tenantId, subjectId, kind = "Sales" }),
+        "quotations.export-failed.v1" => JsonSerializer.Serialize(new { tenantId, subjectId, kind = "Orders" }),
         _ => throw new ArgumentOutOfRangeException(nameof(eventName), eventName, "No payload for this event."),
     };
 }

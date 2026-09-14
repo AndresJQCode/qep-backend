@@ -408,7 +408,7 @@ public static class QuotationEndpoints
         quotation.Total,
         quotation.CanBeSent,
         quotation.IsComplete,
-        quotation.SaleId,
-        quotation.SaleStatus);
+        quotation.OrderId,
+        quotation.OrderStatus);
 
 }

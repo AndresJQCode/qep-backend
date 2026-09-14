@@ -77,8 +77,8 @@ internal static class QuotationsApiHarness
     [
         QuotationsPermissions.QuotationRead,
         QuotationsPermissions.QuotationManage,
-        SalesPermissions.SaleRead,
-        SalesPermissions.SaleManage,
+        OrdersPermissions.OrderRead,
+        OrdersPermissions.OrderManage,
         CustomersPermissions.CustomerRead,
         CustomersPermissions.CustomerManage,
         CustomersPermissions.ClassificationRead,
@@ -377,7 +377,7 @@ internal static class QuotationsApiHarness
             client, factory, tenantId, "application/pdf", "%PDF-1.7\nquotation"u8.ToArray(), "quotation.pdf");
 
     /// <summary>US-14: un comprobante de pago disponible. PDF y no JPG/PNG a propósito -- los
-    /// tres tipos son válidos para <c>SalePaymentProofResolver</c>, pero construir un JPG/PNG
+    /// tres tipos son válidos para <c>OrderPaymentProofResolver</c>, pero construir un JPG/PNG
     /// minúsculo que además pase la verificación de firma binaria real de Storage es frágil; un
     /// PDF mínimo válido ya lo tiene <see cref="CreateAvailablePdfFileAsync"/>.</summary>
     public static Task<Guid> CreateAvailablePaymentProofFileAsync(
@@ -386,7 +386,7 @@ internal static class QuotationsApiHarness
             client, factory, tenantId, "application/pdf", "%PDF-1.7\nproof"u8.ToArray(), "proof.pdf");
 
     /// <summary>Crea una cotización, le agrega un ítem y la marca como enviada -- el punto de
-    /// partida que necesita toda prueba de conversión a venta (US-13 exige <c>Sent</c>).</summary>
+    /// partida que necesita toda prueba de conversión a pedido (US-13 exige <c>Sent</c>).</summary>
     /// <summary>
     /// Una empresa con una cuenta bancaria, que es de donde la cotización copia su cuenta de
     /// cobro: <c>QuotationBillingAccountRequest</c> la valida contra las cuentas de la empresa
@@ -443,7 +443,7 @@ internal static class QuotationsApiHarness
             validUntil: null,
             billingAccount: new QuotationBillingAccountRequest(
                 billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            // Ya no es un requisito para convertir en venta (2026-09-12: el editor dejó de
+            // Ya no es un requisito para convertir en pedido (2026-09-12: el editor dejó de
             // pedirla, así que exigirla bloqueaba toda cotización nueva). El parámetro se queda
             // por si alguna prueba puntual quiere una cotización con forma de pago cargada.
             paymentMethod: paymentMethod);
@@ -464,7 +464,7 @@ internal static class QuotationsApiHarness
     }
 
     /// <summary>Nace con vigencia porque <c>Quotation.Send</c> la exige: sin
-    /// <c>ValidUntil</c> la cotización nunca vencería y quedaría convertible a venta para
+    /// <c>ValidUntil</c> la cotización nunca vencería y quedaría convertible a pedido para
     /// siempre. Las pruebas que necesitan otra fecha (el barrido de vencimiento) la
     /// sobrescriben después con <c>UpdateQuotationRequest</c>, que sigue disponible en
     /// <c>Sent</c>.</summary>

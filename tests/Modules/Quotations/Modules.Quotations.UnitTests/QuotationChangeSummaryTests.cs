@@ -122,4 +122,12 @@ public sealed class QuotationChangeSummaryTests
             "el envío. Revisa con el cliente antes de reintentar.",
             summary);
     }
+
+    // "Pedido" es masculino (spec 2026-09-14, D7). El sujeto sigue siendo la cotización, por eso
+    // "Convertida".
+    [Fact]
+    public void ConvertingNamesTheOrderInMasculine() =>
+        Assert.Equal(
+            "Convertida en el pedido PED-2026-0001.",
+            QuotationChangeSummary.ConvertedToOrder("PED-2026-0001"));
 }

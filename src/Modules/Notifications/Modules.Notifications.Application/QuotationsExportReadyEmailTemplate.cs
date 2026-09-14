@@ -4,7 +4,7 @@ using System.Net;
 namespace Modules.Notifications.Application;
 
 /// <summary>
-/// El correo de exportación lista de cotizaciones o ventas. Mismo criterio que
+/// El correo de exportación lista de cotizaciones o pedidos. Mismo criterio que
 /// <see cref="CustomerExportEmailTemplate"/>: plantilla fija, variables en allowlist y el
 /// vencimiento dicho explícito, porque un enlace que caduca sin aviso se lee como una falla.
 /// </summary>
