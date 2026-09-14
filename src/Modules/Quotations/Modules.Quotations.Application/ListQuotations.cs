@@ -30,10 +30,15 @@ public sealed record QuotationListItemDto(
     /// resuelve, la fila viaja igual y quien la muestra elige el respaldo.</summary>
     string? ClientName,
     Guid AdvisorId,
-    /// <summary>Correo de la asesora, resuelto contra Tenancy/Identity para toda la página de
-    /// una vez. Nullable por la misma razón que <c>ClientName</c>: es una referencia blanda
-    /// entre módulos.</summary>
-    string? AdvisorEmail,
+    /// <summary>Cómo presentar a la asesora en la grilla: el nombre de su membresía o, si no
+    /// tiene uno, su correo (<see cref="QuotationAdvisor.Label"/>). Las membresías creadas con
+    /// <c>CreateActive</c> —el owner al registrarse y los miembros sembrados— nacen sin nombre, y
+    /// el respaldo viaja resuelto para que la pantalla pinte un solo campo en vez de elegir entre
+    /// dos. Reemplaza al <c>AdvisorEmail</c> que la fila traía antes (spec 2026-09-11, D1, nota
+    /// del 2026-09-14). Se resuelve contra Tenancy/Identity para toda la página de una vez, y es
+    /// nullable por la misma razón que <c>ClientName</c>: es una referencia blanda entre
+    /// módulos.</summary>
+    string? AdvisorName,
     string Status,
     DateTimeOffset CreatedAt,
     /// <summary>La moneda de <c>Total</c>: la grilla mezcla cotizaciones en pesos y en dolares
@@ -133,8 +138,8 @@ public sealed class ListQuotationsHandler(
 
         // Misma idea que los nombres de cliente: una ida por página, con los ids sin repetir.
         // Antes el frontend se traía el padrón de miembros entero para poner un correo en cada
-        // fila. La fila muestra el correo aunque la asesora tenga nombre: el nombre sólo llega al
-        // PDF (spec 2026-09-11, D1).
+        // fila. La fila muestra el nombre de la asesora y cae al correo mientras la membresía no
+        // tenga uno (spec 2026-09-11, D1, nota del 2026-09-14).
         var advisors = quotations.Count == 0
             ? new Dictionary<Guid, QuotationAdvisor>()
             : await advisorLookup.FindAsync(
@@ -154,7 +159,7 @@ public sealed class ListQuotationsHandler(
 
         // La venta de cada cotizacion --1:1-- para que la fila sepa si ya se convirtio y si esa
         // venta sigue esperando el visto bueno. Otra ida por pagina, mismo criterio que los
-        // nombres de cliente y los correos de las asesoras.
+        // nombres de cliente y los de las asesoras.
         //
         // Solo para quien puede leer ventas: poder ver cotizaciones no es poder saber cuales se
         // cobraron. Sin ese permiso la fila viaja sin venta --que es todo lo que esa persona
@@ -168,7 +173,7 @@ public sealed class ListQuotationsHandler(
         var items = quotations
             .Select(quotation => quotation.ToListItemDto(
                 clientNames.GetValueOrDefault(quotation.ClientId),
-                advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Email,
+                advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Label,
                 withItems.Contains(quotation.Id.Value),
                 sales.GetValueOrDefault(quotation.Id.Value)))
             .ToArray();

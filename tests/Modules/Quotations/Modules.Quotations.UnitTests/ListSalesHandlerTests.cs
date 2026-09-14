@@ -34,8 +34,8 @@ public sealed class ListSalesHandlerTests
         Assert.Equal("COP", row.Currency);
     }
 
-    // El nombre de la asesora llega sólo al PDF (spec 2026-09-11, D1): la fila de ventas sigue
-    // mostrando el correo aunque la membresía tenga nombre.
+    // La fila de ventas sigue mostrando el correo aunque la membresía tenga nombre: el nombre llega
+    // al PDF y al listado de cotizaciones, no a ventas (spec 2026-09-11, D1, nota del 2026-09-14).
     [Fact]
     public async Task ListKeepsTheAdvisorEmailEvenWhenTheMemberHasAName()
     {

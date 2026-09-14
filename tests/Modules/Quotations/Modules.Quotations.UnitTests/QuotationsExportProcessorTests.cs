@@ -34,14 +34,29 @@ public sealed class QuotationsExportProcessorTests
         Assert.Equal("QUO-2026-0001", row[0].Text);
         Assert.Equal(Now.ToString("O", CultureInfo.InvariantCulture), row[1].Text);
         Assert.Equal("Ferretería El Tornillo", row[2].Text);
-        // El correo y no el nombre, igual que la tabla (spec 2026-09-11, D1).
-        Assert.Equal("asesora@qcode.co", row[3].Text);
+        // El nombre, igual que la tabla (spec 2026-09-11, D1, nota del 2026-09-14).
+        Assert.Equal("Asesora Uno", row[3].Text);
         // La etiqueta de la tabla, no el nombre del enum (spec 2026-09-13, A7).
         Assert.Equal("Borrador", row[4].Text);
         Assert.Equal("COP", row[5].Text);
         Assert.Equal(0m, row[6].Number);
         Assert.Null(row[6].Text);
         Assert.True(writer.Disposed);
+    }
+
+    // Sin nombre en la membresía (owner, sembrados) el archivo cae al correo, igual que la tabla.
+    [Fact]
+    public async Task WritesTheAdvisorEmailWhenTheMemberHasNoName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var processor = NewProcessor(
+            new StubQuotationListRepository(NewQuotation("QUO-2026-0001")),
+            writer,
+            advisors: new StubQuotationAdvisorLookup("asesora@qcode.co"));
+
+        await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora@qcode.co", Assert.Single(writer.Rows)[3].Text);
     }
 
     // D8: la memoria queda acotada al lote. Mil y una filas son dos consultas.
@@ -196,12 +211,13 @@ public sealed class QuotationsExportProcessorTests
     private static QuotationsExportProcessor NewProcessor(
         StubQuotationListRepository repository,
         RecordingExportWorkbookWriter? writer = null,
-        RecordingExportFileStorage? storage = null) =>
+        RecordingExportFileStorage? storage = null,
+        StubQuotationAdvisorLookup? advisors = null) =>
         new(repository,
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
-            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
             new FixedClock(Now));

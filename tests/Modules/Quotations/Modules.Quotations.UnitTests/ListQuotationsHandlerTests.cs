@@ -76,15 +76,45 @@ public sealed class ListQuotationsHandlerTests
         Assert.Null(Assert.Single(page.Items).ClientName);
     }
 
-    // D1: el listado de cotizaciones sigue con el correo; el nombre es sólo del PDF.
+    // La grilla presenta a la asesora por su nombre (spec 2026-09-11, D1, nota del 2026-09-14).
     [Fact]
-    public async Task ListKeepsTheAdvisorEmailEvenWhenTheMemberHasAName()
+    public async Task ListCarriesTheAdvisorNameWhenTheMemberHasOne()
     {
         var handler = NewHandler(NewCustomerLookup(), NewQuotation("QUO-2026-0001", ClientId));
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("asesora@qcode.co", Assert.Single(page.Items).AdvisorEmail);
+        Assert.Equal("Asesora Uno", Assert.Single(page.Items).AdvisorName);
+    }
+
+    // El owner y los miembros sembrados nacen con CreateActive, sin nombre: la fila cae al correo
+    // en vez de viajar vacía, así que la pantalla no tiene que conocer dos campos para elegir.
+    [Fact]
+    public async Task ListFallsBackToTheAdvisorEmailWhenTheMemberHasNoName()
+    {
+        var handler = NewHandler(
+            NewCustomerLookup(),
+            new StubQuotationAdvisorLookup("asesora@qcode.co"),
+            NewQuotation("QUO-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora@qcode.co", Assert.Single(page.Items).AdvisorName);
+    }
+
+    // La asesora es una referencia blanda, igual que el cliente: si la membresía no resuelve, la
+    // fila viaja igual y sin etiqueta.
+    [Fact]
+    public async Task ListLeavesTheAdvisorNameNullWhenTheMemberDoesNotResolve()
+    {
+        var handler = NewHandler(
+            NewCustomerLookup(),
+            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno", resolves: false),
+            NewQuotation("QUO-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Null(Assert.Single(page.Items).AdvisorName);
     }
 
     // Las tres acciones que la fila ofrece y que no se deducen de su estado —editar, anular e
@@ -232,9 +262,26 @@ public sealed class ListQuotationsHandlerTests
         StubQuotationCustomerLookup customers,
         SaleWithQuotation[] sales,
         params Quotation[] quotations) =>
+        NewHandler(
+            customers,
+            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            sales,
+            quotations);
+
+    private static ListQuotationsHandler NewHandler(
+        StubQuotationCustomerLookup customers,
+        StubQuotationAdvisorLookup advisors,
+        params Quotation[] quotations) =>
+        NewHandler(customers, advisors, [], quotations);
+
+    private static ListQuotationsHandler NewHandler(
+        StubQuotationCustomerLookup customers,
+        StubQuotationAdvisorLookup advisors,
+        SaleWithQuotation[] sales,
+        Quotation[] quotations) =>
         new(new StubQuotationListRepository(quotations),
             new StubSaleListRepository(sales),
             customers,
-            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            advisors,
             new StubExecutionContext(SubjectId, TenantId));
 }

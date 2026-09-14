@@ -71,7 +71,8 @@ internal static class SaleListing
                 rows.Select(row => row.Quotation.ClientId).Distinct().ToArray(),
                 cancellationToken);
 
-        // El correo y no el nombre, mismo criterio que el listado de cotizaciones (spec 2026-09-11, D1).
+        // El correo y no el nombre: ventas sigue con el correo aunque el listado de cotizaciones ya
+        // muestre el nombre (spec 2026-09-11, D1, nota del 2026-09-14).
         var advisors = rows.Count == 0
             ? new Dictionary<Guid, QuotationAdvisor>()
             : await advisorLookup.FindAsync(

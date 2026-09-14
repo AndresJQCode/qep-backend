@@ -162,7 +162,8 @@ public sealed class ExportLoadSeedTests
         Assert.All(quotations.Items, item =>
         {
             Assert.NotNull(item.ClientName);
-            Assert.Equal(OwnerEmail, item.AdvisorEmail);
+            // El owner sembrado nace con CreateActive, sin nombre: la fila cae a su correo.
+            Assert.Equal(OwnerEmail, item.AdvisorName);
             // Líneas, vigencia y cuenta de cobro: lo que hace que una venta haya podido salir de ahí.
             Assert.True(item.IsComplete);
         });

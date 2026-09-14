@@ -13,7 +13,8 @@ namespace Bootstrapper;
 ///
 /// **Los reportes muestran el email, no el nombre.** El nombre existe desde el 2026-09-11
 /// —<c>Modules.Tenancy.Domain.Membership.DisplayName</c>—, pero por decisión de alcance sólo lo
-/// imprime el PDF de cotización (spec 2026-09-11, D1); llevarlo a reportes es un trabajo aparte.
+/// muestran el PDF y el listado de cotizaciones (spec 2026-09-11, D1 y su nota del 2026-09-14);
+/// llevarlo a reportes es un trabajo aparte.
 /// Así que lo que viaja en <c>advisorName</c> y <c>changedByName</c> sigue siendo el email — los
 /// nombres de campo se mantienen porque son los que fija el contrato de API con el frontend.
 ///

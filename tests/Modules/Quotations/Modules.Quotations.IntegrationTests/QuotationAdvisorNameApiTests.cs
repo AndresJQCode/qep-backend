@@ -8,7 +8,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// <summary>
 /// El nombre de la asesora cruza tres módulos —membresía en Tenancy, correo en Identity,
 /// cotización en Quotations— por el adaptador de <c>Bootstrapper</c>, que ninguna prueba
-/// unitaria ve. Ésta lo recorre punta a punta.
+/// unitaria ve. Éstas lo recorren punta a punta.
 /// </summary>
 public sealed class QuotationAdvisorNameApiTests
 {
@@ -32,24 +32,64 @@ public sealed class QuotationAdvisorNameApiTests
         Assert.Null(quotation.AdvisorName);
         Assert.NotNull(quotation.AdvisorEmail);
 
-        var version = await MembershipVersionAsync(client, tenantId, quotation.AdvisorId);
-        using var rename = new HttpRequestMessage(
-            HttpMethod.Patch,
-            $"/api/v1/tenants/{tenantId}/memberships/{quotation.AdvisorId}/display-name")
-        {
-            Content = JsonContent.Create(new { displayName = "Laura Gómez" })
-        };
-        rename.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
-        var renamed = await client.SendAsync(rename, TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+        await RenameAsync(client, tenantId, quotation.AdvisorId, "Laura Gómez");
 
         var fetched = await client.GetFromJsonAsync<QuotationResponse>(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
 
         Assert.NotNull(fetched);
         Assert.Equal("Laura Gómez", fetched.AdvisorName);
-        // D1: el correo sigue viajando igual; la pantalla lo sigue usando.
+        // D1: el detalle sigue trayendo el correo aparte; su pantalla lo sigue usando.
         Assert.Equal(quotation.AdvisorEmail, fetched.AdvisorEmail);
+    }
+
+    // La fila del listado trae un solo campo: el nombre o, mientras la membresía no tenga uno, el
+    // correo (spec 2026-09-11, D1, nota del 2026-09-14).
+    [Fact]
+    public async Task TheQuotationListShowsTheAdvisorNameAndFallsBackToTheEmail()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        // El owner nace sin nombre (CreateActive): la fila cae a su correo.
+        Assert.NotNull(quotation.AdvisorEmail);
+        Assert.Equal(
+            quotation.AdvisorEmail,
+            (await ListRowAsync(client, tenantId, quotation.Id)).AdvisorName);
+
+        await RenameAsync(client, tenantId, quotation.AdvisorId, "Laura Gómez");
+
+        Assert.Equal(
+            "Laura Gómez",
+            (await ListRowAsync(client, tenantId, quotation.Id)).AdvisorName);
+    }
+
+    private static async Task<QuotationListItemResponse> ListRowAsync(
+        HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var page = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            QuotationsUrl(tenantId), TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        return Assert.Single(page.Items, item => item.Id == quotationId);
+    }
+
+    private static async Task RenameAsync(
+        HttpClient client, Guid tenantId, Guid membershipId, string displayName)
+    {
+        var version = await MembershipVersionAsync(client, tenantId, membershipId);
+        using var rename = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name")
+        {
+            Content = JsonContent.Create(new { displayName })
+        };
+        rename.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        using var renamed = await client.SendAsync(rename, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
     }
 
     // La versión se lee del roster en vez de suponerla: If-Match tiene que llevar la vigente.
