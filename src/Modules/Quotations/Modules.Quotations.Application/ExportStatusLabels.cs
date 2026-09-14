@@ -21,6 +21,7 @@ public static class ExportStatusLabels
         QuotationStatus.Sent => "Enviada",
         QuotationStatus.Voided => "Anulada",
         QuotationStatus.Expired => "Vencida",
+        QuotationStatus.Converted => "Convertida",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The quotation status has no export label."),
     };
 

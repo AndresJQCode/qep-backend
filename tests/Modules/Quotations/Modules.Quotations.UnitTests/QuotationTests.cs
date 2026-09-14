@@ -890,9 +890,9 @@ public sealed class QuotationTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 
-    // No hay un estado "aprobada": convertir a venta deja la cotizacion en Sent (ver
-    // QuotationStatus) -- EnsureConvertibleToSale es solo el guard de precondicion que
-    // ConvertQuotationToSaleHandler llama antes de crear la Sale, no muta nada.
+    // EnsureConvertibleToSale sigue siendo solo el guard de precondicion, sin mutar nada: quien
+    // pasa la cotizacion a Converted es ConvertToSale, que lo llama primero. CanBeConvertedToSale
+    // y la pantalla dependen de que preguntar no cambie el estado.
     [Fact]
     public void EnsureConvertibleToSaleDoesNotThrowOrChangeStatusForASentQuotation()
     {
@@ -956,6 +956,169 @@ public sealed class QuotationTests
             () => quotation.EnsureConvertibleToSale());
 
         Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
+    }
+
+    // Convertir en venta deja la cotización en Converted, venga de Draft o de Sent: es el mismo
+    // hecho para el agregado, y lo que queda es un documento de sólo lectura con su venta.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConvertToSaleMovesTheQuotationToConverted(bool sendFirst)
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        if (sendFirst)
+        {
+            quotation.Send(AdvisorId, Now);
+        }
+
+        var versionBeforeConverting = quotation.Version;
+        var convertedBy = new MemberId(Guid.CreateVersion7());
+        var convertedAt = Now.AddHours(2);
+
+        quotation.ConvertToSale(convertedBy, convertedAt);
+
+        Assert.Equal(QuotationStatus.Converted, quotation.Status);
+        Assert.Equal(convertedBy, quotation.UpdatedBy);
+        Assert.Equal(convertedAt, quotation.UpdatedAt);
+        Assert.Equal(versionBeforeConverting + 1, quotation.Version);
+        Assert.False(quotation.CanBeConvertedToSale);
+        Assert.False(quotation.CanBeSent);
+    }
+
+    // Una ya convertida tampoco se convierte de nuevo: el estado lo corta antes de que el índice
+    // único de Sale.QuotationId tenga que hacerlo.
+    [Theory]
+    [InlineData(QuotationStatus.Voided)]
+    [InlineData(QuotationStatus.Expired)]
+    [InlineData(QuotationStatus.Converted)]
+    public void ConvertToSaleRejectsAQuotationThatIsNotDraftOrSent(QuotationStatus status)
+    {
+        var quotation = ConvertibleSentQuotation();
+        MoveTo(quotation, status);
+        var versionBefore = quotation.Version;
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.ConvertToSale(AdvisorId, Now.AddDays(61)));
+
+        Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
+        Assert.Equal(status, quotation.Status);
+        Assert.Equal(versionBefore, quotation.Version);
+    }
+
+    // ConvertToSale no se salta ninguna precondición de EnsureConvertibleToSale, y si una falla
+    // la cotización se queda como estaba.
+    [Fact]
+    public void ConvertToSaleStillEnforcesThePreconditionsWithoutChangingTheStatus()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.Send(AdvisorId, Now);
+        var versionBefore = quotation.Version;
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.ConvertToSale(AdvisorId, Now.AddHours(1)));
+
+        Assert.Equal("quotation.quotation.items_required", error.Code);
+        Assert.Equal(QuotationStatus.Sent, quotation.Status);
+        Assert.Equal(versionBefore, quotation.Version);
+    }
+
+    // US-10: "se bloquea una vez convertida a venta". Converted queda de sólo lectura, igual que
+    // Voided y Expired.
+    [Fact]
+    public void EditingAConvertedQuotationIsRejected()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+
+        var addError = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now));
+        Assert.Equal("quotation.quotation.not_editable", addError.Code);
+
+        var updateError = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.UpdateDetails(null, null, null, QuotationParties.Empty, null, null, AdvisorId, Now));
+        Assert.Equal("quotation.quotation.not_editable", updateError.Code);
+    }
+
+    [Fact]
+    public void VoidRejectsAConvertedQuotation()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.Void(AdvisorId, Now));
+
+        Assert.Equal("quotation.quotation.not_editable", error.Code);
+        Assert.Equal(QuotationStatus.Converted, quotation.Status);
+    }
+
+    // EnsureSendable es lo que SendQuotationHandler llama antes de firmar el PDF y de hablar con
+    // WhatsApp: una convertida tiene que caerse ahí, antes de cualquier efecto externo.
+    [Fact]
+    public void SendingAConvertedQuotationIsRejected()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+
+        var ensureError = Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable);
+        Assert.Equal("quotation.quotation.not_draft", ensureError.Code);
+
+        var sendError = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.Send(AdvisorId, Now.AddHours(2)));
+        Assert.Equal("quotation.quotation.not_draft", sendError.Code);
+    }
+
+    [Fact]
+    public void ExpireRejectsAConvertedQuotation()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.Expire(Now.AddDays(60)));
+
+        Assert.Equal("quotation.quotation.not_sent", error.Code);
+        Assert.Equal(QuotationStatus.Converted, quotation.Status);
+    }
+
+    // Mientras una convertida seguía en Sent, RefreshCustomerTaxProfile le recalculaba los
+    // totales si el cliente cambiaba de perfil fiscal, aunque la venta ya los hubiera heredado.
+    // En Converted queda tal cual quedó, igual que una anulada o una vencida.
+    [Fact]
+    public void RefreshCustomerTaxProfileLeavesAConvertedQuotationAsItWas()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+        var totalBefore = quotation.Total;
+        var taxBefore = quotation.TaxAmount;
+
+        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
+
+        Assert.False(quotation.CustomerWithRetention);
+        Assert.False(quotation.CustomerVatSurplus);
+        Assert.Equal(totalBefore, quotation.Total);
+        Assert.Equal(taxBefore, quotation.TaxAmount);
+    }
+
+    /// <summary>Lleva una cotización ya enviada al estado pedido por el camino real de cada
+    /// transición, sin tocar el estado a mano.</summary>
+    private static void MoveTo(Quotation quotation, QuotationStatus status)
+    {
+        switch (status)
+        {
+            case QuotationStatus.Voided:
+                quotation.Void(AdvisorId, Now);
+                break;
+            case QuotationStatus.Expired:
+                quotation.Expire(Now.AddDays(60));
+                break;
+            case QuotationStatus.Converted:
+                quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(status), status, "No transition to that status.");
+        }
     }
 
     // A pedido (2026-09), editar una enviada ya no la vuelve inconvertible: la vieja regla

@@ -14,12 +14,13 @@ public sealed class ReportFilterParserTests
     [InlineData("Sent", QuotationStatusFilter.Sent)]
     [InlineData("Expired", QuotationStatusFilter.Expired)]
     [InlineData("Voided", QuotationStatusFilter.Voided)]
-    public void ParsesTheFourQuotationStatuses(string value, QuotationStatusFilter expected) =>
+    [InlineData("Converted", QuotationStatusFilter.Converted)]
+    public void ParsesTheFiveQuotationStatuses(string value, QuotationStatusFilter expected) =>
         Assert.Equal(expected, ReportFilterParser.ParseQuotationStatus(value));
 
     /// <summary>
-    /// `Approved` dejó de ser un estado de cotización: convertirla en venta la deja en `Sent`, y
-    /// la única señal de la conversión es que exista una `Sale` apuntándola 1:1.
+    /// `Approved` dejó de ser un estado de cotización: convertirla en venta la deja en
+    /// `Converted`. `Approved` es un estado de la venta (`SaleStatus`), no de la cotización.
     ///
     /// Esta prueba existe porque el enum del filtro se redeclara acá en vez de referenciar
     /// `QuotationStatus` —el dominio de un módulo no referencia el de otro—, así que el

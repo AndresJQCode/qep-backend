@@ -111,7 +111,8 @@ internal sealed class QuotationsReportSource(
     }
 
     /// <summary>
-    /// El reparto por estado, con **los cuatro siempre presentes** aunque alguno este en cero.
+    /// El reparto por estado, con **los cinco siempre presentes** aunque alguno este en cero. Sale
+    /// de <c>Enum.GetValues</c>, así que un estado nuevo aparece acá sin tocar este método.
     ///
     /// Un estado que desaparece de la respuesta obligaria a la pantalla a saber cuales existen
     /// para poder dibujar el que falta, y eso es duplicar el enum del backend en el frontend.
@@ -449,6 +450,7 @@ internal sealed class QuotationsReportSource(
         QuotationStatusFilter.Sent => QuotationStatus.Sent,
         QuotationStatusFilter.Expired => QuotationStatus.Expired,
         QuotationStatusFilter.Voided => QuotationStatus.Voided,
+        QuotationStatusFilter.Converted => QuotationStatus.Converted,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown status.")
     };
 

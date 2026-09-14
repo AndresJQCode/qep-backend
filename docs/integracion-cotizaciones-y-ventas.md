@@ -20,7 +20,7 @@ diferencia con la respuesta real de la API, **gana la API** y este documento se 
 ## Estados
 
 ```
-Quotation.status: Draft → Sent → Approved
+Quotation.status: Draft → Sent → Converted
                               ↘ Voided (desde Draft o Sent)
                               ↘ Expired (job automático, sólo desde Sent)
 
@@ -28,7 +28,7 @@ Sale.status:         Approved   (único valor hoy)
 Sale.paymentStatus:  FullPaymentReceived | PartialPaymentReceived | PaymentPending
 ```
 
-Editar (encabezado o líneas) sólo funciona en `Draft`/`Sent`. `Approved`, `Voided` y `Expired`
+Editar (encabezado o líneas) sólo funciona en `Draft`/`Sent`. `Converted`, `Voided` y `Expired`
 son de sólo lectura (422 `quotation.quotation.not_editable`).
 
 ## Endpoints
@@ -73,7 +73,7 @@ type ConvertQuotationToSaleRequest = {
 
 type QuotationResponse = {
   id: string; quotationNumber: string; clientId: string; advisorId: string;
-  status: "Draft" | "Sent" | "Approved" | "Voided" | "Expired";
+  status: "Draft" | "Sent" | "Voided" | "Expired" | "Converted";
   createdAt: string; validUntil: string | null; paymentMethod: string | null;
   subtotal: number; taxPercentage: number; taxAmount: number; discountAmount: number; total: number;
   notes: string | null;
