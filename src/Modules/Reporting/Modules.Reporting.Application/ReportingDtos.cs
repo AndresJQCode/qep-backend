@@ -5,10 +5,10 @@ namespace Modules.Reporting.Application;
 /// cotización: <c>Sale</c> no los duplica (modelo-datos-cotizaciones.md §1.2).
 ///
 /// <c>AdvisorName</c> es el **email** del asesor, no su nombre. El nombre vive en
-/// <c>Tenancy.Membership.DisplayName</c> desde el 2026-09-11, pero sólo lo usa el PDF de
-/// cotización (spec 2026-09-11, D1). El nombre del campo se mantiene porque es el que el contrato
-/// de API fija con el frontend; léase "la etiqueta con la que mostrar a esta persona". Nulo
-/// cuando la fila de usuario no está.
+/// <c>Tenancy.Membership.DisplayName</c> desde el 2026-09-11, pero sólo lo usan el PDF y el
+/// listado de cotizaciones (spec 2026-09-11, D1 y su nota del 2026-09-14). El nombre del campo se
+/// mantiene porque es el que el contrato de API fija con el frontend; léase "la etiqueta con la
+/// que mostrar a esta persona". Nulo cuando la fila de usuario no está.
 ///
 /// <c>ClientName</c> sí es un nombre real: sale de <c>Customer.Name</c>.
 /// </summary>

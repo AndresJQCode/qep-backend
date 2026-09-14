@@ -112,7 +112,11 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
     }
 }
 
-internal sealed class StubQuotationAdvisorLookup(string? email = null, string? displayName = null)
+/// <summary><paramref name="resolves"/> en false simula la membresía que ya no es del tenant: el
+/// adaptador real la deja fuera del diccionario, que no es lo mismo que devolverla sin correo ni
+/// nombre.</summary>
+internal sealed class StubQuotationAdvisorLookup(
+    string? email = null, string? displayName = null, bool resolves = true)
     : IQuotationAdvisorLookup
 {
     public int FindCalls { get; private set; }
@@ -125,6 +129,7 @@ internal sealed class StubQuotationAdvisorLookup(string? email = null, string? d
         FindCalls++;
         return Task.FromResult<IReadOnlyDictionary<Guid, QuotationAdvisor>>(
             membershipIds
+                .Where(_ => resolves)
                 .Distinct()
                 .ToDictionary(id => id, _ => new QuotationAdvisor(email, displayName)));
     }

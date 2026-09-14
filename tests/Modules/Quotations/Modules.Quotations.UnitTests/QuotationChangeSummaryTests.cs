@@ -98,4 +98,28 @@ public sealed class QuotationChangeSummaryTests
 
         Assert.Equal("Editó facturación (ahora con datos propios).", summary);
     }
+
+    // El texto es en español neutro con tuteo, nunca voseo: "Revisa", no "Revisá".
+    [Fact]
+    public void SendFailedByRecipientTellsAdvisorToCheckContactDataInNeutralSpanish()
+    {
+        var summary = QuotationChangeSummary.SendFailed(QuotationSendStage.Recipient);
+
+        Assert.Equal(
+            "No se pudo enviar la cotización: el cliente no tiene un número de WhatsApp " +
+            "válido. Revisa sus datos de contacto.",
+            summary);
+    }
+
+    // Idem: el mensaje sí salió, pero registrarlo falló. Tuteo, nunca voseo.
+    [Fact]
+    public void SendFailedByPersistenceTellsAdvisorToCheckWithCustomerInNeutralSpanish()
+    {
+        var summary = QuotationChangeSummary.SendFailed(QuotationSendStage.Persistence);
+
+        Assert.Equal(
+            "No se pudo enviar la cotización: el mensaje salió pero no pudimos registrar " +
+            "el envío. Revisa con el cliente antes de reintentar.",
+            summary);
+    }
 }

@@ -66,7 +66,7 @@ internal static class QuotationMapping
     public static QuotationListItemDto ToListItemDto(
         this Quotation quotation,
         string? clientName,
-        string? advisorEmail,
+        string? advisorName,
         bool hasItems,
         Sale? sale) => new(
         quotation.Id.Value,
@@ -74,7 +74,7 @@ internal static class QuotationMapping
         quotation.ClientId,
         clientName,
         quotation.AdvisorId.Value,
-        advisorEmail,
+        advisorName,
         quotation.Status.ToString(),
         quotation.CreatedAt,
         quotation.Currency.ToCode(),

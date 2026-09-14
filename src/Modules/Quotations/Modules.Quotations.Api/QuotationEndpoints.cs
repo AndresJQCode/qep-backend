@@ -401,7 +401,7 @@ public static class QuotationEndpoints
         quotation.ClientId,
         quotation.ClientName,
         quotation.AdvisorId,
-        quotation.AdvisorEmail,
+        quotation.AdvisorName,
         quotation.Status,
         quotation.CreatedAt,
         quotation.Currency,

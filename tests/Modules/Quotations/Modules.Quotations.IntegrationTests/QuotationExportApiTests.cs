@@ -223,7 +223,7 @@ public sealed class QuotationExportApiTests
         var first = sheet.Rows[1];
         Assert.Equal(items[0].CreatedAt, DateTimeOffset.Parse(first[1], CultureInfo.InvariantCulture));
         Assert.Equal("Verde Esencial S.A.S.", first[2]);
-        Assert.Equal(items[0].AdvisorEmail ?? string.Empty, first[3]);
+        Assert.Equal(items[0].AdvisorName ?? string.Empty, first[3]);
         Assert.Equal("Borrador", first[4]);
         Assert.Equal(items[0].Currency, first[5]);
         Assert.True(sheet.NumericCells[1][6]);
