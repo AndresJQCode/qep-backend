@@ -54,6 +54,7 @@ public static class AuthSessionEndpoints
         HttpContext httpContext,
         IProviderLinking providerLinking,
         IMembershipActivation membershipActivation,
+        IActiveTenantsQuery activeTenantsQuery,
         ISessionService sessionService,
         IOptions<QepSessionOptions> sessionOptions,
         IHostEnvironment environment,
@@ -92,10 +93,18 @@ public static class AuthSessionEndpoints
         }
 
         var userId = outcome.UserId!.Value;
-        var activeTenants = await membershipActivation.AcceptInvitedMembershipsAsync(
+        // El valor de retorno se descarta a propósito: activeTenantsQuery.ListActiveTenantsAsync
+        // de abajo es la única consulta detrás de los dos campos de SessionResponse, para que
+        // ids y nombres no puedan discrepar si una membresía cambia entre dos consultas
+        // separadas.
+        await membershipActivation.AcceptInvitedMembershipsAsync(
             userId,
             httpContext.TraceIdentifier,
             cancellationToken);
+        var activeTenants = await activeTenantsQuery.ListActiveTenantsAsync(
+            userId,
+            cancellationToken);
+        var activeTenantIds = activeTenants.Select(tenant => tenant.TenantId).ToArray();
 
         var issued = await sessionService.IssueAsync(
             userId,
@@ -104,7 +113,7 @@ public static class AuthSessionEndpoints
             cancellationToken);
         SessionCookieWriter.Append(httpContext, sessionOptions.Value, environment, issued);
 
-        return Results.Ok(new SessionResponse(userId, email, activeTenants));
+        return Results.Ok(new SessionResponse(userId, email, activeTenantIds, activeTenants));
     }
 
     private static async Task<IResult> GetCurrentSessionAsync(
@@ -120,10 +129,11 @@ public static class AuthSessionEndpoints
         }
 
         var email = await userDirectory.GetEmailAsync(userId.Value, cancellationToken);
-        var activeTenants = await activeTenantsQuery.ListActiveTenantIdsAsync(
+        var activeTenants = await activeTenantsQuery.ListActiveTenantsAsync(
             userId.Value,
             cancellationToken);
-        return Results.Ok(new SessionResponse(userId.Value, email, activeTenants));
+        var activeTenantIds = activeTenants.Select(tenant => tenant.TenantId).ToArray();
+        return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, activeTenants));
     }
 
     private static async Task<IResult> LogoutAsync(
@@ -153,7 +163,14 @@ public static class AuthSessionEndpoints
     }
 }
 
+/// <summary>
+/// <c>ActiveTenants</c> lleva el nombre de cada tenant activo porque el selector de tenant del
+/// menú de usuario no puede pedirle a la persona que elija entre GUIDs — con sólo el id
+/// tendría que adivinar cuál es cuál. <c>ActiveTenantIds</c> se mantiene sin cambios, por
+/// compatibilidad con quien todavía sólo lee ids.
+/// </summary>
 public sealed record SessionResponse(
     Guid UserId,
     string? Email,
-    IReadOnlyCollection<Guid> ActiveTenantIds);
+    IReadOnlyCollection<Guid> ActiveTenantIds,
+    IReadOnlyCollection<ActiveTenantSummary> ActiveTenants);

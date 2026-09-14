@@ -29,6 +29,13 @@ public interface IMembershipRepository
         Guid userId,
         CancellationToken cancellationToken);
 
+    // Igual que ListActiveTenantsByUserAsync pero con el DisplayName del tenant: el join vive
+    // acá porque Application no puede tocar EF Core, y este es el único consumidor del nombre
+    // (el selector de tenant del menú de usuario, vía IActiveTenantsQuery).
+    Task<IReadOnlyList<ActiveTenantSummary>> ListActiveTenantSummariesByUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken);
+
     // Todas las membresías del usuario en cualquier tenant y en cualquier estado, terminales
     // incluidas. Es la vista que necesita quien decide si un usuario todavía existe para
     // Tenancy (MembershipUserReferenceProbe) o quién más lo referencia (IMembershipDirectory).
