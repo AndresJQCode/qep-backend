@@ -12,7 +12,7 @@ namespace Modules.Quotations.Application;
 /// historial —"¿qué tocaron?"—. El texto es para leer, no para parsear: quien necesite el dato
 /// estructurado tiene la cotización y la auditoría transversal.
 ///
-/// En español rioplatense como el resto del copy que ve una persona, y **resumido**: la columna
+/// En español neutro como el resto del copy que ve una persona, y **resumido**: la columna
 /// admite 500 caracteres y una fila de historial se lee de un vistazo, así que se enumera qué
 /// campos se tocaron y no sus valores viejos y nuevos, salvo donde el valor <em>es</em> la noticia
 /// (el cliente, la cantidad de una línea, la moneda).
@@ -63,7 +63,7 @@ public static class QuotationChangeSummary
         Trim($"No se pudo enviar la cotización: {StageReason(stage)}");
 
     // En segunda persona y accionable donde se puede hacer algo, y neutro donde no: decirle
-    // "revisá" a alguien por una caída de Zenvia lo manda a buscar un problema que no tiene.
+    // "revisa" a alguien por una caída de Zenvia lo manda a buscar un problema que no tiene.
     private static string StageReason(QuotationSendStage stage) => stage switch
     {
         QuotationSendStage.Advisor =>
@@ -73,11 +73,11 @@ public static class QuotationChangeSummary
         QuotationSendStage.Publish =>
             "falló la publicación del PDF que el cliente tiene que poder descargar.",
         QuotationSendStage.Recipient =>
-            "el cliente no tiene un número de WhatsApp válido. Revisá sus datos de contacto.",
+            "el cliente no tiene un número de WhatsApp válido. Revisa sus datos de contacto.",
         QuotationSendStage.WhatsApp =>
             "WhatsApp rechazó el mensaje.",
         QuotationSendStage.Persistence =>
-            "el mensaje salió pero no pudimos registrar el envío. Revisá con el cliente antes de reintentar.",
+            "el mensaje salió pero no pudimos registrar el envío. Revisa con el cliente antes de reintentar.",
         _ => "falló por un motivo no previsto."
     };
 
