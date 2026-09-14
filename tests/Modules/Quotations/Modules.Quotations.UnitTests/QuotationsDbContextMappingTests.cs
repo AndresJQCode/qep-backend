@@ -83,11 +83,11 @@ public sealed class QuotationsDbContextMappingTests
             ["TenantId", "CreatedAt", "QuotationNumber"],
             quotations.Properties.Select(property => property.Name));
 
-        var sales = model.FindEntityType(typeof(Order))!.GetIndexes()
+        var orders = model.FindEntityType(typeof(Order))!.GetIndexes()
             .Single(index => index.GetDatabaseName() == "IX_orders_tenant_converted_at_number");
         Assert.Equal(
             ["TenantId", "ConvertedAt", "OrderNumber"],
-            sales.Properties.Select(property => property.Name));
+            orders.Properties.Select(property => property.Name));
     }
 
     /// <summary>

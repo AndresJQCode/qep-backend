@@ -6,7 +6,7 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Infrastructure.Persistence;
 
 /// <summary>
-/// Quotations retiene a un usuario mientras alguna cotización, venta o comprobante siga
+/// Quotations retiene a un usuario mientras alguna cotización, pedido o comprobante siga
 /// apuntando a una de sus membresías. El módulo nunca guarda el id de usuario: toda
 /// referencia es un <see cref="MemberId"/> hacia <c>tenancy.memberships</c> (documento §1.4),
 /// así que la sonda traduce primero usuario → membresías por <see cref="IMembershipDirectory"/>

@@ -5,7 +5,7 @@ using Modules.Tenancy.Application;
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// El resumen del reporte de clientes. Cuarto hermano de los de ventas, cotizaciones y cambios de
+/// El resumen del reporte de clientes. Cuarto hermano de los de pedidos, cotizaciones y cambios de
 /// precio —mismos filtros que el listado menos la paginación, mismo permiso, mismo motivo para
 /// existir— y el que cierra el módulo: hasta acá clientes era el único que seguía siendo una tabla.
 ///
@@ -18,7 +18,7 @@ namespace Modules.Reporting.Application;
 ///
 /// **Los inactivos no viajan: son la resta.** <c>CustomerCount - ActiveCount</c>, y un campo más
 /// es un campo más que puede desincronizarse de los dos que lo definen — mismo criterio que el
-/// ticket promedio de ventas, que el panel deriva. Se puede porque el reparto es binario y
+/// ticket promedio de pedidos, que el panel deriva. Se puede porque el reparto es binario y
 /// exhaustivo, a diferencia de la dirección de un cambio de precio: ahí hay un tercer grupo —los
 /// que no se movieron— y por eso ese resumen sí manda las dos puntas.
 /// </summary>

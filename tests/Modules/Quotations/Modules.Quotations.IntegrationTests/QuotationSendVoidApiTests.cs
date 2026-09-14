@@ -94,7 +94,7 @@ public sealed class QuotationSendVoidApiTests
     }
 
     // Sin vigencia la cotización nunca vencería (QuotationExpirationProcessor filtra por
-    // ValidUntil != null) y quedaría convertible a venta para siempre. El dominio lo corta al
+    // ValidUntil != null) y quedaría convertible a pedido para siempre. El dominio lo corta al
     // salir de Draft; acá se verifica que ese código llega al cliente como 422 y no como 500.
     // Aca vivia `SendWithoutAValidityDateIsUnprocessable`. Se elimino en vez de arreglarse:
     // desde 23ae906 `CreateQuotation` le pone vigencia por defecto, asi que por la API no

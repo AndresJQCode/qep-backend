@@ -5,7 +5,7 @@ using Modules.Tenancy.Application;
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// El resumen del reporte de cambios de precio. Tercer hermano de los de ventas y cotizaciones
+/// El resumen del reporte de cambios de precio. Tercer hermano de los de pedidos y cotizaciones
 /// —mismos filtros que el listado menos la paginación, mismo permiso, mismo motivo para existir—
 /// con una diferencia que le da la forma entera.
 ///

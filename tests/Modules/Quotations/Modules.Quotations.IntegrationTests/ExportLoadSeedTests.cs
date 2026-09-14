@@ -225,7 +225,7 @@ public sealed class ExportLoadSeedTests
             connectionString, "SELECT cuc FROM customers.customers WHERE id = @id", ("id", customerId));
         Assert.EndsWith($"{result.Customers + 1:D6}", cuc, StringComparison.Ordinal);
 
-        // Ventas: un contador por año, cada uno en el siguiente al último sembrado.
+        // Pedidos: un contador por año, cada uno en el siguiente al último sembrado.
         Assert.Equal(0L, await ScalarAsync<long>(connectionString, """
             SELECT count(*) FROM (
                 SELECT extract(year FROM converted_at AT TIME ZONE 'UTC')::int AS year, count(*) + 1 AS expected

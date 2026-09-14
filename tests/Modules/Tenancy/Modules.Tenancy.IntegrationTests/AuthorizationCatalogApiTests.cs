@@ -45,7 +45,7 @@ public sealed class AuthorizationCatalogApiTests
     /// <summary>
     /// Lo que la pantalla de roles muestra de los permisos de pedidos (spec 2026-09-14): códigos
     /// nuevos, textos en masculino y con tilde, y los mismos permisos efectivos en los tres roles
-    /// de fábrica que antes tenían los de ventas.
+    /// de fábrica que antes tenían los de pedidos.
     /// </summary>
     [Fact]
     public async Task TheCatalogNamesTheOrderPermissions()

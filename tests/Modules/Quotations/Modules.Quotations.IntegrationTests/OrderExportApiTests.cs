@@ -71,7 +71,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("order.export.empty", problem?.Code);
     }
 
-    // El cupo es por persona y cuenta los dos tipos: tres de cotizaciones frenan un pedido.
+    // El cupo es por persona y cuenta los dos tipos: tres de cotizaciones frenan una de pedidos.
     [Fact]
     public async Task PendingQuotationExportsFillTheOrdersQuota()
     {

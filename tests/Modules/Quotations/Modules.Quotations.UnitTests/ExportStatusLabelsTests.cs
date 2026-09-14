@@ -24,7 +24,7 @@ public sealed class ExportStatusLabelsTests
             },
             ExportStatusLabels.For);
 
-    // order-list.ts, ORDER_STATUS_LABELS
+    // order-list.ts (frontend), las etiquetas de estado del pedido
     [Fact]
     public void EveryOrderStatusHasTheLabelOfTheOrdersTable() =>
         AssertLabels(
@@ -35,7 +35,7 @@ public sealed class ExportStatusLabelsTests
             },
             ExportStatusLabels.For);
 
-    // order-list.ts, ORDER_PAYMENT_STATUS_LABELS
+    // order-list.ts (frontend), las etiquetas de estado del pago
     [Fact]
     public void EveryPaymentStatusHasTheLabelOfTheOrdersTable() =>
         AssertLabels(

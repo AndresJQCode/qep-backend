@@ -150,7 +150,7 @@ public sealed record QuotationPartiesRequest(
     /// <summary>Sólo tiene sentido cuando <c>Billing</c> trae datos propios: si esa facturación
     /// practica retención en la fuente. Con los datos del cliente se ignora — ahí manda lo que
     /// diga el cliente. Null es "todavía no se contestó"; un <c>Billing</c> con datos propios y
-    /// esto en null deja la cotización inconvertible a venta
+    /// esto en null deja la cotización inconvertible a pedido
     /// (<c>quotation.billing.tax_profile_required</c>).</summary>
     bool? BillingWithRetention = null,
     /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA.</summary>
@@ -405,7 +405,7 @@ public sealed record QuotationItemResponse(
     int Position);
 
 /// <summary>
-/// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de ventas. No
+/// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No
 /// lleva nombre de archivo ni cantidad de filas porque todavía no existen, ni enlace porque el
 /// canal de entrega es el correo: con el enlace acá, la pantalla tomaría el atajo y el correo
 /// quedaría sin ejercitar. El jobId es para soporte y para una futura "mis exportaciones" (D15).

@@ -5,20 +5,20 @@ using Modules.Tenancy.Application;
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// El resumen del reporte de cotizaciones. Hermano del de ventas —mismos filtros que el listado
+/// El resumen del reporte de cotizaciones. Hermano del de pedidos —mismos filtros que el listado
 /// menos la paginación, mismo permiso, mismo motivo para existir— pero con dos cosas propias que
-/// una venta no tiene.
+/// un pedido no tiene.
 ///
-/// La primera es <see cref="ByStatus"/>: una cotización vive en cinco estados y una venta en
+/// La primera es <see cref="ByStatus"/>: una cotización vive en cinco estados y un pedido en
 /// uno, así que acá el reparto por estado **es** el reporte, no un detalle.
 ///
 /// La segunda es <see cref="Validity"/> y <see cref="Expiring"/>: una cotización enviada tiene
 /// fecha de vencimiento, y lo que el negocio necesita saber no es cuántas hay sino **cuánta plata
 /// se vence esta semana**. Eso no sale de un listado ordenado por fecha de creación.
 ///
-/// **No hay estado «Aprobada».** Convertir una cotización en venta la deja en <c>Converted</c>.
+/// **No hay estado «Aprobada».** Convertir una cotización en pedido la deja en <c>Converted</c>.
 /// Las que se convirtieron antes de que ese estado existiera siguen en <c>Sent</c> (no hubo
-/// backfill), así que cuántas terminaron en venta se lee en el reporte de ventas, no acá.
+/// backfill), así que cuántas terminaron en pedido se lee en el reporte de pedidos, no acá.
 /// </summary>
 public sealed record QuotationsReportSummaryDto(
     int QuotationCount,

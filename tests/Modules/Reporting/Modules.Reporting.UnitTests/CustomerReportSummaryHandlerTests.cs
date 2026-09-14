@@ -105,7 +105,7 @@ public sealed class CustomerReportSummaryHandlerTests
     /// <summary>
     /// Los inactivos **no viajan en el contrato**: son la resta, y un campo más es un campo más que
     /// puede desincronizarse de los dos que lo definen. Mismo criterio que el ticket promedio de
-    /// ventas, que el panel deriva de <c>total / orderCount</c>.
+    /// pedidos, que el panel deriva de <c>total / orderCount</c>.
     ///
     /// Acá se puede porque el reparto es binario y exhaustivo, a diferencia de la dirección de un
     /// cambio de precio: ahí existe un tercer grupo —los que no se movieron— y por eso ese resumen

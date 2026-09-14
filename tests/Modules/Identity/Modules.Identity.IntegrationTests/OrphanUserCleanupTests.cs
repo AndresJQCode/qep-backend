@@ -24,7 +24,7 @@ namespace Modules.Identity.IntegrationTests;
 /// después del commit para armar la respuesta. Por eso todas las pruebas esperan al worker.
 ///
 /// Las huellas que retienen al usuario las declara cada módulo por <c>IUserReferenceProbe</c>:
-/// una membresía viva en otro tenant (Tenancy), una cotización/venta que referencia alguna de
+/// una membresía viva en otro tenant (Tenancy), una cotización/pedido que referencia alguna de
 /// sus membresías (Quotations) o un archivo del que es dueño (Storage). Auditoría y
 /// notificaciones no retienen: son append-only y guardan snapshot.
 /// </summary>

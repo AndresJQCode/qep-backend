@@ -1,4 +1,4 @@
-# Cotizaciones y ventas — guía de integración para el frontend
+# Cotizaciones y pedidos — guía de integración para el frontend
 
 Contrato leído del código (`src/Modules/Quotations/`), no de un spec aparte. Ante cualquier
 diferencia con la respuesta real de la API, **gana la API** y este documento se corrige.
@@ -7,10 +7,10 @@ diferencia con la respuesta real de la API, **gana la API** y este documento se 
 
 - Todas las rutas cuelgan del tenant: `/api/v1/tenants/{tenantId}/…`.
 - **Los permisos del módulo están temporalmente desactivados** (a pedido, mientras se prueba
-  manualmente) — ver `QuotationEndpoints.cs`/`SaleEndpoints.cs`/`QuotationsAuthorization.cs`,
+  manualmente) — ver `QuotationEndpoints.cs`/`OrderEndpoints.cs`/`QuotationsAuthorization.cs`,
   todos marcados `TEMPORAL`. Hoy sólo hace falta estar autenticado; **no construir la UI
   asumiendo 403 por falta de permiso específico**, porque va a volver a exigirse antes de
-  producción (`quotations.quotation.read/manage`, `quotations.sale.read/manage`). El
+  producción (`quotations.quotation.read/manage`, `quotations.order.read/manage`). El
   aislamiento por tenant (403 si el tenant no coincide) sí sigue activo siempre.
 - Métodos que mutan llevan `X-Qep-Client: web` (CSRF), igual que el resto de la API.
 - Errores: `ProblemDetails` con `code` en la raíz — ver
@@ -24,8 +24,8 @@ Quotation.status: Draft → Sent → Converted
                               ↘ Voided (desde Draft o Sent)
                               ↘ Expired (job automático, sólo desde Sent)
 
-Sale.status:         Approved   (único valor hoy)
-Sale.paymentStatus:  FullPaymentReceived | PartialPaymentReceived | PaymentPending
+Order.status:        Pending → Approved
+Order.paymentStatus: FullPaymentReceived | PartialPaymentReceived | PaymentPending
 ```
 
 Editar (encabezado o líneas) sólo funciona en `Draft`/`Sent`. `Converted`, `Voided` y `Expired`
@@ -44,8 +44,8 @@ son de sólo lectura (422 `quotation.quotation.not_editable`).
 | `DELETE` | `/quotations/{id}/items/{itemId}` | — | |
 | `POST` | `/quotations/{id}/send` | `SendQuotationRequest` | El PDF ya se subió a Storage antes de este llamado (ver abajo) |
 | `POST` | `/quotations/{id}/void` | — (sin body) | |
-| `GET` | `/quotations/{id}/sale` | — | 404 si no se convirtió todavía |
-| `POST` | `/quotations/{id}/sale` | `ConvertQuotationToSaleRequest` | Aprueba la cotización y crea la venta en una sola operación |
+| `GET` | `/quotations/{id}/order` | — | 404 si no se convirtió todavía |
+| `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | Crea el pedido en `Pending` y deja la cotización en `Converted`, en una sola operación |
 
 ## Formas de los DTOs
 
@@ -65,7 +65,7 @@ type UpdateQuotationItemRequest = { quantity: number };
 
 type SendQuotationRequest = { pdfFileId: string };
 
-type ConvertQuotationToSaleRequest = {
+type ConvertQuotationToOrderRequest = {
   paymentStatus: "FullPaymentReceived" | "PartialPaymentReceived" | "PaymentPending";
   notes: string | null;
   paymentProofs: { fileId: string; amount: number }[]; // vacío sólo permitido si paymentStatus = PaymentPending
@@ -82,14 +82,14 @@ type QuotationResponse = {
   createdBy: string; updatedBy: string | null; updatedAt: string;
   sentAt: string | null; pdfFileId: string | null;
   // Las tres preguntas que la pantalla no reimplementa. `hasChangesSinceSent` (se editó después
-  // del último envío) ya está adentro de `canBeConvertedToSale`; viaja aparte para que el
+  // del último envío) ya está adentro de `canBeConvertedToOrder`; viaja aparte para que el
   // detalle pueda decir *por qué* no se ofrece convertir, en vez de esconder el botón callado.
-  canBeSent: boolean; hasChangesSinceSent: boolean; canBeConvertedToSale: boolean;
+  canBeSent: boolean; hasChangesSinceSent: boolean; canBeConvertedToOrder: boolean;
   items: { id, productId, quantity, unitPrice, discountPercentage, discountAmount, subtotal, position }[];
 };
 
-type SaleResponse = {
-  id: string; saleNumber: string; quotationId: string; status: "Approved";
+type OrderResponse = {
+  id: string; orderNumber: string; quotationId: string; status: "Pending" | "Approved";
   paymentStatus: string; notes: string | null;
   convertedAt: string; convertedBy: string; ritualCollectionSyncId: string | null;
   createdAt: string; updatedAt: string;
@@ -127,10 +127,10 @@ No hace falta publicar (paso 5 de esa guía) — estos archivos no necesitan URL
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
-| `sale.sale.payment_proof_required` | 422 | `POST /sale` sin comprobantes y el pago no es `PaymentPending`; en `POST /sale/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
-| `sale.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
-| `sale.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |
-| `sale.payment_proof.not_found` | 422 | `updatedProofs` referencia un `proofId` que no es de esta venta |
+| `order.order.payment_proof_required` | 422 | `POST /order` sin comprobantes y el pago no es `PaymentPending`; en `POST /order/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
+| `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
+| `order.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |
+| `order.payment_proof.not_found` | 422 | `updatedProofs` referencia un `proofId` que no es de este pedido |
 | `validation.failed` | 422 | Errores de campo, viene con `errors` |
 
 ---

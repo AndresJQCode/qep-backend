@@ -109,7 +109,7 @@ public sealed class ExportQuotationsHandler(
                 "There are no quotations matching the export filters.");
         }
 
-        // 4: el límite de pendientes, contando cotizaciones y ventas. Es de mejor esfuerzo —cuenta
+        // 4: el límite de pendientes, contando cotizaciones y pedidos. Es de mejor esfuerzo —cuenta
         // y después inserta, sin bloqueo—: ver ExportJobLimits.PendingPerRequester.
         var pending = await queue.CountPendingAsync(
             command.TenantId, executionContext.SubjectId, cancellationToken);

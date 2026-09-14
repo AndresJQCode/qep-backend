@@ -13,7 +13,7 @@ namespace Bootstrapper.Seeding;
 /// La carga sintética para medir la exportación en producción (spec 2026-09-13, A10).
 ///
 /// El tenant, el usuario, la membresía y el catálogo se crean por el dominio, con los mismos seeders
-/// de la semilla de arranque. Clientes, cotizaciones, líneas y ventas van en SQL masivo, en una sola
+/// de la semilla de arranque. Clientes, cotizaciones, líneas y pedidos van en SQL masivo, en una sola
 /// transacción: no pasan por los handlers, así que no generan outbox, auditoría, correos ni WhatsApp.
 ///
 /// Es idempotente: si el tenant ya tiene cotizaciones, no siembra. Si falla a mitad, la transacción no
@@ -31,7 +31,7 @@ public static class ExportLoadSeeder
     /// detalle de la cotización la busca (QuotationResponseComposer), no la encuentra y muestra la cuenta
     /// bancaria sin nombre ni NIT de empresa. No la reutilices donde la búsqueda es estricta, como
     /// QuotationBillingAccountResolver al editar. La cuenta completa está para que el listado muestre las
-    /// cotizaciones como completas y las ventas tengan de dónde salir.
+    /// cotizaciones como completas y los pedidos tengan de dónde salir.
     /// </summary>
     public static readonly Guid BillingCompanyId = Guid.Parse("01900000-0000-7000-8000-000000000005");
 
@@ -229,7 +229,7 @@ public static class ExportLoadSeeder
 
     // Fechas repartidas en los últimos 364 días. El número es QUO-{año UTC}-{consecutivo del año}: D4 es
     // un mínimo, y greatest(4, …) evita que lpad trunque a partir de 10 000. La vigencia es la de la app,
-    // alta + 15 días. El 30 % se convierte en venta.
+    // alta + 15 días. El 30 % se convierte en pedido.
     private const string LoadQuotationsSql = """
         INSERT INTO load_quotations (n, id, client_id, created_at, year, quotation_number, sent_at, valid_until, converted)
         SELECT numbered.n, gen_random_uuid(), seeded_customers.id, numbered.created_at, numbered.year,

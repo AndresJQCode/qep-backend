@@ -288,7 +288,7 @@ internal sealed class PriceChangeReportSource(
         }
 
         // ChangedBy es el subject de la ejecucion, o sea el id de identity.users directo: a
-        // diferencia de AdvisorId en ventas y cotizaciones, no pasa por una membresia.
+        // diferencia de AdvisorId en pedidos y cotizaciones, no pasa por una membresia.
         var authors = await peopleLookup.EmailsByUserIdAsync(
             rows.Select(row => row.ChangedBy).ToArray(), cancellationToken);
 

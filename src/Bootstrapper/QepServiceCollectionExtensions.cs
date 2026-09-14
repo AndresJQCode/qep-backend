@@ -450,7 +450,7 @@ public static class QepServiceCollectionExtensions
 
         // El tick del worker de exportaciones. Scoped: ExportJobWorker abre un scope por job para
         // que cada uno tenga su DbContext limpio. Los procesadores por kind se registran con él
-        // cuando existen (cotizaciones y ventas).
+        // cuando existen (cotizaciones y pedidos).
         services.AddScoped<ExportJobRunner>();
         services.AddScoped<IExportJobProcessor, QuotationsExportProcessor>();
         services.AddScoped<IExportJobProcessor, OrdersExportProcessor>();

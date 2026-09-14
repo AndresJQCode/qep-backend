@@ -260,12 +260,12 @@ public sealed class ListQuotationsHandlerTests
 
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers,
-        OrderWithQuotation[] sales,
+        OrderWithQuotation[] orders,
         params Quotation[] quotations) =>
         NewHandler(
             customers,
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
-            sales,
+            orders,
             quotations);
 
     private static ListQuotationsHandler NewHandler(
@@ -277,10 +277,10 @@ public sealed class ListQuotationsHandlerTests
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers,
         StubQuotationAdvisorLookup advisors,
-        OrderWithQuotation[] sales,
+        OrderWithQuotation[] orders,
         Quotation[] quotations) =>
         new(new StubQuotationListRepository(quotations),
-            new StubOrderListRepository(sales),
+            new StubOrderListRepository(orders),
             customers,
             advisors,
             new StubExecutionContext(SubjectId, TenantId));

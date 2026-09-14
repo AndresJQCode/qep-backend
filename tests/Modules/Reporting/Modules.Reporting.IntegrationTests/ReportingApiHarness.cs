@@ -32,7 +32,7 @@ internal static class ReportingApiHarness
     public static string ReportsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/reports";
 
     /// <summary>
-    /// Todo lo que hace falta para sembrar (cliente, producto, cotizacion, venta, cambio de
+    /// Todo lo que hace falta para sembrar (cliente, producto, cotizacion, pedido, cambio de
     /// precio) **y ademas** leer los cuatro reportes.
     ///
     /// El stub de desarrollo concede solo los permisos de tenancy por defecto, asi que cada uno

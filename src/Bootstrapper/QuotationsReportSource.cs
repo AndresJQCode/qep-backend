@@ -10,7 +10,7 @@ namespace Bootstrapper;
 /// El origen del reporte de cotizaciones. Ver <see cref="OrdersReportSource"/> sobre por que los
 /// adaptadores de <c>reporting</c> viven en el composition root.
 ///
-/// A diferencia del de ventas, este no necesita join: <c>Quotation</c> ya tiene numero, fechas,
+/// A diferencia del de pedidos, este no necesita join: <c>Quotation</c> ya tiene numero, fechas,
 /// asesor, cliente, estado e importes.
 /// </summary>
 internal sealed class QuotationsReportSource(
