@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -138,13 +141,136 @@ public sealed class AuthSessionApiTests
         Assert.Contains(Guid.Parse(SeededTenantId), secondSession.ActiveTenantIds);
     }
 
+    [Fact]
+    public async Task LoginListsActiveTenantsWithDisplayNamesAndExcludesSuspendedMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var email = NewEmail();
+        var googleSubject = Guid.CreateVersion7().ToString();
+
+        // Un segundo tenant activo y un tercero que se suspende después del login, sembrados
+        // directo en la base — mismo patrón que TenancyDatabaseInitializer usa para el tenant
+        // de desarrollo (ver SeedStartupTests.cs).
+        var secondTenantId = Guid.CreateVersion7();
+        var suspendedTenantId = Guid.CreateVersion7();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            dbContext.Tenants.Add(Tenant.Create(
+                new TenantId(secondTenantId),
+                "acme-consultoria",
+                "Acme Consultoría",
+                "es-CO",
+                "America/Bogota",
+                "yyyy-MM-dd",
+                DateTimeOffset.UtcNow));
+            dbContext.Tenants.Add(Tenant.Create(
+                new TenantId(suspendedTenantId),
+                "zeta-ventures",
+                "Zeta Ventures",
+                "es-CO",
+                "America/Bogota",
+                "yyyy-MM-dd",
+                DateTimeOffset.UtcNow));
+            await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        using (var admin = CreateAdminClient(factory))
+        {
+            Assert.Equal(HttpStatusCode.Created, (await InviteAsync(admin, email)).StatusCode);
+        }
+
+        using (var adminSecond = CreateAdminClientForTenant(factory, secondTenantId.ToString()))
+        {
+            Assert.Equal(
+                HttpStatusCode.Created,
+                (await InviteAsync(adminSecond, email, secondTenantId.ToString())).StatusCode);
+        }
+
+        using (var adminSuspended = CreateAdminClientForTenant(factory, suspendedTenantId.ToString()))
+        {
+            Assert.Equal(
+                HttpStatusCode.Created,
+                (await InviteAsync(adminSuspended, email, suspendedTenantId.ToString())).StatusCode);
+        }
+
+        using var client = CreateLoginClient(factory, googleSubject, email, verified: true);
+        var firstLogin = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, firstLogin.StatusCode);
+        var firstSession = await firstLogin.Content.ReadFromJsonAsync<SessionPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(firstSession);
+
+        // Suspende la membresía del tercer tenant después de que el login la activó, para
+        // probar que una membresía suspendida deja de listarse.
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var suspendedMembershipRow = await QueryRowAsync(
+            connection,
+            "SELECT id FROM tenancy.memberships WHERE tenant_id = @tenantId AND user_id = @userId",
+            ("tenantId", suspendedTenantId),
+            ("userId", firstSession!.UserId));
+        Assert.NotNull(suspendedMembershipRow);
+
+        using (var adminSuspended = CreateAdminClientForTenant(factory, suspendedTenantId.ToString()))
+        {
+            var suspend = await adminSuspended.PostAsync(
+                $"/api/v1/tenants/{suspendedTenantId}/memberships/{suspendedMembershipRow![0]}/suspend",
+                content: null,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, suspend.StatusCode);
+        }
+
+        var second = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var session = await second.Content.ReadFromJsonAsync<SessionPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(session);
+
+        Assert.Equal(2, session!.ActiveTenantIds.Count);
+        Assert.Contains(Guid.Parse(SeededTenantId), session.ActiveTenantIds);
+        Assert.Contains(secondTenantId, session.ActiveTenantIds);
+        Assert.DoesNotContain(suspendedTenantId, session.ActiveTenantIds);
+
+        Assert.Equal(2, session.ActiveTenants.Count);
+        Assert.Contains(
+            session.ActiveTenants,
+            tenant => tenant.TenantId == Guid.Parse(SeededTenantId) && tenant.DisplayName == "QCode Demo");
+        Assert.Contains(
+            session.ActiveTenants,
+            tenant => tenant.TenantId == secondTenantId && tenant.DisplayName == "Acme Consultoría");
+        Assert.DoesNotContain(session.ActiveTenants, tenant => tenant.TenantId == suspendedTenantId);
+
+        // activeTenantIds y activeTenants salen de la misma consulta (ver AuthSessionEndpoints):
+        // tienen que ser exactamente el mismo conjunto de ids. SetEquals y no Assert.Equal
+        // porque el orden de un HashSet no está garantizado entre dos instancias distintas.
+        Assert.True(
+            session.ActiveTenants.Select(tenant => tenant.TenantId)
+                .ToHashSet()
+                .SetEquals(session.ActiveTenantIds));
+
+        // Orden determinista: por DisplayName y, ante empate, por id.
+        var expectedOrder = session.ActiveTenants
+            .OrderBy(tenant => tenant.DisplayName, StringComparer.Ordinal)
+            .ThenBy(tenant => tenant.TenantId)
+            .Select(tenant => tenant.TenantId)
+            .ToArray();
+        Assert.Equal(expectedOrder, session.ActiveTenants.Select(tenant => tenant.TenantId));
+    }
+
     private static string NewEmail() => $"login-{Guid.NewGuid():N}@example.com";
 
-    private static async Task<HttpResponseMessage> InviteAsync(HttpClient client, string email)
+    private static async Task<HttpResponseMessage> InviteAsync(
+        HttpClient client,
+        string email,
+        string tenantId = SeededTenantId)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            $"/api/v1/tenants/{SeededTenantId}/memberships")
+            $"/api/v1/tenants/{tenantId}/memberships")
         {
             Content = JsonContent.Create(new { email, displayName = "Ana Pérez", roles = DefaultRoles })
         };
@@ -189,11 +315,14 @@ public sealed class AuthSessionApiTests
         return database;
     }
 
-    private static HttpClient CreateAdminClient(QepApiFactory factory)
+    private static HttpClient CreateAdminClient(QepApiFactory factory) =>
+        CreateAdminClientForTenant(factory, SeededTenantId);
+
+    private static HttpClient CreateAdminClientForTenant(QepApiFactory factory, string tenantId)
     {
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Subject-Id", AdminSubjectId);
-        client.DefaultRequestHeaders.Add("X-Tenant-Id", SeededTenantId);
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId);
         return client;
     }
 
@@ -216,7 +345,10 @@ public sealed class AuthSessionApiTests
     private sealed record SessionPayload(
         Guid UserId,
         string? Email,
-        IReadOnlyCollection<Guid> ActiveTenantIds);
+        IReadOnlyCollection<Guid> ActiveTenantIds,
+        IReadOnlyCollection<ActiveTenantPayload> ActiveTenants);
+
+    private sealed record ActiveTenantPayload(Guid TenantId, string DisplayName);
 
     private sealed class QepApiFactory(string connectionString)
         : WebApplicationFactory<Program>
