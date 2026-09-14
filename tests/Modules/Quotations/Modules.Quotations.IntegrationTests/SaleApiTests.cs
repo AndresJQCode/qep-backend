@@ -378,7 +378,7 @@ public sealed class SaleApiTests
             new AddSalePaymentProofsRequest(
                 "FullPaymentReceived",
                 [new SalePaymentProofRequest(proofFileId, quotation.Total)],
-                "Pago completado por transferencia"),
+                Notes: "Pago completado por transferencia"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -390,6 +390,80 @@ public sealed class SaleApiTests
         var proof = Assert.Single(sale.PaymentProofs);
         Assert.Equal(proofFileId, proof.FileId);
         Assert.Equal(quotation.Total, proof.Amount);
+    }
+
+    // A pedido (2026-09): corregir el monto de un comprobante ya cargado, en el mismo request
+    // que sumaria uno nuevo -- un solo viaje de red para las dos cosas.
+    [Fact]
+    public async Task AddPaymentProofsCorrectsAnExistingProofAmount()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var firstProofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest(
+                "PartialPaymentReceived",
+                null,
+                [new SalePaymentProofRequest(firstProofFileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+        var created = await convert.Content.ReadFromJsonAsync<SaleResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(created);
+        var existingProofId = Assert.Single(created.PaymentProofs).Id;
+
+        var response = await client.PostAsJsonAsync(
+            SaleProofsUrl(tenantId, quotation.Id),
+            new AddSalePaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new SalePaymentProofUpdateRequest(existingProofId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var sale = await response.Content.ReadFromJsonAsync<SaleResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(sale);
+        Assert.Equal("FullPaymentReceived", sale.PaymentStatus);
+        var proof = Assert.Single(sale.PaymentProofs);
+        Assert.Equal(existingProofId, proof.Id);
+        Assert.Equal(firstProofFileId, proof.FileId);
+        Assert.Equal(quotation.Total, proof.Amount);
+    }
+
+    // Corregir un comprobante que no existe en esta venta -- de otra venta, o un id inventado --
+    // no puede pasar como si fuera valido.
+    [Fact]
+    public async Task AddPaymentProofsRejectsCorrectingAProofThatDoesNotExistOnThisSale()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+
+        var response = await client.PostAsJsonAsync(
+            SaleProofsUrl(tenantId, quotation.Id),
+            new AddSalePaymentProofsRequest(
+                "PaymentPending",
+                [],
+                UpdatedProofs: [new SalePaymentProofUpdateRequest(Guid.CreateVersion7(), 1_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
     // Aprobada, la venta es el respaldo de un cobro que alguien ya reviso con lo que habia en

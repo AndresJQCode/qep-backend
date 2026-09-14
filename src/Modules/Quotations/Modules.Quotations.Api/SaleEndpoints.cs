@@ -73,10 +73,10 @@ public static class SaleEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Cargar lo que faltó al convertir, o lo que se terminó de cobrar después (a pedido,
-        // 2026-09): "Aprobar venta" se bloquea mientras el pago no está completo, y esto es la
-        // única forma de destrabarlo sin recrear la venta entera. Sólo sobre Pending —
-        // ver Sale.AddPaymentProofs.
+        // Cargar lo que faltó al convertir, lo que se terminó de cobrar después, o corregir el
+        // monto de un comprobante ya cargado (a pedido, 2026-09): "Aprobar venta" se bloquea
+        // mientras el pago no está completo o correcto, y esto es la única forma de destrabarlo
+        // sin recrear la venta entera. Sólo sobre Pending — ver Sale.AddPaymentProofs.
         group.MapPost("/proofs", AddSalePaymentProofsAsync)
             .RequireAuthorization(SalesPermissions.SaleManage)
             .Accepts<AddSalePaymentProofsRequest>("application/json")
@@ -209,7 +209,12 @@ public static class SaleEndpoints
     {
         var sale = await dispatcher.SendAsync(
             new AddSalePaymentProofsCommand(
-                tenantId, quotationId, request.PaymentStatus, request.Notes, request.PaymentProofs),
+                tenantId,
+                quotationId,
+                request.PaymentStatus,
+                request.Notes,
+                request.PaymentProofs,
+                request.UpdatedProofs ?? []),
             cancellationToken);
 
         return Results.Ok(ToResponse(sale));

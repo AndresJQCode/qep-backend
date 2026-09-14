@@ -1,9 +1,11 @@
 namespace Modules.Quotations.Domain;
 
 /// <summary>
-/// Un comprobante de pago adjuntado durante la conversión de una cotización en venta (US-14).
-/// Entidad hija de <see cref="Sale"/> — nace con ella y no se agrega ni se quita después: el
-/// asistente de conversión los sube todos en el mismo paso.
+/// Un comprobante de pago adjuntado durante la conversión de una cotización en venta (US-14), o
+/// sumado después mientras la venta sigue pendiente (<see cref="Sale.AddPaymentProofs"/>).
+/// Entidad hija de <see cref="Sale"/>: el archivo y quién lo subió no cambian una vez creado,
+/// pero el monto sí puede corregirse (a pedido, 2026-09) —ver <see cref="UpdateAmount"/>— si
+/// alguien lo tipeó mal.
 /// </summary>
 public sealed class SalePaymentProof
 {
@@ -68,5 +70,21 @@ public sealed class SalePaymentProof
         }
 
         return new SalePaymentProof(id, saleId, fileId, amount, uploadedBy, uploadedAt);
+    }
+
+    /// <summary>Corrige el monto de un comprobante ya cargado (a pedido, 2026-09) — sólo desde
+    /// <see cref="Sale.AddPaymentProofs"/>, que es quien decide si la venta admite el cambio
+    /// (sólo <see cref="SaleStatus.Pending"/>). El archivo y quién lo subió no se tocan: es una
+    /// corrección puntual del importe, no otro comprobante.</summary>
+    internal void UpdateAmount(decimal amount)
+    {
+        if (amount <= 0)
+        {
+            throw new QuotationsDomainException(
+                "sale.payment_proof.amount_invalid",
+                "The payment proof amount must be greater than zero.");
+        }
+
+        Amount = amount;
     }
 }
