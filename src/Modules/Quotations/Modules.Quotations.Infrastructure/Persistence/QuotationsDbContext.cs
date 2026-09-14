@@ -335,7 +335,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     private static void ConfigureOrder(ModelBuilder modelBuilder)
     {
         var order = modelBuilder.Entity<Order>();
-        order.ToTable("sales", "quotations");
+        order.ToTable("orders", "quotations");
         order.HasKey(value => value.Id);
         order.Property(value => value.Id)
             .HasColumnName("id")
@@ -343,7 +343,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .ValueGeneratedNever();
         order.Property(value => value.TenantId).HasColumnName("tenant_id");
         order.Property(value => value.OrderNumber)
-            .HasColumnName("sale_number")
+            .HasColumnName("order_number")
             .HasMaxLength(Order.OrderNumberMaxLength);
         order.Property(value => value.QuotationId)
             .HasColumnName("quotation_id")
@@ -379,21 +379,21 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Navigation(value => value.PaymentProofs)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        order.HasIndex(value => value.TenantId).HasDatabaseName("IX_sales_tenant");
+        order.HasIndex(value => value.TenantId).HasDatabaseName("IX_orders_tenant");
         // 1:1 con la cotizacion de origen (modelo-datos-cotizaciones.md §2.4).
         order.HasIndex(value => value.QuotationId)
             .IsUnique()
-            .HasDatabaseName("IX_sales_quotation");
+            .HasDatabaseName("IX_orders_quotation");
         // La unicidad que promete el numero de pedido. Nombrado a proposito, misma leccion de
         // SDD-CT-06 que IX_quotations_tenant_number.
         order.HasIndex(value => new { value.TenantId, value.OrderNumber })
             .IsUnique()
-            .HasDatabaseName("IX_sales_tenant_number");
+            .HasDatabaseName("IX_orders_tenant_number");
         // El keyset de la exportación de pedidos (spec 2026-09-12, D8): el orden exacto del listado
         // —fecha de conversión y número como desempate, OrderRepository.SearchAsync— detrás del
         // tenant.
         order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
-            .HasDatabaseName("IX_sales_tenant_converted_at_number");
+            .HasDatabaseName("IX_orders_tenant_converted_at_number");
 
         // RESTRICT, no CASCADE: el pedido es el registro que sobrevive -- borrar la cotizacion de
         // origen (si algun dia existiera un borrado duro) no deberia poder llevarse el pedido
@@ -407,14 +407,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     private static void ConfigureOrderPaymentProof(ModelBuilder modelBuilder)
     {
         var proof = modelBuilder.Entity<OrderPaymentProof>();
-        proof.ToTable("sale_payment_proofs", "quotations");
+        proof.ToTable("order_payment_proofs", "quotations");
         proof.HasKey(value => value.Id);
         proof.Property(value => value.Id)
             .HasColumnName("id")
             .HasConversion(id => id.Value, value => new OrderPaymentProofId(value))
             .ValueGeneratedNever();
         proof.Property(value => value.OrderId)
-            .HasColumnName("sale_id")
+            .HasColumnName("order_id")
             .HasConversion(id => id.Value, value => new OrderId(value));
         proof.Property(value => value.FileId).HasColumnName("file_id");
         proof.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
@@ -422,7 +422,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("uploaded_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
         proof.Property(value => value.UploadedAt).HasColumnName("uploaded_at");
-        proof.HasIndex(value => value.OrderId).HasDatabaseName("IX_sale_payment_proofs_sale");
+        proof.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_payment_proofs_order");
 
         // CASCADE: un comprobante no tiene sentido sin su pedido -- mismo criterio que
         // QuotationItem -> Quotation.
@@ -437,7 +437,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     private static void ConfigureOrderNumberCounter(ModelBuilder modelBuilder)
     {
         var counter = modelBuilder.Entity<OrderNumberCounter>();
-        counter.ToTable("sale_number_counters", "quotations");
+        counter.ToTable("order_number_counters", "quotations");
         counter.HasKey(value => new { value.TenantId, value.Year });
         counter.Property(value => value.TenantId).HasColumnName("tenant_id");
         counter.Property(value => value.Year).HasColumnName("year");

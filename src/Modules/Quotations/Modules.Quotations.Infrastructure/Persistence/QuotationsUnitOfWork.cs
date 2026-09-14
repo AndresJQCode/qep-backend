@@ -12,13 +12,14 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // SDD-CT-06: 23505 solo dice que se violo algun indice unico.
     private const string QuotationNumberIndex = "IX_quotations_tenant_number";
 
-    // Order.QuotationId es 1:1 (IX_sales_quotation, unico). En el camino normal no se alcanza:
-    // convertir deja la cotizacion en Converted y EnsureConvertibleToOrder rechaza una segunda
-    // conversion por estado. Queda de red para dos conversiones simultaneas que lean la
-    // cotizacion antes de que cualquiera guarde, y para las convertidas antes de que existiera
-    // Converted, que siguen en Sent (no hubo backfill) -- sin traducir, saldria como 500 con el
-    // nombre de la constraint adentro.
-    private const string SaleQuotationIndex = "IX_sales_quotation";
+    // Order.QuotationId es 1:1 (IX_orders_quotation, único). En el camino normal no se alcanza:
+    // convertir deja la cotización en Converted y EnsureConvertibleToOrder rechaza una segunda
+    // conversión por estado. Queda de red para dos conversiones simultáneas que lean la cotización
+    // antes de que cualquiera guarde, y para las convertidas antes de que existiera Converted, que
+    // siguen en Sent (no hubo backfill). Sin traducir, saldría como 500 con el nombre de la
+    // constraint adentro. Cambia junto con la migración que renombra el índice: la prueba es
+    // OrderApiTests.ConvertingAQuotationThatAlreadyHasAnOrderIsAlreadyConverted.
+    private const string OrderQuotationIndex = "IX_orders_quotation";
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -56,7 +57,7 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
                   postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
                   string.Equals(
                       postgres.ConstraintName,
-                      SaleQuotationIndex,
+                      OrderQuotationIndex,
                       StringComparison.Ordinal))
         {
             throw new QuotationsDomainException(

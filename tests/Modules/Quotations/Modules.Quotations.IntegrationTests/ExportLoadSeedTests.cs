@@ -228,11 +228,11 @@ public sealed class ExportLoadSeedTests
         Assert.Equal(0L, await ScalarAsync<long>(connectionString, """
             SELECT count(*) FROM (
                 SELECT extract(year FROM converted_at AT TIME ZONE 'UTC')::int AS year, count(*) + 1 AS expected
-                FROM quotations.sales
+                FROM quotations.orders
                 WHERE tenant_id = @tenant
                 GROUP BY 1) AS seeded
             FULL JOIN (
-                SELECT year, next_value FROM quotations.sale_number_counters WHERE tenant_id = @tenant) AS counter
+                SELECT year, next_value FROM quotations.order_number_counters WHERE tenant_id = @tenant) AS counter
               ON counter.year = seeded.year
             WHERE counter.next_value IS DISTINCT FROM seeded.expected
             """));
@@ -296,8 +296,8 @@ public sealed class ExportLoadSeedTests
 
         string[] tenantTables =
         [
-            "quotations.sales", "quotations.quotations", "quotations.quotation_number_counters",
-            "quotations.sale_number_counters", "quotations.export_jobs", "customers.customers",
+            "quotations.orders", "quotations.quotations", "quotations.quotation_number_counters",
+            "quotations.order_number_counters", "quotations.export_jobs", "customers.customers",
             "customers.client_classifications", "customers.cuc_counters", "catalog.products",
             "catalog.tax_rates", "tenancy.memberships",
         ];

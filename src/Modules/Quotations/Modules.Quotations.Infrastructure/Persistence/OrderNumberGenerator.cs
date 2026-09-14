@@ -11,7 +11,7 @@ internal sealed class OrderNumberGenerator(QuotationsDbContext dbContext) : IOrd
     {
         await dbContext.Database.ExecuteSqlAsync(
             $"""
-            INSERT INTO quotations.sale_number_counters (tenant_id, year, next_value)
+            INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
             VALUES ({tenantId}, {year}, 1)
             ON CONFLICT (tenant_id, year) DO NOTHING
             """,
@@ -20,7 +20,7 @@ internal sealed class OrderNumberGenerator(QuotationsDbContext dbContext) : IOrd
         var emitted = await dbContext.Database
             .SqlQuery<long>(
                 $"""
-                UPDATE quotations.sale_number_counters
+                UPDATE quotations.order_number_counters
                 SET next_value = next_value + 1
                 WHERE tenant_id = {tenantId} AND year = {year}
                 RETURNING next_value - 1 AS "Value"
@@ -30,6 +30,6 @@ internal sealed class OrderNumberGenerator(QuotationsDbContext dbContext) : IOrd
         return emitted.Count == 1
             ? emitted[0]
             : throw new InvalidOperationException(
-                $"The sale number counter for tenant '{tenantId}' year {year} could not be read back.");
+                $"The order number counter for tenant '{tenantId}' year {year} could not be read back.");
     }
 }

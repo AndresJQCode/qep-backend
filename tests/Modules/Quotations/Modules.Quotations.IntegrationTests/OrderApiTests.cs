@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Modules.Quotations.Application;
+using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -175,6 +176,55 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("quotation.quotation.status_not_convertible", body, StringComparison.Ordinal);
+    }
+
+    // La red de abajo del índice único de Order.QuotationId (QuotationsUnitOfWork): un pedido de
+    // antes de que existiera Converted dejó su cotización en Sent, así que el estado no corta la
+    // segunda conversión y la corta el índice. Si el nombre del índice cambia y la constante no, esto
+    // sale 500 con el nombre de la constraint adentro (spec 2026-09-14, «Riesgos»).
+    [Fact]
+    public async Task ConvertingAQuotationThatAlreadyHasAnOrderIsAlreadyConverted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await InsertLegacyOrderAsync(database.GetConnectionString(), tenantId, quotation.Id);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("quotation.quotation.already_converted", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>Un pedido "legado" para una cotización que siguió en Sent. Número fuera de la
+    /// secuencia a propósito: lo único que tiene que chocar es el índice de la cotización.</summary>
+    private static async Task InsertLegacyOrderAsync(string connectionString, Guid tenantId, Guid quotationId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO quotations.orders (
+                id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at,
+                converted_by, approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
+            VALUES (
+                @id, @tenantId, 'LEGADO-0001', @quotationId, 'Pending', 'PaymentPending', NULL, now(),
+                @convertedBy, NULL, NULL, NULL, now(), now(), 1)
+            """,
+            connection);
+        command.Parameters.AddWithValue("id", Guid.CreateVersion7());
+        command.Parameters.AddWithValue("tenantId", tenantId);
+        command.Parameters.AddWithValue("quotationId", quotationId);
+        command.Parameters.AddWithValue("convertedBy", Guid.CreateVersion7());
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
     }
 
     // US-14: sin comprobantes se permite unicamente cuando el pago queda pendiente.

@@ -24,12 +24,12 @@ BEGIN
 END
 $$;
 
--- sales -> quotations es RESTRICT: primero las ventas. Sus comprobantes caen en cascada.
-DELETE FROM quotations.sales WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
+-- orders -> quotations es RESTRICT: primero los pedidos. Sus comprobantes caen en cascada.
+DELETE FROM quotations.orders WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 -- Ítems, partes, historial y PDFs caen en cascada con la cotización.
 DELETE FROM quotations.quotations WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 DELETE FROM quotations.quotation_number_counters WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
-DELETE FROM quotations.sale_number_counters WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
+DELETE FROM quotations.order_number_counters WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 DELETE FROM quotations.export_jobs WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 
 -- Las direcciones caen en cascada con el cliente. La clasificación es RESTRICT, así que va después.

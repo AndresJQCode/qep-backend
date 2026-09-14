@@ -84,10 +84,48 @@ public sealed class QuotationsDbContextMappingTests
             quotations.Properties.Select(property => property.Name));
 
         var sales = model.FindEntityType(typeof(Order))!.GetIndexes()
-            .Single(index => index.GetDatabaseName() == "IX_sales_tenant_converted_at_number");
+            .Single(index => index.GetDatabaseName() == "IX_orders_tenant_converted_at_number");
         Assert.Equal(
             ["TenantId", "ConvertedAt", "OrderNumber"],
             sales.Properties.Select(property => property.Name));
+    }
+
+    /// <summary>
+    /// Los nombres de base de los pedidos (spec 2026-09-14). Van a mano en el mapeo y la migración
+    /// que los renombra se escribió a mano: un nombre que no coincida no lo ve el compilador, lo ve
+    /// la próxima migración generada, que intentaría recrear la tabla. La FK y la PK salen por
+    /// convención del nombre de la tabla, así que también se fijan acá.
+    /// </summary>
+    [Fact]
+    public void OrdersMapToTheirRenamedTablesColumnsIndexesAndConstraints()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var order = model.FindEntityType(typeof(Order))!;
+        Assert.Equal("orders", order.GetTableName());
+        Assert.Equal("quotations", order.GetSchema());
+        Assert.Equal("order_number", order.FindProperty(nameof(Order.OrderNumber))!.GetColumnName());
+        Assert.Equal("PK_orders", order.FindPrimaryKey()!.GetName());
+        Assert.Equal(
+            ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_converted_at_number", "IX_orders_tenant_number"],
+            order.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            "FK_orders_quotations_quotation_id",
+            Assert.Single(order.GetForeignKeys()).GetConstraintName());
+
+        var proof = model.FindEntityType(typeof(OrderPaymentProof))!;
+        Assert.Equal("order_payment_proofs", proof.GetTableName());
+        Assert.Equal("order_id", proof.FindProperty(nameof(OrderPaymentProof.OrderId))!.GetColumnName());
+        Assert.Equal("PK_order_payment_proofs", proof.FindPrimaryKey()!.GetName());
+        Assert.Equal("IX_order_payment_proofs_order", Assert.Single(proof.GetIndexes()).GetDatabaseName());
+        Assert.Equal(
+            "FK_order_payment_proofs_orders_order_id",
+            Assert.Single(proof.GetForeignKeys()).GetConstraintName());
+
+        var counter = model.FindEntityType(typeof(OrderNumberCounter))!;
+        Assert.Equal("order_number_counters", counter.GetTableName());
+        Assert.Equal("PK_order_number_counters", counter.FindPrimaryKey()!.GetName());
     }
 
     /// <summary>

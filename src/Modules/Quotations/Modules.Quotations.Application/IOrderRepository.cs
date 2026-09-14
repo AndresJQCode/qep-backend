@@ -13,7 +13,7 @@ public sealed record OrderWithQuotation(Order Order, Quotation Quotation);
 /// Dónde quedó el export de pedidos (spec 2026-09-12, D8): la fecha de conversión y el número del
 /// último pedido leído, el mismo orden que el listado. El número y no el id porque
 /// <see cref="OrderId"/> no se compara, y el número es único por tenant
-/// (<c>IX_sales_tenant_number</c>).
+/// (<c>IX_orders_tenant_number</c>).
 /// </summary>
 public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderNumber);
 

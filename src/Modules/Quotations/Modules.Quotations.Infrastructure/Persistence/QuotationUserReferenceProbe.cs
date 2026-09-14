@@ -15,8 +15,8 @@ namespace Modules.Quotations.Infrastructure.Persistence;
 /// <remarks>
 /// Cubre cada columna mapeada con <see cref="MemberId"/> en <see cref="QuotationsDbContext"/>:
 /// <c>quotations.advisor_id</c>, <c>created_by</c> y <c>updated_by</c>;
-/// <c>quotation_history.member_id</c>; <c>sales.converted_by</c>; y
-/// <c>sale_payment_proofs.uploaded_by</c>. Una columna nueva con <see cref="MemberId"/> tiene
+/// <c>quotation_history.member_id</c>; <c>orders.converted_by</c>; y
+/// <c>order_payment_proofs.uploaded_by</c>. Una columna nueva con <see cref="MemberId"/> tiene
 /// que sumarse acá, o el usuario que la referencia se borra igual.
 /// </remarks>
 internal sealed class QuotationUserReferenceProbe(

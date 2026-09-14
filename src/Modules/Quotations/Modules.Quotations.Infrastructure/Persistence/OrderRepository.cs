@@ -121,8 +121,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
     // el lote siguiente es "lo que viene después del último pedido leído" y no un offset, así que
     // un pedido convertido o que sale del filtro durante el export no repite ni salta filas
     // (spec 2026-09-12, D8). El corte va sobre `orders`, antes del join, igual que los filtros, y es
-    // una comparación de filas de Postgres, `(converted_at, sale_number) < (@fecha, @numero)`, que
-    // Npgsql traduce desde EF.Functions.LessThan: IX_sales_tenant_converted_at_number la resuelve
+    // una comparación de filas de Postgres, `(converted_at, order_number) < (@fecha, @numero)`, que
+    // Npgsql traduce desde EF.Functions.LessThan: IX_orders_tenant_converted_at_number la resuelve
     // como un rango, y el número se compara con la collation de la columna, la misma del ORDER BY.
     public async Task<IReadOnlyList<OrderWithQuotation>> ListForExportAsync(
         Guid tenantId,

@@ -335,16 +335,16 @@ public static class ExportLoadSeeder
         FROM load_items
         """;
 
-    // Convertida un día después del envío, dentro de la vigencia. VEN-{año UTC de la conversión}-{n}.
+    // Convertido un día después del envío, dentro de la vigencia. VEN-{año UTC de la conversión}-{n}.
     // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage.
     private const string OrdersSql = """
-        INSERT INTO quotations.sales (
-            id, tenant_id, sale_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
+        INSERT INTO quotations.orders (
+            id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
             approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
         SELECT gen_random_uuid(), @tenant,
-               'VEN-' || sale.year || '-' || lpad(sale.sequence::text, greatest(4, length(sale.sequence::text)), '0'),
-               sale.quotation_id, 'Pending', 'PaymentPending', NULL, sale.converted_at, @advisor,
-               NULL, NULL, NULL, sale.converted_at, sale.converted_at, 1
+               'VEN-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
+               numbered.quotation_id, 'Pending', 'PaymentPending', NULL, numbered.converted_at, @advisor,
+               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1
         FROM (
             SELECT converted.quotation_id,
                    converted.converted_at,
@@ -357,7 +357,7 @@ public static class ExportLoadSeeder
                 FROM load_quotations
                 WHERE converted
             ) AS converted
-        ) AS sale
+        ) AS numbered
         """;
 
     private const string QuotationCountersSql = """
@@ -370,13 +370,13 @@ public static class ExportLoadSeeder
         """;
 
     private const string OrderCountersSql = """
-        INSERT INTO quotations.sale_number_counters (tenant_id, year, next_value)
+        INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
         SELECT @tenant, extract(year FROM converted_at AT TIME ZONE 'UTC')::int, count(*) + 1
-        FROM quotations.sales
+        FROM quotations.orders
         WHERE tenant_id = @tenant
         GROUP BY 2
         ON CONFLICT (tenant_id, year) DO UPDATE
-            SET next_value = greatest(sale_number_counters.next_value, EXCLUDED.next_value)
+            SET next_value = greatest(order_number_counters.next_value, EXCLUDED.next_value)
         """;
 }
 
