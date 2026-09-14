@@ -19,19 +19,19 @@ public sealed class OrdersExportProcessor(
     IClock clock)
     : IExportJobProcessor
 {
-    public const string SheetName = "Ventas";
+    public const string SheetName = "Pedidos";
 
-    public const string FilePrefix = "ventas";
+    public const string FilePrefix = "pedidos";
 
     /// <summary>
-    /// Las de la tabla de pedidos en su orden (order-table.tsx: Venta, Cliente, Asesora, Fecha, Pago,
+    /// Las de la tabla de pedidos en su orden (order-table.tsx: Pedido, Cliente, Asesora, Fecha, Pago,
     /// Estado, Total), con la moneda aparte del total y "Asesor" como en el Excel de cotizaciones.
     /// "Pago" replica el respaldo de la tabla: la forma de pago o, mientras llegue vacía, la etiqueta del
     /// estado del pago. Los estados van con la etiqueta de la pantalla (spec 2026-09-13, A7).
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
-        new("Venta", 18),
+        new("Pedido", 18),
         new("Cliente", 40),
         new("Asesor", 32),
         new("Fecha", 34),
@@ -41,7 +41,7 @@ public sealed class OrdersExportProcessor(
         new("Total", 16),
     ];
 
-    public ExportJobKind Kind => ExportJobKind.Sales;
+    public ExportJobKind Kind => ExportJobKind.Orders;
 
     public async Task<ExportJobResult> ProcessAsync(ExportJob job, CancellationToken cancellationToken)
     {
@@ -64,7 +64,7 @@ public sealed class OrdersExportProcessor(
                 paymentStatus,
                 filters.ConvertedFrom,
                 filters.ConvertedTo,
-                filters.SaleNumber,
+                filters.OrderNumber,
                 after,
                 limit,
                 ct),
@@ -80,7 +80,7 @@ public sealed class OrdersExportProcessor(
         if (rowCount == 0)
         {
             throw new ExportJobDefinitiveException(
-                "Empty: no sales matched the export filters when the export ran.");
+                "Empty: no orders matched the export filters when the export ran.");
         }
 
         var fileName = ExportFileNames.For(FilePrefix, generatedAt);

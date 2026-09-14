@@ -31,7 +31,7 @@ public sealed class ExportStatusLabelsTests
             new Dictionary<OrderStatus, string>
             {
                 [OrderStatus.Pending] = "Pendiente",
-                [OrderStatus.Approved] = "Aprobada",
+                [OrderStatus.Approved] = "Aprobado",
             },
             ExportStatusLabels.For);
 

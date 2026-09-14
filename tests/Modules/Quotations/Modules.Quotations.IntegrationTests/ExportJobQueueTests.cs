@@ -135,9 +135,9 @@ public sealed class ExportJobQueueTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         await EnqueueExportJobAsync(factory, TenantId, RequesterId, ExportJobKind.Quotations);
-        await EnqueueExportJobAsync(factory, TenantId, RequesterId, ExportJobKind.Sales);
-        await EnqueueExportJobAsync(factory, TenantId, Guid.CreateVersion7(), ExportJobKind.Sales);
-        await EnqueueExportJobAsync(factory, Guid.CreateVersion7(), RequesterId, ExportJobKind.Sales);
+        await EnqueueExportJobAsync(factory, TenantId, RequesterId, ExportJobKind.Orders);
+        await EnqueueExportJobAsync(factory, TenantId, Guid.CreateVersion7(), ExportJobKind.Orders);
+        await EnqueueExportJobAsync(factory, Guid.CreateVersion7(), RequesterId, ExportJobKind.Orders);
         await ClaimAsync(factory); // uno pasa a Processing: sigue contando
         await InsertFinishedAsync(factory, DateTimeOffset.UtcNow); // terminado: no cuenta
 

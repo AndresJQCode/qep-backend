@@ -19,18 +19,28 @@ public sealed class QuotationsExportEmailTemplateTests
     public void ReadyNamesTheKindAndPutsTheLinkAndTheExpiryInBothBodies()
     {
         var message = QuotationsExportReadyEmailTemplate.Render(
-            "ana@qcode.co", "Sales", SignedUrl, "ventas-2026-09-12-1530.xlsx", 42, ExpiresAt);
+            "ana@qcode.co", "Orders", SignedUrl, "pedidos-2026-09-12-1530.xlsx", 42, ExpiresAt);
 
         Assert.Equal("ana@qcode.co", message.ToAddress);
-        Assert.Equal("Tu exportación de ventas está lista", message.Subject);
+        Assert.Equal("Tu exportación de pedidos está lista", message.Subject);
         foreach (var body in new[] { message.HtmlBody, message.TextBody })
         {
-            Assert.Contains("ventas-2026-09-12-1530.xlsx", body, StringComparison.Ordinal);
-            Assert.Contains("42 ventas", body, StringComparison.Ordinal);
+            Assert.Contains("pedidos-2026-09-12-1530.xlsx", body, StringComparison.Ordinal);
+            Assert.Contains("42 pedidos", body, StringComparison.Ordinal);
             Assert.Contains("13/09/2026 15:30 UTC", body, StringComparison.Ordinal);
         }
 
         Assert.Contains(SignedUrl, message.TextBody, StringComparison.Ordinal);
+    }
+
+    // Sin alias (spec 2026-09-14, D5): un evento emitido antes del deploy con el kind viejo cae al
+    // nombre genérico, igual que cualquier kind desconocido.
+    [Fact]
+    public void TheOldSalesKindFallsBackToTheGenericName()
+    {
+        var message = QuotationsExportFailedEmailTemplate.Render("ana@qcode.co", "Sales");
+
+        Assert.Equal("No pudimos generar tu exportación de registros", message.Subject);
     }
 
     // Mismo motivo que en CustomerExportEmailTemplateTests: un `&` sin declarar en el href rompe

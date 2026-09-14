@@ -35,7 +35,7 @@ public sealed class OrderListApiTests
         Assert.NotNull(page);
         Assert.Equal(1, page.Total);
         var row = Assert.Single(page.Items);
-        Assert.StartsWith($"VEN-{DateTime.UtcNow.Year}-", row.OrderNumber, StringComparison.Ordinal);
+        Assert.StartsWith($"PED-{DateTime.UtcNow.Year}-", row.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(quotation.Id, row.QuotationId);
         Assert.Equal(quotation.QuotationNumber, row.QuotationNumber);
         Assert.Equal(clientId, row.ClientId);

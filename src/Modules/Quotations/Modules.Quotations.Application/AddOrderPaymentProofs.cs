@@ -101,7 +101,7 @@ public sealed class AddOrderPaymentProofsHandler(
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
-            "quotation.sale.payment_proofs_added",
+            "quotation.order.payment_proofs_added",
             order.Id.ToString(),
             "success",
             now);

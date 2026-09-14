@@ -174,6 +174,7 @@ public sealed class ExportLoadSeedTests
         Assert.Equal(result.Orders, orders.Total);
         Assert.All(orders.Items, item =>
         {
+            Assert.StartsWith("PED-", item.OrderNumber, StringComparison.Ordinal);
             Assert.NotNull(item.ClientName);
             Assert.Equal(OwnerEmail, item.AdvisorEmail);
             Assert.Equal("PaymentPending", item.PaymentStatus);
@@ -188,7 +189,7 @@ public sealed class ExportLoadSeedTests
         Assert.Equal(result.Quotations, (await FindExportJobAsync(factory, quotationsJob)).RowCount);
 
         var ordersJob = await EnqueueExportJobAsync(
-            factory, ExportLoadSeeder.TenantId, ownerUserId, ExportJobKind.Sales,
+            factory, ExportLoadSeeder.TenantId, ownerUserId, ExportJobKind.Orders,
             ExportJobFilters.Serialize(new OrdersExportFilters(null, null, null, null, today.AddYears(-1), today, null, null)));
         Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
         Assert.Equal(result.Orders, (await FindExportJobAsync(factory, ordersJob)).RowCount);

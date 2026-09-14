@@ -56,7 +56,7 @@ public sealed class QuotationsExportNotificationTests
         await InsertOutboxAsync(
             database.GetConnectionString(),
             "quotations.export-failed.v1",
-            JsonSerializer.Serialize(new { tenantId, subjectId = ownerUserId, kind = "Sales" }));
+            JsonSerializer.Serialize(new { tenantId, subjectId = ownerUserId, kind = "Orders" }));
 
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);

@@ -47,7 +47,7 @@ public sealed class ApproveOrderHandler(
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
-            "quotation.sale.approved",
+            "quotation.order.approved",
             order.Id.ToString(),
             "success",
             now);

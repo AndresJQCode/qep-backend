@@ -86,7 +86,7 @@ public static class QuotationChangeSummary
     public static string Expired() => "Vencida automáticamente al pasar su vigencia.";
 
     public static string ConvertedToOrder(string orderNumber) =>
-        Trim($"Convertida en la venta {orderNumber}.");
+        Trim($"Convertida en el pedido {orderNumber}.");
 
     /// <summary>
     /// Qué campos del encabezado cambiaron entre dos fotos del mismo agregado. Devuelve

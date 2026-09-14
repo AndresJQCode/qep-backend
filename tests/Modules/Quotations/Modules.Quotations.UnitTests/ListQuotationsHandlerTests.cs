@@ -246,7 +246,7 @@ public sealed class ListQuotationsHandlerTests
         Order.Create(
             OrderId.New(),
             TenantId,
-            "VEN-2026-0001",
+            "PED-2026-0001",
             quotation.Id,
             OrderPaymentStatus.PaymentPending,
             notes: null,

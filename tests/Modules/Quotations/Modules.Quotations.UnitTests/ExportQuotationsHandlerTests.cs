@@ -241,7 +241,7 @@ public sealed class ExportQuotationsHandlerTests
         for (var index = 0; index < count; index++)
         {
             // Alternados a propósito: el límite cuenta cotizaciones y pedidos juntos.
-            var kind = index % 2 == 0 ? ExportJobKind.Quotations : ExportJobKind.Sales;
+            var kind = index % 2 == 0 ? ExportJobKind.Quotations : ExportJobKind.Orders;
             queue.Add(ExportJob.Enqueue(Guid.CreateVersion7(), TenantId, requestedBy, kind, "{}", Now));
         }
 

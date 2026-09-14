@@ -149,19 +149,19 @@ public sealed class ExportOrdersHandlerTests
 
         var accepted = await handler.HandleAsync(
             new ExportOrdersCommand(
-                TenantId, ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "VEN-2026"),
+                TenantId, ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
             TestContext.Current.CancellationToken);
 
         var job = Assert.Single(queue.Jobs);
         Assert.Equal(new ExportJobAccepted(job.Id, Now), accepted);
-        Assert.Equal(ExportJobKind.Sales, job.Kind);
+        Assert.Equal(ExportJobKind.Orders, job.Kind);
         Assert.Equal(SubjectId, job.RequestedBy);
         Assert.Equal(
-            new OrdersExportFilters(ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "VEN-2026"),
+            new OrdersExportFilters(ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
             JsonSerializer.Deserialize<OrdersExportFilters>(job.Filters));
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Pending, OrderPaymentStatus.PaymentPending, From, To, "VEN-2026"),
+                ClientId, null, AdvisorId, OrderStatus.Pending, OrderPaymentStatus.PaymentPending, From, To, "PED-2026"),
             repository.LastExportSearch);
         Assert.Equal(1, unitOfWork.Saves);
     }
@@ -183,7 +183,7 @@ public sealed class ExportOrdersHandlerTests
             paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null,
             customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
         var order = Order.Create(
-            OrderId.New(), TenantId, "VEN-2026-0001", quotation.Id, OrderPaymentStatus.PaymentPending,
+            OrderId.New(), TenantId, "PED-2026-0001", quotation.Id, OrderPaymentStatus.PaymentPending,
             notes: null, AdvisorId, [], Now);
         return new OrderWithQuotation(order, quotation);
     }

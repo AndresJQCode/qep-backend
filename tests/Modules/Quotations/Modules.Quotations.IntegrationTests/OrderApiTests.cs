@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Quotations.Application;
+using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -73,7 +75,7 @@ public sealed class OrderApiTests
         Assert.Equal("FullPaymentReceived", order.PaymentStatus);
         Assert.Equal(quotation.Id, order.QuotationId);
         Assert.StartsWith(
-            $"VEN-{DateTime.UtcNow.Year}-", order.OrderNumber, StringComparison.Ordinal);
+            $"PED-{DateTime.UtcNow.Year}-", order.OrderNumber, StringComparison.Ordinal);
         Assert.Null(order.RitualCollectionSyncId);
         var proof = Assert.Single(order.PaymentProofs);
         Assert.Equal(proofFileId, proof.FileId);
@@ -607,6 +609,48 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    // Acciones de auditoría nuevas (spec 2026-09-14). Las filas viejas de audit.entries quedan como
+    // están (D4); lo que se prueba es lo que se escribe desde ahora.
+    [Fact]
+    public async Task AddingProofsAndApprovingAreAuditedAsOrderActions()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        (await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        (await client.PostAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            null,
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var actions = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"))
+            .Select(ActionOf)
+            .ToArray();
+
+        Assert.Contains("quotation.order.payment_proofs_added", actions);
+        Assert.Contains("quotation.order.approved", actions);
+        Assert.DoesNotContain(actions, action => action.StartsWith("quotation.sale.", StringComparison.Ordinal));
+    }
+
+    private static string ActionOf(QuotationsOutboxMessage message)
+    {
+        using var payload = JsonDocument.Parse(message.PayloadJson);
+        return payload.RootElement.GetProperty("action").GetString()!;
     }
 
     /// <summary>Una edicion cualquiera sobre la cotizacion ya enviada: mueve UpdatedAt por

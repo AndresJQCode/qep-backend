@@ -139,6 +139,72 @@ public sealed class OrdersMigrationTests
             await ListAsync(connectionString, ConstraintsSql));
     }
 
+    private const string OrdersJobId = "01900000-0000-7000-8000-00000000c007";
+    private const string QuotationsJobId = "01900000-0000-7000-8000-00000000c008";
+
+    // Un job de pedidos pendiente, tal como lo dejó el código anterior al rename, y uno de
+    // cotizaciones que la migración no tiene que tocar.
+    private const string LegacyExportJobsSql = $$"""
+        INSERT INTO quotations.export_jobs (
+            id, tenant_id, requested_by, kind, filters, status, attempts, next_attempt_at, requested_at)
+        VALUES
+            ('{{OrdersJobId}}', '{{TenantId}}', '{{MemberId}}', 'Sales',
+             '{"ClientId":null,"AdvisorId":null,"Status":null,"PaymentStatus":null,"ConvertedFrom":"2026-09-01","ConvertedTo":"2026-09-12","ClientCuc":null,"SaleNumber":"VEN-2026"}',
+             'Pending', 0, now(), now()),
+            ('{{QuotationsJobId}}', '{{TenantId}}', '{{MemberId}}', 'Quotations',
+             '{"ClientId":null,"QuotationNumber":"COT-2026"}',
+             'Pending', 0, now(), now());
+        """;
+
+    [Fact]
+    public async Task PendingOrderExportsKeepTheirKindAndTheirNumberFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync(MigrationId(context, "_RenameToOrders"), TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, LegacyExportJobsSql);
+
+        await migrator.MigrateAsync(
+            MigrationId(context, "_MigrateExportJobsToOrders"), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Orders", await ScalarAsync<string>(
+            connectionString, $"SELECT kind FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
+        Assert.Equal("VEN-2026", await ScalarAsync<string>(
+            connectionString, $"SELECT filters ->> 'OrderNumber' FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
+        Assert.False(await ScalarAsync<bool>(
+            connectionString, $"SELECT filters ? 'SaleNumber' FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
+        Assert.Equal("2026-09-01", await ScalarAsync<string>(
+            connectionString, $"SELECT filters ->> 'ConvertedFrom' FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
+        Assert.Equal("Quotations", await ScalarAsync<string>(
+            connectionString, $"SELECT kind FROM quotations.export_jobs WHERE id = '{QuotationsJobId}'"));
+        Assert.Equal("COT-2026", await ScalarAsync<string>(
+            connectionString, $"SELECT filters ->> 'QuotationNumber' FROM quotations.export_jobs WHERE id = '{QuotationsJobId}'"));
+    }
+
+    [Fact]
+    public async Task RevertingPutsBackTheOldKindAndKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync(MigrationId(context, "_RenameToOrders"), TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, LegacyExportJobsSql);
+        await migrator.MigrateAsync(
+            MigrationId(context, "_MigrateExportJobsToOrders"), TestContext.Current.CancellationToken);
+
+        await migrator.MigrateAsync(MigrationId(context, "_RenameToOrders"), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Sales", await ScalarAsync<string>(
+            connectionString, $"SELECT kind FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
+        Assert.Equal("VEN-2026", await ScalarAsync<string>(
+            connectionString, $"SELECT filters ->> 'SaleNumber' FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
+        Assert.False(await ScalarAsync<bool>(
+            connectionString, $"SELECT filters ? 'OrderNumber' FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
+    }
+
     private static QuotationsDbContext NewContext(string connectionString) =>
         new(new DbContextOptionsBuilder<QuotationsDbContext>()
             .UseNpgsql(

@@ -16,7 +16,7 @@ public sealed class OrderTests
         Order.Create(
             OrderId.New(),
             TenantId,
-            "VEN-2026-0001",
+            "PED-2026-0001",
             QuotationId,
             paymentStatus,
             notes,

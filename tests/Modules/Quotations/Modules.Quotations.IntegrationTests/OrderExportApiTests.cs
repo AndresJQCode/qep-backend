@@ -32,7 +32,7 @@ public sealed class OrderExportApiTests
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
         var job = await FindExportJobAsync(factory, accepted!.JobId);
-        Assert.Equal(ExportJobKind.Sales, job.Kind);
+        Assert.Equal(ExportJobKind.Orders, job.Kind);
         Assert.Equal(ExportJobStatus.Pending, job.Status);
         Assert.Equal(ownerUserId, job.RequestedBy);
     }
@@ -148,11 +148,11 @@ public sealed class OrderExportApiTests
 
         var job = await FindExportJobAsync(factory, accepted.JobId);
         Assert.Equal(2, job.RowCount);
-        Assert.Matches(@"^ventas-\d{4}-\d{2}-\d{2}-\d{4}\.xlsx$", job.FileName);
+        Assert.Matches(@"^pedidos-\d{4}-\d{2}-\d{2}-\d{4}\.xlsx$", job.FileName);
         var ready = Assert.Single(await OutboxMessagesAsync(factory, "quotations.export-ready.v1"));
         using (var payload = JsonDocument.Parse(ready.PayloadJson))
         {
-            Assert.Equal("Sales", payload.RootElement.GetProperty("kind").GetString());
+            Assert.Equal("Orders", payload.RootElement.GetProperty("kind").GetString());
         }
 
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
@@ -160,8 +160,8 @@ public sealed class OrderExportApiTests
         var list = await client.GetFromJsonAsync<OrdersPageResponse>(
             $"{OrdersUrl(tenantId)}?{CurrentRange()}", TestContext.Current.CancellationToken);
         var items = list!.Items.ToArray();
-        Assert.Equal("Ventas", sheet.Name);
-        Assert.Equal(["Venta", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total"], sheet.Rows[0]);
+        Assert.Equal("Pedidos", sheet.Name);
+        Assert.Equal(["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total"], sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[0]));
         var first = sheet.Rows[1];
         Assert.Equal(items[0].ClientName, first[1]);

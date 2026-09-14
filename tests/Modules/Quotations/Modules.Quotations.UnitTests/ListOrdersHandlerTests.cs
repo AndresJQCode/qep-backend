@@ -21,12 +21,12 @@ public sealed class ListOrdersHandlerTests
     public async Task ListPutsTheClientAndTheQuotationTotalsOnEachRow()
     {
         var customers = NewCustomerLookup();
-        var handler = NewHandler(customers, NewRow("VEN-2026-0001", ClientId));
+        var handler = NewHandler(customers, NewRow("PED-2026-0001", ClientId));
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
         var row = Assert.Single(page.Items);
-        Assert.Equal("VEN-2026-0001", row.OrderNumber);
+        Assert.Equal("PED-2026-0001", row.OrderNumber);
         Assert.Equal("Ferretería El Tornillo", row.ClientName);
         Assert.Equal("asesora@qcode.co", row.AdvisorEmail);
         // Nace pendiente de revisión: quien convierte y quien aprueba son roles distintos.
@@ -39,7 +39,7 @@ public sealed class ListOrdersHandlerTests
     [Fact]
     public async Task ListKeepsTheAdvisorEmailEvenWhenTheMemberHasAName()
     {
-        var handler = NewHandler(NewCustomerLookup(), NewRow("VEN-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
@@ -54,9 +54,9 @@ public sealed class ListOrdersHandlerTests
         customers.Names[OtherClientId] = "Distribuidora del Sur";
         var handler = NewHandler(
             customers,
-            NewRow("VEN-2026-0001", ClientId),
-            NewRow("VEN-2026-0002", ClientId),
-            NewRow("VEN-2026-0003", OtherClientId));
+            NewRow("PED-2026-0001", ClientId),
+            NewRow("PED-2026-0002", ClientId),
+            NewRow("PED-2026-0003", OtherClientId));
 
         await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
@@ -69,7 +69,7 @@ public sealed class ListOrdersHandlerTests
     [Fact]
     public async Task ListLeavesTheClientNameNullWhenTheCustomerDoesNotResolve()
     {
-        var handler = NewHandler(NewCustomerLookup(), NewRow("VEN-2026-0002", OtherClientId));
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0002", OtherClientId));
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
@@ -83,7 +83,7 @@ public sealed class ListOrdersHandlerTests
     {
         var customers = NewCustomerLookup();
         customers.IdsByCuc.Add(ClientId);
-        var repository = new StubOrderListRepository(NewRow("VEN-2026-0001", ClientId));
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
         var handler = NewHandler(customers, repository);
 
         await handler.HandleAsync(
@@ -97,7 +97,7 @@ public sealed class ListOrdersHandlerTests
     public async Task ListDoesNotTouchCustomersWhenThereIsNoCucFilter()
     {
         var customers = NewCustomerLookup();
-        var repository = new StubOrderListRepository(NewRow("VEN-2026-0001", ClientId));
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
         var handler = NewHandler(customers, repository);
 
         await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
@@ -112,7 +112,7 @@ public sealed class ListOrdersHandlerTests
     [InlineData("NotAStatus", "order.order.status_invalid")]
     public async Task ListRejectsAnUnknownStatus(string status, string code)
     {
-        var handler = NewHandler(NewCustomerLookup(), NewRow("VEN-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             handler.HandleAsync(
@@ -124,7 +124,7 @@ public sealed class ListOrdersHandlerTests
     [Fact]
     public async Task ListRejectsAnUnknownPaymentStatus()
     {
-        var handler = NewHandler(NewCustomerLookup(), NewRow("VEN-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             handler.HandleAsync(

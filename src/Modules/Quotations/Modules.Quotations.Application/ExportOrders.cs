@@ -30,7 +30,7 @@ public sealed record OrdersExportFilters(
     DateOnly ConvertedFrom,
     DateOnly ConvertedTo,
     string? ClientCuc,
-    string? SaleNumber);
+    string? OrderNumber);
 
 /// <summary>El mismo rango que <see cref="ExportQuotationsValidator"/>, sobre la fecha del pedido
 /// (D3). Validador para que el 422 lleve el mapa <c>errors</c>.</summary>
@@ -115,7 +115,7 @@ public sealed class ExportOrdersHandler(
             Guid.CreateVersion7(),
             command.TenantId,
             executionContext.SubjectId,
-            ExportJobKind.Sales,
+            ExportJobKind.Orders,
             ExportJobFilters.Serialize(new OrdersExportFilters(
                 command.ClientId,
                 command.AdvisorId,

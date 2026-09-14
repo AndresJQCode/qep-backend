@@ -335,14 +335,14 @@ public static class ExportLoadSeeder
         FROM load_items
         """;
 
-    // Convertida un día después del envío, dentro de la vigencia. VEN-{año UTC de la conversión}-{n}.
+    // Convertida un día después del envío, dentro de la vigencia. PED-{año UTC de la conversión}-{n}.
     // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage.
     private const string OrdersSql = """
         INSERT INTO quotations.orders (
             id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
             approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
         SELECT gen_random_uuid(), @tenant,
-               'VEN-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
+               'PED-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
                numbered.quotation_id, 'Pending', 'PaymentPending', NULL, numbered.converted_at, @advisor,
                NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1
         FROM (

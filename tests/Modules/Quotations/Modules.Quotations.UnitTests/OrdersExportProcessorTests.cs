@@ -21,16 +21,16 @@ public sealed class OrdersExportProcessorTests
     public async Task WritesTheOrdersListColumnsInTheirOrder()
     {
         var writer = new RecordingExportWorkbookWriter();
-        var processor = NewProcessor(new StubOrderListRepository(NewRow("VEN-2026-0001", paymentMethod: null)), writer);
+        var processor = NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", paymentMethod: null)), writer);
 
         await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Ventas", writer.SheetName);
+        Assert.Equal("Pedidos", writer.SheetName);
         Assert.Equal(
-            ["Venta", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total"],
+            ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total"],
             writer.Columns.Select(column => column.Header));
         var row = Assert.Single(writer.Rows);
-        Assert.Equal("VEN-2026-0001", row[0].Text);
+        Assert.Equal("PED-2026-0001", row[0].Text);
         Assert.Equal("Ferretería El Tornillo", row[1].Text);
         Assert.Equal("asesora@qcode.co", row[2].Text);
         Assert.Equal(Now.ToString("O", CultureInfo.InvariantCulture), row[3].Text);
@@ -46,7 +46,7 @@ public sealed class OrdersExportProcessorTests
     {
         var writer = new RecordingExportWorkbookWriter();
 
-        await NewProcessor(new StubOrderListRepository(NewRow("VEN-2026-0001", "Transferencia")), writer)
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", "Transferencia")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Transferencia", Assert.Single(writer.Rows)[4].Text);
@@ -56,7 +56,7 @@ public sealed class OrdersExportProcessorTests
     public async Task ReadsInBatchesOfAThousandUntilAShortBatch()
     {
         var rows = Enumerable.Range(1, ExportJobLimits.BatchSize + 1)
-            .Select(number => NewRow($"VEN-2026-{number:0000}", paymentMethod: null))
+            .Select(number => NewRow($"PED-2026-{number:0000}", paymentMethod: null))
             .ToArray();
         var repository = new StubOrderListRepository(rows);
 
@@ -72,41 +72,41 @@ public sealed class OrdersExportProcessorTests
     public async Task EachBatchStartsAfterTheLastRowOfThePreviousOne()
     {
         var rows = Enumerable.Range(1, ExportJobLimits.BatchSize + 1)
-            .Select(number => NewRow($"VEN-2026-{number:0000}", paymentMethod: null))
+            .Select(number => NewRow($"PED-2026-{number:0000}", paymentMethod: null))
             .ToArray();
         var repository = new StubOrderListRepository(rows);
 
         await NewProcessor(repository).ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new OrderExportCursor?[] { null, new OrderExportCursor(Now, "VEN-2026-0002") },
+            new OrderExportCursor?[] { null, new OrderExportCursor(Now, "PED-2026-0002") },
             repository.ExportCursors);
     }
 
     [Fact]
-    public async Task UploadsAsVentasUnderTheJob()
+    public async Task UploadsAsPedidosUnderTheJob()
     {
         var storage = new RecordingExportFileStorage();
         var job = NewJob();
 
-        var result = await NewProcessor(new StubOrderListRepository(NewRow("VEN-2026-0001", null)), storage: storage)
+        var result = await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", null)), storage: storage)
             .ProcessAsync(job, TestContext.Current.CancellationToken);
 
-        Assert.Equal("ventas-2026-09-12-1530.xlsx", result.FileName);
+        Assert.Equal("pedidos-2026-09-12-1530.xlsx", result.FileName);
         Assert.Equal(job.Id, storage.Upload!.JobId);
     }
 
     [Fact]
     public async Task FiltersWithWhatTheRequestStored()
     {
-        var repository = new StubOrderListRepository(NewRow("VEN-2026-0001", null));
-        var job = NewJob(new OrdersExportFilters(ClientId, AdvisorId.Value, "approved", "fullpaymentreceived", From, To, null, "VEN"));
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", null));
+        var job = NewJob(new OrdersExportFilters(ClientId, AdvisorId.Value, "approved", "fullpaymentreceived", From, To, null, "PED"));
 
         await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
 
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, From, To, "VEN"),
+                ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, From, To, "PED"),
             repository.LastExportSearch);
     }
 
@@ -123,7 +123,7 @@ public sealed class OrdersExportProcessorTests
         var job = NewJob(new OrdersExportFilters(null, null, null, "Refunded", From, To, null, null));
 
         await Assert.ThrowsAsync<ExportJobDefinitiveException>(() =>
-            NewProcessor(new StubOrderListRepository(NewRow("VEN-2026-0001", null)))
+            NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", null)))
                 .ProcessAsync(job, TestContext.Current.CancellationToken));
     }
 
@@ -132,7 +132,7 @@ public sealed class OrdersExportProcessorTests
             Guid.CreateVersion7(),
             TenantId,
             Guid.CreateVersion7(),
-            ExportJobKind.Sales,
+            ExportJobKind.Orders,
             ExportJobFilters.Serialize(filters ?? new OrdersExportFilters(null, null, null, null, From, To, null, null)),
             Now);
 

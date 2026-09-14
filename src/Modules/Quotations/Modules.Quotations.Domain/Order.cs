@@ -55,7 +55,7 @@ public sealed class Order
 
     public Guid TenantId { get; private set; }
 
-    /// <summary>Único por tenant. Formato <c>VEN-2026-0001</c>, emitido por
+    /// <summary>Único por tenant. Formato <c>PED-2026-0001</c>, emitido por
     /// <c>IOrderNumberGenerator</c> — mismo mecanismo que <c>QuotationNumber</c>.</summary>
     public string OrderNumber { get; private set; }
 

@@ -28,8 +28,8 @@ public static class ExportStatusLabels
     public static string For(OrderStatus status) => status switch
     {
         OrderStatus.Pending => "Pendiente",
-        OrderStatus.Approved => "Aprobada",
-        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The sale status has no export label."),
+        OrderStatus.Approved => "Aprobado",
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The order status has no export label."),
     };
 
     public static string For(OrderPaymentStatus status) => status switch
