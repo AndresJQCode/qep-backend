@@ -67,8 +67,8 @@ internal static class QuotationListing
 
         // Misma idea que los nombres de cliente: una sola ida, con los ids sin repetir. Antes el
         // frontend se traía el padrón de miembros entero para poner un correo en cada fila. El
-        // archivo lleva el correo aunque la asesora tenga nombre, igual que la tabla (spec
-        // 2026-09-11, D1).
+        // archivo lleva el nombre con respaldo al correo, igual que la tabla (spec 2026-09-11,
+        // D1, nota del 2026-09-14).
         var advisors = quotations.Count == 0
             ? new Dictionary<Guid, QuotationAdvisor>()
             : await advisorLookup.FindAsync(
@@ -81,7 +81,7 @@ internal static class QuotationListing
         return quotations
             .Select(quotation => quotation.ToListItemDto(
                 clientNames.GetValueOrDefault(quotation.ClientId),
-                advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Email,
+                advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Label,
                 hasItems: false,
                 sale: null))
             .ToArray();

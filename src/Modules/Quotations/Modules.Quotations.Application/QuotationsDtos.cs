@@ -275,8 +275,8 @@ public sealed record QuotationResponse(
     string? AdvisorEmail,
     /// <summary>El nombre que el tenant cargó en la membresía de la asesora. Null en membresías
     /// anteriores al nombre y en el owner hasta que lo cargue desde el roster. Hoy sólo lo usa el
-    /// PDF, que cae a <c>AdvisorEmail</c> cuando falta (spec 2026-09-11, D6); la pantalla sigue
-    /// mostrando el correo (D1). Aditivo: un front que no lo lee no se entera.</summary>
+    /// PDF, que cae a <c>AdvisorEmail</c> cuando falta (spec 2026-09-11, D6); la pantalla del
+    /// detalle sigue mostrando el correo (D1). Aditivo: un front que no lo lee no se entera.</summary>
     string? AdvisorName,
     string Status,
     DateTimeOffset CreatedAt,
@@ -353,7 +353,10 @@ public sealed record QuotationListItemResponse(
     Guid ClientId,
     string? ClientName,
     Guid AdvisorId,
-    string? AdvisorEmail,
+    /// <summary>El nombre de la asesora, o su correo si la membresía no tiene nombre. Viaja ya
+    /// resuelto para que la grilla pinte un solo campo; el porqué está en
+    /// <see cref="QuotationListItemDto.AdvisorName"/>.</summary>
+    string? AdvisorName,
     string Status,
     DateTimeOffset CreatedAt,
     /// <summary>La moneda de <c>Total</c>. Viaja por fila porque la grilla mezcla cotizaciones

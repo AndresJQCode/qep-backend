@@ -107,7 +107,7 @@ public sealed class QuotationsExportProcessor(
         // quien abre el archivo, y ahí 03/04 deja de ser una fecha sola.
         ExportCell.OfText(row.CreatedAt.ToString("O", CultureInfo.InvariantCulture)),
         ExportCell.OfText(row.ClientName),
-        ExportCell.OfText(row.AdvisorEmail),
+        ExportCell.OfText(row.AdvisorName),
         // La etiqueta de la tabla (spec 2026-09-13, A7). El DTO trae el nombre del enum, que es
         // contrato de la API (QuotationMapping.cs:76); acá se vuelve al enum sólo para etiquetarlo.
         ExportCell.OfText(ExportStatusLabels.For(Enum.Parse<QuotationStatus>(row.Status))),

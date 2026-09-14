@@ -89,8 +89,10 @@ public sealed record SaleListItemResponse(
     /// entre modulos y una venta historica tiene que poder leerse igual.</summary>
     string? ClientName,
     Guid AdvisorId,
-    /// <summary>Correo de la asesora, no su nombre: el nombre de la membresía sólo llega al PDF
-    /// (spec 2026-09-11, D1). Mismo criterio y misma nulabilidad que <c>QuotationListItemResponse</c>.</summary>
+    /// <summary>Correo de la asesora, no su nombre: el listado de ventas sigue con el correo aunque
+    /// el de cotizaciones ya muestre el nombre (spec 2026-09-11, D1, nota del 2026-09-14). Misma
+    /// nulabilidad que <c>QuotationListItemResponse.AdvisorName</c>: referencia blanda entre
+    /// módulos.</summary>
     string? AdvisorEmail,
     string Status,
     string PaymentStatus,

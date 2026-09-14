@@ -49,8 +49,9 @@ public sealed class SalesReportApiTests
         Assert.Equal(customer.Id, item.ClientId);
         Assert.Equal(customer.Cuc, item.ClientCuc);
         Assert.Equal("Verde Esencial S.A.S.", item.ClientName);
-        // advisorName es el email: el nombre de la membresia solo llega al PDF de cotizacion
-        // (spec 2026-09-11, D1). Ver la seccion del contrato al respecto.
+        // advisorName es el email: el nombre de la membresia llega al PDF y al listado de
+        // cotizaciones, no a los reportes (spec 2026-09-11, D1). Ver la seccion del contrato al
+        // respecto.
         Assert.Equal(tenant.OwnerEmail, item.AdvisorName);
         Assert.Equal(quotation.Subtotal, item.Subtotal);
         Assert.Equal(quotation.TaxAmount, item.TaxAmount);
