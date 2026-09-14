@@ -335,7 +335,7 @@ public static class ExportLoadSeeder
         FROM load_items
         """;
 
-    // Convertido un día después del envío, dentro de la vigencia. VEN-{año UTC de la conversión}-{n}.
+    // Convertida un día después del envío, dentro de la vigencia. VEN-{año UTC de la conversión}-{n}.
     // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage.
     private const string OrdersSql = """
         INSERT INTO quotations.orders (

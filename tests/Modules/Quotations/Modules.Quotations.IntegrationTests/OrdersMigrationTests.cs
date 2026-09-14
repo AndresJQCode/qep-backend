@@ -122,6 +122,9 @@ public sealed class OrdersMigrationTests
             connectionString, $"SELECT sale_number FROM quotations.sales WHERE id = '{OrderId}'"));
         Assert.Equal(Guid.Parse(OrderId), await ScalarAsync<Guid>(
             connectionString, $"SELECT sale_id FROM quotations.sale_payment_proofs WHERE id = '{ProofId}'"));
+        Assert.Equal(2L, await ScalarAsync<long>(
+            connectionString,
+            $"SELECT next_value FROM quotations.sale_number_counters WHERE tenant_id = '{TenantId}' AND year = 2026"));
         Assert.Equal(
             ["sale_number_counters", "sale_payment_proofs", "sales"],
             await ListAsync(connectionString, TablesSql));
