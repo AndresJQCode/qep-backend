@@ -43,7 +43,8 @@ public sealed class SalesReportApiTests
         Assert.Equal(sale.SaleNumber, item.SaleNumber);
         Assert.Equal(quotation.Id, item.QuotationId);
         Assert.Equal(quotation.QuotationNumber, item.QuotationNumber);
-        Assert.Equal("Approved", item.Status);
+        // Toda venta nace Pending y otro rol la aprueba (aa020a8): recién convertida, así sale.
+        Assert.Equal("Pending", item.Status);
         Assert.Equal("FullPaymentReceived", item.PaymentStatus);
         Assert.Equal(customer.Id, item.ClientId);
         Assert.Equal(customer.Cuc, item.ClientCuc);
