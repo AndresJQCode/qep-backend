@@ -890,13 +890,13 @@ public sealed class QuotationTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 
-    // EnsureConvertibleToSale sigue siendo solo el guard de precondicion, sin mutar nada: quien
-    // pasa la cotizacion a Converted es ConvertToSale, que lo llama primero. CanBeConvertedToSale
+    // EnsureConvertibleToOrder sigue siendo solo el guard de precondicion, sin mutar nada: quien
+    // pasa la cotizacion a Converted es ConvertToOrder, que lo llama primero. CanBeConvertedToOrder
     // y la pantalla dependen de que preguntar no cambie el estado.
     [Fact]
-    public void EnsureConvertibleToSaleDoesNotThrowOrChangeStatusForASentQuotation()
+    public void EnsureConvertibleToOrderDoesNotThrowOrChangeStatusForASentQuotation()
     {
-        // Con todo lo que la venta hereda: productos, vigencia, forma de pago y cuenta de cobro.
+        // Con todo lo que el pedido hereda: productos, vigencia, forma de pago y cuenta de cobro.
         var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
@@ -904,30 +904,30 @@ public sealed class QuotationTests
         quotation.Send(AdvisorId, Now);
         var versionBeforeConverting = quotation.Version;
 
-        quotation.EnsureConvertibleToSale();
+        quotation.EnsureConvertibleToOrder();
 
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
         Assert.Equal(versionBeforeConverting, quotation.Version);
     }
 
     // A pedido (2026-09) ya no hace falta haberla enviado: un borrador con los cuatro datos que
-    // la venta hereda se convierte igual que uno ya enviado.
+    // el pedido hereda se convierte igual que uno ya enviado.
     [Fact]
-    public void EnsureConvertibleToSaleDoesNotThrowForADraftWithEverythingASaleNeeds()
+    public void EnsureConvertibleToOrderDoesNotThrowForADraftWithEverythingAOrderNeeds()
     {
         var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        quotation.EnsureConvertibleToSale();
+        quotation.EnsureConvertibleToOrder();
 
         Assert.Equal(QuotationStatus.Draft, quotation.Status);
-        Assert.True(quotation.CanBeConvertedToSale);
+        Assert.True(quotation.CanBeConvertedToOrder);
     }
 
     [Fact]
-    public void EnsureConvertibleToSaleRejectsAVoidedQuotation()
+    public void EnsureConvertibleToOrderRejectsAVoidedQuotation()
     {
         var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.AddItem(
@@ -936,14 +936,14 @@ public sealed class QuotationTests
         quotation.Void(AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
-            () => quotation.EnsureConvertibleToSale());
+            () => quotation.EnsureConvertibleToOrder());
 
         Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
-        Assert.False(quotation.CanBeConvertedToSale);
+        Assert.False(quotation.CanBeConvertedToOrder);
     }
 
     [Fact]
-    public void EnsureConvertibleToSaleRejectsAnExpiredQuotation()
+    public void EnsureConvertibleToOrderRejectsAnExpiredQuotation()
     {
         var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.AddItem(
@@ -953,17 +953,17 @@ public sealed class QuotationTests
         quotation.Expire(Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
-            () => quotation.EnsureConvertibleToSale());
+            () => quotation.EnsureConvertibleToOrder());
 
         Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
     }
 
-    // Convertir en venta deja la cotización en Converted, venga de Draft o de Sent: es el mismo
-    // hecho para el agregado, y lo que queda es un documento de sólo lectura con su venta.
+    // Convertir en pedido deja la cotización en Converted, venga de Draft o de Sent: es el mismo
+    // hecho para el agregado, y lo que queda es un documento de sólo lectura con su pedido.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ConvertToSaleMovesTheQuotationToConverted(bool sendFirst)
+    public void ConvertToOrderMovesTheQuotationToConverted(bool sendFirst)
     {
         var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.AddItem(
@@ -978,60 +978,60 @@ public sealed class QuotationTests
         var convertedBy = new MemberId(Guid.CreateVersion7());
         var convertedAt = Now.AddHours(2);
 
-        quotation.ConvertToSale(convertedBy, convertedAt);
+        quotation.ConvertToOrder(convertedBy, convertedAt);
 
         Assert.Equal(QuotationStatus.Converted, quotation.Status);
         Assert.Equal(convertedBy, quotation.UpdatedBy);
         Assert.Equal(convertedAt, quotation.UpdatedAt);
         Assert.Equal(versionBeforeConverting + 1, quotation.Version);
-        Assert.False(quotation.CanBeConvertedToSale);
+        Assert.False(quotation.CanBeConvertedToOrder);
         Assert.False(quotation.CanBeSent);
     }
 
     // Una ya convertida tampoco se convierte de nuevo: el estado lo corta antes de que el índice
-    // único de Sale.QuotationId tenga que hacerlo.
+    // único de Order.QuotationId tenga que hacerlo.
     [Theory]
     [InlineData(QuotationStatus.Voided)]
     [InlineData(QuotationStatus.Expired)]
     [InlineData(QuotationStatus.Converted)]
-    public void ConvertToSaleRejectsAQuotationThatIsNotDraftOrSent(QuotationStatus status)
+    public void ConvertToOrderRejectsAQuotationThatIsNotDraftOrSent(QuotationStatus status)
     {
         var quotation = ConvertibleSentQuotation();
         MoveTo(quotation, status);
         var versionBefore = quotation.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.ConvertToSale(AdvisorId, Now.AddDays(61)));
+            quotation.ConvertToOrder(AdvisorId, Now.AddDays(61)));
 
         Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
         Assert.Equal(status, quotation.Status);
         Assert.Equal(versionBefore, quotation.Version);
     }
 
-    // ConvertToSale no se salta ninguna precondición de EnsureConvertibleToSale, y si una falla
+    // ConvertToOrder no se salta ninguna precondición de EnsureConvertibleToOrder, y si una falla
     // la cotización se queda como estaba.
     [Fact]
-    public void ConvertToSaleStillEnforcesThePreconditionsWithoutChangingTheStatus()
+    public void ConvertToOrderStillEnforcesThePreconditionsWithoutChangingTheStatus()
     {
         var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.Send(AdvisorId, Now);
         var versionBefore = quotation.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.ConvertToSale(AdvisorId, Now.AddHours(1)));
+            quotation.ConvertToOrder(AdvisorId, Now.AddHours(1)));
 
         Assert.Equal("quotation.quotation.items_required", error.Code);
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
         Assert.Equal(versionBefore, quotation.Version);
     }
 
-    // US-10: "se bloquea una vez convertida a venta". Converted queda de sólo lectura, igual que
+    // US-10: "se bloquea una vez convertida a pedido". Converted queda de sólo lectura, igual que
     // Voided y Expired.
     [Fact]
     public void EditingAConvertedQuotationIsRejected()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
 
         var addError = Assert.Throws<QuotationsDomainException>(() =>
             quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now));
@@ -1046,7 +1046,7 @@ public sealed class QuotationTests
     public void VoidRejectsAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
 
         var error = Assert.Throws<QuotationsDomainException>(() => quotation.Void(AdvisorId, Now));
 
@@ -1060,7 +1060,7 @@ public sealed class QuotationTests
     public void SendingAConvertedQuotationIsRejected()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
 
         var ensureError = Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable);
         Assert.Equal("quotation.quotation.not_draft", ensureError.Code);
@@ -1074,7 +1074,7 @@ public sealed class QuotationTests
     public void ExpireRejectsAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
 
         var error = Assert.Throws<QuotationsDomainException>(() => quotation.Expire(Now.AddDays(60)));
 
@@ -1083,13 +1083,13 @@ public sealed class QuotationTests
     }
 
     // Mientras una convertida seguía en Sent, RefreshCustomerTaxProfile le recalculaba los
-    // totales si el cliente cambiaba de perfil fiscal, aunque la venta ya los hubiera heredado.
+    // totales si el cliente cambiaba de perfil fiscal, aunque el pedido ya los hubiera heredado.
     // En Converted queda tal cual quedó, igual que una anulada o una vencida.
     [Fact]
     public void RefreshCustomerTaxProfileLeavesAConvertedQuotationAsItWas()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
         var totalBefore = quotation.Total;
         var taxBefore = quotation.TaxAmount;
 
@@ -1114,7 +1114,7 @@ public sealed class QuotationTests
                 quotation.Expire(Now.AddDays(60));
                 break;
             case QuotationStatus.Converted:
-                quotation.ConvertToSale(AdvisorId, Now.AddHours(1));
+                quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(status), status, "No transition to that status.");
@@ -1122,37 +1122,37 @@ public sealed class QuotationTests
     }
 
     // A pedido (2026-09), editar una enviada ya no la vuelve inconvertible: la vieja regla
-    // exigia reenviarla antes de convertir para que la venta heredara lo mismo que el cliente
+    // exigia reenviarla antes de convertir para que el pedido heredara lo mismo que el cliente
     // vio, pero dejaba inconvertible a cualquier cotizacion que se corrigiera despues de
     // enviarse sin que nadie se lo pidiera. Sigue editable (US-10) y ahora tambien convertible
     // asi, sin reenviar.
     [Fact]
-    public void CanBeConvertedToSaleStaysTrueAfterEditingASentQuotation()
+    public void CanBeConvertedToOrderStaysTrueAfterEditingASentQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        Assert.True(quotation.CanBeConvertedToSale);
+        Assert.True(quotation.CanBeConvertedToOrder);
 
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 50_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
 
         Assert.True(quotation.HasChangesSinceSent);
-        Assert.True(quotation.CanBeConvertedToSale);
+        Assert.True(quotation.CanBeConvertedToOrder);
     }
 
     [Fact]
-    public void EnsureConvertibleToSaleDoesNotThrowAfterEditingASentQuotation()
+    public void EnsureConvertibleToOrderDoesNotThrowAfterEditingASentQuotation()
     {
         var quotation = ConvertibleSentQuotation();
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 50_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddHours(1));
 
-        quotation.EnsureConvertibleToSale();
+        quotation.EnsureConvertibleToOrder();
     }
 
     [Fact]
-    public void EnsureConvertibleToSaleRejectsAnIncompleteBillingParty()
+    public void EnsureConvertibleToOrderRejectsAnIncompleteBillingParty()
     {
         var quotation = NewQuotation(
             billingAccount: BillingAccount,
@@ -1163,14 +1163,14 @@ public sealed class QuotationTests
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
-            () => quotation.EnsureConvertibleToSale());
+            () => quotation.EnsureConvertibleToOrder());
 
         Assert.Equal("quotation.billing.party_incomplete", error.Code);
-        Assert.False(quotation.CanBeConvertedToSale);
+        Assert.False(quotation.CanBeConvertedToOrder);
     }
 
     [Fact]
-    public void EnsureConvertibleToSaleRejectsAnIncompleteShippingParty()
+    public void EnsureConvertibleToOrderRejectsAnIncompleteShippingParty()
     {
         var quotation = NewQuotation(
             billingAccount: BillingAccount,
@@ -1181,17 +1181,17 @@ public sealed class QuotationTests
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
-            () => quotation.EnsureConvertibleToSale());
+            () => quotation.EnsureConvertibleToOrder());
 
         Assert.Equal("quotation.shipping.party_incomplete", error.Code);
-        Assert.False(quotation.CanBeConvertedToSale);
+        Assert.False(quotation.CanBeConvertedToOrder);
     }
 
     // Los seis campos, no menos: es el mismo umbral que exige el editor antes de dejar mandar
-    // la cotizacion (quote-party-fields.tsx), y una venta no puede heredar una direccion a
+    // la cotizacion (quote-party-fields.tsx), y un pedido no puede heredar una direccion a
     // medio llenar.
     [Fact]
-    public void EnsureConvertibleToSaleAcceptsACompleteOwnParty()
+    public void EnsureConvertibleToOrderAcceptsACompleteOwnParty()
     {
         var completeParty = new QuotationPartyDetails
         {
@@ -1211,15 +1211,15 @@ public sealed class QuotationTests
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        quotation.EnsureConvertibleToSale();
+        quotation.EnsureConvertibleToOrder();
 
-        Assert.True(quotation.CanBeConvertedToSale);
+        Assert.True(quotation.CanBeConvertedToOrder);
     }
 
     // Con datos propios de facturacion nadie mas dice si hay retencion/excedente de IVA: null
-    // es "todavia no se contesto", y eso deja la venta bloqueada aunque la parte este completa.
+    // es "todavia no se contesto", y eso deja el pedido bloqueado aunque la parte este completa.
     [Fact]
-    public void EnsureConvertibleToSaleRejectsAnOwnBillingPartyWithoutATaxProfileAnswer()
+    public void EnsureConvertibleToOrderRejectsAnOwnBillingPartyWithoutATaxProfileAnswer()
     {
         var completeParty = new QuotationPartyDetails
         {
@@ -1237,13 +1237,13 @@ public sealed class QuotationTests
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        var exception = Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToSale);
+        var exception = Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToOrder);
 
         Assert.Equal("quotation.billing.tax_profile_required", exception.Code);
-        Assert.False(quotation.CanBeConvertedToSale);
+        Assert.False(quotation.CanBeConvertedToOrder);
     }
 
-    /// <summary>Enviada y con los cuatro datos que la venta hereda: productos, vigencia, forma
+    /// <summary>Enviada y con los cuatro datos que el pedido hereda: productos, vigencia, forma
     /// de pago y cuenta de cobro.</summary>
     private static Quotation ConvertibleSentQuotation()
     {

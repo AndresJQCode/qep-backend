@@ -5,7 +5,7 @@ namespace Modules.Quotations.IntegrationTests;
 
 // Procesadores de mentira para probar la cola y el runner contra Postgres sin armar un Excel:
 // lo que se verifica acá es la toma, el cierre y los eventos. El Excel real lo cubren
-// QuotationExportApiTests y SaleExportApiTests.
+// QuotationExportApiTests y OrderExportApiTests.
 
 internal sealed class SucceedingExportProcessor(ExportJobKind kind) : IExportJobProcessor
 {

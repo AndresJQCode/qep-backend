@@ -67,8 +67,8 @@ internal static class QuotationListing
 
         // Misma idea que los nombres de cliente: una sola ida, con los ids sin repetir. Antes el
         // frontend se traía el padrón de miembros entero para poner un correo en cada fila. El
-        // archivo lleva el correo aunque la asesora tenga nombre, igual que la tabla (spec
-        // 2026-09-11, D1).
+        // archivo lleva el nombre con respaldo al correo, igual que la tabla (spec 2026-09-11,
+        // D1, nota del 2026-09-14).
         var advisors = quotations.Count == 0
             ? new Dictionary<Guid, QuotationAdvisor>()
             : await advisorLookup.FindAsync(
@@ -76,14 +76,14 @@ internal static class QuotationListing
                 quotations.Select(quotation => quotation.AdvisorId.Value).Distinct().ToArray(),
                 cancellationToken);
 
-        // Sin lineas ni venta a proposito: el Excel no pinta IsComplete, SaleId ni SaleStatus, y
+        // Sin lineas ni pedido a proposito: el Excel no pinta IsComplete, OrderId ni OrderStatus, y
         // resolverlos seria dos idas mas por exportacion para columnas que no existen.
         return quotations
             .Select(quotation => quotation.ToListItemDto(
                 clientNames.GetValueOrDefault(quotation.ClientId),
-                advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Email,
+                advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Label,
                 hasItems: false,
-                sale: null))
+                order: null))
             .ToArray();
     }
 }

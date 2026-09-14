@@ -6,7 +6,7 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Infrastructure.Persistence;
 
 /// <summary>
-/// Quotations retiene a un usuario mientras alguna cotización, venta o comprobante siga
+/// Quotations retiene a un usuario mientras alguna cotización, pedido o comprobante siga
 /// apuntando a una de sus membresías. El módulo nunca guarda el id de usuario: toda
 /// referencia es un <see cref="MemberId"/> hacia <c>tenancy.memberships</c> (documento §1.4),
 /// así que la sonda traduce primero usuario → membresías por <see cref="IMembershipDirectory"/>
@@ -15,8 +15,8 @@ namespace Modules.Quotations.Infrastructure.Persistence;
 /// <remarks>
 /// Cubre cada columna mapeada con <see cref="MemberId"/> en <see cref="QuotationsDbContext"/>:
 /// <c>quotations.advisor_id</c>, <c>created_by</c> y <c>updated_by</c>;
-/// <c>quotation_history.member_id</c>; <c>sales.converted_by</c>; y
-/// <c>sale_payment_proofs.uploaded_by</c>. Una columna nueva con <see cref="MemberId"/> tiene
+/// <c>quotation_history.member_id</c>; <c>orders.converted_by</c>; y
+/// <c>order_payment_proofs.uploaded_by</c>. Una columna nueva con <see cref="MemberId"/> tiene
 /// que sumarse acá, o el usuario que la referencia se borra igual.
 /// </remarks>
 internal sealed class QuotationUserReferenceProbe(
@@ -45,10 +45,10 @@ internal sealed class QuotationUserReferenceProbe(
                 await dbContext.QuotationHistoryEntries.AnyAsync(
                     entry => entry.MemberId == member,
                     cancellationToken) ||
-                await dbContext.Sales.AnyAsync(
-                    sale => sale.ConvertedBy == member,
+                await dbContext.Orders.AnyAsync(
+                    order => order.ConvertedBy == member,
                     cancellationToken) ||
-                await dbContext.SalePaymentProofs.AnyAsync(
+                await dbContext.OrderPaymentProofs.AnyAsync(
                     proof => proof.UploadedBy == member,
                     cancellationToken))
             {

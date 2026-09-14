@@ -36,13 +36,13 @@ public sealed class PriceChangeReportSummaryHandlerTests
         Assert.Empty(source.SummarizedCriteria);
     }
 
-    /// <summary>El reporte de cambios de precio es sólo del Administrador: el permiso de ventas
+    /// <summary>El reporte de cambios de precio es sólo del Administrador: el permiso de pedidos
     /// —que sí tiene un asesor— no alcanza para verlo.</summary>
     [Fact]
-    public async Task SummarizingRejectsACallerWithOnlyTheSalesPermission()
+    public async Task SummarizingRejectsACallerWithOnlyTheOrdersPermission()
     {
         var source = new FakePriceChangeReportSource();
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(

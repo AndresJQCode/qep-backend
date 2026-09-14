@@ -13,7 +13,8 @@ namespace Bootstrapper;
 ///
 /// **Los reportes muestran el email, no el nombre.** El nombre existe desde el 2026-09-11
 /// —<c>Modules.Tenancy.Domain.Membership.DisplayName</c>—, pero por decisión de alcance sólo lo
-/// imprime el PDF de cotización (spec 2026-09-11, D1); llevarlo a reportes es un trabajo aparte.
+/// muestran el PDF y el listado de cotizaciones (spec 2026-09-11, D1 y su nota del 2026-09-14);
+/// llevarlo a reportes es un trabajo aparte.
 /// Así que lo que viaja en <c>advisorName</c> y <c>changedByName</c> sigue siendo el email — los
 /// nombres de campo se mantienen porque son los que fija el contrato de API con el frontend.
 ///
@@ -99,7 +100,7 @@ internal sealed class ReportingPeopleLookup(
 /// <summary>
 /// Resuelve nombre y CUC de los clientes de una pagina de reporte.
 ///
-/// Vive aca por lo mismo que <c>QuotationCustomerLookup</c>: los reportes de ventas y de
+/// Vive aca por lo mismo que <c>QuotationCustomerLookup</c>: los reportes de pedidos y de
 /// cotizaciones necesitan un dato de <c>customers</c>, y ningun modulo de negocio referencia a
 /// otro. En lote, por lo mismo que <see cref="ReportingPeopleLookup"/>.
 /// </summary>
@@ -128,7 +129,7 @@ internal sealed class ReportingClientLookup(CustomersDbContext customers)
     }
 }
 
-/// <summary>Lo unico que los reportes de ventas y cotizaciones necesitan de un cliente.</summary>
+/// <summary>Lo unico que los reportes de pedidos y cotizaciones necesitan de un cliente.</summary>
 internal sealed record ReportingClientRef(string Name, string Cuc);
 
 /// <summary>

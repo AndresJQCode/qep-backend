@@ -73,13 +73,13 @@ public sealed record QuotationDto(
     /// cambiado o no — reenviar sin cambios es un caso legítimo.</summary>
     bool CanBeSent,
     /// <summary>Si se editó después del último envío. Viaja aunque
-    /// <see cref="CanBeConvertedToSale"/> ya lo incluya: es el único de los motivos de ese
+    /// <see cref="CanBeConvertedToOrder"/> ya lo incluya: es el único de los motivos de ese
     /// false que la pantalla no puede deducir de los otros campos, y sin él "Convertir en
-    /// venta" desaparece sin decir por qué (la pantalla enumera los otros tres).</summary>
+    /// pedido" desaparece sin decir por qué (la pantalla enumera los otros tres).</summary>
     bool HasChangesSinceSent,
-    /// <summary>Si convertir en venta es posible: enviada, sin cambios desde ese envío, con
+    /// <summary>Si convertir en pedido es posible: enviada, sin cambios desde ese envío, con
     /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
-    bool CanBeConvertedToSale,
+    bool CanBeConvertedToOrder,
     IReadOnlyCollection<QuotationItemDto> Items);
 
 /// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto
@@ -150,7 +150,7 @@ public sealed record QuotationPartiesRequest(
     /// <summary>Sólo tiene sentido cuando <c>Billing</c> trae datos propios: si esa facturación
     /// practica retención en la fuente. Con los datos del cliente se ignora — ahí manda lo que
     /// diga el cliente. Null es "todavía no se contestó"; un <c>Billing</c> con datos propios y
-    /// esto en null deja la cotización inconvertible a venta
+    /// esto en null deja la cotización inconvertible a pedido
     /// (<c>quotation.billing.tax_profile_required</c>).</summary>
     bool? BillingWithRetention = null,
     /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA.</summary>
@@ -275,8 +275,8 @@ public sealed record QuotationResponse(
     string? AdvisorEmail,
     /// <summary>El nombre que el tenant cargó en la membresía de la asesora. Null en membresías
     /// anteriores al nombre y en el owner hasta que lo cargue desde el roster. Hoy sólo lo usa el
-    /// PDF, que cae a <c>AdvisorEmail</c> cuando falta (spec 2026-09-11, D6); la pantalla sigue
-    /// mostrando el correo (D1). Aditivo: un front que no lo lee no se entera.</summary>
+    /// PDF, que cae a <c>AdvisorEmail</c> cuando falta (spec 2026-09-11, D6); la pantalla del
+    /// detalle sigue mostrando el correo (D1). Aditivo: un front que no lo lee no se entera.</summary>
     string? AdvisorName,
     string Status,
     DateTimeOffset CreatedAt,
@@ -320,7 +320,7 @@ public sealed record QuotationResponse(
     Guid? PdfFileId,
     bool CanBeSent,
     bool HasChangesSinceSent,
-    bool CanBeConvertedToSale,
+    bool CanBeConvertedToOrder,
     IReadOnlyCollection<QuotationItemResponse> Items);
 
 /// <summary>
@@ -353,7 +353,10 @@ public sealed record QuotationListItemResponse(
     Guid ClientId,
     string? ClientName,
     Guid AdvisorId,
-    string? AdvisorEmail,
+    /// <summary>El nombre de la asesora, o su correo si la membresía no tiene nombre. Viaja ya
+    /// resuelto para que la grilla pinte un solo campo; el porqué está en
+    /// <see cref="QuotationListItemDto.AdvisorName"/>.</summary>
+    string? AdvisorName,
     string Status,
     DateTimeOffset CreatedAt,
     /// <summary>La moneda de <c>Total</c>. Viaja por fila porque la grilla mezcla cotizaciones
@@ -366,10 +369,10 @@ public sealed record QuotationListItemResponse(
     /// <summary>Si ya es un documento presentable: al menos una linea, vigencia y cuenta de
     /// cobro.</summary>
     bool IsComplete,
-    /// <summary>La venta que salio de esta cotizacion. <c>null</c> es "sin convertir".</summary>
-    Guid? SaleId,
-    /// <summary><c>Pending</c> o <c>Approved</c>; <c>null</c> sin venta.</summary>
-    string? SaleStatus);
+    /// <summary>El pedido que salió de esta cotización. <c>null</c> es "sin convertir".</summary>
+    Guid? OrderId,
+    /// <summary><c>Pending</c> o <c>Approved</c>; <c>null</c> sin pedido.</summary>
+    string? OrderStatus);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>
@@ -402,7 +405,7 @@ public sealed record QuotationItemResponse(
     int Position);
 
 /// <summary>
-/// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de ventas. No
+/// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No
 /// lleva nombre de archivo ni cantidad de filas porque todavía no existen, ni enlace porque el
 /// canal de entrega es el correo: con el enlace acá, la pantalla tomaría el atajo y el correo
 /// quedaría sin ejercitar. El jobId es para soporte y para una futura "mis exportaciones" (D15).

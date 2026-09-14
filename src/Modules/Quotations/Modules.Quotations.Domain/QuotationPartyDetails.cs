@@ -112,7 +112,7 @@ public sealed record QuotationParties(
     /// retención en la fuente. Con los datos del cliente, ese hecho lo dice el cliente
     /// (<c>Customer.WithRetention</c>, ver <see cref="Quotation.CustomerWithRetention"/>); con
     /// datos propios nadie más lo sabe, así que hay que preguntarlo — <c>null</c> mientras no se
-    /// contestó no es "no aplica", es "todavía no se sabe" (ver <see cref="Quotation.EnsureConvertibleToSale"/>).
+    /// contestó no es "no aplica", es "todavía no se sabe" (ver <see cref="Quotation.EnsureConvertibleToOrder"/>).
     /// Se ignora cuando <see cref="Billing"/> es null: ahí manda el cliente.
     /// </summary>
     bool? BillingWithRetention = null,

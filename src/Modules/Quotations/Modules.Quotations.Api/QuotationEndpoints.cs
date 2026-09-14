@@ -401,14 +401,14 @@ public static class QuotationEndpoints
         quotation.ClientId,
         quotation.ClientName,
         quotation.AdvisorId,
-        quotation.AdvisorEmail,
+        quotation.AdvisorName,
         quotation.Status,
         quotation.CreatedAt,
         quotation.Currency,
         quotation.Total,
         quotation.CanBeSent,
         quotation.IsComplete,
-        quotation.SaleId,
-        quotation.SaleStatus);
+        quotation.OrderId,
+        quotation.OrderStatus);
 
 }

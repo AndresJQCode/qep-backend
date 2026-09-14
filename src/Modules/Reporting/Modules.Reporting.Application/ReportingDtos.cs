@@ -1,20 +1,20 @@
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// Una venta convertida, con la cotización de origen ya resuelta. Los importes son los de la
-/// cotización: <c>Sale</c> no los duplica (modelo-datos-cotizaciones.md §1.2).
+/// Un pedido convertido, con la cotización de origen ya resuelta. Los importes son los de la
+/// cotización: <c>Order</c> no los duplica (modelo-datos-cotizaciones.md §1.2).
 ///
 /// <c>AdvisorName</c> es el **email** del asesor, no su nombre. El nombre vive en
-/// <c>Tenancy.Membership.DisplayName</c> desde el 2026-09-11, pero sólo lo usa el PDF de
-/// cotización (spec 2026-09-11, D1). El nombre del campo se mantiene porque es el que el contrato
-/// de API fija con el frontend; léase "la etiqueta con la que mostrar a esta persona". Nulo
-/// cuando la fila de usuario no está.
+/// <c>Tenancy.Membership.DisplayName</c> desde el 2026-09-11, pero sólo lo usan el PDF y el
+/// listado de cotizaciones (spec 2026-09-11, D1 y su nota del 2026-09-14). El nombre del campo se
+/// mantiene porque es el que el contrato de API fija con el frontend; léase "la etiqueta con la
+/// que mostrar a esta persona". Nulo cuando la fila de usuario no está.
 ///
 /// <c>ClientName</c> sí es un nombre real: sale de <c>Customer.Name</c>.
 /// </summary>
-public sealed record SalesReportItemDto(
-    Guid SaleId,
-    string SaleNumber,
+public sealed record OrdersReportItemDto(
+    Guid OrderId,
+    string OrderNumber,
     Guid QuotationId,
     string QuotationNumber,
     DateTimeOffset ConvertedAt,
@@ -30,7 +30,7 @@ public sealed record SalesReportItemDto(
     decimal Total);
 
 /// <summary>
-/// Una cotización, en cualquiera de sus cinco estados. Ver <see cref="SalesReportItemDto"/> sobre
+/// Una cotización, en cualquiera de sus cinco estados. Ver <see cref="OrdersReportItemDto"/> sobre
 /// <c>AdvisorName</c>.
 ///
 /// <c>ValidUntil</c> es opcional porque el dominio lo permite: <c>Quotation.ValidUntil</c> es
@@ -58,7 +58,7 @@ public sealed record QuotationsReportItemDto(
 /// <c>ScaleFromUnit</c>/<c>ScaleToUnit</c> vienen con valor sólo cuando <c>Field</c> es
 /// <c>ScaleDiscount</c>: los precios base son del producto entero y no tienen rango.
 ///
-/// <c>ChangedByName</c> es el email del autor. Ver <see cref="SalesReportItemDto"/>.
+/// <c>ChangedByName</c> es el email del autor. Ver <see cref="OrdersReportItemDto"/>.
 /// </summary>
 public sealed record PriceChangeReportItemDto(
     Guid ChangeId,

@@ -21,7 +21,7 @@ public sealed class RequestFailureTests
     // distinguiría nada — es el mismo para todas las filas del reporte.
     [InlineData($"/api/v1/tenants/{TenantSegment}/catalog/products", "catalog")]
     [InlineData($"/api/v1/tenants/{TenantSegment}/quotations/abc/send", "quotations")]
-    [InlineData($"/api/v1/tenants/{TenantSegment}/reports/sales", "reports")]
+    [InlineData($"/api/v1/tenants/{TenantSegment}/reports/orders", "reports")]
     [InlineData($"/api/v1/tenants/{TenantSegment}/platform/request-log", "platform")]
     // Lo que no vive dentro de un tenant.
     [InlineData("/api/v1/auth/session", "auth")]

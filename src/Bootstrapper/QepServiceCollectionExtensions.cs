@@ -339,35 +339,35 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>,
             ExportQuotationPdfHandler>();
         services.AddScoped<
-            IQueryHandler<GetSaleQuery, SaleDto>,
-            GetSaleHandler>();
+            IQueryHandler<GetOrderQuery, OrderDto>,
+            GetOrderHandler>();
         services.AddScoped<
-            IQueryHandler<ListSalesQuery, SalePage>,
-            ListSalesHandler>();
+            IQueryHandler<ListOrdersQuery, OrderPage>,
+            ListOrdersHandler>();
         services.AddScoped<
-            ICommandHandler<ExportSalesCommand, ExportJobAccepted>,
-            ExportSalesHandler>();
+            ICommandHandler<ExportOrdersCommand, ExportJobAccepted>,
+            ExportOrdersHandler>();
         services.AddScoped<
-            IQueryHandler<GetSaleByIdQuery, SaleDetailDto>,
-            GetSaleByIdHandler>();
+            IQueryHandler<GetOrderByIdQuery, OrderDetailDto>,
+            GetOrderByIdHandler>();
         services.AddScoped<
-            ICommandHandler<ApproveSaleCommand, SaleDto>,
-            ApproveSaleHandler>();
+            ICommandHandler<ApproveOrderCommand, OrderDto>,
+            ApproveOrderHandler>();
         services.AddScoped<
-            ICommandHandler<ConvertQuotationToSaleCommand, SaleDto>,
-            ConvertQuotationToSaleHandler>();
+            ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>,
+            ConvertQuotationToOrderHandler>();
         services.AddScoped<
-            ICommandHandler<AddSalePaymentProofsCommand, SaleDto>,
-            AddSalePaymentProofsHandler>();
+            ICommandHandler<AddOrderPaymentProofsCommand, OrderDto>,
+            AddOrderPaymentProofsHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
         services.AddScoped<
-            IQueryHandler<ListSalesReportQuery, ReportPage<SalesReportItemDto>>,
-            ListSalesReportHandler>();
+            IQueryHandler<ListOrdersReportQuery, ReportPage<OrdersReportItemDto>>,
+            ListOrdersReportHandler>();
         services.AddScoped<
-            IQueryHandler<GetSalesReportSummaryQuery, SalesReportSummaryDto>,
-            GetSalesReportSummaryHandler>();
+            IQueryHandler<GetOrdersReportSummaryQuery, OrdersReportSummaryDto>,
+            GetOrdersReportSummaryHandler>();
         services.AddScoped<
             IQueryHandler<GetQuotationsReportSummaryQuery, QuotationsReportSummaryDto>,
             GetQuotationsReportSummaryHandler>();
@@ -391,7 +391,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
-        services.AddValidatorsFromAssemblyContaining<SalesReportFilterValidator>();
+        services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -450,10 +450,10 @@ public static class QepServiceCollectionExtensions
 
         // El tick del worker de exportaciones. Scoped: ExportJobWorker abre un scope por job para
         // que cada uno tenga su DbContext limpio. Los procesadores por kind se registran con él
-        // cuando existen (cotizaciones y ventas).
+        // cuando existen (cotizaciones y pedidos).
         services.AddScoped<ExportJobRunner>();
         services.AddScoped<IExportJobProcessor, QuotationsExportProcessor>();
-        services.AddScoped<IExportJobProcessor, SalesExportProcessor>();
+        services.AddScoped<IExportJobProcessor, OrdersExportProcessor>();
 
         // Reporting es el caso extremo del mismo patron (CAT-05): el modulo no tiene tablas
         // propias, asi que **todos** sus origenes de datos cruzan una frontera de modulo. Van
@@ -463,7 +463,7 @@ public static class QepServiceCollectionExtensions
         // ICustomerGeographyLookup de arriba, que el de clientes reusa.
         services.AddScoped<ReportingPeopleLookup>();
         services.AddScoped<ReportingClientLookup>();
-        services.AddScoped<ISalesReportSource, SalesReportSource>();
+        services.AddScoped<IOrdersReportSource, OrdersReportSource>();
         services.AddScoped<IQuotationsReportSource, QuotationsReportSource>();
         services.AddScoped<IPriceChangeReportSource, PriceChangeReportSource>();
         services.AddScoped<ICustomerReportSource, CustomerReportSource>();
@@ -541,12 +541,12 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.ClassificationManage,
                 QuotationsPermissions.QuotationRead,
                 QuotationsPermissions.QuotationManage,
-                SalesPermissions.SaleRead,
-                SalesPermissions.SaleManage,
+                OrdersPermissions.OrderRead,
+                OrdersPermissions.OrderManage,
                 // Los cuatro reportes. Admin es el unico rol que ve los de cambios de precio y
                 // padron de clientes: el primero expone el historial comercial completo del
                 // catalogo, y el segundo el padron entero con datos de identificacion.
-                ReportingPermissions.SalesRead,
+                ReportingPermissions.OrdersRead,
                 ReportingPermissions.QuotationRead,
                 ReportingPermissions.PriceChangeRead,
                 ReportingPermissions.CustomerRead,
@@ -586,18 +586,18 @@ public static class QepServiceCollectionExtensions
                 // que son catalogos maestros que administra otro rol.
                 QuotationsPermissions.QuotationRead,
                 QuotationsPermissions.QuotationManage,
-                // US-12/US-14: enviar una cotizacion sube su PDF a Storage, y convertir en venta
+                // US-12/US-14: enviar una cotizacion sube su PDF a Storage, y convertir en pedido
                 // sube los comprobantes de pago -- las dos acciones de la asesora que tocan
                 // archivos.
                 StoragePermissions.FileUpload,
                 StoragePermissions.FileRead,
-                // Convertir una cotizacion aprobada en venta (US-13 a US-16) es la continuacion
+                // Convertir una cotizacion aprobada en pedido (US-13 a US-16) es la continuacion
                 // natural de cotizar, no una operacion separada que administre otro rol.
-                SalesPermissions.SaleRead,
-                SalesPermissions.SaleManage,
+                OrdersPermissions.OrderRead,
+                OrdersPermissions.OrderManage,
                 // Solo los dos reportes de su trabajo diario. Cambios de precio y padron de
                 // clientes quedan en admin: son la vista agregada del negocio, no la operacion.
-                ReportingPermissions.SalesRead,
+                ReportingPermissions.OrdersRead,
                 ReportingPermissions.QuotationRead
             ]));
         services.AddSingleton(new RoleDefinition(
@@ -610,11 +610,11 @@ public static class QepServiceCollectionExtensions
                 TenancyPermissions.SettingsRead,
                 CustomersPermissions.CustomerRead,
                 // Los tres tercios del alcance de negocio pedido para este rol ("ver clientes,
-                // cotizaciones y ventas") ya existen. Sólo lectura en los tres: facturar necesita
+                // cotizaciones y pedidos") ya existen. Sólo lectura en los tres: facturar necesita
                 // ver el estado del pago y los comprobantes, no aprobar conversiones ni editar
                 // cotizaciones -- eso sigue siendo trabajo de la asesora.
                 QuotationsPermissions.QuotationRead,
-                SalesPermissions.SaleRead
+                OrdersPermissions.OrderRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -758,21 +758,21 @@ public static class QepServiceCollectionExtensions
             "Quotations",
             "medium"));
         services.AddSingleton(new PermissionDefinition(
-            SalesPermissions.SaleRead,
-            "Leer ventas",
-            "Permite consultar la venta convertida de una cotizacion.",
+            OrdersPermissions.OrderRead,
+            "Leer pedidos",
+            "Permite consultar el pedido convertido de una cotización.",
             "Quotations",
             "low"));
         services.AddSingleton(new PermissionDefinition(
-            SalesPermissions.SaleManage,
-            "Gestionar ventas",
-            "Permite convertir una cotizacion enviada en venta, con sus comprobantes de pago.",
+            OrdersPermissions.OrderManage,
+            "Gestionar pedidos",
+            "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
             "medium"));
         services.AddSingleton(new PermissionDefinition(
-            ReportingPermissions.SalesRead,
-            "Reporte de ventas",
-            "Permite consultar y exportar el reporte de ventas convertidas del tenant.",
+            ReportingPermissions.OrdersRead,
+            "Reporte de pedidos",
+            "Permite consultar y exportar el reporte de pedidos convertidos del tenant.",
             "Reporting",
             "low"));
         services.AddSingleton(new PermissionDefinition(
@@ -1000,20 +1000,20 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 QuotationsPermissions.QuotationManage,
                 policy => AddPermissionRequirement(policy, QuotationsPermissions.QuotationManage))
-            // La otra mitad del permiso, para los dos de Sales -- mismo gotcha.
+            // La otra mitad del permiso, para los dos de Orders -- mismo gotcha.
             .AddPolicy(
-                SalesPermissions.SaleRead,
-                policy => AddPermissionRequirement(policy, SalesPermissions.SaleRead))
+                OrdersPermissions.OrderRead,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderRead))
             .AddPolicy(
-                SalesPermissions.SaleManage,
-                policy => AddPermissionRequirement(policy, SalesPermissions.SaleManage))
+                OrdersPermissions.OrderManage,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderManage))
             // La otra mitad del permiso, para los cuatro de Reporting. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 -- mismo gotcha que
             // TaxRateRead/TaxRateManage, ClassificationRead/ClassificationManage y los de
-            // Quotations/Sales.
+            // Quotations/Orders.
             .AddPolicy(
-                ReportingPermissions.SalesRead,
-                policy => AddPermissionRequirement(policy, ReportingPermissions.SalesRead))
+                ReportingPermissions.OrdersRead,
+                policy => AddPermissionRequirement(policy, ReportingPermissions.OrdersRead))
             .AddPolicy(
                 ReportingPermissions.QuotationRead,
                 policy => AddPermissionRequirement(policy, ReportingPermissions.QuotationRead))

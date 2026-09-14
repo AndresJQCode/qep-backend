@@ -4,7 +4,7 @@ using Modules.Reporting.Domain;
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// Los filtros del reporte de ventas tal como llegan por query string. <c>PaymentStatus</c> es
+/// Los filtros del reporte de pedidos tal como llegan por query string. <c>PaymentStatus</c> es
 /// texto y no el enum: el valor lo escribe el llamador, y un enum en la firma haría que un valor
 /// inválido lo rechazara el binder con un 400 opaco en vez del 422 con el mapa <c>errors</c> que
 /// el contrato fija.
@@ -12,7 +12,7 @@ namespace Modules.Reporting.Application;
 /// El mismo record lo usan el listado y el resumen —el contrato pide exactamente los mismos
 /// filtros menos la paginación—, así que también hay un solo validador para los dos caminos.
 /// </summary>
-public sealed record SalesReportFilter(
+public sealed record OrdersReportFilter(
     Guid TenantId,
     DateOnly? From,
     DateOnly? To,
@@ -23,15 +23,15 @@ public sealed record SalesReportFilter(
 /// <summary>Los mismos filtros ya validados y parseados, que es lo que ve el adaptador. Separado
 /// del filtro de entrada para que ningún origen de datos tenga que volver a interpretar
 /// texto.</summary>
-public sealed record SalesReportCriteria(
+public sealed record OrdersReportCriteria(
     Guid TenantId,
     DateOnly? From,
     DateOnly? To,
     Guid? AdvisorId,
     Guid? ClientId,
-    SalePaymentStatusFilter? PaymentStatus);
+    OrderPaymentStatusFilter? PaymentStatus);
 
-/// <summary>Ver <see cref="SalesReportFilter"/>.</summary>
+/// <summary>Ver <see cref="OrdersReportFilter"/>.</summary>
 public sealed record QuotationsReportFilter(
     Guid TenantId,
     DateOnly? From,
@@ -40,7 +40,7 @@ public sealed record QuotationsReportFilter(
     Guid? ClientId,
     string? Status);
 
-/// <summary>Ver <see cref="SalesReportCriteria"/>.</summary>
+/// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
 public sealed record QuotationsReportCriteria(
     Guid TenantId,
     DateOnly? From,
@@ -49,7 +49,7 @@ public sealed record QuotationsReportCriteria(
     Guid? ClientId,
     QuotationStatusFilter? Status);
 
-/// <summary>Ver <see cref="SalesReportFilter"/>.</summary>
+/// <summary>Ver <see cref="OrdersReportFilter"/>.</summary>
 public sealed record PriceChangeReportFilter(
     Guid TenantId,
     DateOnly? From,
@@ -58,7 +58,7 @@ public sealed record PriceChangeReportFilter(
     Guid? ChangedBy,
     string? Field);
 
-/// <summary>Ver <see cref="SalesReportCriteria"/>.</summary>
+/// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
 public sealed record PriceChangeReportCriteria(
     Guid TenantId,
     DateOnly? From,
@@ -86,7 +86,7 @@ public sealed record CustomerReportFilter(
     Guid? ClassificationId,
     Guid? DepartmentId);
 
-/// <summary>Ver <see cref="SalesReportCriteria"/>. No tiene nada que parsear, pero existe igual
+/// <summary>Ver <see cref="OrdersReportCriteria"/>. No tiene nada que parsear, pero existe igual
 /// para que los cuatro puertos reciban el mismo tipo de objeto.</summary>
 public sealed record CustomerReportCriteria(
     Guid TenantId,
@@ -100,13 +100,13 @@ public sealed record CustomerReportCriteria(
 /// Traduce filtro de entrada a criterio.
 ///
 /// El parseo es la única traducción: los enums ya los valida
-/// <see cref="SalesReportFilterValidator"/> y compañía, así que llegar acá con un texto inválido
+/// <see cref="OrdersReportFilterValidator"/> y compañía, así que llegar acá con un texto inválido
 /// es un error de programación, no de entrada — y <c>ReportFilterParser</c> tira en vez de elegir
 /// un valor en silencio.
 /// </summary>
 public static class ReportFilterMapping
 {
-    public static SalesReportCriteria ToCriteria(this SalesReportFilter filter) =>
+    public static OrdersReportCriteria ToCriteria(this OrdersReportFilter filter) =>
         new(
             filter.TenantId,
             filter.From,
@@ -149,9 +149,9 @@ public static class ReportFilterMapping
 /// (<c>validation.failed</c> → 422 con el mapa <c>errors</c>). El nombre de propiedad viaja en el
 /// mapa, así que el frontend puede marcar el control equivocado.
 /// </summary>
-public sealed class SalesReportFilterValidator : AbstractValidator<SalesReportFilter>
+public sealed class OrdersReportFilterValidator : AbstractValidator<OrdersReportFilter>
 {
-    public SalesReportFilterValidator()
+    public OrdersReportFilterValidator()
     {
         RuleFor(filter => filter.PaymentStatus)
             .Must(value => ReportFilterParser.TryParsePaymentStatus(value, out _))
@@ -166,7 +166,7 @@ public sealed class SalesReportFilterValidator : AbstractValidator<SalesReportFi
     }
 }
 
-/// <summary>Ver <see cref="SalesReportFilterValidator"/>.</summary>
+/// <summary>Ver <see cref="OrdersReportFilterValidator"/>.</summary>
 public sealed class QuotationsReportFilterValidator : AbstractValidator<QuotationsReportFilter>
 {
     public QuotationsReportFilterValidator()
@@ -182,7 +182,7 @@ public sealed class QuotationsReportFilterValidator : AbstractValidator<Quotatio
     }
 }
 
-/// <summary>Ver <see cref="SalesReportFilterValidator"/>.</summary>
+/// <summary>Ver <see cref="OrdersReportFilterValidator"/>.</summary>
 public sealed class PriceChangeReportFilterValidator : AbstractValidator<PriceChangeReportFilter>
 {
     public PriceChangeReportFilterValidator()
@@ -199,7 +199,7 @@ public sealed class PriceChangeReportFilterValidator : AbstractValidator<PriceCh
 }
 
 /// <summary>
-/// Ver <see cref="SalesReportFilterValidator"/>.
+/// Ver <see cref="OrdersReportFilterValidator"/>.
 ///
 /// Sigue sin tener nada que parsear —el resto de los filtros son tipados—, pero ya no está vacío:
 /// el rango de fechas de alta se rechaza dado vuelta antes de tocar la base, con la misma regla y

@@ -1,12 +1,12 @@
 namespace Modules.Reporting.Domain;
 
 /// <summary>
-/// El estado de pago por el que se puede filtrar el reporte de ventas. Son exactamente los tres
-/// valores de <c>SalePaymentStatus</c> en Quotations, redeclarados acá y no referenciados: el
+/// El estado de pago por el que se puede filtrar el reporte de pedidos. Son exactamente los tres
+/// valores de <c>OrderPaymentStatus</c> en Quotations, redeclarados acá y no referenciados: el
 /// dominio de un módulo de negocio no referencia el dominio de otro — mismo criterio que
 /// <c>Quotations.MemberId</c> frente al <c>MembershipId</c> de Tenancy.
 /// </summary>
-public enum SalePaymentStatusFilter
+public enum OrderPaymentStatusFilter
 {
     FullPaymentReceived,
     PartialPaymentReceived,
@@ -14,13 +14,13 @@ public enum SalePaymentStatusFilter
 }
 
 /// <summary>
-/// Los cinco estados de <c>QuotationStatus</c>. Ver <see cref="SalePaymentStatusFilter"/> sobre
+/// Los cinco estados de <c>QuotationStatus</c>. Ver <see cref="OrderPaymentStatusFilter"/> sobre
 /// por qué se redeclaran.
 ///
-/// <see cref="Converted"/> es la cotización que ya terminó en venta. **No hay "Approved"**: ése
-/// es un estado de la venta, no de la cotización. Las que se convirtieron antes de que existiera
+/// <see cref="Converted"/> es la cotización que ya terminó en pedido. **No hay "Approved"**: ése
+/// es un estado del pedido, no de la cotización. Las que se convirtieron antes de que existiera
 /// <see cref="Converted"/> siguen en <see cref="Sent"/> (no hubo backfill), así que para "las
-/// cotizaciones que terminaron en venta" el reporte que no se equivoca sigue siendo el de ventas.
+/// cotizaciones que terminaron en pedido" el reporte que no se equivoca sigue siendo el de pedidos.
 /// </summary>
 public enum QuotationStatusFilter
 {
@@ -32,7 +32,7 @@ public enum QuotationStatusFilter
 }
 
 /// <summary>Los tres valores de <c>ProductPriceField</c> en Catalog. Ver
-/// <see cref="SalePaymentStatusFilter"/> sobre por qué se redeclaran.</summary>
+/// <see cref="OrderPaymentStatusFilter"/> sobre por qué se redeclaran.</summary>
 public enum PriceChangeField
 {
     PriceBaseUsd,
@@ -52,7 +52,7 @@ public enum PriceChangeField
 /// </summary>
 public static class ReportFilterParser
 {
-    public static bool TryParsePaymentStatus(string? value, out SalePaymentStatusFilter parsed) =>
+    public static bool TryParsePaymentStatus(string? value, out OrderPaymentStatusFilter parsed) =>
         TryParse(value, out parsed);
 
     public static bool TryParseQuotationStatus(string? value, out QuotationStatusFilter parsed) =>
@@ -64,8 +64,8 @@ public static class ReportFilterParser
     /// <summary>El valor parseado, o <c>null</c> si no vino ninguno. Un texto presente pero
     /// inválido tira <see cref="ReportingDomainException"/>: el validador de FluentValidation lo
     /// atrapa antes con el nombre del campo, y esto es la red de abajo.</summary>
-    public static SalePaymentStatusFilter? ParsePaymentStatus(string? value) =>
-        Parse<SalePaymentStatusFilter>(value, "paymentStatus");
+    public static OrderPaymentStatusFilter? ParsePaymentStatus(string? value) =>
+        Parse<OrderPaymentStatusFilter>(value, "paymentStatus");
 
     /// <summary>Ver <see cref="ParsePaymentStatus"/>.</summary>
     public static QuotationStatusFilter? ParseQuotationStatus(string? value) =>

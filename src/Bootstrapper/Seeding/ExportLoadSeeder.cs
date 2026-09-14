@@ -13,7 +13,7 @@ namespace Bootstrapper.Seeding;
 /// La carga sintética para medir la exportación en producción (spec 2026-09-13, A10).
 ///
 /// El tenant, el usuario, la membresía y el catálogo se crean por el dominio, con los mismos seeders
-/// de la semilla de arranque. Clientes, cotizaciones, líneas y ventas van en SQL masivo, en una sola
+/// de la semilla de arranque. Clientes, cotizaciones, líneas y pedidos van en SQL masivo, en una sola
 /// transacción: no pasan por los handlers, así que no generan outbox, auditoría, correos ni WhatsApp.
 ///
 /// Es idempotente: si el tenant ya tiene cotizaciones, no siembra. Si falla a mitad, la transacción no
@@ -31,7 +31,7 @@ public static class ExportLoadSeeder
     /// detalle de la cotización la busca (QuotationResponseComposer), no la encuentra y muestra la cuenta
     /// bancaria sin nombre ni NIT de empresa. No la reutilices donde la búsqueda es estricta, como
     /// QuotationBillingAccountResolver al editar. La cuenta completa está para que el listado muestre las
-    /// cotizaciones como completas y las ventas tengan de dónde salir.
+    /// cotizaciones como completas y los pedidos tengan de dónde salir.
     /// </summary>
     public static readonly Guid BillingCompanyId = Guid.Parse("01900000-0000-7000-8000-000000000005");
 
@@ -113,17 +113,17 @@ public static class ExportLoadSeeder
         }
 
         var seededItems = await ExecuteAsync(connection, transaction, ItemsSql, cancellationToken);
-        var seededSales = await ExecuteAsync(connection, transaction, SalesSql, cancellationToken,
+        var seededOrders = await ExecuteAsync(connection, transaction, OrdersSql, cancellationToken,
             ("tenant", TenantId), ("advisor", advisorId), ("now", now));
         await ExecuteAsync(connection, transaction, QuotationCountersSql, cancellationToken,
             ("tenant", TenantId));
-        await ExecuteAsync(connection, transaction, SaleCountersSql, cancellationToken,
+        await ExecuteAsync(connection, transaction, OrderCountersSql, cancellationToken,
             ("tenant", TenantId));
 
         await transaction.CommitAsync(cancellationToken);
 
         return new ExportLoadSeedResult(
-            true, seededCustomers, seededQuotations, seededItems, seededSales, Stopwatch.GetElapsedTime(startedAt));
+            true, seededCustomers, seededQuotations, seededItems, seededOrders, Stopwatch.GetElapsedTime(startedAt));
     }
 
     private static async Task<bool> AlreadySeededAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
@@ -229,7 +229,7 @@ public static class ExportLoadSeeder
 
     // Fechas repartidas en los últimos 364 días. El número es QUO-{año UTC}-{consecutivo del año}: D4 es
     // un mínimo, y greatest(4, …) evita que lpad trunque a partir de 10 000. La vigencia es la de la app,
-    // alta + 15 días. El 30 % se convierte en venta.
+    // alta + 15 días. El 30 % se convierte en pedido.
     private const string LoadQuotationsSql = """
         INSERT INTO load_quotations (n, id, client_id, created_at, year, quotation_number, sent_at, valid_until, converted)
         SELECT numbered.n, gen_random_uuid(), seeded_customers.id, numbered.created_at, numbered.year,
@@ -335,16 +335,16 @@ public static class ExportLoadSeeder
         FROM load_items
         """;
 
-    // Convertida un día después del envío, dentro de la vigencia. VEN-{año UTC de la conversión}-{n}.
+    // Convertida un día después del envío, dentro de la vigencia. PED-{año UTC de la conversión}-{n}.
     // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage.
-    private const string SalesSql = """
-        INSERT INTO quotations.sales (
-            id, tenant_id, sale_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
+    private const string OrdersSql = """
+        INSERT INTO quotations.orders (
+            id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
             approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
         SELECT gen_random_uuid(), @tenant,
-               'VEN-' || sale.year || '-' || lpad(sale.sequence::text, greatest(4, length(sale.sequence::text)), '0'),
-               sale.quotation_id, 'Pending', 'PaymentPending', NULL, sale.converted_at, @advisor,
-               NULL, NULL, NULL, sale.converted_at, sale.converted_at, 1
+               'PED-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
+               numbered.quotation_id, 'Pending', 'PaymentPending', NULL, numbered.converted_at, @advisor,
+               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1
         FROM (
             SELECT converted.quotation_id,
                    converted.converted_at,
@@ -357,7 +357,7 @@ public static class ExportLoadSeeder
                 FROM load_quotations
                 WHERE converted
             ) AS converted
-        ) AS sale
+        ) AS numbered
         """;
 
     private const string QuotationCountersSql = """
@@ -369,14 +369,14 @@ public static class ExportLoadSeeder
             SET next_value = greatest(quotation_number_counters.next_value, EXCLUDED.next_value)
         """;
 
-    private const string SaleCountersSql = """
-        INSERT INTO quotations.sale_number_counters (tenant_id, year, next_value)
+    private const string OrderCountersSql = """
+        INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
         SELECT @tenant, extract(year FROM converted_at AT TIME ZONE 'UTC')::int, count(*) + 1
-        FROM quotations.sales
+        FROM quotations.orders
         WHERE tenant_id = @tenant
         GROUP BY 2
         ON CONFLICT (tenant_id, year) DO UPDATE
-            SET next_value = greatest(sale_number_counters.next_value, EXCLUDED.next_value)
+            SET next_value = greatest(order_number_counters.next_value, EXCLUDED.next_value)
         """;
 }
 
@@ -387,7 +387,7 @@ public sealed record ExportLoadSeedResult(
     int Customers,
     int Quotations,
     int Items,
-    int Sales,
+    int Orders,
     TimeSpan Duration)
 {
     public static ExportLoadSeedResult Skipped { get; } = new(false, 0, 0, 0, 0, TimeSpan.Zero);

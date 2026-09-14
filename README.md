@@ -344,7 +344,7 @@ tenant **Carga de exportación** (`carga-export`). Lleva:
 
 - esa cantidad de cotizaciones repartidas en los últimos 12 meses;
 - un cliente cada 25 cotizaciones;
-- el 30 % convertidas en venta;
+- el 30 % convertidas en pedido;
 - el catálogo de la semilla;
 - una membresía `admin` para `Seed:OwnerEmail`.
 
@@ -910,10 +910,10 @@ Para AWS CLI se incluye la variante envuelta en `CORSRules` en
 ### Reportes exportados (`exports/`)
 
 La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y las de los
-listados de cotizaciones y ventas (`POST /tenants/{tenantId}/quotations/export`,
-`POST /tenants/{tenantId}/sales/export`) no devuelven el archivo: lo suben bajo el prefijo
+listados de cotizaciones y pedidos (`POST /tenants/{tenantId}/quotations/export`,
+`POST /tenants/{tenantId}/orders/export`) no devuelven el archivo: lo suben bajo el prefijo
 `exports/` del **bucket privado** y le mandan a quien la pidió un correo con una URL prefirmada.
-Clientes arma el Excel dentro del request; cotizaciones y ventas contestan `202` y lo encolan en
+Clientes arma el Excel dentro del request; cotizaciones y pedidos contestan `202` y lo encolan en
 `quotations.export_jobs`, y `ExportJobWorker` lo arma en segundo plano con la clave
 `exports/tenants/{tenantId}/jobs/{jobId}.xlsx` —un reintento pisa el mismo objeto—. La vigencia
 del enlace es `Storage:ExportUrlHours` (24 h por defecto), propia y no

@@ -7,8 +7,8 @@ namespace Modules.Reporting.IntegrationTests;
 /// <summary>
 /// El resumen agregado de cotizaciones: <c>GET /reports/quotations/summary</c>.
 ///
-/// Igual que el de ventas, estas pruebas existen sobre todo para verificar **que los agregados se
-/// traduzcan a SQL**, y acá hay uno que el de ventas no tiene: los tramos de vigencia agrupan por
+/// Igual que el de pedidos, estas pruebas existen sobre todo para verificar **que los agregados se
+/// traduzcan a SQL**, y acá hay uno que el de pedidos no tiene: los tramos de vigencia agrupan por
 /// una cadena de condicionales sobre <c>ValidUntil</c>. Eso compila siempre y traduce sólo si EF
 /// sabe convertir la expresión en un <c>CASE</c> — es exactamente el tipo de consulta que revienta
 /// en runtime y ninguna prueba unitaria alcanza a ver.
@@ -54,7 +54,7 @@ public sealed class QuotationsReportSummaryApiTests
         Assert.All(
             summary.ByStatus.Where(slice => slice.Status != "Sent"),
             slice => Assert.Equal(0, slice.Count));
-        // Y ninguno es "Approved": ése es un estado de la venta. Convertir deja la cotización en
+        // Y ninguno es "Approved": ése es un estado del pedido. Convertir deja la cotización en
         // Converted.
         Assert.DoesNotContain(summary.ByStatus, slice => slice.Status == "Approved");
 

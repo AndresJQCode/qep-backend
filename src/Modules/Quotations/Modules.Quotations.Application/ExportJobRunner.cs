@@ -128,7 +128,7 @@ public sealed class ExportJobRunner(
 
     private static string AuditActionFor(ExportJobKind kind) => kind switch
     {
-        ExportJobKind.Sales => "quotation.sale.exported",
+        ExportJobKind.Orders => "quotation.order.exported",
         _ => "quotation.quotation.exported",
     };
 
