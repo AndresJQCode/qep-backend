@@ -76,4 +76,4 @@ data:
   # hace que prenderlo y apagarlo sean un diff de una línea que queda en la historia. Después de medir
   # vuelve a "0" y SÓLO ENTONCES se corre ops/export-load-cleanup.sql
   # (README § Carga sintética para medir la exportación).
-  Seed__ExportLoad__Quotations: "50000"
+  Seed__ExportLoad__Quotations: "0"
