@@ -6,17 +6,19 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Sumar comprobantes a una venta que ya existe, con el estado de pago que corresponda a lo
-/// cargado. Ruta hermana de <see cref="ApproveSaleCommand"/> y no un campo del PATCH que no
-/// existe: la venta no se edita en general, esto es un único gesto puntual —"cargué lo que
-/// faltaba"— para destrabar "Aprobar venta" cuando el pago no había quedado completo.
+/// Sumar comprobantes a una venta que ya existe, y corregir el monto de los que ya tenía
+/// cargados (a pedido, 2026-09), con el estado de pago que corresponda a lo cargado. Ruta
+/// hermana de <see cref="ApproveSaleCommand"/> y no un campo del PATCH que no existe: la venta
+/// no se edita en general, esto es un único gesto puntual —"cargué o corregí lo que hacía
+/// falta"— para destrabar "Aprobar venta" cuando el pago no había quedado completo o correcto.
 /// </summary>
 public sealed record AddSalePaymentProofsCommand(
     Guid TenantId,
     Guid QuotationId,
     string PaymentStatus,
     string? Notes,
-    IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs) : ICommand<SaleDto>;
+    IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs,
+    IReadOnlyCollection<SalePaymentProofUpdateRequest> UpdatedProofs) : ICommand<SaleDto>;
 
 public sealed class AddSalePaymentProofsValidator
     : AbstractValidator<AddSalePaymentProofsCommand>
@@ -34,6 +36,17 @@ public sealed class AddSalePaymentProofsValidator
             .MaximumLength(Sale.NotesMaxLength)
             .When(command => command.Notes is not null);
         RuleForEach(command => command.PaymentProofs).SetValidator(new SalePaymentProofRequestValidator());
+        RuleForEach(command => command.UpdatedProofs).SetValidator(new SalePaymentProofUpdateRequestValidator());
+    }
+}
+
+internal sealed class SalePaymentProofUpdateRequestValidator
+    : AbstractValidator<SalePaymentProofUpdateRequest>
+{
+    public SalePaymentProofUpdateRequestValidator()
+    {
+        RuleFor(request => request.ProofId).NotEmpty();
+        RuleFor(request => request.Amount).GreaterThan(0);
     }
 }
 
@@ -79,7 +92,11 @@ public sealed class AddSalePaymentProofsHandler(
             paymentStatus,
             command.Notes,
             uploadedBy,
-            now);
+            now,
+            command.UpdatedProofs
+                .Select(update => new SalePaymentProofAmountUpdate(
+                    new SalePaymentProofId(update.ProofId), update.Amount))
+                .ToArray());
 
         auditPublisher.Publish(
             command.TenantId,

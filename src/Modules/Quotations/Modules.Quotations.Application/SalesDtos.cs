@@ -26,6 +26,11 @@ public sealed record SaleDto(
 /// archivo ya se subió a Storage por fuera de este llamado, acá sólo se referencia.</summary>
 public sealed record SalePaymentProofRequest(Guid FileId, decimal Amount);
 
+/// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
+/// <see cref="SalePaymentProofRequest"/>, lleva el id del comprobante a corregir en vez del
+/// archivo — ese no cambia.</summary>
+public sealed record SalePaymentProofUpdateRequest(Guid ProofId, decimal Amount);
+
 /// <summary>US-13 a US-16: el asistente de conversión. No lleva cliente/productos/totales —
 /// todo eso se hereda de la cotización, que ya existe.</summary>
 public sealed record ConvertQuotationToSaleRequest(
@@ -33,16 +38,21 @@ public sealed record ConvertQuotationToSaleRequest(
     string? Notes,
     IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs);
 
-/// <summary>Sumar comprobantes a una venta que ya existe (a pedido, 2026-09) — mismos dos
-/// campos que <see cref="ConvertQuotationToSaleRequest"/> le pide a los comprobantes, sin
-/// <c>Notes</c>: esto no vuelve a pedir lo que ya se cargó al convertir.</summary>
+/// <summary>Sumar comprobantes a una venta que ya existe, y de paso corregir el monto de los
+/// que ya tenía cargados (a pedido, 2026-09) — un solo request para las dos cosas, en vez de uno
+/// por cada comprobante que se toca.</summary>
 public sealed record AddSalePaymentProofsRequest(
     string PaymentStatus,
     IReadOnlyCollection<SalePaymentProofRequest> PaymentProofs,
     /// <summary>Reemplaza <c>Sale.Notes</c> entero (a pedido, 2026-09). La pantalla la precarga
     /// con lo que ya había, así que ausente o null la borra igual que al crear la venta — no es
     /// un PATCH parcial.</summary>
-    string? Notes = null);
+    string? Notes = null,
+    /// <summary>Comprobantes ya cargados cuyo monto se corrige (a pedido, 2026-09). El archivo
+    /// no viaja: no cambia, sólo lo hace el importe. Ausente o vacío, no se corrige ninguno.
+    /// Último parámetro a propósito: los tres anteriores ya existían y algún caller los pasa
+    /// posicionalmente — agregar éste al final no les rompe el orden.</summary>
+    IReadOnlyCollection<SalePaymentProofUpdateRequest>? UpdatedProofs = null);
 
 public sealed record SalePaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 
