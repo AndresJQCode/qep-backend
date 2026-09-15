@@ -29,9 +29,9 @@ public interface IMembershipRepository
         Guid userId,
         CancellationToken cancellationToken);
 
-    // Igual que ListActiveTenantsByUserAsync pero con el DisplayName del tenant: el join vive
-    // acá porque Application no puede tocar EF Core, y este es el único consumidor del nombre
-    // (el selector de tenant del menú de usuario, vía IActiveTenantsQuery).
+    // Igual que ListActiveTenantsByUserAsync pero con el DisplayName del tenant y las claves de
+    // rol de la membresía: el join vive acá porque Application no puede tocar EF Core, y este
+    // es el único consumidor de los dos (el menú de usuario, vía IActiveTenantsQuery).
     Task<IReadOnlyList<ActiveTenantSummary>> ListActiveTenantSummariesByUserAsync(
         Guid userId,
         CancellationToken cancellationToken);

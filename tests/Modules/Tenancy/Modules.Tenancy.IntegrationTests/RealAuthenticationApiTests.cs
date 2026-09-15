@@ -315,6 +315,32 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
     }
 
+    [Fact]
+    public async Task CurrentSessionListsTheOwnersRolesWithCatalogDisplayNames()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+
+        // /auth/me se ejercita acá y no en AuthSessionApiTests: con el stub de desarrollo el
+        // principal nunca recibe qep_sub (ExternalClaimsTransformation.cs:31-36) y el endpoint
+        // responde 401.
+        var response = await owner.GetAsync(
+            "/api/v1/auth/me",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var session = await response.Content.ReadFromJsonAsync<SessionPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(session);
+
+        var tenant = Assert.Single(session!.ActiveTenants);
+        Assert.Equal(tenantId, tenant.TenantId);
+        // El owner de registro entra con admin (TenantRegistrationService.cs:16).
+        Assert.NotNull(tenant.Roles);
+        Assert.Equal(new[] { new SessionRolePayload("admin", "Administrador") }, tenant.Roles);
+    }
+
     // Todo cliente de esta suite se crea acá, y sobre https. Ver CreateClient.
     private static async Task<(HttpClient Client, Guid TenantId)> RegisterOwnerAndTenantAsync(
         QepApiFactory factory)
@@ -442,6 +468,16 @@ public sealed class RealAuthenticationApiTests
     /// <summary>El listado viaja envuelto, con los conteos por estado al lado.</summary>
     private sealed record MembershipListPayload(
         IReadOnlyList<MembershipPayload> Items);
+
+    private sealed record SessionPayload(IReadOnlyList<ActiveTenantPayload> ActiveTenants);
+
+    // Roles nullable: un backend que no manda el campo deserializa a null y la prueba lo
+    // reporta como tal.
+    private sealed record ActiveTenantPayload(
+        Guid TenantId,
+        IReadOnlyList<SessionRolePayload>? Roles);
+
+    private sealed record SessionRolePayload(string Role, string DisplayName);
 
     /// <summary>
     /// Cliente sobre **https**, y no es cosmético: es lo que hace que la cookie de sesión viaje.
