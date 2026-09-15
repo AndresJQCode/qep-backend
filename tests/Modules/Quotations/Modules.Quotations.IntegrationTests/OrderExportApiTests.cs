@@ -165,7 +165,7 @@ public sealed class OrderExportApiTests
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[0]));
         var first = sheet.Rows[1];
         Assert.Equal(items[0].ClientName, first[1]);
-        Assert.Equal(items[0].AdvisorEmail ?? string.Empty, first[2]);
+        Assert.Equal(items[0].AdvisorName ?? string.Empty, first[2]);
         Assert.Equal(items[0].ConvertedAt, DateTimeOffset.Parse(first[3], CultureInfo.InvariantCulture));
         // La API sigue mandando el enum (A8); el archivo, la etiqueta de la tabla (A7).
         Assert.Equal("Pending", items[0].Status);
