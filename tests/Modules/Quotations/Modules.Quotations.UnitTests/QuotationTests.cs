@@ -1243,6 +1243,63 @@ public sealed class QuotationTests
         Assert.False(quotation.CanBeConvertedToOrder);
     }
 
+    // A pedido (2026-09): "Editar" un pedido pendiente para sumarle productos que faltaron al
+    // convertir, sin recrear el pedido entero. Sólo sumar — ver Order.RecalculatePaymentStatus
+    // para la otra mitad de esta historia.
+    [Fact]
+    public void AddItemAfterConversionAddsALineToAConvertedQuotation()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToOrder(AdvisorId, Now);
+        var totalBefore = quotation.Total;
+        var productId = Guid.CreateVersion7();
+        var later = Now.AddDays(1);
+
+        quotation.AddItemAfterConversion(
+            QuotationItemId.New(), productId, quantity: 2, unitPrice: 50_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, later);
+
+        Assert.Equal(2, quotation.Items.Count);
+        Assert.Contains(quotation.Items, item => item.ProductId == productId);
+        Assert.True(quotation.Total > totalBefore);
+        Assert.Equal(later, quotation.UpdatedAt);
+        Assert.Equal(AdvisorId, quotation.UpdatedBy);
+    }
+
+    // Bug real: las conversiones de antes del 2026-09-13 no movían el estado de la cotización
+    // (el campo se agregó ese día, sin backfill), así que hay pedidos Pending reales cuya
+    // cotización quedó en Sent para siempre. Exigir Converted acá las dejaba sin poder
+    // editarse — el caso de uso ya encontró el pedido pendiente antes de llamar, y eso alcanza.
+    [Fact]
+    public void AddItemAfterConversionAddsALineEvenWhenTheQuotationWasNeverBackfilledToConverted()
+    {
+        var quotation = ConvertibleSentQuotation();
+        var productId = Guid.CreateVersion7();
+
+        quotation.AddItemAfterConversion(
+            QuotationItemId.New(), productId, quantity: 1, unitPrice: 50_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now.AddDays(1));
+
+        Assert.Contains(quotation.Items, item => item.ProductId == productId);
+    }
+
+    // Mismo invariante que AddItem: dos líneas del mismo producto es la misma línea con la
+    // cantidad partida.
+    [Fact]
+    public void AddItemAfterConversionRejectsADuplicateProduct()
+    {
+        var quotation = ConvertibleSentQuotation();
+        var existingProductId = Assert.Single(quotation.Items).ProductId;
+        quotation.ConvertToOrder(AdvisorId, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.AddItemAfterConversion(
+                QuotationItemId.New(), existingProductId, 1, 1000m, 0m, 0,
+                AdvisorId, Now.AddDays(1)));
+
+        Assert.Equal("quotation.item.duplicate_product", error.Code);
+    }
+
     /// <summary>Enviada y con los cuatro datos que el pedido hereda: productos, vigencia, forma
     /// de pago y cuenta de cobro.</summary>
     private static Quotation ConvertibleSentQuotation()

@@ -29,7 +29,9 @@ Order.paymentStatus: FullPaymentReceived | PartialPaymentReceived | PaymentPendi
 ```
 
 Editar (encabezado o líneas) sólo funciona en `Draft`/`Sent`. `Converted`, `Voided` y `Expired`
-son de sólo lectura (422 `quotation.quotation.not_editable`).
+son de sólo lectura (422 `quotation.quotation.not_editable`). Única excepción: mientras el pedido
+sigue `Pending`, `POST /quotations/{id}/order/items` le suma líneas a su cotización —sólo sumar,
+nada de cambiar cantidad ni quitar—, sin importar el `status` de la cotización.
 
 ## Endpoints
 
@@ -46,6 +48,7 @@ son de sólo lectura (422 `quotation.quotation.not_editable`).
 | `POST` | `/quotations/{id}/void` | — (sin body) | |
 | `GET` | `/quotations/{id}/order` | — | 404 si no se convirtió todavía |
 | `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | Crea el pedido en `Pending` y deja la cotización en `Converted`, en una sola operación |
+| `POST` | `/quotations/{id}/order/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas a la cotización y recalcula `paymentStatus` contra el total nuevo |
 
 ## Formas de los DTOs
 
@@ -95,6 +98,10 @@ type OrderResponse = {
   createdAt: string; updatedAt: string;
   paymentProofs: { id, fileId, amount, uploadedAt }[];
 };
+
+type AddOrderItemsRequest = { toAdd: { productId: string; quantity: number }[] }; // al menos uno
+
+type OrderDetailResponse = { order: OrderResponse; quotation: QuotationResponse };
 ```
 
 `advisorId`/`createdBy`/`updatedBy`/`convertedBy` son ids de **membership** (Tenancy), no el
@@ -127,6 +134,8 @@ No hace falta publicar (paso 5 de esa guía) — estos archivos no necesitan URL
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
+| `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
+| `order.order.not_pending` | 422 | El pedido ya está `Approved`: no admite comprobantes (`/order/proofs`), productos (`/order/items`) ni otra aprobación |
 | `order.order.payment_proof_required` | 422 | `POST /order` sin comprobantes y el pago no es `PaymentPending`; en `POST /order/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
 | `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
 | `order.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |

@@ -14,6 +14,11 @@ namespace Modules.Quotations.Domain;
 /// <see cref="QuotationStatus.Sent"/> — US-10: "se puede editar en Draft y Sent... se bloquea
 /// una vez convertida a pedido, anulada o vencida". <see cref="Send"/> sale de Draft o de Sent
 /// (reenvío); <see cref="Void"/> y <see cref="ConvertToOrder"/> también.
+///
+/// Única excepción (a pedido, 2026-09): <see cref="AddItemAfterConversion"/> suma una línea a
+/// la cotización de un pedido que sigue <c>OrderStatus.Pending</c>, sin exigir
+/// <see cref="QuotationStatus.Converted"/> en este campo — ver su propio comentario para el
+/// porqué. Sólo sumar, nada de editar cantidad ni quitar.
 /// </summary>
 public sealed class Quotation
 {
@@ -338,7 +343,54 @@ public sealed class Quotation
         DateTimeOffset occurredAt)
     {
         EnsureEditable();
+        AddItemCore(
+            itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            updatedBy, occurredAt);
+    }
 
+    /// <summary>
+    /// Agrega una línea a la cotización de un pedido pendiente (a pedido, 2026-09): la pantalla
+    /// del pedido ofrece "Editar" mientras sigue <c>OrderStatus.Pending</c> —sumar productos que
+    /// faltaron al convertir, sin recrear el pedido entero—, y ese estado lo controla
+    /// <c>Order</c>, no este agregado (no tiene referencia a su pedido). El caso de uso ya
+    /// encontró un <c>Order</c> pendiente para esta cotización antes de llamar acá —eso alcanza
+    /// como autorización; este método no vuelve a exigir <see cref="QuotationStatus.Converted"/>.
+    ///
+    /// Repetirlo acá rompía con datos reales: las conversiones de antes del 2026-09-13 no movían
+    /// el estado de la cotización (el campo se agregó ese día, sin backfill), así que hay pedidos
+    /// `Pending` genuinos cuya cotización quedó en `Draft` o `Sent` para siempre. Exigir
+    /// `Converted` los dejaba sin poder editarse — el índice único `Order.QuotationId` ya es la
+    /// garantía real de que esta cotización tiene un pedido, sea cual sea el valor de este campo.
+    ///
+    /// A diferencia de <see cref="AddItem"/>, no hay forma paralela de editar cantidad ni quitar
+    /// líneas acá: sólo sumar. Tocar lo que el cliente ya vio en la cotización que recibió es
+    /// otra decisión, no tomada todavía.
+    /// </summary>
+    public void AddItemAfterConversion(
+        QuotationItemId itemId,
+        Guid productId,
+        decimal quantity,
+        decimal unitPrice,
+        decimal discountPercentage,
+        int taxPercentage,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        AddItemCore(
+            itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            updatedBy, occurredAt);
+    }
+
+    private void AddItemCore(
+        QuotationItemId itemId,
+        Guid productId,
+        decimal quantity,
+        decimal unitPrice,
+        decimal discountPercentage,
+        int taxPercentage,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
         // Un producto por cotizacion: dos lineas del mismo producto son la misma linea con la
         // cantidad partida, y partida ademas rompe el descuento por escala (cada mitad resuelve
         // su escala por separado y las dos pagan mas caro que la suma junta). Quien quiera mas
