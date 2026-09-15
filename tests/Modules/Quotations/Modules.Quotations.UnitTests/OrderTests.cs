@@ -334,4 +334,48 @@ public sealed class OrderTests
 
         Assert.Equal("order.order.not_pending", error.Code);
     }
+
+    // A pedido (2026-09): agregar un producto desde "Editar" pedido sube el total de la
+    // cotización; lo cargado en comprobantes no cambia, pero el estado de pago sí puede.
+    [Theory]
+    [InlineData(50_000, 100_000, OrderPaymentStatus.PartialPaymentReceived)]
+    [InlineData(100_000, 100_000, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(120_000, 100_000, OrderPaymentStatus.FullPaymentReceived)]
+    public void RecalculatePaymentStatusComparesProofsAgainstTheNewTotal(
+        decimal proofAmount, decimal newTotal, OrderPaymentStatus expected)
+    {
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)]);
+        var later = Now.AddDays(1);
+
+        order.RecalculatePaymentStatus(newTotal, later);
+
+        Assert.Equal(expected, order.PaymentStatus);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    [Fact]
+    public void RecalculatePaymentStatusIsPendingWithoutAnyProof()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
+
+        order.RecalculatePaymentStatus(100_000m, Now.AddDays(1));
+
+        Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
+    }
+
+    // Aprobado, el pedido es el respaldo de un cobro que alguien ya revisó con el total que
+    // tenía en ese momento — este método no se llama en ese caso (el caso de uso que agrega el
+    // producto ya lo bloquea antes), pero el agregado se defiende igual.
+    [Fact]
+    public void RecalculatePaymentStatusRejectsAnAlreadyApprovedOrder()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.RecalculatePaymentStatus(200_000m, Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
 }

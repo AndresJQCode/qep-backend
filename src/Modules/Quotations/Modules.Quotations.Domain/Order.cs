@@ -193,6 +193,39 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>
+    /// Recalcula el estado de pago cuando el total de la cotización cambia por agregarle un
+    /// producto (a pedido, 2026-09, ver <see cref="Quotation.AddItemAfterConversion"/>): lo
+    /// cargado en comprobantes no cambia, pero el total contra el que se compara sí. Mismo
+    /// cálculo que usa el frontend al cargar comprobantes (<c>derivePaymentStatus</c>) — acá se
+    /// repite porque agregar un producto no pasa por esa pantalla, así que nadie manda el
+    /// estado ya calculado.
+    ///
+    /// Sólo sobre <see cref="OrderStatus.Pending"/> — mismo motivo que
+    /// <see cref="AddPaymentProofs"/>: aprobado, el pedido es el respaldo de un cobro que
+    /// alguien ya revisó con el total que tenía en ese momento. El caso de uso que agrega el
+    /// producto ya comprobó esto mismo antes de tocar la cotización; este chequeo es la mitad
+    /// que le toca a este agregado.
+    /// </summary>
+    public void RecalculatePaymentStatus(decimal quotationTotal, DateTimeOffset occurredAt)
+    {
+        if (Status != OrderStatus.Pending)
+        {
+            throw new QuotationsDomainException(
+                "order.order.not_pending",
+                "The payment status can only be recalculated on a pending order.");
+        }
+
+        var proofsTotal = _paymentProofs.Sum(proof => proof.Amount);
+        PaymentStatus = proofsTotal <= 0
+            ? OrderPaymentStatus.PaymentPending
+            : proofsTotal >= quotationTotal
+                ? OrderPaymentStatus.FullPaymentReceived
+                : OrderPaymentStatus.PartialPaymentReceived;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
     // 'Payment pending'". Va antes de construir las líneas para no dejar un pedido a medio
     // armar si el chequeo falla.

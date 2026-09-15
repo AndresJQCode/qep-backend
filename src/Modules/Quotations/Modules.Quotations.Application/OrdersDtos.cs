@@ -54,6 +54,20 @@ public sealed record AddOrderPaymentProofsRequest(
     /// posicionalmente — agregar éste al final no les rompe el orden.</summary>
     IReadOnlyCollection<OrderPaymentProofUpdateRequest>? UpdatedProofs = null);
 
+/// <summary>Una línea a agregar a la cotización de un pedido pendiente — mismo par que
+/// <see cref="BatchQuotationItemAdditionRequest"/>, DTO propio porque viaja en un endpoint de
+/// Orders y no de Quotations.</summary>
+public sealed record OrderItemAdditionRequest(Guid ProductId, decimal Quantity);
+
+/// <summary>
+/// "Editar" un pedido pendiente para sumarle productos (a pedido, 2026-09): sólo mientras
+/// <see cref="OrderStatus.Pending"/> — ver <see cref="Quotation.AddItemAfterConversion"/> y
+/// <see cref="Order.RecalculatePaymentStatus"/>. Una tanda y no un producto por request, mismo
+/// motivo que <see cref="BatchUpdateQuotationItemsRequest"/>: quien edita puede agregar varios
+/// de una sola vez.
+/// </summary>
+public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
+
 public sealed record OrderPaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 
 public sealed record OrderResponse(

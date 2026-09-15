@@ -85,6 +85,17 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // "Editar" un pedido pendiente para sumarle productos que faltaron al convertir (a
+        // pedido, 2026-09) — sólo mientras Pending, ver AddOrderItemsHandler. Devuelve el pedido y
+        // la cotización juntos, igual que GetOrderByIdAsync: el total nuevo vive en la segunda.
+        group.MapPost("/items", AddOrderItemsAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<AddOrderItemsRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -218,6 +229,29 @@ public static class OrderEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(order));
+    }
+
+    private static async Task<IResult> AddOrderItemsAsync(
+        Guid tenantId,
+        Guid quotationId,
+        AddOrderItemsRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var toAdd = request.ToAdd
+            .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
+            .ToArray();
+
+        var result = await dispatcher.SendAsync(
+            new AddOrderItemsCommand(tenantId, quotationId, toAdd),
+            cancellationToken);
+
+        // Misma composición que GetOrderByIdAsync: el mismo composer, para que las dos pantallas
+        // no puedan mostrar cosas distintas de la misma cotización.
+        return Results.Ok(new OrderDetailResponse(
+            ToResponse(result.Order),
+            await composer.ComposeAsync(tenantId, result.Quotation, cancellationToken)));
     }
 
     private static async Task<IResult> ApproveOrderAsync(
