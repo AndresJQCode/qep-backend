@@ -155,7 +155,7 @@ internal static class CustomersApiHarness
     private sealed record GeographyCityDto(Guid Id, string DivipolaCode, string Name, Guid DepartmentId);
 
     /// <summary>
-    /// Una fila del Excel de importacion, para armar workbooks de prueba sin repetir las once
+    /// Una fila del Excel de importacion, para armar workbooks de prueba sin repetir las trece
     /// columnas en cada test. Todos los campos son opcionales — un test que quiere una fila
     /// invalida por una celda vacia simplemente no la pasa. <c>Cuc</c> vacio (el default) es una
     /// fila que crea; con un valor, una fila que actualiza el cliente con ese Cuc.
@@ -163,6 +163,7 @@ internal static class CustomersApiHarness
     public sealed record ExcelRowInput(
         string? Cuc = null,
         string? Name = "Verde Esencial S.A.S.",
+        string? BusinessName = null,
         string? IdentificationType = "NIT",
         string? IdentificationNumber = "900.123.456-1",
         string? Phone = null,
@@ -171,7 +172,8 @@ internal static class CustomersApiHarness
         string? Department = null,
         string? City = null,
         string? Classification = null,
-        string? WithRetention = null);
+        string? WithRetention = null,
+        string? VatSurplus = null);
 
     /// <summary>
     /// Arma un <c>.xlsx</c> real en memoria con ClosedXML — las pruebas de import ya no suben
@@ -192,20 +194,33 @@ internal static class CustomersApiHarness
             sheet.Cell(1, column + 1).Value = columns[column];
         }
 
+        // Cada celda se escribe bajo la cabecera de su nombre, no por posicion: es como la lee
+        // el parser, y asi una columna que se agrega al contrato no corre las demas en silencio
+        // (a054cfd agrego "Razon Social" en la tercera posicion y desplazo todo el resto).
         for (var index = 0; index < rows.Count; index++)
         {
             var row = rows[index];
-            var values = new[]
+            var valueByColumn = new Dictionary<string, string?>(StringComparer.Ordinal)
             {
-                row.Cuc, row.Name, row.IdentificationType, row.IdentificationNumber, row.Phone,
-                row.Email, row.Address, row.Department, row.City, row.Classification,
-                row.WithRetention
+                [CustomerImportColumns.Cuc] = row.Cuc,
+                [CustomerImportColumns.Name] = row.Name,
+                [CustomerImportColumns.BusinessName] = row.BusinessName,
+                [CustomerImportColumns.IdentificationType] = row.IdentificationType,
+                [CustomerImportColumns.IdentificationNumber] = row.IdentificationNumber,
+                [CustomerImportColumns.Phone] = row.Phone,
+                [CustomerImportColumns.Email] = row.Email,
+                [CustomerImportColumns.Address] = row.Address,
+                [CustomerImportColumns.Department] = row.Department,
+                [CustomerImportColumns.City] = row.City,
+                [CustomerImportColumns.Classification] = row.Classification,
+                [CustomerImportColumns.WithRetention] = row.WithRetention,
+                [CustomerImportColumns.VatSurplus] = row.VatSurplus
             };
-            for (var column = 0; column < values.Length && column < columns.Count; column++)
+            for (var column = 0; column < columns.Count; column++)
             {
-                if (values[column] is not null)
+                if (valueByColumn.TryGetValue(columns[column], out var value) && value is not null)
                 {
-                    sheet.Cell(index + 2, column + 1).Value = values[column];
+                    sheet.Cell(index + 2, column + 1).Value = value;
                 }
             }
         }
