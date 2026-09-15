@@ -13,7 +13,7 @@ public static class QuotationsExportKindText
     public static QuotationsExportKindNames Of(string kind) => kind switch
     {
         "Quotations" => new("cotización", "cotizaciones"),
-        "Sales" => new("venta", "ventas"),
+        "Orders" => new("pedido", "pedidos"),
         _ => new("registro", "registros"),
     };
 }

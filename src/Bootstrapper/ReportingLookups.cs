@@ -100,7 +100,7 @@ internal sealed class ReportingPeopleLookup(
 /// <summary>
 /// Resuelve nombre y CUC de los clientes de una pagina de reporte.
 ///
-/// Vive aca por lo mismo que <c>QuotationCustomerLookup</c>: los reportes de ventas y de
+/// Vive aca por lo mismo que <c>QuotationCustomerLookup</c>: los reportes de pedidos y de
 /// cotizaciones necesitan un dato de <c>customers</c>, y ningun modulo de negocio referencia a
 /// otro. En lote, por lo mismo que <see cref="ReportingPeopleLookup"/>.
 /// </summary>
@@ -129,7 +129,7 @@ internal sealed class ReportingClientLookup(CustomersDbContext customers)
     }
 }
 
-/// <summary>Lo unico que los reportes de ventas y cotizaciones necesitan de un cliente.</summary>
+/// <summary>Lo unico que los reportes de pedidos y cotizaciones necesitan de un cliente.</summary>
 internal sealed record ReportingClientRef(string Name, string Cuc);
 
 /// <summary>

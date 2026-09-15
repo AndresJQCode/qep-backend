@@ -100,6 +100,131 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.ToTable("export_jobs", "quotations");
                 });
 
+            modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("approved_at");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approved_by");
+
+                    b.Property<DateTimeOffset>("ConvertedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("converted_at");
+
+                    b.Property<Guid>("ConvertedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("converted_by");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("OrderNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("order_number");
+
+                    b.Property<string>("PaymentStatus")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("payment_status");
+
+                    b.Property<Guid>("QuotationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("quotation_id");
+
+                    b.Property<string>("RitualCollectionSyncId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("ritual_collection_sync_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QuotationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_orders_quotation");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_orders_tenant");
+
+                    b.HasIndex("TenantId", "OrderNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_orders_tenant_number");
+
+                    b.HasIndex("TenantId", "ConvertedAt", "OrderNumber")
+                        .HasDatabaseName("IX_orders_tenant_converted_at_number");
+
+                    b.ToTable("orders", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderPaymentProof", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<DateTimeOffset>("UploadedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("uploaded_at");
+
+                    b.Property<Guid>("UploadedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("uploaded_by");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("IX_order_payment_proofs_order");
+
+                    b.ToTable("order_payment_proofs", "quotations");
+                });
+
             modelBuilder.Entity("Modules.Quotations.Domain.Quotation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -462,129 +587,23 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.ToTable("quotation_pdfs", "quotations");
                 });
 
-            modelBuilder.Entity("Modules.Quotations.Domain.Sale", b =>
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.OrderNumberCounter", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("approved_at");
-
-                    b.Property<Guid?>("ApprovedBy")
-                        .HasColumnType("uuid")
-                        .HasColumnName("approved_by");
-
-                    b.Property<DateTimeOffset>("ConvertedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("converted_at");
-
-                    b.Property<Guid>("ConvertedBy")
-                        .HasColumnType("uuid")
-                        .HasColumnName("converted_by");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
-                        .HasColumnName("notes");
-
-                    b.Property<string>("PaymentStatus")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)")
-                        .HasColumnName("payment_status");
-
-                    b.Property<Guid>("QuotationId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("quotation_id");
-
-                    b.Property<string>("RitualCollectionSyncId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("ritual_collection_sync_id");
-
-                    b.Property<string>("SaleNumber")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasColumnName("sale_number");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasColumnName("status");
-
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
+                    b.Property<int>("Year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
 
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
+                    b.Property<long>("NextValue")
                         .HasColumnType("bigint")
-                        .HasColumnName("version");
+                        .HasColumnName("next_value");
 
-                    b.HasKey("Id");
+                    b.HasKey("TenantId", "Year");
 
-                    b.HasIndex("QuotationId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_sales_quotation");
-
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("IX_sales_tenant");
-
-                    b.HasIndex("TenantId", "SaleNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_sales_tenant_number");
-
-                    b.HasIndex("TenantId", "ConvertedAt", "SaleNumber")
-                        .HasDatabaseName("IX_sales_tenant_converted_at_number");
-
-                    b.ToTable("sales", "quotations");
-                });
-
-            modelBuilder.Entity("Modules.Quotations.Domain.SalePaymentProof", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)")
-                        .HasColumnName("amount");
-
-                    b.Property<Guid>("FileId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("file_id");
-
-                    b.Property<Guid>("SaleId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("sale_id");
-
-                    b.Property<DateTimeOffset>("UploadedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("uploaded_at");
-
-                    b.Property<Guid>("UploadedBy")
-                        .HasColumnType("uuid")
-                        .HasColumnName("uploaded_by");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SaleId")
-                        .HasDatabaseName("IX_sale_payment_proofs_sale");
-
-                    b.ToTable("sale_payment_proofs", "quotations");
+                    b.ToTable("order_number_counters", "quotations");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.QuotationNumberCounter", b =>
@@ -654,23 +673,22 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         });
                 });
 
-            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.SaleNumberCounter", b =>
+            modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>
                 {
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
+                    b.HasOne("Modules.Quotations.Domain.Quotation", null)
+                        .WithMany()
+                        .HasForeignKey("QuotationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
 
-                    b.Property<int>("Year")
-                        .HasColumnType("integer")
-                        .HasColumnName("year");
-
-                    b.Property<long>("NextValue")
-                        .HasColumnType("bigint")
-                        .HasColumnName("next_value");
-
-                    b.HasKey("TenantId", "Year");
-
-                    b.ToTable("sale_number_counters", "quotations");
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderPaymentProof", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Order", null)
+                        .WithMany("PaymentProofs")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.Quotation", b =>
@@ -749,22 +767,9 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("Modules.Quotations.Domain.Sale", b =>
+            modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>
                 {
-                    b.HasOne("Modules.Quotations.Domain.Quotation", null)
-                        .WithMany()
-                        .HasForeignKey("QuotationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Modules.Quotations.Domain.SalePaymentProof", b =>
-                {
-                    b.HasOne("Modules.Quotations.Domain.Sale", null)
-                        .WithMany("PaymentProofs")
-                        .HasForeignKey("SaleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                    b.Navigation("PaymentProofs");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.Quotation", b =>
@@ -772,11 +777,6 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Navigation("Items");
 
                     b.Navigation("Parties");
-                });
-
-            modelBuilder.Entity("Modules.Quotations.Domain.Sale", b =>
-                {
-                    b.Navigation("PaymentProofs");
                 });
 #pragma warning restore 612, 618
         }

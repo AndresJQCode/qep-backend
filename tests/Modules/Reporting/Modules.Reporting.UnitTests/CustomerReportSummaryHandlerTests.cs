@@ -38,13 +38,13 @@ public sealed class CustomerReportSummaryHandlerTests
         Assert.Empty(source.SummarizedCriteria);
     }
 
-    /// <summary>El reporte de clientes es sólo del Administrador: el permiso de ventas —que sí
+    /// <summary>El reporte de clientes es sólo del Administrador: el permiso de pedidos —que sí
     /// tiene un asesor— no alcanza para verlo.</summary>
     [Fact]
-    public async Task SummarizingRejectsACallerWithOnlyTheSalesPermission()
+    public async Task SummarizingRejectsACallerWithOnlyTheOrdersPermission()
     {
         var source = new FakeCustomerReportSource();
-        var handler = Handler(source, Tenant, ReportingPermissions.SalesRead);
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(
@@ -105,7 +105,7 @@ public sealed class CustomerReportSummaryHandlerTests
     /// <summary>
     /// Los inactivos **no viajan en el contrato**: son la resta, y un campo más es un campo más que
     /// puede desincronizarse de los dos que lo definen. Mismo criterio que el ticket promedio de
-    /// ventas, que el panel deriva de <c>total / saleCount</c>.
+    /// pedidos, que el panel deriva de <c>total / orderCount</c>.
     ///
     /// Acá se puede porque el reparto es binario y exhaustivo, a diferencia de la dirección de un
     /// cambio de precio: ahí existe un tercer grupo —los que no se movieron— y por eso ese resumen

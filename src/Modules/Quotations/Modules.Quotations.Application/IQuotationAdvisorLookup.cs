@@ -2,7 +2,7 @@ namespace Modules.Quotations.Application;
 
 /// <summary>Lo que Tenancy e Identity saben de la asesora de una cotización.</summary>
 /// <param name="Email">El correo, de Identity. Null si el usuario ya no resuelve (dado de baja
-/// en Identity). Es lo que muestran el detalle, el historial y el listado de ventas.</param>
+/// en Identity). Es lo que muestran el detalle, el historial y el listado de pedidos.</param>
 /// <param name="DisplayName">El nombre que el tenant cargó en la membresía. Null en las
 /// membresías anteriores a que existiera y en las creadas con <c>CreateActive</c> —el owner al
 /// registrarse y los miembros sembrados— hasta que alguien lo cargue desde el roster.</param>

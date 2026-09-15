@@ -16,11 +16,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<QuotationNumberCounter> QuotationNumberCounters => Set<QuotationNumberCounter>();
 
-    public DbSet<Sale> Sales => Set<Sale>();
+    public DbSet<Order> Orders => Set<Order>();
 
-    internal DbSet<SalePaymentProof> SalePaymentProofs => Set<SalePaymentProof>();
+    internal DbSet<OrderPaymentProof> OrderPaymentProofs => Set<OrderPaymentProof>();
 
-    internal DbSet<SaleNumberCounter> SaleNumberCounters => Set<SaleNumberCounter>();
+    internal DbSet<OrderNumberCounter> OrderNumberCounters => Set<OrderNumberCounter>();
 
     internal DbSet<QuotationPdf> QuotationPdfs => Set<QuotationPdf>();
 
@@ -36,9 +36,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureQuotationHistoryEntry(modelBuilder);
         ConfigureQuotationPdf(modelBuilder);
         ConfigureQuotationNumberCounter(modelBuilder);
-        ConfigureSale(modelBuilder);
-        ConfigureSalePaymentProof(modelBuilder);
-        ConfigureSaleNumberCounter(modelBuilder);
+        ConfigureOrder(modelBuilder);
+        ConfigureOrderPaymentProof(modelBuilder);
+        ConfigureOrderNumberCounter(modelBuilder);
         ConfigureExportJob(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -332,112 +332,112 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         counter.Property(value => value.NextValue).HasColumnName("next_value");
     }
 
-    private static void ConfigureSale(ModelBuilder modelBuilder)
+    private static void ConfigureOrder(ModelBuilder modelBuilder)
     {
-        var sale = modelBuilder.Entity<Sale>();
-        sale.ToTable("sales", "quotations");
-        sale.HasKey(value => value.Id);
-        sale.Property(value => value.Id)
+        var order = modelBuilder.Entity<Order>();
+        order.ToTable("orders", "quotations");
+        order.HasKey(value => value.Id);
+        order.Property(value => value.Id)
             .HasColumnName("id")
-            .HasConversion(id => id.Value, value => new SaleId(value))
+            .HasConversion(id => id.Value, value => new OrderId(value))
             .ValueGeneratedNever();
-        sale.Property(value => value.TenantId).HasColumnName("tenant_id");
-        sale.Property(value => value.SaleNumber)
-            .HasColumnName("sale_number")
-            .HasMaxLength(Sale.SaleNumberMaxLength);
-        sale.Property(value => value.QuotationId)
+        order.Property(value => value.TenantId).HasColumnName("tenant_id");
+        order.Property(value => value.OrderNumber)
+            .HasColumnName("order_number")
+            .HasMaxLength(Order.OrderNumberMaxLength);
+        order.Property(value => value.QuotationId)
             .HasColumnName("quotation_id")
             .HasConversion(id => id.Value, value => new QuotationId(value));
-        sale.Property(value => value.Status)
+        order.Property(value => value.Status)
             .HasColumnName("status")
             .HasConversion<string>()
             .HasMaxLength(20);
-        sale.Property(value => value.PaymentStatus)
+        order.Property(value => value.PaymentStatus)
             .HasColumnName("payment_status")
             .HasConversion<string>()
             .HasMaxLength(30);
-        sale.Property(value => value.Notes).HasColumnName("notes").HasMaxLength(Sale.NotesMaxLength);
-        sale.Property(value => value.ConvertedAt).HasColumnName("converted_at");
-        sale.Property(value => value.ConvertedBy)
+        order.Property(value => value.Notes).HasColumnName("notes").HasMaxLength(Order.NotesMaxLength);
+        order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
+        order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
-        sale.Property(value => value.ApprovedAt).HasColumnName("approved_at");
-        sale.Property(value => value.ApprovedBy)
+        order.Property(value => value.ApprovedAt).HasColumnName("approved_at");
+        order.Property(value => value.ApprovedBy)
             .HasColumnName("approved_by")
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new MemberId(value.Value) : null);
-        sale.Property(value => value.RitualCollectionSyncId)
+        order.Property(value => value.RitualCollectionSyncId)
             .HasColumnName("ritual_collection_sync_id")
             .HasMaxLength(100);
-        sale.Property(value => value.CreatedAt).HasColumnName("created_at");
-        sale.Property(value => value.UpdatedAt).HasColumnName("updated_at");
-        sale.Property(value => value.Version)
+        order.Property(value => value.CreatedAt).HasColumnName("created_at");
+        order.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        order.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
 
-        sale.Navigation(value => value.PaymentProofs)
+        order.Navigation(value => value.PaymentProofs)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        sale.HasIndex(value => value.TenantId).HasDatabaseName("IX_sales_tenant");
+        order.HasIndex(value => value.TenantId).HasDatabaseName("IX_orders_tenant");
         // 1:1 con la cotizacion de origen (modelo-datos-cotizaciones.md §2.4).
-        sale.HasIndex(value => value.QuotationId)
+        order.HasIndex(value => value.QuotationId)
             .IsUnique()
-            .HasDatabaseName("IX_sales_quotation");
-        // La unicidad que promete el numero de venta. Nombrado a proposito, misma leccion de
+            .HasDatabaseName("IX_orders_quotation");
+        // La unicidad que promete el numero de pedido. Nombrado a proposito, misma leccion de
         // SDD-CT-06 que IX_quotations_tenant_number.
-        sale.HasIndex(value => new { value.TenantId, value.SaleNumber })
+        order.HasIndex(value => new { value.TenantId, value.OrderNumber })
             .IsUnique()
-            .HasDatabaseName("IX_sales_tenant_number");
-        // El keyset de la exportación de ventas (spec 2026-09-12, D8): el orden exacto del listado
-        // —fecha de conversión y número como desempate, SaleRepository.SearchAsync— detrás del
+            .HasDatabaseName("IX_orders_tenant_number");
+        // El keyset de la exportación de pedidos (spec 2026-09-12, D8): el orden exacto del listado
+        // —fecha de conversión y número como desempate, OrderRepository.SearchAsync— detrás del
         // tenant.
-        sale.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.SaleNumber })
-            .HasDatabaseName("IX_sales_tenant_converted_at_number");
+        order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
+            .HasDatabaseName("IX_orders_tenant_converted_at_number");
 
-        // RESTRICT, no CASCADE: la venta es el registro que sobrevive -- borrar la cotizacion de
-        // origen (si algun dia existiera un borrado duro) no deberia poder llevarse la venta
+        // RESTRICT, no CASCADE: el pedido es el registro que sobrevive -- borrar la cotizacion de
+        // origen (si algun dia existiera un borrado duro) no deberia poder llevarse el pedido
         // consigo en silencio.
-        sale.HasOne<Quotation>()
+        order.HasOne<Quotation>()
             .WithMany()
             .HasForeignKey(value => value.QuotationId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 
-    private static void ConfigureSalePaymentProof(ModelBuilder modelBuilder)
+    private static void ConfigureOrderPaymentProof(ModelBuilder modelBuilder)
     {
-        var proof = modelBuilder.Entity<SalePaymentProof>();
-        proof.ToTable("sale_payment_proofs", "quotations");
+        var proof = modelBuilder.Entity<OrderPaymentProof>();
+        proof.ToTable("order_payment_proofs", "quotations");
         proof.HasKey(value => value.Id);
         proof.Property(value => value.Id)
             .HasColumnName("id")
-            .HasConversion(id => id.Value, value => new SalePaymentProofId(value))
+            .HasConversion(id => id.Value, value => new OrderPaymentProofId(value))
             .ValueGeneratedNever();
-        proof.Property(value => value.SaleId)
-            .HasColumnName("sale_id")
-            .HasConversion(id => id.Value, value => new SaleId(value));
+        proof.Property(value => value.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(id => id.Value, value => new OrderId(value));
         proof.Property(value => value.FileId).HasColumnName("file_id");
         proof.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
         proof.Property(value => value.UploadedBy)
             .HasColumnName("uploaded_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
         proof.Property(value => value.UploadedAt).HasColumnName("uploaded_at");
-        proof.HasIndex(value => value.SaleId).HasDatabaseName("IX_sale_payment_proofs_sale");
+        proof.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_payment_proofs_order");
 
-        // CASCADE: un comprobante no tiene sentido sin su venta -- mismo criterio que
+        // CASCADE: un comprobante no tiene sentido sin su pedido -- mismo criterio que
         // QuotationItem -> Quotation.
-        proof.HasOne<Sale>()
-            .WithMany(sale => sale.PaymentProofs)
-            .HasForeignKey(value => value.SaleId)
+        proof.HasOne<Order>()
+            .WithMany(order => order.PaymentProofs)
+            .HasForeignKey(value => value.OrderId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 
-    /// <summary>El consecutivo del numero de venta, una fila por (tenant, año). Mismo criterio
+    /// <summary>El consecutivo del numero de pedido, una fila por (tenant, año). Mismo criterio
     /// que <see cref="ConfigureQuotationNumberCounter"/>.</summary>
-    private static void ConfigureSaleNumberCounter(ModelBuilder modelBuilder)
+    private static void ConfigureOrderNumberCounter(ModelBuilder modelBuilder)
     {
-        var counter = modelBuilder.Entity<SaleNumberCounter>();
-        counter.ToTable("sale_number_counters", "quotations");
+        var counter = modelBuilder.Entity<OrderNumberCounter>();
+        counter.ToTable("order_number_counters", "quotations");
         counter.HasKey(value => new { value.TenantId, value.Year });
         counter.Property(value => value.TenantId).HasColumnName("tenant_id");
         counter.Property(value => value.Year).HasColumnName("year");

@@ -32,7 +32,7 @@ internal static class ReportingApiHarness
     public static string ReportsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/reports";
 
     /// <summary>
-    /// Todo lo que hace falta para sembrar (cliente, producto, cotizacion, venta, cambio de
+    /// Todo lo que hace falta para sembrar (cliente, producto, cotizacion, pedido, cambio de
     /// precio) **y ademas** leer los cuatro reportes.
     ///
     /// El stub de desarrollo concede solo los permisos de tenancy por defecto, asi que cada uno
@@ -43,21 +43,21 @@ internal static class ReportingApiHarness
     [
         QuotationsPermissions.QuotationRead,
         QuotationsPermissions.QuotationManage,
-        SalesPermissions.SaleRead,
-        SalesPermissions.SaleManage,
+        OrdersPermissions.OrderRead,
+        OrdersPermissions.OrderManage,
         CustomersPermissions.CustomerRead,
         CustomersPermissions.CustomerManage,
         CustomersPermissions.ClassificationRead,
         CustomersPermissions.ClassificationManage,
         CatalogPermissions.ProductRead,
         CatalogPermissions.ProductManage,
-        // Convertir en venta exige cuenta de cobro, y la cuenta sale de una empresa: sembrar una
-        // venta pasa por la API de Companies.
+        // Convertir en pedido exige cuenta de cobro, y la cuenta sale de una empresa: sembrar un
+        // pedido pasa por la API de Companies.
         CompaniesPermissions.CompanyRead,
         CompaniesPermissions.CompanyManage,
         StoragePermissions.FileUpload,
         StoragePermissions.FileRead,
-        ReportingPermissions.SalesRead,
+        ReportingPermissions.OrdersRead,
         ReportingPermissions.QuotationRead,
         ReportingPermissions.PriceChangeRead,
         ReportingPermissions.CustomerRead
@@ -279,9 +279,9 @@ internal static class ReportingApiHarness
         Guid productId,
         DateOnly? validUntil = null)
     {
-        // Sin cuenta de cobro la cotización se envía igual, pero convertirla en venta devuelve 422
-        // `quotation.billing.account_required`: toda prueba del reporte de ventas se caería en
-        // `ConvertToSaleAsync`, lejos de lo que mide.
+        // Sin cuenta de cobro la cotización se envía igual, pero convertirla en pedido devuelve 422
+        // `quotation.billing.account_required`: toda prueba del reporte de pedidos se caería en
+        // `ConvertToOrderAsync`, lejos de lo que mide.
         var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations",
@@ -353,7 +353,7 @@ internal static class ReportingApiHarness
         return (body.Id, bankName, accountNumber, currency);
     }
 
-    public static async Task<SaleResponse> ConvertToSaleAsync(
+    public static async Task<OrderResponse> ConvertToOrderAsync(
         HttpClient client,
         QepApiFactory factory,
         Guid tenantId,
@@ -362,17 +362,17 @@ internal static class ReportingApiHarness
     {
         var proofFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/sale",
-            new ConvertQuotationToSaleRequest(
+            $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest(
                 paymentStatus,
                 "Pago verificado",
-                [new SalePaymentProofRequest(proofFileId, quotation.Total)]),
+                [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
-        var sale = await response.Content.ReadFromJsonAsync<SaleResponse>(
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(sale);
-        return sale;
+        Assert.NotNull(order);
+        return order;
     }
 
     private static async Task<Guid> CreateAvailablePdfFileAsync(

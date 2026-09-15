@@ -19,8 +19,8 @@ public sealed class ReportFilterParserTests
         Assert.Equal(expected, ReportFilterParser.ParseQuotationStatus(value));
 
     /// <summary>
-    /// `Approved` dejó de ser un estado de cotización: convertirla en venta la deja en
-    /// `Converted`. `Approved` es un estado de la venta (`SaleStatus`), no de la cotización.
+    /// `Approved` dejó de ser un estado de cotización: convertirla en pedido la deja en
+    /// `Converted`. `Approved` es un estado del pedido (`OrderStatus`), no de la cotización.
     ///
     /// Esta prueba existe porque el enum del filtro se redeclara acá en vez de referenciar
     /// `QuotationStatus` —el dominio de un módulo no referencia el de otro—, así que el
@@ -51,13 +51,13 @@ public sealed class ReportFilterParserTests
         Assert.Throws<ReportingDomainException>(
             () => ReportFilterParser.ParseQuotationStatus(value));
 
-    /// <summary>El estado de pago de una venta es un enum distinto y sigue teniendo sus tres
+    /// <summary>El estado de pago de un pedido es un enum distinto y sigue teniendo sus tres
     /// valores: bajar `Approved` de las cotizaciones no lo tocó.</summary>
     [Theory]
-    [InlineData("FullPaymentReceived", SalePaymentStatusFilter.FullPaymentReceived)]
-    [InlineData("PartialPaymentReceived", SalePaymentStatusFilter.PartialPaymentReceived)]
-    [InlineData("PaymentPending", SalePaymentStatusFilter.PaymentPending)]
-    public void ParsesTheThreePaymentStatuses(string value, SalePaymentStatusFilter expected) =>
+    [InlineData("FullPaymentReceived", OrderPaymentStatusFilter.FullPaymentReceived)]
+    [InlineData("PartialPaymentReceived", OrderPaymentStatusFilter.PartialPaymentReceived)]
+    [InlineData("PaymentPending", OrderPaymentStatusFilter.PaymentPending)]
+    public void ParsesTheThreePaymentStatuses(string value, OrderPaymentStatusFilter expected) =>
         Assert.Equal(expected, ReportFilterParser.ParsePaymentStatus(value));
 
     [Theory]

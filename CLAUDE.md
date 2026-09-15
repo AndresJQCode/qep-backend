@@ -115,7 +115,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   ve la pantalla que lo obligó, y sin esa nota el siguiente lo "simplifica".
 - **Qué significa eso en concreto, con los precedentes ya escritos.** Un agregado que la
   pantalla no puede calcular es un endpoint, no un problema del cliente:
-  `/reports/sales/summary` existe porque sumar páginas de 50 filas del lado del cliente da un
+  `/reports/orders/summary` existe porque sumar páginas de 50 filas del lado del cliente da un
   total que depende de la página que se esté mirando, y `MaxPageSize` impide pedir el período
   entero. Las colecciones de tamaño fijo viajan **completas, incluso en cero**
   (`ReportStatusSliceDto`, `PriceChangeFieldSliceDto`): un elemento que desaparece obliga a la

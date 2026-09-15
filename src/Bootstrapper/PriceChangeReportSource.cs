@@ -8,7 +8,7 @@ namespace Bootstrapper;
 
 /// <summary>
 /// El origen del reporte de cambios de precio: <c>catalog.product_price_changes</c>, con el
-/// nombre y el codigo del producto resueltos por join. Ver <see cref="SalesReportSource"/> sobre
+/// nombre y el codigo del producto resueltos por join. Ver <see cref="OrdersReportSource"/> sobre
 /// por que los adaptadores de <c>reporting</c> viven en el composition root.
 ///
 /// **Es el historico del catalogo, no el de las cotizaciones.** Sigue los dos precios base del
@@ -217,7 +217,7 @@ internal sealed class PriceChangeReportSource(
                          on change.ProductId equals product.Id
                      select new { change, product };
 
-        // Ver SalesReportSource sobre el orden total.
+        // Ver OrdersReportSource sobre el orden total.
         return joined
             .OrderByDescending(row => row.change.ChangedAt)
             .ThenBy(row => row.change.Id)
@@ -288,7 +288,7 @@ internal sealed class PriceChangeReportSource(
         }
 
         // ChangedBy es el subject de la ejecucion, o sea el id de identity.users directo: a
-        // diferencia de AdvisorId en ventas y cotizaciones, no pasa por una membresia.
+        // diferencia de AdvisorId en pedidos y cotizaciones, no pasa por una membresia.
         var authors = await peopleLookup.EmailsByUserIdAsync(
             rows.Select(row => row.ChangedBy).ToArray(), cancellationToken);
 
@@ -309,7 +309,7 @@ internal sealed class PriceChangeReportSource(
             .ToArray();
     }
 
-    // Sin default a proposito, en las dos direcciones: ver MapPaymentStatus en SalesReportSource.
+    // Sin default a proposito, en las dos direcciones: ver MapPaymentStatus en OrdersReportSource.
     private static ProductPriceField MapField(PriceChangeField value) => value switch
     {
         PriceChangeField.PriceBaseUsd => ProductPriceField.PriceBaseUsd,

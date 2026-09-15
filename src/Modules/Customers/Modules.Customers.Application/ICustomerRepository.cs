@@ -115,8 +115,8 @@ public interface ICustomerRepository
     /// <summary>
     /// Ids de los clientes cuyo CUC contiene <paramref name="term"/> (coincidencia parcial, sin
     /// distinguir mayusculas), en una sola consulta sin paginar — gemela de
-    /// <see cref="SearchIdsByIdentificationNumberAsync"/>, la usa el filtro del listado de ventas
-    /// (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup</c>): ni la venta ni la
+    /// <see cref="SearchIdsByIdentificationNumberAsync"/>, la usa el filtro del listado de pedidos
+    /// (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup</c>): ni el pedido ni la
     /// cotizacion guardan el CUC.
     /// </summary>
     Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
