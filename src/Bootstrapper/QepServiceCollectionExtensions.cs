@@ -450,6 +450,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
+        // Los comprobantes de pago públicos (spec 2026-09-15, P3): el publicador que copia al bucket
+        // público o el que no hace nada, según Quotations:PaymentProofs:PublicLinks. Se decide al
+        // resolver, con las opciones ya validadas por ValidateOnStart, mismo criterio que
+        // IFileScanner en AddStorageInfrastructure. Scoped porque IFileResourceRepository lo es.
+        services.AddScoped<PublicPaymentProofPublisher>();
+        services.AddScoped<IPaymentProofPublisher>(provider =>
+            provider.GetRequiredService<IOptions<QuotationsOptions>>().Value.PaymentProofs.PublicLinks
+                ? provider.GetRequiredService<PublicPaymentProofPublisher>()
+                : new DisabledPaymentProofPublisher());
         // P2 (spec 2026-09-15): con Quotations:PaymentProofs:PublicLinks encendida, el bucket
         // público es obligatorio. Vive acá porque es el único lugar que ve QuotationsOptions y
         // StorageOptions a la vez. Se suma al QuotationsOptionsValidator de
