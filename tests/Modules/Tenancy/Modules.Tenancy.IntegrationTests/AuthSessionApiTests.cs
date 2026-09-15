@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
@@ -14,6 +15,7 @@ public sealed class AuthSessionApiTests
 {
     private const string SeededTenantId = "01900000-0000-7000-8000-000000000001";
     private const string AdminSubjectId = "01900000-0000-7000-8000-000000000002";
+    private const string CustomRoleKey = "supervisor-ventas";
     private static readonly string[] DefaultRoles = ["advisor"];
 
     [Fact]
@@ -244,6 +246,15 @@ public sealed class AuthSessionApiTests
             tenant => tenant.TenantId == secondTenantId && tenant.DisplayName == "Acme Consultoría");
         Assert.DoesNotContain(session.ActiveTenants, tenant => tenant.TenantId == suspendedTenantId);
 
+        // Cada tenant lleva los roles de la membresía con el nombre del catálogo: las dos
+        // invitaciones vivas de arriba usan DefaultRoles (advisor → "Asesor").
+        var advisorOnly = new[] { new SessionRolePayload("advisor", "Asesor") };
+        Assert.All(session.ActiveTenants, tenant =>
+        {
+            Assert.NotNull(tenant.Roles);
+            Assert.Equal(advisorOnly, tenant.Roles);
+        });
+
         // activeTenantIds y activeTenants salen de la misma consulta (ver AuthSessionEndpoints):
         // tienen que ser exactamente el mismo conjunto de ids. SetEquals y no Assert.Equal
         // porque el orden de un HashSet no está garantizado entre dos instancias distintas.
@@ -261,18 +272,120 @@ public sealed class AuthSessionApiTests
         Assert.Equal(expectedOrder, session.ActiveTenants.Select(tenant => tenant.TenantId));
     }
 
+    [Fact]
+    public async Task SessionListsRolesPerTenantWithCatalogDisplayNamesInStoredOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var email = NewEmail();
+        var googleSubject = Guid.CreateVersion7().ToString();
+        var seededTenantId = Guid.Parse(SeededTenantId);
+
+        // Un rol custom del tenant: su nombre vive sólo en la base, no en el código, así que
+        // prueba que el nombre sale de ITenantRoleCatalog y no del catálogo estático.
+        using (var roleAdmin = CreateAdminClient(factory))
+        {
+            // El stub concede por defecto sólo los permisos de tenancy
+            // (DevelopmentAuthenticationHandler.cs:61-79) y definir roles exige
+            // advisorship.roles.manage (RoleEndpoints.cs:27-28).
+            roleAdmin.DefaultRequestHeaders.Add(
+                "X-Permissions",
+                TenancyPermissions.AdvisorshipRolesManage);
+            var createRole = await roleAdmin.PostAsJsonAsync(
+                $"/api/v1/tenants/{SeededTenantId}/authorization/roles",
+                new
+                {
+                    key = CustomRoleKey,
+                    displayName = "Supervisor de ventas",
+                    description = "Supervisa al equipo comercial.",
+                    permissions = new[] { TenancyPermissions.SettingsRead },
+                },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Created, createRole.StatusCode);
+        }
+
+        // El custom primero y admin después: no es el orden alfabético ni el del catálogo
+        // (sistema primero), así que sólo pasa si la respuesta respeta el orden guardado.
+        using (var admin = CreateAdminClient(factory))
+        {
+            Assert.Equal(
+                HttpStatusCode.Created,
+                (await InviteAsync(admin, email, roles: [CustomRoleKey, "admin"])).StatusCode);
+        }
+
+        using var client = CreateLoginClient(factory, googleSubject, email, verified: true);
+        var login = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var session = await login.Content.ReadFromJsonAsync<SessionPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(session);
+        Assert.Equal(
+            new[]
+            {
+                new SessionRolePayload(CustomRoleKey, "Supervisor de ventas"),
+                new SessionRolePayload("admin", "Administrador"),
+            },
+            RolesOf(session!, seededTenantId));
+
+        // Un rol retirado del catálogo que la membresía todavía nombra —el mismo caso que
+        // TenantRoleCatalog.PermissionsForAsync tolera—. Va directo a la base porque la API no
+        // deja invitar con un rol que el catálogo no conoce (InviteMember.cs:192-199).
+        await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var update = new NpgsqlCommand(
+                "UPDATE tenancy.memberships SET roles = array_append(roles, 'rol-retirado') " +
+                "WHERE user_id = @userId AND tenant_id = @tenantId",
+                connection);
+            update.Parameters.AddWithValue("userId", session!.UserId);
+            update.Parameters.AddWithValue("tenantId", seededTenantId);
+            Assert.Equal(
+                1,
+                await update.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+        }
+
+        // Otro POST /auth/session y no GET /auth/me: con el stub de desarrollo el principal nunca
+        // recibe qep_sub (ExternalClaimsTransformation.cs:31-36), así que /auth/me responde 401
+        // acá. /auth/me se prueba con auth real en RealAuthenticationApiTests; el login es
+        // idempotente (RepeatedLoginIsIdempotent) y arma la misma respuesta.
+        var relogin = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, relogin.StatusCode);
+        var current = await relogin.Content.ReadFromJsonAsync<SessionPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+        Assert.Equal(
+            new[]
+            {
+                new SessionRolePayload(CustomRoleKey, "Supervisor de ventas"),
+                new SessionRolePayload("admin", "Administrador"),
+                // Sin nombre en el catálogo cae a la clave: el rol no se descarta.
+                new SessionRolePayload("rol-retirado", "rol-retirado"),
+            },
+            RolesOf(current!, seededTenantId));
+    }
+
+    private static IReadOnlyList<SessionRolePayload> RolesOf(SessionPayload session, Guid tenantId)
+    {
+        var tenant = Assert.Single(session.ActiveTenants, tenant => tenant.TenantId == tenantId);
+        Assert.NotNull(tenant.Roles);
+        return tenant.Roles;
+    }
+
     private static string NewEmail() => $"login-{Guid.NewGuid():N}@example.com";
 
     private static async Task<HttpResponseMessage> InviteAsync(
         HttpClient client,
         string email,
-        string tenantId = SeededTenantId)
+        string tenantId = SeededTenantId,
+        string[]? roles = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, displayName = "Ana Pérez", roles = DefaultRoles })
+            Content = JsonContent.Create(new { email, displayName = "Ana Pérez", roles = roles ?? DefaultRoles })
         };
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
@@ -348,7 +461,14 @@ public sealed class AuthSessionApiTests
         IReadOnlyCollection<Guid> ActiveTenantIds,
         IReadOnlyCollection<ActiveTenantPayload> ActiveTenants);
 
-    private sealed record ActiveTenantPayload(Guid TenantId, string DisplayName);
+    // Roles nullable a propósito: un backend que no manda el campo deserializa a null y la
+    // prueba lo reporta como tal, en vez de reventar en el deserializador.
+    private sealed record ActiveTenantPayload(
+        Guid TenantId,
+        string DisplayName,
+        IReadOnlyList<SessionRolePayload>? Roles);
+
+    private sealed record SessionRolePayload(string Role, string DisplayName);
 
     private sealed class QepApiFactory(string connectionString)
         : WebApplicationFactory<Program>

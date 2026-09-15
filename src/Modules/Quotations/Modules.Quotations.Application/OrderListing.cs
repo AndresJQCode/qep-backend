@@ -63,7 +63,7 @@ internal static class OrderListing
         IReadOnlyList<OrderWithQuotation> rows,
         CancellationToken cancellationToken)
     {
-        // Una ida para los nombres y otra para los correos, con los ids sin repetir.
+        // Una ida para los clientes y otra para las asesoras, con los ids sin repetir.
         var clientNames = rows.Count == 0
             ? new Dictionary<Guid, string>()
             : await customerLookup.FindNamesAsync(
@@ -71,8 +71,9 @@ internal static class OrderListing
                 rows.Select(row => row.Quotation.ClientId).Distinct().ToArray(),
                 cancellationToken);
 
-        // El correo y no el nombre: pedidos sigue con el correo aunque el listado de cotizaciones ya
-        // muestre el nombre (spec 2026-09-11, D1, nota del 2026-09-14).
+        // El nombre con respaldo al correo (QuotationAdvisor.Label), igual que QuotationListing: la
+        // tabla y el Excel de pedidos presentan a la asesora como los de cotizaciones (spec
+        // 2026-09-11, D1, nota del 2026-09-15).
         var advisors = rows.Count == 0
             ? new Dictionary<Guid, QuotationAdvisor>()
             : await advisorLookup.FindAsync(
@@ -83,7 +84,7 @@ internal static class OrderListing
         return rows
             .Select(row => row.ToListItemDto(
                 clientNames.GetValueOrDefault(row.Quotation.ClientId),
-                advisors.GetValueOrDefault(row.Quotation.AdvisorId.Value)?.Email))
+                advisors.GetValueOrDefault(row.Quotation.AdvisorId.Value)?.Label))
             .ToArray();
     }
 }

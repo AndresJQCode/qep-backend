@@ -21,6 +21,15 @@ public interface IActiveTenantsQuery
 }
 
 /// <summary>
-/// Lectura mínima de un tenant activo: el id y el nombre para mostrar, nada más.
+/// Lectura mínima de un tenant activo: el id, el nombre para mostrar y las claves de rol de la
+/// membresía, en el orden en que la membresía las guarda.
 /// </summary>
-public sealed record ActiveTenantSummary(Guid TenantId, string DisplayName);
+/// <remarks>
+/// Sólo las claves, no el nombre de cada rol: el catálogo de roles es de Authorization, y
+/// Authorization.Application ya referencia a Tenancy.Application — resolver el nombre acá
+/// cerraría un ciclo. Lo resuelve la raíz de composición (AuthSessionEndpoints).
+/// </remarks>
+public sealed record ActiveTenantSummary(
+    Guid TenantId,
+    string DisplayName,
+    IReadOnlyCollection<string> Roles);

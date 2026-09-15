@@ -31,6 +31,12 @@ asesor y reportes/Excel siguen mostrando el correo. Llevarlo ahí es un trabajo 
 > cambio que rompe, y el front lo sigue aparte. Ventas, historial, filtros de asesor y reportes
 > siguen mostrando el correo.
 
+> **Nota del 2026-09-15.** El alcance se amplió al listado de pedidos (antes ventas) y a su Excel,
+> con el mismo respaldo: la fila muestra el nombre y cae al correo cuando la membresía no tiene
+> uno. En el contrato de la fila de pedidos, `advisorName` reemplaza a `advisorEmail`, que deja de
+> viajar; también es un cambio que rompe, y el front lo sigue aparte. Historial, filtros de asesor
+> y reportes siguen mostrando el correo.
+
 ### D2 — El nombre vive en la membresía, no en el usuario
 
 `User` (Identity) es global: la misma persona puede ser miembro de varios tenants. Con el nombre
@@ -142,9 +148,9 @@ reescribe por un dato de presentación.
   `IReadOnlyDictionary<Guid, QuotationAdvisor>` con
   `QuotationAdvisor(string? Email, string? DisplayName)`.
 - `QuotationAdvisorLookup` toma `DisplayName` de la membresía que ya trae, sin sumar consultas.
-- `ListSales` y `ListQuotationHistory` toman `.Email`, y su contrato hacia el front no cambia
-  (D1). `ListQuotations` y su Excel toman el nombre con respaldo al correo desde el 2026-09-14
-  (nota en D1).
+- `ListQuotationHistory` toma `.Email`, y su contrato hacia el front no cambia (D1).
+  `ListQuotations` y su Excel toman el nombre con respaldo al correo (`.Label`) desde el
+  2026-09-14, y `ListOrders` (antes `ListSales`) y su Excel desde el 2026-09-15 (notas en D1).
 - `QuotationResponse` suma `string? AdvisorName`. Es aditivo en el detalle y no rompe al front.
 - `QuotationPdfDocumentMapper` aplica D6.
 - El fake de `QuotationsTestDoubles` se adapta a la firma nueva.
@@ -159,7 +165,8 @@ reescribe por un dato de presentación.
 - **Editar nombre:** acción del menú de fila, visible con `AdvisorshipManage`. Abre un diálogo
   con un input precargado y manda `If-Match`. El 412 se maneja igual que en editar roles.
 - Fuera de alcance: pantallas de cotizaciones, ventas, historial y filtros (D1). El listado de
-  cotizaciones pasó a mostrar el nombre el 2026-09-14 (nota en D1).
+  cotizaciones pasó a mostrar el nombre el 2026-09-14, y el de pedidos el 2026-09-15 (notas en
+  D1).
 
 ## Pruebas
 
@@ -207,8 +214,8 @@ después de que el front ya mande el campo.
 
 ## Fuera de alcance
 
-- Nombre en el listado de ventas, historial, filtros y reportes (D1). El de cotizaciones entró el
-  2026-09-14 (nota en D1).
+- Nombre en el historial, filtros y reportes (D1). El listado de cotizaciones entró el
+  2026-09-14, y el de pedidos (antes ventas) el 2026-09-15, cada uno con su Excel (notas en D1).
 - Pedir el nombre en `register-tenant`: el owner lo carga desde el roster.
 - Usar el nombre en el correo de invitación (`InvitationEmailTemplate`), que sigue diciendo
   "Hola,".

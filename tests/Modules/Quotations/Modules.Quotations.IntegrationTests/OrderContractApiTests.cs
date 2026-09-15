@@ -153,7 +153,8 @@ public sealed class OrderContractApiTests
 
     // Corte duro (D3): ninguna ruta vieja queda como alias. Cubre las nueve rutas de `sale(s)` que
     // existían antes del rename -- listado, detalle, export, conversión, comprobantes, aprobación
-    // y los dos reportes -- cada una esperando 404, no sólo las tres más obvias.
+    // y los dos reportes -- cada una esperando 404, no sólo las tres más obvias. Más
+    // `sale/items`, que sólo llegó a existir en feature/sales y entró ya como `order/items`.
     [Fact]
     public async Task TheSalesRoutesNoLongerExist()
     {
@@ -183,6 +184,7 @@ public sealed class OrderContractApiTests
             $"{QuotationsUrl(tenantId)}/{quotationId}/sale",
             $"{QuotationsUrl(tenantId)}/{quotationId}/sale/approve",
             $"{QuotationsUrl(tenantId)}/{quotationId}/sale/proofs",
+            $"{QuotationsUrl(tenantId)}/{quotationId}/sale/items",
         ];
         foreach (var url in postRoutes)
         {

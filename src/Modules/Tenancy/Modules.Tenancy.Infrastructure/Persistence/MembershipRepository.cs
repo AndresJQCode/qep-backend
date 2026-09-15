@@ -41,7 +41,12 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
             join tenant in dbContext.Tenants on membership.TenantId equals tenant.Id
             where membership.UserId == userId && membership.State == MembershipState.Active
             orderby tenant.DisplayName, tenant.Id
-            select new ActiveTenantSummary(tenant.Id.Value, tenant.DisplayName))
+            // EF.Property y no membership.Roles: el mapeo ignora la propiedad y le da la columna
+            // al campo privado (TenancyDbContext.cs:91-93).
+            select new ActiveTenantSummary(
+                tenant.Id.Value,
+                tenant.DisplayName,
+                EF.Property<List<string>>(membership, "_roles")))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Membership>> ListByUserAsync(

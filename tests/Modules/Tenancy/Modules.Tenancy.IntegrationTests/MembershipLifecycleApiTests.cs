@@ -177,6 +177,67 @@ public sealed class MembershipLifecycleApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
+    /// <summary>
+    /// Quitar a alguien no le cierra la puerta: el owner decidió que una persona quitada se
+    /// puede volver a invitar. La fila se reutiliza —(user_id, tenant_id) es UNIQUE— y vuelve a
+    /// Invited con roles, nombre y ventana nuevos, así que la persona tiene que aceptar otra vez.
+    /// Hasta este cambio respondía 422 tenancy.membership.not_reinvitable.
+    ///
+    /// Sólo pasa por Reinvite si el usuario de Identity sobrevive a la baja: si
+    /// OrphanUserCleanupWorker lo borra, la invitación crea un usuario y una membresía nuevos.
+    /// La invitación viva en el otro tenant lo retiene (MembershipUserReferenceProbe), así que el
+    /// resultado no depende de cuándo corra el worker. En producción lo retiene eso mismo, o una
+    /// cotización que la persona ya hizo.
+    /// </summary>
+    [Fact]
+    public async Task ReinvitingARemovedMemberRenewsTheSameMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var email = NewEmail();
+        var memberId = await InviteAsync(ownerClient, tenantId, email, AdvisorRoles);
+        await InviteAsync(otherOwnerClient, otherTenantId, email, AdvisorRoles);
+        await ActivateMembershipAsync(factory.ConnectionString, memberId);
+        var removal = await SendActionAsync(ownerClient, tenantId, memberId, "remove");
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+        var removed = await removal.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+
+        var response = await SendInviteAsync(
+            ownerClient, tenantId, email, AdminRoles, "Ana María Pérez");
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var renewed = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(memberId, renewed!.Id);
+        Assert.Equal("Invited", renewed.State);
+        Assert.Null(renewed.AcceptedAt);
+        Assert.True(
+            renewed.ExpiresAt > DateTimeOffset.UtcNow,
+            "A renewed invitation must expire in the future.");
+        Assert.Equal(AdminRoles, renewed.Roles);
+        Assert.Equal("Ana María Pérez", renewed.DisplayName);
+        Assert.Equal(removed!.Version + 1, renewed.Version);
+
+        // El email nuevo sale del evento re-emitido: sin él, la renovación no le llega a nadie.
+        Assert.Equal(2L, await OutboxEventCountAsync(
+            factory.ConnectionString, memberId, "tenancy.membership-invited.v1"));
+        var outcomes = await AuditOutcomesAsync(
+            factory.ConnectionString, memberId, "tenancy.membership.invited");
+        Assert.Equal(["success", "success"], outcomes);
+
+        // Y vuelve al roster, que esconde sólo las quitadas.
+        var listResponse = await ownerClient.GetAsync(
+            $"/api/v1/tenants/{tenantId}/memberships",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        var list = await listResponse.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Invited", Assert.Single(list!.Items, item => item.Id == memberId).State);
+    }
+
     [Fact]
     public async Task SuspendOwnMembershipIsRejected()
     {
@@ -615,17 +676,28 @@ public sealed class MembershipLifecycleApiTests
         IReadOnlyCollection<string>? roles = null,
         string displayName = DefaultDisplayName)
     {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"/api/v1/tenants/{tenantId}/memberships")
-        {
-            Content = JsonContent.Create(new { email, displayName, roles = roles ?? AdvisorRoles })
-        };
-        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var response = await SendInviteAsync(
+            client, tenantId, email, roles ?? AdvisorRoles, displayName);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
             TestContext.Current.CancellationToken);
         return membership!.Id;
+    }
+
+    private static async Task<HttpResponseMessage> SendInviteAsync(
+        HttpClient client,
+        string tenantId,
+        string email,
+        IReadOnlyCollection<string> roles,
+        string displayName)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/tenants/{tenantId}/memberships")
+        {
+            Content = JsonContent.Create(new { email, displayName, roles })
+        };
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
     // Deja al tenant con un segundo admin activo, para que la guarda que se ejercite sea la
@@ -719,6 +791,26 @@ public sealed class MembershipLifecycleApiTests
         }
 
         return outcomes;
+    }
+
+    private static async Task<long> OutboxEventCountAsync(
+        string connectionString,
+        Guid membershipId,
+        string eventName)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT COUNT(*) FROM platform.outbox_messages
+            WHERE event_name = @eventName
+              AND payload::text LIKE '%' || @membershipId || '%'
+            """,
+            connection);
+        command.Parameters.AddWithValue("eventName", eventName);
+        command.Parameters.AddWithValue("membershipId", membershipId.ToString());
+        var count = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return (long)count!;
     }
 
     private static async Task<Guid> FindMembershipIdAsync(

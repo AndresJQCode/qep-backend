@@ -81,9 +81,11 @@ public sealed class AddOrderItemsHandler(
             quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
                 QuotationHistoryEntryId.New(), quotation.Id, QuotationHistoryEventType.Edited,
                 updatedBy, QuotationChangeSummary.ItemAdded(pricing.Name, addition.Quantity), now));
+            // Como en las demás acciones quotation.order.*, la entidad auditada es el pedido:
+            // si buscas esta acción en auditoría, filtra por el id del pedido, no el de la cotización.
             auditPublisher.Publish(
                 command.TenantId, executionContext.SubjectId, "quotation.order.item_added",
-                quotation.Id.ToString(), "success", now);
+                order.Id.ToString(), "success", now);
         }
 
         order.RecalculatePaymentStatus(quotation.Total, now);

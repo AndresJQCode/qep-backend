@@ -449,10 +449,11 @@ public sealed class MembershipTests
     }
 
     /// <summary>
-    /// La frontera de seguridad que la revisión de AUTH-05 encontró sin probar. Suspender y quitar
-    /// son actos deliberados de un administrador; re-invitar no debe deshacer ninguno de los dos
-    /// en silencio. Si re-invitar *debería* restaurar a un miembro suspendido es una pregunta de
-    /// producto, abierta como SDD-OD-13 — hasta que se responda, rechazar es la respuesta segura.
+    /// La frontera de seguridad que la revisión de AUTH-05 encontró sin probar. Suspender es un
+    /// acto deliberado de un administrador, y re-invitar no debe deshacerlo en silencio: la
+    /// suspensión se levanta con Reactivate, una operación separada (SDD-OD-13). Quitar ya no
+    /// entra acá: una membresía quitada sí se re-invita, pero vuelve a Invited y no a Active, así
+    /// que nadie recupera acceso sin aceptar de nuevo (ReinviteRenewsARemovedMembership).
     /// </summary>
     [Fact]
     public void ReinviteRejectsASuspendedMembership()
@@ -474,24 +475,44 @@ public sealed class MembershipTests
         Assert.Equal(MembershipState.Suspended, membership.State);
     }
 
+    /// <summary>
+    /// Quitar a alguien no le cierra la puerta para siempre: el owner decidió que una persona
+    /// quitada se puede volver a invitar. Se renueva igual que una invitación vencida —en el
+    /// lugar, con ventana, roles, nombre y token nuevos— y vuelve a
+    /// <see cref="MembershipState.Invited"/>, así que tiene que aceptar otra vez.
+    ///
+    /// Se re-invita dentro de la ventana original a propósito: la regla de la invitación viva
+    /// mira sólo las filas en Invited, y una membresía quitada no tiene un link vigente que cuidar.
+    /// </summary>
     [Fact]
-    public void ReinviteRejectsARemovedMembership()
+    public void ReinviteRenewsARemovedMembership()
     {
         var membership = Invite(Guid.CreateVersion7());
+        var originalId = membership.Id;
         membership.Accept(InvitedAt + TimeSpan.FromHours(1));
         membership.Remove(InvitedAt + TimeSpan.FromHours(2));
+        var versionWhileRemoved = membership.Version;
+        membership.PullDomainEvents();
+        var renewedAt = InvitedAt + TimeSpan.FromHours(3);
 
-        var error = Assert.Throws<TenantDomainException>(
-            () => membership.Reinvite(
-                InvitedName,
-                ["advisor"],
-                RenewedToken,
-                RenewedTokenHash,
-                InvitedAt + Ttl + TimeSpan.FromHours(1),
-                Ttl));
+        membership.Reinvite(
+            "Ana María Pérez", ["tenancy.admin"], RenewedToken, RenewedTokenHash, renewedAt, Ttl);
 
-        Assert.Equal("tenancy.membership.not_reinvitable", error.Code);
-        Assert.Equal(MembershipState.Removed, membership.State);
+        Assert.Equal(originalId, membership.Id);
+        Assert.Equal(MembershipState.Invited, membership.State);
+        Assert.Equal(renewedAt, membership.InvitedAt);
+        Assert.Equal(renewedAt + Ttl, membership.ExpiresAt);
+        Assert.Null(membership.AcceptedAt);
+        Assert.Equal(["tenancy.admin"], membership.Roles);
+        Assert.Equal("Ana María Pérez", membership.DisplayName);
+        Assert.Equal(RenewedTokenHash, membership.InvitationTokenHash);
+        Assert.Equal(versionWhileRemoved + 1, membership.Version);
+        Assert.Equal(renewedAt, membership.UpdatedAt);
+        var invited = Assert.IsType<MembershipInvitedDomainEvent>(
+            Assert.Single(membership.DomainEvents));
+        Assert.Equal(membership.Id, invited.MembershipId);
+        Assert.Equal(membership.ExpiresAt, invited.ExpiresAt);
+        Assert.Equal(RenewedToken, invited.Token);
     }
 
     /// <summary>

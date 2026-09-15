@@ -20,10 +20,10 @@ internal static class OrderMapping
         order.UpdatedAt,
         order.PaymentProofs.Select(ToDto).ToArray());
 
-    /// <summary>La fila del listado, con el nombre del cliente y el correo de la asesora ya
+    /// <summary>La fila del listado, con el nombre del cliente y el de la asesora (o su correo) ya
     /// resueltos por el handler para toda la pagina de una vez.</summary>
     public static OrderListItemDto ToListItemDto(
-        this OrderWithQuotation row, string? clientName, string? advisorEmail) => new(
+        this OrderWithQuotation row, string? clientName, string? advisorName) => new(
         row.Order.Id.Value,
         row.Order.OrderNumber,
         row.Quotation.Id.Value,
@@ -31,7 +31,7 @@ internal static class OrderMapping
         row.Quotation.ClientId,
         clientName,
         row.Quotation.AdvisorId.Value,
-        advisorEmail,
+        advisorName,
         row.Order.Status.ToString(),
         row.Order.PaymentStatus.ToString(),
         row.Quotation.PaymentMethod,

@@ -103,11 +103,11 @@ public sealed record OrderListItemResponse(
     /// entre modulos y un pedido historico tiene que poder leerse igual.</summary>
     string? ClientName,
     Guid AdvisorId,
-    /// <summary>Correo de la asesora, no su nombre: el listado de pedidos sigue con el correo aunque
-    /// el de cotizaciones ya muestre el nombre (spec 2026-09-11, D1, nota del 2026-09-14). Misma
-    /// nulabilidad que <c>QuotationListItemResponse.AdvisorName</c>: referencia blanda entre
-    /// módulos.</summary>
-    string? AdvisorEmail,
+    /// <summary>El nombre de la asesora, o su correo si la membresía no tiene nombre: el mismo
+    /// campo que <see cref="QuotationListItemResponse.AdvisorName"/>, que reemplaza al
+    /// <c>AdvisorEmail</c> de antes (spec 2026-09-11, D1, nota del 2026-09-15). El porqué está en
+    /// <see cref="OrderListItemDto.AdvisorName"/>.</summary>
+    string? AdvisorName,
     string Status,
     string PaymentStatus,
     /// <summary>La forma de pago de la cotizacion de origen -- la columna "Pago" del listado.
