@@ -359,6 +359,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<AddSalePaymentProofsCommand, SaleDto>,
             AddSalePaymentProofsHandler>();
+        services.AddScoped<
+            ICommandHandler<AddSaleItemsCommand, SaleItemsAddedResult>,
+            AddSaleItemsHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.

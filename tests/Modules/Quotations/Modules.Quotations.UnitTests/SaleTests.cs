@@ -334,4 +334,48 @@ public sealed class SaleTests
 
         Assert.Equal("sale.sale.not_pending", error.Code);
     }
+
+    // A pedido (2026-09): agregar un producto desde "Editar" pedido sube el total de la
+    // cotización; lo cargado en comprobantes no cambia, pero el estado de pago sí puede.
+    [Theory]
+    [InlineData(50_000, 100_000, SalePaymentStatus.PartialPaymentReceived)]
+    [InlineData(100_000, 100_000, SalePaymentStatus.FullPaymentReceived)]
+    [InlineData(120_000, 100_000, SalePaymentStatus.FullPaymentReceived)]
+    public void RecalculatePaymentStatusComparesProofsAgainstTheNewTotal(
+        decimal proofAmount, decimal newTotal, SalePaymentStatus expected)
+    {
+        var sale = NewSale(proofs: [new SalePaymentProofInput(Guid.CreateVersion7(), proofAmount)]);
+        var later = Now.AddDays(1);
+
+        sale.RecalculatePaymentStatus(newTotal, later);
+
+        Assert.Equal(expected, sale.PaymentStatus);
+        Assert.Equal(later, sale.UpdatedAt);
+        Assert.Equal(2, sale.Version);
+    }
+
+    [Fact]
+    public void RecalculatePaymentStatusIsPendingWithoutAnyProof()
+    {
+        var sale = NewSale(paymentStatus: SalePaymentStatus.PaymentPending, proofs: []);
+
+        sale.RecalculatePaymentStatus(100_000m, Now.AddDays(1));
+
+        Assert.Equal(SalePaymentStatus.PaymentPending, sale.PaymentStatus);
+    }
+
+    // Aprobada, la venta es el respaldo de un cobro que alguien ya revisó con el total que
+    // tenía en ese momento — este método no se llama en ese caso (el caso de uso que agrega el
+    // producto ya lo bloquea antes), pero el agregado se defiende igual.
+    [Fact]
+    public void RecalculatePaymentStatusRejectsAnAlreadyApprovedSale()
+    {
+        var sale = NewSale();
+        sale.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            sale.RecalculatePaymentStatus(200_000m, Now.AddDays(1)));
+
+        Assert.Equal("sale.sale.not_pending", error.Code);
+    }
 }

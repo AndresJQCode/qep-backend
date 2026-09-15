@@ -15,6 +15,9 @@ public sealed class SaleApiTests
     private static string SaleProofsUrl(Guid tenantId, Guid quotationId) =>
         $"{SaleUrl(tenantId, quotationId)}/proofs";
 
+    private static string SaleItemsUrl(Guid tenantId, Guid quotationId) =>
+        $"{SaleUrl(tenantId, quotationId)}/items";
+
     // Bug real, 2026-09-12: el editor de cotizaciones dejo de pedir la forma de pago hace
     // rato (ver `UpdateQuotationRequest` en el frontend), asi que toda cotizacion nueva la
     // tiene en null -- pero `EnsureConvertibleToSale` seguia exigiendola, y con eso "Convertir
@@ -557,6 +560,165 @@ public sealed class SaleApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    // A pedido (2026-09): "Editar" un pedido pendiente para sumarle productos que faltaron al
+    // convertir. Con el pago pendiente (sin comprobantes) agregar un producto no tiene nada que
+    // recalcular del lado del pago -- sigue en PaymentPending.
+    [Fact]
+    public async Task AddSaleItemsAddsAProductAndRecalculatesTheQuotationTotal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+
+        var secondProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 50_000m);
+        var response = await client.PostAsJsonAsync(
+            SaleItemsUrl(tenantId, quotation.Id),
+            new AddSaleItemsRequest([new SaleItemAdditionRequest(secondProductId, 1m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await response.Content.ReadFromJsonAsync<SaleDetailResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal(2, detail.Quotation.Items.Count);
+        Assert.True(detail.Quotation.Total > quotation.Total);
+        Assert.Contains(detail.Quotation.Items, item => item.ProductId == secondProductId);
+        Assert.Equal("PaymentPending", detail.Sale.PaymentStatus);
+    }
+
+    // Lo cargado en comprobantes no cambia, pero el total contra el que se compara sí: cubría
+    // el total viejo por completo y ahora sólo cubre una parte.
+    [Fact]
+    public async Task AddSaleItemsRecalculatesThePaymentStatusWhenTheTotalGrows()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest(
+                "FullPaymentReceived", null, [new SalePaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+
+        var secondProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 50_000m);
+        var response = await client.PostAsJsonAsync(
+            SaleItemsUrl(tenantId, quotation.Id),
+            new AddSaleItemsRequest([new SaleItemAdditionRequest(secondProductId, 1m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await response.Content.ReadFromJsonAsync<SaleDetailResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal("PartialPaymentReceived", detail.Sale.PaymentStatus);
+    }
+
+    // Aprobada, la venta es el respaldo de un cobro que alguien ya revisó con el total que
+    // tenía en ese momento: agregar un producto ahí adentro cambiaría lo que esa persona dio
+    // por bueno.
+    [Fact]
+    public async Task AddSaleItemsRejectsAnAlreadyApprovedSale()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+        var approve = await client.PostAsync(
+            $"{SaleUrl(tenantId, quotation.Id)}/approve",
+            null,
+            TestContext.Current.CancellationToken);
+        approve.EnsureSuccessStatusCode();
+
+        var secondProductId = await CreateProductWithScalesAsync(client, tenantId);
+        var response = await client.PostAsJsonAsync(
+            SaleItemsUrl(tenantId, quotation.Id),
+            new AddSaleItemsRequest([new SaleItemAdditionRequest(secondProductId, 1m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("sale.sale.not_pending", body, StringComparison.Ordinal);
+    }
+
+    // Un producto por cotización: agregarlo de nuevo por esta vía es la misma línea con la
+    // cantidad partida, mismo invariante que agregarlo desde el editor.
+    [Fact]
+    public async Task AddSaleItemsRejectsAProductAlreadyInTheQuotation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var convert = await client.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+
+        var response = await client.PostAsJsonAsync(
+            SaleItemsUrl(tenantId, quotation.Id),
+            new AddSaleItemsRequest([new SaleItemAdditionRequest(productId, 1m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("quotation.item.duplicate_product", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AddSaleItemsForAnotherTenantIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = owner;
+        var clientId = await CreateActiveCustomerAsync(owner, tenantId);
+        var productId = await CreateProductWithScalesAsync(owner, tenantId);
+        var quotation = await CreateSentQuotationAsync(owner, factory, tenantId, clientId, productId);
+        var convert = await owner.PostAsJsonAsync(
+            SaleUrl(tenantId, quotation.Id),
+            new ConvertQuotationToSaleRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        convert.EnsureSuccessStatusCode();
+
+        var (_, _, otherOwner) = await RegisterTenantAsync(factory, SalesPermissions.SaleManage);
+        using var __ = otherOwner;
+        var secondProductId = await CreateProductWithScalesAsync(owner, tenantId);
+
+        var response = await otherOwner.PostAsJsonAsync(
+            SaleItemsUrl(tenantId, quotation.Id),
+            new AddSaleItemsRequest([new SaleItemAdditionRequest(secondProductId, 1m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     /// <summary>Una edicion cualquiera sobre la cotizacion ya enviada: mueve UpdatedAt por

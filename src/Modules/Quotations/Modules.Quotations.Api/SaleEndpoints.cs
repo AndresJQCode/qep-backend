@@ -85,6 +85,17 @@ public static class SaleEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // "Editar" un pedido pendiente para sumarle productos que faltaron al convertir (a
+        // pedido, 2026-09) — sólo mientras Pending, ver AddSaleItemsHandler. Devuelve venta y
+        // cotización juntas, igual que GetSaleByIdAsync: el total nuevo vive en la segunda.
+        group.MapPost("/items", AddSaleItemsAsync)
+            .RequireAuthorization(SalesPermissions.SaleManage)
+            .Accepts<AddSaleItemsRequest>("application/json")
+            .Produces<SaleDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -218,6 +229,29 @@ public static class SaleEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(sale));
+    }
+
+    private static async Task<IResult> AddSaleItemsAsync(
+        Guid tenantId,
+        Guid quotationId,
+        AddSaleItemsRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var toAdd = request.ToAdd
+            .Select(item => new SaleItemAddition(item.ProductId, item.Quantity))
+            .ToArray();
+
+        var result = await dispatcher.SendAsync(
+            new AddSaleItemsCommand(tenantId, quotationId, toAdd),
+            cancellationToken);
+
+        // Misma composición que GetSaleByIdAsync: el mismo composer, para que las dos pantallas
+        // no puedan mostrar cosas distintas de la misma cotización.
+        return Results.Ok(new SaleDetailResponse(
+            ToResponse(result.Sale),
+            await composer.ComposeAsync(tenantId, result.Quotation, cancellationToken)));
     }
 
     private static async Task<IResult> ApproveSaleAsync(
