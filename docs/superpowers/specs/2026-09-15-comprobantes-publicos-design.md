@@ -51,7 +51,7 @@ la tiene.
 | E1 | La hoja «Pedidos» suma cuatro columnas al final, después de Total: «Comprobantes» (cantidad, número), «Comprobante 1», «Comprobante 2», «Comprobante 3». | Las ocho actuales copian el orden de `order-table.tsx` y no se mueven. La cantidad hace visible el cuarto comprobante, que no tiene columna. |
 | E2 | Cada celda de comprobante trae el enlace «Ver» si tiene copia pública, «Sin enlace» si es privado, y queda vacía si el pedido no tiene ese comprobante. | Una celda vacía no puede significar dos cosas. |
 | E3 | El enlace es la fórmula `HYPERLINK("url","Ver")`, con el valor ya calculado y estilo de enlace (azul, subrayado). | El writer escribe en streaming y el zip admite una sola entrada abierta a la vez. Un hipervínculo de relación (`<hyperlinks>` más `sheet1.xml.rels`) obliga a guardar en memoria todos los enlaces hasta el final. |
-| E4 | Si la URL pasa de 255 caracteres, la celda lleva la URL como texto plano. | Es el tope de Excel para una cadena dentro de una fórmula. Una URL pública mide unos 100 caracteres; sólo lo rompe un `PublicBaseUrl` mal configurado, y así la URL se ve en vez de perderse. |
+| E4 | Si la URL o el texto pasan de 255 caracteres, la celda lleva la URL como texto plano. El tope se mide sobre la cadena tal como entra en la fórmula, con las comillas ya duplicadas. | Es el tope de Excel para una cadena dentro de una fórmula; medido ya escapado, toda fórmula que se escribe es válida. Una URL pública mide unos 100 caracteres; sólo lo rompe un `PublicBaseUrl` mal configurado, y así la URL se ve en vez de perderse. |
 | E5 | `ExportCell` gana un tercer tipo: `OfLink(url, text)`. | El Excel de cotizaciones no cambia. |
 | E6 | Los comprobantes se leen con una consulta por lote de 1000 pedidos, ordenados por `UploadedAt` y después por `Id`. | Evita el N+1. «Comprobante 1» es el primero que se subió. |
 | E7 | Las cuatro columnas salen siempre, aunque la opción esté apagada. | La forma del archivo no depende del ambiente. |
@@ -191,7 +191,8 @@ procesador la llama dentro de la proyección del lote de `ExportBatchLoop`, con 
 - Las comillas dobles se escapan duplicándolas (`"` → `""`), en la URL y en el texto.
 - `<v>` lleva el valor ya calculado: el archivo se ve bien antes de que Excel recalcule, y en
   visores que no calculan.
-- Si `url.Length > 255` o el texto pasa de 255, la celda sale como texto plano con la URL (E4).
+- Si la URL o el texto pasan de 255 caracteres tal como entran en la fórmula, con las comillas ya
+  duplicadas, la celda sale como texto plano con la URL (E4).
 - El estilo de índice 2 es una fuente azul (`FF0563C1`) y subrayada. `BuildStylesheet` pasa a tres
   fuentes y tres formatos de celda.
 
