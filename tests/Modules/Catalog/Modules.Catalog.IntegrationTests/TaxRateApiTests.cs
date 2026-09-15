@@ -616,6 +616,7 @@ public sealed class TaxRateApiTests
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
             // Fijado, nunca heredado de appsettings.json. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }
 }

@@ -674,6 +674,12 @@ internal static class QuotationsApiHarness
             // este proyecto mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
 
+            // Fijado, nunca heredado, mismo criterio que Notifications:EmailProvider: con la opción
+            // prendida en los user-secrets de quien corre las pruebas y sin bucket público,
+            // PaymentProofsOptionsValidator no deja arrancar el host, y todas las pruebas de este
+            // proyecto mueren antes de su aserción (spec 2026-09-15, P2).
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+
             // Fijado, nunca heredado: con un número en los user-secrets de quien corre las pruebas,
             // cada host de este proyecto sembraría la carga de exportación. Las pruebas de la carga lo
             // prenden con WithWebHostBuilder, que se aplica después y gana.

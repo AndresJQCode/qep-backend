@@ -450,6 +450,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
+        // P2 (spec 2026-09-15): con Quotations:PaymentProofs:PublicLinks encendida, el bucket
+        // público es obligatorio. Vive acá porque es el único lugar que ve QuotationsOptions y
+        // StorageOptions a la vez. Se suma al QuotationsOptionsValidator de
+        // AddQuotationsInfrastructure, que ya declara ValidateOnStart: AddSingleton y no TryAdd,
+        // porque con TryAdd este segundo validador no se registraría.
+        services.AddSingleton<IValidateOptions<QuotationsOptions>, PaymentProofsOptionsValidator>();
 
         // El tick del worker de exportaciones. Scoped: ExportJobWorker abre un scope por job para
         // que cada uno tenga su DbContext limpio. Los procesadores por kind se registran con él

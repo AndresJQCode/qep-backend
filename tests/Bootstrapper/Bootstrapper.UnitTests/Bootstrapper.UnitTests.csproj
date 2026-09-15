@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Los adaptadores entre módulos y los validadores de opciones del composition root son
+         internal (InternalsVisibleTo en Bootstrapper.csproj). Los módulos llegan transitivos por
+         esta referencia. -->
+    <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
+  </ItemGroup>
+</Project>
