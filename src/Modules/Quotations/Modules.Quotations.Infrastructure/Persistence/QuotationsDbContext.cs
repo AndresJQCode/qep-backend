@@ -422,6 +422,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("uploaded_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
         proof.Property(value => value.UploadedAt).HasColumnName("uploaded_at");
+        // La clave de la copia pública (spec 2026-09-15, P5): nullable, porque los comprobantes
+        // privados no tienen, y sin índice, porque nadie busca por ella. La clave mide 51
+        // caracteres (`payment-proofs/` + 32 hex + extensión); 200 deja margen.
+        proof.Property(value => value.PublicStorageKey)
+            .HasColumnName("public_storage_key")
+            .HasMaxLength(200);
         proof.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_payment_proofs_order");
 
         // CASCADE: un comprobante no tiene sentido sin su pedido -- mismo criterio que
