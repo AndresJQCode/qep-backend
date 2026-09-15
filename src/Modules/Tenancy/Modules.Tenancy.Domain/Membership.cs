@@ -262,7 +262,8 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Renueva en el lugar una invitación vencida, con ventana nueva y los roles que se den ahora.
+    /// Renueva en el lugar una invitación vencida o una membresía quitada, con ventana nueva y los
+    /// roles que se den ahora.
     /// </summary>
     /// <remarks>
     /// En el lugar, y no creando una segunda membresía: (UserId, TenantId) es un índice
@@ -274,11 +275,17 @@ public sealed class Membership
     /// con un ExpiresAt en el pasado para siempre, y volver a invitarla devolvía esa fila
     /// muerta sin tocar: ni invitación nueva, ni error, ni aviso. Ver SDD-OD-04.
     ///
+    /// Una membresía quitada también se renueva: el owner decidió que a una persona quitada se la
+    /// puede volver a invitar. Vuelve a <see cref="MembershipState.Invited"/> y no a
+    /// <see cref="MembershipState.Active"/>, así que tiene que aceptar de nuevo: nadie recupera el
+    /// acceso sólo porque alguien lo invitó. Una suspendida, en cambio, se rechaza: se levanta con
+    /// <see cref="Reactivate"/>, que es una operación separada (SDD-OD-13).
+    ///
     /// Una invitación todavía válida se rechaza en vez de renovarse: extender una ventana viva
     /// invalida en silencio el link que ya está en la bandeja de alguien.
     ///
-    /// El nombre se reescribe junto con los roles: quien renueva una invitación vencida la está
-    /// armando de nuevo (spec 2026-09-11, D5).
+    /// El nombre se reescribe junto con los roles: quien renueva una invitación la está armando
+    /// de nuevo (spec 2026-09-11, D5).
     /// </remarks>
     public void Reinvite(
         string displayName,
@@ -305,11 +312,11 @@ public sealed class Membership
                 "The invitation has not expired yet.");
         }
 
-        if (State is not (MembershipState.Invited or MembershipState.Expired))
+        if (State is not (MembershipState.Invited or MembershipState.Expired or MembershipState.Removed))
         {
             throw new TenantDomainException(
                 "tenancy.membership.not_reinvitable",
-                "Only a lapsed or expired invitation can be re-invited.");
+                "Only a lapsed, expired or removed membership can be re-invited.");
         }
 
         _roles.Clear();
@@ -319,7 +326,7 @@ public sealed class Membership
         InvitedAt = occurredAt;
         ExpiresAt = occurredAt + timeToLive;
         AcceptedAt = null;
-        // Rotar el token invalida el link vencido que quedó en alguna bandeja; el vigente
+        // Rotar el token invalida el link anterior que quedó en alguna bandeja; el vigente
         // viaja en el evento re-emitido, que es lo que dispara el email nuevo.
         InvitationTokenHash = invitationTokenHash;
         Version++;
@@ -336,9 +343,9 @@ public sealed class Membership
 
     /// <summary>
     /// Suspende una membresía activa, bloqueando el acceso sin descartarla.
-    /// Sólo es válido desde <see cref="MembershipState.Active"/>; en la v1 no hay
-    /// camino de reactivación (según el ADR 0016, los estados son transiciones reales y
-    /// auditadas — un miembro suspendido tiene que ser re-invitado para volver).
+    /// Sólo es válido desde <see cref="MembershipState.Active"/>. Se vuelve con
+    /// <see cref="Reactivate"/> y no re-invitando: <see cref="Reinvite"/> rechaza una membresía
+    /// suspendida (SDD-OD-13).
     /// </summary>
     public void Suspend(DateTimeOffset occurredAt)
     {
@@ -401,9 +408,11 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Quita una membresía, revocándola de forma permanente. Válido desde cualquier
-    /// estado no terminal (<see cref="MembershipState.Invited"/>,
-    /// <see cref="MembershipState.Active"/> o <see cref="MembershipState.Suspended"/>).
+    /// Quita una membresía: la persona pierde el acceso y deja de aparecer en el roster. Válido
+    /// desde <see cref="MembershipState.Invited"/>, <see cref="MembershipState.Active"/> o
+    /// <see cref="MembershipState.Suspended"/>. No es permanente: volver a invitar a la persona
+    /// reutiliza esta fila y la devuelve a <see cref="MembershipState.Invited"/>
+    /// (<see cref="Reinvite"/>), así que tiene que aceptar de nuevo.
     /// </summary>
     public void Remove(DateTimeOffset occurredAt)
     {

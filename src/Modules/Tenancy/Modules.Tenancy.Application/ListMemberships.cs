@@ -106,12 +106,13 @@ public sealed class ListMembershipsHandler(
         // handler para la resolución de email — la cantidad de miembros de un tenant es
         // chica hoy, no justifica un método de repositorio nuevo.
         //
-        // Las quitadas se descartan primero, antes que el rol: una membresía Removed es
-        // terminal (Membership.Remove no admite volver) y para el roster dejó de existir. No
-        // entra en el listado ni en los conteos, con o sin filtro de estado. Es además el
-        // único estado visible que se deriva 1:1 de la columna, así que acá no hace falta
-        // reloj. El usuario detrás puede seguir existiendo o no —eso lo decide Identity al
-        // consumir el evento de baja—; para este tenant es indistinto.
+        // Las quitadas se descartan primero, antes que el rol: mientras una membresía está en
+        // Removed, para el roster dejó de existir. No entra en el listado ni en los conteos, con
+        // o sin filtro de estado. No es para siempre: volver a invitar a la persona reutiliza la
+        // fila y la pasa a Invited (Membership.Reinvite), y desde ahí vuelve a aparecer como
+        // pendiente. Es además el único estado visible que se deriva 1:1 de la columna, así que
+        // acá no hace falta reloj. El usuario detrás puede seguir existiendo o no —eso lo decide
+        // Identity al consumir el evento de baja—; para este tenant es indistinto.
         //
         // El rol se aplica antes de resolver los correos y no después: cada membresía que
         // sobrevive cuesta una consulta a IUserDirectory, así que descartar acá es lo que
