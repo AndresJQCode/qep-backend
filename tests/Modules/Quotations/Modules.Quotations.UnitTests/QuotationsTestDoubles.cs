@@ -642,3 +642,61 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
 
     public void Add(Order order) { }
 }
+
+/// <summary>
+/// El publicador de comprobantes (spec 2026-09-15): anota qué se publicó y qué se borró, y con qué
+/// token. La clave sale del id del archivo para que la prueba la pueda predecir; la real es
+/// aleatoria. Con <c>enabled</c> en false se porta como la opción apagada.
+/// </summary>
+internal sealed class RecordingPaymentProofPublisher(bool enabled = true) : IPaymentProofPublisher
+{
+    public const string BaseUrl = "https://assets-qep.example.co";
+
+    private int _publishCalls;
+
+    /// <summary>La llamada a <see cref="PublishAsync"/> (desde 1) que falla; null si ninguna.</summary>
+    public int? FailingPublishCall { get; set; }
+
+    /// <summary>La clave cuyo borrado falla, para probar que el rollback sigue con las demás.</summary>
+    public string? FailingDeleteKey { get; set; }
+
+    public List<string> PublishedKeys { get; } = [];
+
+    public List<string> DeletedKeys { get; } = [];
+
+    public List<CancellationToken> DeleteTokens { get; } = [];
+
+    public static string KeyFor(Guid fileId) => $"payment-proofs/{fileId:N}.pdf";
+
+    public Task<string?> PublishAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
+    {
+        _publishCalls++;
+        if (_publishCalls == FailingPublishCall)
+        {
+            return Task.FromException<string?>(new InvalidOperationException("Simulated copy failure."));
+        }
+
+        if (!enabled)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        var key = KeyFor(fileId);
+        PublishedKeys.Add(key);
+        return Task.FromResult<string?>(key);
+    }
+
+    public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
+    {
+        DeleteTokens.Add(cancellationToken);
+        if (publicKey == FailingDeleteKey)
+        {
+            return Task.FromException(new InvalidOperationException("Simulated delete failure."));
+        }
+
+        DeletedKeys.Add(publicKey);
+        return Task.CompletedTask;
+    }
+
+    public string? UrlFor(string publicKey) => enabled ? $"{BaseUrl}/{publicKey}" : null;
+}

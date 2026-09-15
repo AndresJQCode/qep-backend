@@ -55,6 +55,7 @@ public sealed class AddOrderPaymentProofsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationFileLookup fileLookup,
+    IPaymentProofPublisher paymentProofPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -85,27 +86,41 @@ public sealed class AddOrderPaymentProofsHandler(
         var now = clock.UtcNow;
         var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
-        order.AddPaymentProofs(
-            command.PaymentProofs
-                .Select(proof => new OrderPaymentProofInput(proof.FileId, proof.Amount))
-                .ToArray(),
-            paymentStatus,
-            command.Notes,
-            uploadedBy,
-            now,
-            command.UpdatedProofs
-                .Select(update => new OrderPaymentProofAmountUpdate(
-                    new OrderPaymentProofId(update.ProofId), update.Amount))
-                .ToArray());
+        // Sólo los comprobantes nuevos se publican (spec 2026-09-15, P4): corregir un monto
+        // (UpdatedProofs) no cambia el archivo. Antes del dominio y con rollback, igual que al
+        // convertir (P7): si otra persona acaba de aprobar el pedido, AddPaymentProofs lo rechaza
+        // con order.order.not_pending después de copiar, y esas copias se borran.
+        var copies = new PaymentProofCopies(paymentProofPublisher);
+        try
+        {
+            var proofs = await copies.PublishAsync(
+                command.TenantId, command.PaymentProofs, cancellationToken);
 
-        auditPublisher.Publish(
-            command.TenantId,
-            executionContext.SubjectId,
-            "quotation.order.payment_proofs_added",
-            order.Id.ToString(),
-            "success",
-            now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+            order.AddPaymentProofs(
+                proofs,
+                paymentStatus,
+                command.Notes,
+                uploadedBy,
+                now,
+                command.UpdatedProofs
+                    .Select(update => new OrderPaymentProofAmountUpdate(
+                        new OrderPaymentProofId(update.ProofId), update.Amount))
+                    .ToArray());
+
+            auditPublisher.Publish(
+                command.TenantId,
+                executionContext.SubjectId,
+                "quotation.order.payment_proofs_added",
+                order.Id.ToString(),
+                "success",
+                now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            await copies.RollbackAsync();
+            throw;
+        }
 
         return order.ToDto();
     }
