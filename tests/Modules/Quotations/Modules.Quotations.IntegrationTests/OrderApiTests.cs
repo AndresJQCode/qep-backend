@@ -647,6 +647,19 @@ public sealed class OrderApiTests
         Assert.True(detail.Quotation.Total > quotation.Total);
         Assert.Contains(detail.Quotation.Items, item => item.ProductId == secondProductId);
         Assert.Equal("PaymentPending", detail.Order.PaymentStatus);
+
+        var auditMessages = await OutboxMessagesAsync(factory, "platform.audit.recorded.v1");
+
+        // Mismo criterio que las demás acciones quotation.order.*: la entidad auditada es el
+        // pedido, así que el id que llega a audit.entries es el del pedido y no el de la cotización.
+        var itemAdded = Assert.Single(
+            auditMessages, message => ActionOf(message) == "quotation.order.item_added");
+        Assert.Equal(detail.Order.Id, Guid.Parse(EntityIdOf(itemAdded)));
+
+        // Guarda del merge con feature/sales, que llegó con los nombres de venta: ninguna acción
+        // de auditoría de este flujo puede volver a salir como quotation.sale.*.
+        var actions = auditMessages.Select(ActionOf).ToArray();
+        Assert.DoesNotContain(actions, action => action.StartsWith("quotation.sale.", StringComparison.Ordinal));
     }
 
     // Lo cargado en comprobantes no cambia, pero el total contra el que se compara sí: cubría
@@ -813,6 +826,14 @@ public sealed class OrderApiTests
     {
         using var payload = JsonDocument.Parse(message.PayloadJson);
         return payload.RootElement.GetProperty("action").GetString()!;
+    }
+
+    // El campo lo fija el AuditEventPayload de QuotationAuditPublisher (resourceId), que se
+    // serializa con las opciones por defecto: el nombre viaja tal cual está declarado.
+    private static string EntityIdOf(QuotationsOutboxMessage message)
+    {
+        using var payload = JsonDocument.Parse(message.PayloadJson);
+        return payload.RootElement.GetProperty("resourceId").GetString()!;
     }
 
     /// <summary>Una edicion cualquiera sobre la cotizacion ya enviada: mueve UpdatedAt por
