@@ -68,6 +68,33 @@ public sealed class QuotationAdvisorNameApiTests
             (await ListRowAsync(client, tenantId, quotation.Id)).AdvisorName);
     }
 
+    // La fila de pedidos trae el mismo campo que la de cotizaciones: el nombre o, mientras la
+    // membresía no tenga uno, el correo (spec 2026-09-11, D1, nota del 2026-09-15).
+    [Fact]
+    public async Task TheOrderListShowsTheAdvisorNameAndFallsBackToTheEmail()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var order = await ConvertToOrderAsync(client, tenantId, quotation.Id);
+
+        // El owner nace sin nombre (CreateActive): la fila cae a su correo.
+        Assert.NotNull(quotation.AdvisorEmail);
+        Assert.Equal(
+            quotation.AdvisorEmail,
+            (await OrderRowAsync(client, tenantId, order.Id)).AdvisorName);
+
+        await RenameAsync(client, tenantId, quotation.AdvisorId, "Laura Gómez");
+
+        Assert.Equal(
+            "Laura Gómez",
+            (await OrderRowAsync(client, tenantId, order.Id)).AdvisorName);
+    }
+
     private static async Task<QuotationListItemResponse> ListRowAsync(
         HttpClient client, Guid tenantId, Guid quotationId)
     {
@@ -75,6 +102,31 @@ public sealed class QuotationAdvisorNameApiTests
             QuotationsUrl(tenantId), TestContext.Current.CancellationToken);
         Assert.NotNull(page);
         return Assert.Single(page.Items, item => item.Id == quotationId);
+    }
+
+    private static async Task<OrderListItemResponse> OrderRowAsync(
+        HttpClient client, Guid tenantId, Guid orderId)
+    {
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"/api/v1/tenants/{tenantId}/orders", TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        return Assert.Single(page.Items, item => item.Id == orderId);
+    }
+
+    // Sin comprobantes: el pago queda pendiente, el único caso en que la conversión no los exige.
+    // Esta prueba mira la fila del listado, no el asistente.
+    private static async Task<OrderResponse> ConvertToOrderAsync(
+        HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotationId}/order",
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
     }
 
     private static async Task RenameAsync(

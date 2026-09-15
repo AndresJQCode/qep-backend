@@ -40,9 +40,10 @@ public sealed class OrderListApiTests
         Assert.Equal(quotation.QuotationNumber, row.QuotationNumber);
         Assert.Equal(clientId, row.ClientId);
         Assert.Equal("Verde Esencial S.A.S.", row.ClientName);
-        // La asesora se muestra por correo: el nombre de la membresia llega al PDF y al listado
-        // de cotizaciones, no a pedidos (spec 2026-09-11, D1, nota del 2026-09-14).
-        Assert.NotNull(row.AdvisorEmail);
+        // El owner nace sin nombre (CreateActive): la fila trae su correo como respaldo. El nombre
+        // y el respaldo se recorren punta a punta en QuotationAdvisorNameApiTests (spec 2026-09-11,
+        // D1, nota del 2026-09-15).
+        Assert.NotNull(row.AdvisorName);
         Assert.Equal("Pending", row.Status);
         Assert.Equal("PaymentPending", row.PaymentStatus);
         Assert.Equal(quotation.Currency, row.Currency);

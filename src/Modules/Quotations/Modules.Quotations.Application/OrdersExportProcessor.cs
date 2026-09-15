@@ -107,7 +107,9 @@ public sealed class OrdersExportProcessor(
     [
         ExportCell.OfText(row.OrderNumber),
         ExportCell.OfText(row.ClientName),
-        ExportCell.OfText(row.AdvisorEmail),
+        // El nombre con respaldo al correo, igual que la tabla (spec 2026-09-11, D1, nota del
+        // 2026-09-15). El encabezado sigue siendo "Asesor", como en el Excel de cotizaciones.
+        ExportCell.OfText(row.AdvisorName),
         // Texto ISO y no celda de fecha: una fecha se muestra según la configuración regional de
         // quien abre el archivo, mismo criterio que cotizaciones.
         ExportCell.OfText(row.ConvertedAt.ToString("O", CultureInfo.InvariantCulture)),

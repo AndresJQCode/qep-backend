@@ -32,13 +32,29 @@ public sealed class OrdersExportProcessorTests
         var row = Assert.Single(writer.Rows);
         Assert.Equal("PED-2026-0001", row[0].Text);
         Assert.Equal("Ferretería El Tornillo", row[1].Text);
-        Assert.Equal("asesora@qcode.co", row[2].Text);
+        // El nombre, igual que la tabla (spec 2026-09-11, D1, nota del 2026-09-15).
+        Assert.Equal("Asesora Uno", row[2].Text);
         Assert.Equal(Now.ToString("O", CultureInfo.InvariantCulture), row[3].Text);
         // Sin forma de pago, la columna cae a la etiqueta del estado del pago, igual que la tabla
         // (spec 2026-09-13, A7).
         Assert.Equal("Pago pendiente", row[4].Text);
         Assert.Equal("Pendiente", row[5].Text);
         Assert.Equal(0m, row[7].Number);
+    }
+
+    // Sin nombre en la membresía (owner, sembrados) el archivo cae al correo, igual que la tabla.
+    [Fact]
+    public async Task WritesTheAdvisorEmailWhenTheMemberHasNoName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var processor = NewProcessor(
+            new StubOrderListRepository(NewRow("PED-2026-0001", paymentMethod: null)),
+            writer,
+            advisors: new StubQuotationAdvisorLookup("asesora@qcode.co"));
+
+        await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora@qcode.co", Assert.Single(writer.Rows)[2].Text);
     }
 
     [Fact]
@@ -151,12 +167,13 @@ public sealed class OrdersExportProcessorTests
     private static OrdersExportProcessor NewProcessor(
         StubOrderListRepository repository,
         RecordingExportWorkbookWriter? writer = null,
-        RecordingExportFileStorage? storage = null) =>
+        RecordingExportFileStorage? storage = null,
+        StubQuotationAdvisorLookup? advisors = null) =>
         new(repository,
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
-            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
             new FixedClock(Now));

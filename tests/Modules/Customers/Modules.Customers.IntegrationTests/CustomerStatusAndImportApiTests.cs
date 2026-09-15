@@ -696,9 +696,16 @@ public sealed class CustomerStatusAndImportApiTests
         var bytes = await response.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken);
         using var workbook = new XLWorkbook(new MemoryStream(bytes));
         var sheet = workbook.Worksheets.First();
-        Assert.Equal("Cliente A Corregir", sheet.Cell(2, 2).GetString());
-        Assert.Equal("900.999.999-9", sheet.Cell(2, 4).GetString());
-        Assert.Equal("Ciudad Que No Existe", sheet.Cell(2, 9).GetString());
+        // La columna se ubica por su cabecera, no por un numero fijo: una columna nueva en el
+        // contrato corre las posiciones y el numero fijo termina leyendo la celda de al lado.
+        static int ColumnOf(string header) => CustomerImportColumns.Ordered.ToList().IndexOf(header) + 1;
+        Assert.Equal("Cliente A Corregir", sheet.Cell(2, ColumnOf(CustomerImportColumns.Name)).GetString());
+        Assert.Equal(
+            "900.999.999-9",
+            sheet.Cell(2, ColumnOf(CustomerImportColumns.IdentificationNumber)).GetString());
+        Assert.Equal(
+            "Ciudad Que No Existe",
+            sheet.Cell(2, ColumnOf(CustomerImportColumns.City)).GetString());
     }
 
     [Fact]

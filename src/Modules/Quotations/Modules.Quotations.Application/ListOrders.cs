@@ -44,7 +44,13 @@ public sealed record OrderListItemDto(
     /// que <see cref="QuotationListItemDto.ClientName"/>.</summary>
     string? ClientName,
     Guid AdvisorId,
-    string? AdvisorEmail,
+    /// <summary>El nombre de la asesora o, si su membresía no tiene uno, su correo
+    /// (<see cref="QuotationAdvisor.Label"/>): el mismo campo y el mismo respaldo que
+    /// <see cref="QuotationListItemDto.AdvisorName"/>, para que las dos grillas presenten igual a la
+    /// misma persona. Reemplaza al <c>AdvisorEmail</c> que la fila traía antes (spec 2026-09-11, D1,
+    /// nota del 2026-09-15). Null si la membresía no resuelve: referencia blanda entre
+    /// módulos.</summary>
+    string? AdvisorName,
     string Status,
     string PaymentStatus,
     /// <summary>La forma de pago de la cotización de origen. Viene null en todo lo creado desde

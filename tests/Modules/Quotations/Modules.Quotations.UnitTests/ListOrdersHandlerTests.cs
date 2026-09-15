@@ -28,22 +28,52 @@ public sealed class ListOrdersHandlerTests
         var row = Assert.Single(page.Items);
         Assert.Equal("PED-2026-0001", row.OrderNumber);
         Assert.Equal("Ferretería El Tornillo", row.ClientName);
-        Assert.Equal("asesora@qcode.co", row.AdvisorEmail);
+        Assert.Equal("Asesora Uno", row.AdvisorName);
         // Nace pendiente de revisión: quien convierte y quien aprueba son roles distintos.
         Assert.Equal("Pending", row.Status);
         Assert.Equal("COP", row.Currency);
     }
 
-    // La fila de pedidos sigue mostrando el correo aunque la membresía tenga nombre: el nombre llega
-    // al PDF y al listado de cotizaciones, no a pedidos (spec 2026-09-11, D1, nota del 2026-09-14).
+    // La fila de pedidos presenta a la asesora por su nombre, igual que la de cotizaciones (spec
+    // 2026-09-11, D1, nota del 2026-09-15).
     [Fact]
-    public async Task ListKeepsTheAdvisorEmailEvenWhenTheMemberHasAName()
+    public async Task ListCarriesTheAdvisorNameWhenTheMemberHasOne()
     {
         var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("asesora@qcode.co", Assert.Single(page.Items).AdvisorEmail);
+        Assert.Equal("Asesora Uno", Assert.Single(page.Items).AdvisorName);
+    }
+
+    // El owner y los miembros sembrados nacen con CreateActive, sin nombre: la fila cae al correo
+    // en vez de viajar vacía, así que la pantalla no tiene que conocer dos campos para elegir.
+    [Fact]
+    public async Task ListFallsBackToTheAdvisorEmailWhenTheMemberHasNoName()
+    {
+        var handler = NewHandler(
+            NewCustomerLookup(),
+            new StubQuotationAdvisorLookup("asesora@qcode.co"),
+            NewRow("PED-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora@qcode.co", Assert.Single(page.Items).AdvisorName);
+    }
+
+    // La asesora es una referencia blanda, igual que el cliente: si la membresía no resuelve, la
+    // fila viaja igual y sin etiqueta. Un pedido histórico tiene que poder leerse.
+    [Fact]
+    public async Task ListLeavesTheAdvisorNameNullWhenTheMemberDoesNotResolve()
+    {
+        var handler = NewHandler(
+            NewCustomerLookup(),
+            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno", resolves: false),
+            NewRow("PED-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Null(Assert.Single(page.Items).AdvisorName);
     }
 
     // La alternativa —una consulta por fila— es el N+1 que estos campos existen para evitar.
@@ -147,11 +177,19 @@ public sealed class ListOrdersHandlerTests
         NewHandler(customers, new StubOrderListRepository(rows));
 
     private static ListOrdersHandler NewHandler(
-        StubQuotationCustomerLookup customers, StubOrderListRepository repository) =>
+        StubQuotationCustomerLookup customers,
+        StubQuotationAdvisorLookup advisors,
+        params OrderWithQuotation[] rows) =>
+        NewHandler(customers, new StubOrderListRepository(rows), advisors);
+
+    private static ListOrdersHandler NewHandler(
+        StubQuotationCustomerLookup customers,
+        StubOrderListRepository repository,
+        StubQuotationAdvisorLookup? advisors = null) =>
         new(
             repository,
             customers,
-            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubExecutionContext(SubjectId, TenantId));
 
     private static OrderWithQuotation NewRow(string orderNumber, Guid clientId)

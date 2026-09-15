@@ -174,7 +174,7 @@ public static class OrderEndpoints
         order.ClientId,
         order.ClientName,
         order.AdvisorId,
-        order.AdvisorEmail,
+        order.AdvisorName,
         order.Status,
         order.PaymentStatus,
         order.PaymentMethod,

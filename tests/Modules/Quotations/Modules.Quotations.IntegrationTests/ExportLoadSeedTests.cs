@@ -176,7 +176,8 @@ public sealed class ExportLoadSeedTests
         {
             Assert.StartsWith("PED-", item.OrderNumber, StringComparison.Ordinal);
             Assert.NotNull(item.ClientName);
-            Assert.Equal(OwnerEmail, item.AdvisorEmail);
+            // Mismo respaldo que la fila de cotizaciones: sin nombre, el correo del owner.
+            Assert.Equal(OwnerEmail, item.AdvisorName);
             Assert.Equal("PaymentPending", item.PaymentStatus);
         });
 
