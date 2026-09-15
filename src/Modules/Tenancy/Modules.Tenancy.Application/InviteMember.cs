@@ -137,9 +137,11 @@ public sealed class InviteMemberHandler(
             return existing.ToDto();
         }
 
-        // Todo lo demás es o una invitación vencida (todavía en Invited, porque el vencimiento es
-        // perezoso y nadie intentó entrar) o una ya marcada como Expired. Las dos son
-        // renovables; Reinvite rechaza los estados que no lo son. SDD-OD-04.
+        // Todo lo demás es una invitación vencida (todavía en Invited, porque el vencimiento es
+        // perezoso y nadie intentó entrar), una ya marcada como Expired o una membresía quitada.
+        // Las tres son renovables (SDD-OD-04; la quitada, por decisión del owner) y vuelven a
+        // Invited, así que la persona tiene que aceptar de nuevo. Suspended no: Reinvite la
+        // rechaza y se levanta con Reactivate (SDD-OD-13).
         // Token nuevo en cada renovación: el link vencido muere con su ventana.
         var invitationToken = InvitationTokens.Generate();
         existing.Reinvite(

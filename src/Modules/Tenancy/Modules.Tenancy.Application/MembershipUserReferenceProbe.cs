@@ -4,12 +4,15 @@ using Modules.Tenancy.Domain;
 namespace Modules.Tenancy.Application;
 
 /// <summary>
-/// Tenancy retiene a un usuario mientras conserve una membresía que todavía puede volver a
-/// usarse: <see cref="MembershipState.Invited"/>, <see cref="MembershipState.Active"/> o
+/// Tenancy retiene a un usuario mientras conserve una membresía que le da o le promete acceso:
+/// <see cref="MembershipState.Invited"/>, <see cref="MembershipState.Active"/> o
 /// <see cref="MembershipState.Suspended"/> (una suspensión se reactiva). Una membresía
-/// <see cref="MembershipState.Removed"/> o <see cref="MembershipState.Expired"/> es terminal
-/// —<c>Membership.Remove</c> rechaza tocarla— y no cuenta: si son las únicas que quedan, el
-/// usuario es un huérfano y una invitación futura crea uno nuevo.
+/// <see cref="MembershipState.Removed"/> o <see cref="MembershipState.Expired"/> no cuenta,
+/// aunque ninguna de las dos es terminal: las dos se pueden volver a invitar
+/// (<c>Membership.Reinvite</c>). Si son las únicas que quedan, el usuario es un huérfano y se
+/// puede borrar. Qué hace después una invitación nueva depende de si alcanzó a borrarse: si el
+/// usuario sigue en Identity, reutiliza esa misma fila; si ya no está, crea un usuario nuevo y,
+/// con él, una membresía nueva.
 /// </summary>
 public sealed class MembershipUserReferenceProbe(IMembershipRepository membershipRepository)
     : IUserReferenceProbe
