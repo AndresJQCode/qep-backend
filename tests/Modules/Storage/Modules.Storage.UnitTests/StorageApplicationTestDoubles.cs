@@ -104,6 +104,10 @@ internal sealed class RecordingStorageAuditPublisher : IStorageAuditPublisher
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
         Actions.Add(action);
+
+    public void PublishSystem(
+        Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Actions.Add(action);
 }
 
 internal sealed class AllowAllExecutionContext(Guid tenantId) : IExecutionContext

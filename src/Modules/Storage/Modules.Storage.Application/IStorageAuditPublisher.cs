@@ -14,4 +14,16 @@ public interface IStorageAuditPublisher
         string resourceId,
         string outcome,
         DateTimeOffset occurredAt);
+
+    // Spec 2026-09-16: lo que hace un proceso sin persona detrás, como los barridos de Storage.
+    // actorType System y actorId vacío, el sentinela de sistema del repositorio
+    // (QuotationExpirationProcessor). tenantId es null cuando lo afectado no es de un tenant, como
+    // un objeto huérfano del bucket público.
+    void PublishSystem(
+        Guid? tenantId,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt);
 }

@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Modules.Storage.Application;
+using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
 using Npgsql;
@@ -32,6 +34,8 @@ internal static class PaymentProofStorageHarness
     public static readonly Guid SubjectId = Guid.Parse("01900000-0000-7000-8000-000000000002");
 
     private const string Permissions = "storage.file.upload,storage.file.read,storage.file.delete";
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public static string FilesUrl { get; } = $"/api/v1/tenants/{TenantId}/files";
 
@@ -105,6 +109,43 @@ internal static class PaymentProofStorageHarness
     }
 
     public static byte[] Pdf() => "%PDF-1.7\ncomprobante"u8.ToArray();
+
+    /// <summary>Corre hacia atrás la creación de un archivo, directo en la base: la retención es de
+    /// horas y el reloj del host no se corre por prueba.</summary>
+    public static async Task BackdateAsync(string connectionString, Guid fileId, TimeSpan age)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE storage.file_resources SET created_at = @createdAt WHERE id = @id", connection);
+        command.Parameters.AddWithValue("createdAt", DateTimeOffset.UtcNow - age);
+        command.Parameters.AddWithValue("id", fileId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>Un tick del barrido de staging, a mano: el worker espera StagingCleanupMinutes antes
+    /// del primero.</summary>
+    public static async Task RunStagingCleanupAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IStagingCleanupProcessor>()
+            .CleanupAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Las auditorías que Storage dejó en el outbox de plataforma.</summary>
+    public static async Task<IReadOnlyList<AuditPayload>> AuditEventsAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        var payloads = await dbContext.Outbox
+            .AsNoTracking()
+            .Where(message => message.EventName == "platform.audit.recorded.v1")
+            .Select(message => message.PayloadJson)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        return payloads
+            .Select(payload => JsonSerializer.Deserialize<AuditPayload>(payload, Json)!)
+            .ToArray();
+    }
 
     public static string NewPublicKey(string extension) =>
         $"payment-proofs/{Guid.CreateVersion7():N}{extension}";
@@ -224,12 +265,36 @@ internal sealed record FileVariantPayload(string Name);
 
 internal sealed record ProblemPayload(string? Code);
 
+internal sealed record AuditPayload(
+    Guid? TenantId,
+    string ActorType,
+    string Action,
+    string ResourceType,
+    string ResourceId,
+    string Outcome);
+
+/// <summary>La sonda de otro módulo, a mano: retiene los archivos que la prueba marca. Se suma a las
+/// sondas reales del host (GetServices las devuelve todas).</summary>
+internal sealed class FixedFileReferenceProbe : IFileReferenceProbe
+{
+    private readonly ConcurrentDictionary<Guid, bool> _referenced = new();
+
+    public string Source => "test";
+
+    public void Reference(Guid fileId) => _referenced[fileId] = true;
+
+    public Task<bool> HasReferencesAsync(Guid fileId, CancellationToken cancellationToken) =>
+        Task.FromResult(_referenced.ContainsKey(fileId));
+}
+
 /// <summary>El host de la API con los dos buckets en memoria.</summary>
 internal sealed class StorageApiFactory(string connectionString) : WebApplicationFactory<Program>
 {
     public InMemoryObjectStorage ObjectStorage { get; } = new();
 
     public InMemoryPublicObjectStorage PublicObjectStorage { get; } = new();
+
+    public FixedFileReferenceProbe FileReferences { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -250,6 +315,7 @@ internal sealed class StorageApiFactory(string connectionString) : WebApplicatio
             services.AddSingleton<IObjectStorage>(ObjectStorage);
             services.RemoveAll<IPublicObjectStorage>();
             services.AddSingleton<IPublicObjectStorage>(PublicObjectStorage);
+            services.AddSingleton<IFileReferenceProbe>(FileReferences);
 
             // El worker de movimiento consulta el outbox cada 3 s: competiría con el lote que la
             // prueba corre a mano (RunMoveAsync) y la volvería no determinista.

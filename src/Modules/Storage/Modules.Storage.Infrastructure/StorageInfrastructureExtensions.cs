@@ -54,6 +54,8 @@ public static class StorageInfrastructureExtensions
         services.AddSingleton<IAmazonS3>(CreateR2Client);
         services.AddSingleton<IObjectStorage, R2ObjectStorage>();
         services.AddSingleton<IPublicObjectStorage, R2PublicObjectStorage>();
+        // Spec 2026-09-16, D11: el barrido sale del worker para poder probarlo.
+        services.AddScoped<IStagingCleanupProcessor, StagingCleanupProcessor>();
         services.AddHostedService<StagingCleanupWorker>();
         // Spec 2026-09-16, D9: borra el temporal de cada comprobante adjuntado y registra el movimiento.
         services.AddScoped<IPaymentProofMoveProcessor, PaymentProofMoveProcessor>();

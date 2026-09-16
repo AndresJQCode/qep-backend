@@ -51,6 +51,8 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
+        // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).
+        services.AddScoped<IFileReferenceProbe, OrderPaymentProofFileReferenceProbe>();
 
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();
