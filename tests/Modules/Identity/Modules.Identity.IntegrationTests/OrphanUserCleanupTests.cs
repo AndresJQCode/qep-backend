@@ -148,6 +148,30 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
     }
 
+    // Spec 2026-09-16, D18: el frontend sube los comprobantes con ownerId = el usuario. Pasarlos a
+    // PaymentProof no puede dejar de retener a quien los subió.
+    [Fact]
+    public async Task OwningAPaymentProofKeepsTheUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, member.Id);
+        await SeedFileAsync(
+            factory, Guid.Parse(tenantId), ownerUserId: member.UserId, FileOwnerType.PaymentProof);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, member.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
+    }
+
     /// <summary>
     /// Reentrega: se borra la fila del inbox para que el worker reclame el mensaje otra vez.
     /// El usuario ya no existe, así que la segunda pasada no tiene nada que borrar y sólo
@@ -364,7 +388,8 @@ public sealed class OrphanUserCleanupTests
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    private static async Task SeedFileAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
+    private static async Task SeedFileAsync(
+        QepApiFactory factory, Guid tenantId, Guid ownerUserId, FileOwnerType ownerType = FileOwnerType.User)
     {
         using var scope = factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
@@ -372,7 +397,7 @@ public sealed class OrphanUserCleanupTests
             FileResourceId.New(),
             tenantId,
             ownerUserId,
-            FileOwnerType.User,
+            ownerType,
             "avatar.png",
             "image/png",
             1024,
