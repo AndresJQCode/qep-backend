@@ -140,7 +140,7 @@ En `ConvertQuotationToOrderHandler` y `AddOrderPaymentProofsHandler`, sin cambia
 
 ## Enmiendas (2026-09-16, después de escribir el plan)
 
-Al escribir el plan aparecieron conflictos entre el código y este spec. Se resuelven así:
+Al escribir el plan aparecieron conflictos entre el código y este spec (D15–D18), y al rebasar la rama sobre `develop` apareció uno más (D19). Se resuelven así:
 
 | # | Decisión | Por qué |
 | --- | --- | --- |
@@ -148,11 +148,31 @@ Al escribir el plan aparecieron conflictos entre el código y este spec. Se resu
 | D16 | Un comprobante ya movido no se puede adjuntar a otro pedido. `QuotationFileLookup` lo informa como no disponible (`IsAvailable = false` si es `PaymentProof` y ya tiene `PublicStorageKey`), y `OrderPaymentProofResolver` lo rechaza con el código que ya usa, `order.payment_proof.file_not_available`. | Sin esto, la copia al público sale de un temporal borrado y el request termina en 500. No se inventa un código: el archivo ya no está disponible para adjuntar. |
 | D17 | Una migración de Quotations agrega índices sobre `order_payment_proofs.file_id` y `order_payment_proofs.public_storage_key`. | Las dos sondas nuevas consultan esa tabla en cada barrido. |
 | D18 | `FileUserReferenceProbe` cuenta también los archivos `PaymentProof` de un usuario, no sólo los `User`. | El frontend sube los comprobantes con `ownerId` = el usuario. Sin esto, pasarlos a `PaymentProof` dejaría de retener a quien los subió, y `OrphanUserCleanupWorker` podría borrar un usuario que todavía es dueño de comprobantes. |
+| D19 | Reemplazar el archivo de un comprobante (`UpdatedProofs[].NewFileId`) o quitarlo (`RemoveOrderPaymentProof`) **borra el archivo que el pedido deja de usar**, esté en `staging/` o ya movido al bucket público. En la misma transacción que el pedido, Quotations escribe `quotations.order.payment-proofs-detached.v1` con `tenantId`, `orderId` y, por cada archivo soltado, `fileId` y la `publicStorageKey` que tenía ese comprobante (null si no tenía copia); lo escribe también con `Quotations:PaymentProofs:PublicLinks=false`, y el borrado best-effort de la copia vieja después de guardar desaparece. El archivo de reemplazo cuenta como comprobante nuevo: entra en `quotations.order.payment-proofs-attached.v1` con su clave. Storage consume el evento con su inbox, en el mismo worker que el movimiento y después de él. Por cada archivo `PaymentProof` `Available` que ninguna `IFileReferenceProbe` retiene: borra el objeto público si tiene `PublicStorageKey`; si no, el de `staging/` y la copia que trae el evento; después, en un solo `SaveChanges`, `FileResource.PurgeDetachedPaymentProof`, la auditoría `storage.file.purged` con motivo `payment_proof_detached` y el inbox. Uno retenido, ya purgado o en otro estado se salta. De un archivo `User` sólo borra la copia de ese adjunto y audita `storage.public_object.purged` / `payment_proof_detached`. | Decidido por el owner (2026-09-16), después de rebasar la rama sobre `develop` (`528d368`), donde `1439897` agregó reemplazar y quitar comprobantes. Un comprobante mal cargado —quizá de otro cliente— no puede quedar expuesto, y en v2 la copia pública es la **única** copia de un comprobante movido: la borra Storage, que es dueño del archivo, con el mismo orden borrar → guardar de D9 y por la misma razón (no hay transacción entre las dos bases). |
 
 Dos consecuencias que se aceptan y quedan documentadas:
 
 - Con `Quotations:PaymentProofs:PublicLinks=false`, un `PaymentProof` adjunto no tiene clave pública, no genera evento y se queda en `staging/`. Se sigue descargando desde la app, y el barrido de la sección 3 lo respeta porque está referenciado. Producción tiene la opción encendida.
 - Storage no tiene inbox: la sección 2 necesita una tabla de inbox nueva y su migración, con el mismo diseño que los inbox de los demás módulos.
+
+Cómo convive D19 con lo demás:
+
+- **La carrera.** Si un comprobante se adjunta y se reemplaza enseguida, Storage puede soltarlo antes de moverlo: la purga de un archivo sin mover borra su temporal y la copia que el adjunto alcanzó a hacer. `PaymentProofMoveWorker`, al llegar después, lo salta sin fallar —ya no está `Available`— y marca su mensaje.
+- **La opción apagada.** El evento de retiro se escribe igual, con `publicStorageKey` null: el `PaymentProof` que el pedido suelta se borra de `staging/` en segundos, sin esperar al barrido de la sección 3.
+- **Retenido.** Si otro comprobante (del mismo pedido o de otro) todavía usa el archivo, Quotations no lo incluye en el evento o la sonda lo retiene, y no se borra nada. Una copia que quede sin dueño por ese camino es un huérfano de `payment-proofs/`, y la recoge la reconciliación de la sección 4 (D12).
+- **D15** no cambia: el procesador no pasa por los handlers de Storage, y al soltarse el archivo ya no lo referencia el pedido que lo soltó.
+- **D16** tampoco: un archivo purgado no está `Available`, así que adjuntarlo de nuevo responde `order.payment_proof.file_not_available`. Para corregir, la asesora sube un archivo nuevo.
+- **D18:** un comprobante purgado sigue reteniendo a quien lo subió, porque la sonda cuenta cualquier estado.
+- **Revocar.** D19 acota «Nada se revoca» y el «Despublicar un comprobante o revocar su URL» de fuera de alcance: la URL de un comprobante reemplazado o quitado deja de abrir, a propósito. Un Excel ya enviado con esa URL muestra un enlace roto.
+- **Los `User` (D13)** conservan su original privado. Lo único que cambia es quién borra la copia pública de un reemplazo (Storage, con reintento, en vez del borrado best-effort de Quotations) y que quitar un comprobante `User` ahora también borra la suya.
+
+Pruebas de D19 (TDD, igual que el resto):
+
+- unitaria: `FileResource.PurgeDetachedPaymentProof` acepta un `PaymentProof` `Available`, movido o no, y rechaza otro dueño u otro estado;
+- unitaria: el evento sólo lleva los archivos que el pedido dejó de usar, y el de adjuntos suma los archivos de reemplazo con copia;
+- integración (Quotations): reemplazar y quitar escriben el evento de retiro con el archivo y la clave viejos, también con la opción apagada; corregir sólo montos o un retiro rechazado no lo escriben; el evento de adjuntos incluye el archivo de reemplazo;
+- integración de punta a punta: un `PaymentProof` movido que se reemplaza o se quita queda `Purged` y su copia pública se borra; quitar un comprobante `User` borra su copia y conserva el original;
+- integración (Storage): purga el movido (borra el público) y el que sigue en `staging/` (borra el temporal y la copia), respeta el retenido, aplica cada mensaje una sola vez, no guarda nada si un borrado falla, conserva el original de un `User`, y el movimiento salta un comprobante purgado antes de moverse.
 
 ## Fuera de alcance
 
