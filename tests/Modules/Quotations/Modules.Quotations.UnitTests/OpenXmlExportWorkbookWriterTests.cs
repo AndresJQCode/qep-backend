@@ -232,14 +232,111 @@ public sealed class OpenXmlExportWorkbookWriterTests
         Assert.Empty(errors);
     }
 
-    private sealed record CellSnapshot(string Text, bool IsNumber, uint? StyleIndex);
+    // Spec 2026-09-15, E3: el enlace es la fórmula HYPERLINK con el valor ya calculado —se ve bien
+    // antes de que Excel recalcule, y en visores que no calculan— y el estilo de enlace.
+    [Fact]
+    public void ALinkCellIsAHyperlinkFormulaWithItsCachedValueAndTheLinkStyle()
+    {
+        using var workbook = new OpenXmlExportWorkbookWriter().Create("Pedidos", Columns);
+        workbook.AppendRow([
+            ExportCell.OfText("PED-2026-0001"),
+            ExportCell.OfLink("https://assets.qep.test/payment-proofs/abc.pdf", "Ver"),
+            ExportCell.OfNumber(1m)]);
+
+        var sheet = Read(workbook.Complete());
+
+        var link = sheet.Rows[1][1];
+        Assert.Equal("HYPERLINK(\"https://assets.qep.test/payment-proofs/abc.pdf\",\"Ver\")", link.Formula);
+        Assert.Equal("Ver", link.Text);
+        Assert.Equal(CellValues.String, link.Type);
+        Assert.Equal(2u, link.StyleIndex);
+        Assert.True(sheet.StyleTwoIsALink);
+        Assert.Null(sheet.Rows[1][0].Formula);
+        Assert.Null(sheet.Rows[1][0].StyleIndex);
+    }
+
+    // E3: las comillas dobles se escapan duplicándolas, en la URL y en el texto; el valor calculado
+    // queda sin escapar.
+    [Fact]
+    public void QuotesInTheUrlAndTheTextAreDoubled()
+    {
+        using var workbook = new OpenXmlExportWorkbookWriter().Create("Pedidos", Columns);
+        workbook.AppendRow([
+            ExportCell.OfText("PED-2026-0001"),
+            ExportCell.OfLink("https://assets.qep.test/a\"b.pdf", "Ver \"1\""),
+            ExportCell.OfNumber(1m)]);
+
+        var link = Read(workbook.Complete()).Rows[1][1];
+
+        Assert.Equal("HYPERLINK(\"https://assets.qep.test/a\"\"b.pdf\",\"Ver \"\"1\"\"\")", link.Formula);
+        Assert.Equal("Ver \"1\"", link.Text);
+    }
+
+    // E4: 255 es el tope de Excel para una cadena dentro de una fórmula. Hasta ahí, enlace.
+    [Fact]
+    public void AUrlOf255CharactersIsStillALink()
+    {
+        var url = UrlOfLength(255);
+        using var workbook = new OpenXmlExportWorkbookWriter().Create("Pedidos", Columns);
+        workbook.AppendRow([ExportCell.OfText("PED-2026-0001"), ExportCell.OfLink(url, "Ver"), ExportCell.OfNumber(1m)]);
+
+        var link = Read(workbook.Complete()).Rows[1][1];
+
+        Assert.Equal($"HYPERLINK(\"{url}\",\"Ver\")", link.Formula);
+        Assert.Equal("Ver", link.Text);
+    }
+
+    // E4: una más y la celda lleva la URL como texto plano, sin estilo de enlace, para que se vea en
+    // vez de perderse.
+    [Fact]
+    public void AUrlLongerThan255CharactersIsWrittenAsPlainText()
+    {
+        var url = UrlOfLength(256);
+        using var workbook = new OpenXmlExportWorkbookWriter().Create("Pedidos", Columns);
+        workbook.AppendRow([ExportCell.OfText("PED-2026-0001"), ExportCell.OfLink(url, "Ver"), ExportCell.OfNumber(1m)]);
+
+        var cell = Read(workbook.Complete()).Rows[1][1];
+
+        Assert.Null(cell.Formula);
+        Assert.Equal(url, cell.Text);
+        Assert.Equal(CellValues.InlineString, cell.Type);
+        Assert.Null(cell.StyleIndex);
+    }
+
+    // Una celda de enlace y el tercer formato de celda no pueden dejar el archivo inválido.
+    [Fact]
+    public void AFileWithALinkPassesTheOpenXmlValidator()
+    {
+        using var workbook = new OpenXmlExportWorkbookWriter().Create("Pedidos", Columns);
+        workbook.AppendRow([
+            ExportCell.OfText("PED-2026-0001"),
+            ExportCell.OfLink("https://assets.qep.test/payment-proofs/abc.pdf", "Ver"),
+            ExportCell.OfNumber(1m)]);
+
+        using var document = SpreadsheetDocument.Open(workbook.Complete(), isEditable: false);
+        var errors = new OpenXmlValidator().Validate(document, TestContext.Current.CancellationToken)
+            .Select(error => $"{error.ErrorType} {error.Part?.Uri} {error.Path?.XPath}: {error.Description}")
+            .ToArray();
+
+        Assert.Empty(errors);
+    }
+
+    private static string UrlOfLength(int length)
+    {
+        const string Prefix = "https://assets.qep.test/payment-proofs/";
+        return Prefix + new string('a', length - Prefix.Length);
+    }
+
+    private sealed record CellSnapshot(
+        string Text, bool IsNumber, uint? StyleIndex, string? Formula, CellValues? Type);
 
     private sealed record SheetSnapshot(
         string Name,
         IReadOnlyList<IReadOnlyList<CellSnapshot>> Rows,
         IReadOnlyList<double> Widths,
         bool HeaderIsFrozen,
-        bool StyleOneIsBold);
+        bool StyleOneIsBold,
+        bool StyleTwoIsALink);
 
     private static SheetSnapshot Read(string path)
     {
@@ -254,7 +351,9 @@ public sealed class OpenXmlExportWorkbookWriterTests
                 .Select(cell => new CellSnapshot(
                     cell.InlineString?.Text?.Text ?? cell.CellValue?.Text ?? string.Empty,
                     cell.DataType?.Value == CellValues.Number,
-                    cell.StyleIndex?.Value))
+                    cell.StyleIndex?.Value,
+                    cell.CellFormula?.Text,
+                    cell.DataType?.Value))
                 .ToArray())
             .ToArray();
         var widths = worksheet.GetFirstChild<Columns>()!
@@ -265,12 +364,19 @@ public sealed class OpenXmlExportWorkbookWriterTests
         var stylesheet = workbookPart.WorkbookStylesPart!.Stylesheet;
         var headerFontId = stylesheet.CellFormats!.Elements<CellFormat>().ElementAt(1).FontId!.Value;
         var headerFont = stylesheet.Fonts!.Elements<Font>().ElementAt((int)headerFontId);
+        // El formato 2 es el del enlace (E3): fuente subrayada y azul de Office.
+        var linkFontId = stylesheet.CellFormats!.Elements<CellFormat>().ElementAtOrDefault(2)?.FontId?.Value;
+        var linkFont = linkFontId is { } fontId
+            ? stylesheet.Fonts!.Elements<Font>().ElementAtOrDefault((int)fontId)
+            : null;
 
         return new SheetSnapshot(
             sheet.Name!.Value!,
             rows,
             widths,
             pane?.State?.Value == PaneStateValues.Frozen && pane.TopLeftCell?.Value == "A2",
-            headerFont.Bold is not null);
+            headerFont.Bold is not null,
+            linkFont?.Underline is not null
+                && string.Equals(linkFont.Color?.Rgb?.Value, "FF0563C1", StringComparison.OrdinalIgnoreCase));
     }
 }

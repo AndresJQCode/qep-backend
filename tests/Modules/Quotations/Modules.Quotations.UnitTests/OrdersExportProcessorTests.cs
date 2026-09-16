@@ -7,6 +7,7 @@ namespace Modules.Quotations.UnitTests;
 /// <summary>
 /// El procesador de pedidos: las columnas de la tabla de pedidos en su orden (hallazgo 2 del plan),
 /// lectura por lotes con el filtro del listado, y los mismos fallos definitivos que cotizaciones.
+/// Desde el spec 2026-09-15, también las cuatro columnas de los comprobantes de pago.
 /// </summary>
 public sealed class OrdersExportProcessorTests
 {
@@ -26,8 +27,11 @@ public sealed class OrdersExportProcessorTests
         await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Pedidos", writer.SheetName);
+        // Las ocho de la tabla en su orden y, después de Total, las cuatro de los comprobantes
+        // (spec 2026-09-15, E1).
         Assert.Equal(
-            ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total"],
+            ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total",
+                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
             writer.Columns.Select(column => column.Header));
         var row = Assert.Single(writer.Rows);
         Assert.Equal("PED-2026-0001", row[0].Text);
@@ -68,6 +72,119 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Transferencia", Assert.Single(writer.Rows)[4].Text);
     }
 
+    // E2: sin comprobantes, la cantidad es cero y las tres celdas quedan vacías.
+    [Fact]
+    public async Task AnOrderWithoutProofsCountsZeroAndLeavesTheProofCellsEmpty()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", null)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(0m, row[8].Number);
+        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(9).Select(cell => cell.Text));
+        Assert.All(row.Skip(9), cell => Assert.Null(cell.Url));
+    }
+
+    // E2 y E3: un comprobante con copia pública es el enlace «Ver» a su URL pública.
+    [Fact]
+    public async Task AProofWithAPublicCopyIsAVerLinkToItsPublicUrl()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", null, ["payment-proofs/a.pdf"])), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(1m, row[8].Number);
+        Assert.Equal(UrlOf("payment-proofs/a.pdf"), row[9].Url);
+        Assert.Equal("Ver", row[9].Text);
+        Assert.Equal(string.Empty, row[10].Text);
+        Assert.Equal(string.Empty, row[11].Text);
+    }
+
+    // E1: tres comprobantes llenan las tres columnas, en el orden en que llegan del repositorio.
+    [Fact]
+    public async Task ThreeProofsFillTheThreeColumnsInOrder()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow(
+                    "PED-2026-0001", null, ["payment-proofs/a.pdf", "payment-proofs/b.pdf", "payment-proofs/c.pdf"])),
+                writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(3m, row[8].Number);
+        Assert.Equal(
+            [UrlOf("payment-proofs/a.pdf"), UrlOf("payment-proofs/b.pdf"), UrlOf("payment-proofs/c.pdf")],
+            row.Skip(9).Select(cell => cell.Url));
+        Assert.All(row.Skip(9), cell => Assert.Equal("Ver", cell.Text));
+    }
+
+    // E1: el cuarto comprobante no tiene columna, pero la cantidad lo cuenta.
+    [Fact]
+    public async Task AFourthProofOnlyShowsInTheCount()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow(
+                    "PED-2026-0001",
+                    null,
+                    ["payment-proofs/a.pdf", "payment-proofs/b.pdf", "payment-proofs/c.pdf", "payment-proofs/d.pdf"])),
+                writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(12, row.Count);
+        Assert.Equal(4m, row[8].Number);
+        Assert.Equal(
+            [UrlOf("payment-proofs/a.pdf"), UrlOf("payment-proofs/b.pdf"), UrlOf("payment-proofs/c.pdf")],
+            row.Skip(9).Select(cell => cell.Url));
+    }
+
+    // E2: un comprobante privado —de antes de la opción, o adjuntado con ella apagada (P8)— dice
+    // «Sin enlace»: que no haya enlace no es lo mismo que no haya comprobante.
+    [Fact]
+    public async Task AProofWithoutAPublicCopySaysSinEnlace()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", null, [null, "payment-proofs/b.pdf"])), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(2m, row[8].Number);
+        Assert.Equal("Sin enlace", row[9].Text);
+        Assert.Null(row[9].Url);
+        Assert.Equal(UrlOf("payment-proofs/b.pdf"), row[10].Url);
+        Assert.Equal(string.Empty, row[11].Text);
+    }
+
+    // P1 y E7: con la opción apagada no hay URL aunque el comprobante tenga copia, y las cuatro
+    // columnas salen igual.
+    [Fact]
+    public async Task WithTheOptionOffEveryProofSaysSinEnlace()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", null, ["payment-proofs/a.pdf"])),
+                writer,
+                publisher: new RecordingPaymentProofPublisher(enabled: false))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(12, writer.Columns.Count);
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal("Sin enlace", row[9].Text);
+        Assert.Null(row[9].Url);
+    }
+
     [Fact]
     public async Task ReadsInBatchesOfAThousandUntilAShortBatch()
     {
@@ -80,6 +197,26 @@ public sealed class OrdersExportProcessorTests
 
         Assert.Equal(2, repository.ExportCalls);
         Assert.Equal(ExportJobLimits.BatchSize + 1, result.RowCount);
+    }
+
+    // E6: los comprobantes se piden una vez por lote, con los pedidos de ese lote, igual que los
+    // nombres y los correos.
+    [Fact]
+    public async Task ReadsThePaymentProofsOncePerBatchWithTheOrdersOfThatBatch()
+    {
+        var rows = Enumerable.Range(1, ExportJobLimits.BatchSize + 1)
+            .Select(number => NewRow($"PED-2026-{number:0000}", paymentMethod: null))
+            .ToArray();
+        var repository = new StubOrderListRepository(rows);
+
+        await NewProcessor(repository).ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, repository.PaymentProofRequests.Count);
+        Assert.Equal(ExportJobLimits.BatchSize, repository.PaymentProofRequests[0].Count);
+        // El lote corto trae el de número más bajo: el listado va de mayor a menor.
+        Assert.Equal(
+            rows.Single(row => row.Order.OrderNumber == "PED-2026-0001").Order.Id,
+            Assert.Single(repository.PaymentProofRequests[1]));
     }
 
     // Keyset (D8): el lote siguiente arranca después del último pedido del anterior. Todas del
@@ -143,6 +280,8 @@ public sealed class OrdersExportProcessorTests
                 .ProcessAsync(job, TestContext.Current.CancellationToken));
     }
 
+    private static string UrlOf(string publicKey) => $"{RecordingPaymentProofPublisher.BaseUrl}/{publicKey}";
+
     private static ExportJob NewJob(OrdersExportFilters? filters = null) =>
         ExportJob.Enqueue(
             Guid.CreateVersion7(),
@@ -152,15 +291,21 @@ public sealed class OrdersExportProcessorTests
             ExportJobFilters.Serialize(filters ?? new OrdersExportFilters(null, null, null, null, From, To, null, null)),
             Now);
 
-    private static OrderWithQuotation NewRow(string orderNumber, string? paymentMethod)
+    // Un comprobante por clave, en ese orden; null es un comprobante privado. Pago pendiente siempre:
+    // el dominio lo admite con comprobantes o sin ellos, y así la columna Pago no cambia.
+    private static OrderWithQuotation NewRow(
+        string orderNumber, string? paymentMethod, IReadOnlyList<string?>? publicKeys = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod, notes: null, QuotationParties.Empty, billingAccount: null,
             customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
+        var proofs = (publicKeys ?? [])
+            .Select(publicKey => new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m, publicKey))
+            .ToArray();
         var order = Order.Create(
             OrderId.New(), TenantId, orderNumber, quotation.Id, OrderPaymentStatus.PaymentPending,
-            notes: null, AdvisorId, [], Now);
+            notes: null, AdvisorId, proofs, Now);
         return new OrderWithQuotation(order, quotation);
     }
 
@@ -168,12 +313,14 @@ public sealed class OrdersExportProcessorTests
         StubOrderListRepository repository,
         RecordingExportWorkbookWriter? writer = null,
         RecordingExportFileStorage? storage = null,
-        StubQuotationAdvisorLookup? advisors = null) =>
+        StubQuotationAdvisorLookup? advisors = null,
+        RecordingPaymentProofPublisher? publisher = null) =>
         new(repository,
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
             advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            publisher ?? new RecordingPaymentProofPublisher(),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
             new FixedClock(Now));

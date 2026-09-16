@@ -378,4 +378,64 @@ public sealed class OrderTests
 
         Assert.Equal("order.order.not_pending", error.Code);
     }
+
+    // Spec 2026-09-15, P5: cada comprobante guarda la clave de su copia pública, que le llega ya
+    // armada desde el handler.
+    [Fact]
+    public void CreateKeepsThePublicStorageKeyOfEachProof()
+    {
+        var order = NewOrder(proofs:
+        [
+            new OrderPaymentProofInput(Guid.CreateVersion7(), 60_000m, "payment-proofs/a.pdf"),
+            new OrderPaymentProofInput(Guid.CreateVersion7(), 40_000m, "payment-proofs/b.png"),
+        ]);
+
+        Assert.Equal(
+            ["payment-proofs/a.pdf", "payment-proofs/b.png"],
+            order.PaymentProofs.Select(proof => proof.PublicStorageKey));
+    }
+
+    // P8: con la opción apagada, y en los comprobantes de antes, no hay copia pública.
+    [Fact]
+    public void CreateLeavesThePublicStorageKeyNullWhenThereIsNone()
+    {
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
+
+        Assert.Null(Assert.Single(order.PaymentProofs).PublicStorageKey);
+    }
+
+    [Fact]
+    public void AddPaymentProofsKeepsThePublicStorageKeyOfTheNewProofs()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
+
+        order.AddPaymentProofs(
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m, "payment-proofs/c.jpg")],
+            OrderPaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1));
+
+        Assert.Equal("payment-proofs/c.jpg", Assert.Single(order.PaymentProofs).PublicStorageKey);
+    }
+
+    // P4: corregir el monto no toca el archivo, así que tampoco su copia pública.
+    [Fact]
+    public void CorrectingAnAmountKeepsThePublicStorageKey()
+    {
+        var order = NewOrder(
+            paymentStatus: OrderPaymentStatus.PartialPaymentReceived,
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 50_000m, "payment-proofs/d.pdf")]);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        order.AddPaymentProofs(
+            [],
+            OrderPaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1),
+            [new OrderPaymentProofAmountUpdate(proofId, 80_000m)]);
+
+        Assert.Equal("payment-proofs/d.pdf", Assert.Single(order.PaymentProofs).PublicStorageKey);
+    }
 }

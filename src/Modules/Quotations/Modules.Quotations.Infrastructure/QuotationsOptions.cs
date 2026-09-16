@@ -16,6 +16,8 @@ public sealed class QuotationsOptions
     public WhatsAppOptions WhatsApp { get; init; } = new();
 
     public PdfOptions Pdf { get; init; } = new();
+
+    public PaymentProofsOptions PaymentProofs { get; init; } = new();
 }
 
 /// <summary>
@@ -64,4 +66,21 @@ public sealed class PdfOptions
     public string BaseUrl { get; init; } = "https://qcode-pdf.qcode.co";
 
     public string ApiKey { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Los comprobantes de pago de los pedidos (spec 2026-09-15). Con <see cref="PublicLinks"/> en true,
+/// cada comprobante nuevo se copia al bucket público al adjuntarse y el Excel de pedidos lo enlaza.
+/// Es por ambiente y no por tenant (P1): `appsettings.json` la trae en false y producción la
+/// enciende en su ConfigMap. Encendida, exige `Storage:R2:PublicBucket` y `Storage:R2:PublicBaseUrl`;
+/// lo revisa `PaymentProofsOptionsValidator`, en el Bootstrapper, que es el único proyecto que ve
+/// las dos opciones (P2).
+///
+/// Riesgo aceptado por el owner el 2026-09-14: un comprobante suele traer nombre, cédula y número de
+/// cuenta, y quien tenga la URL lo abre sin sesión. La clave aleatoria impide adivinarla; no controla
+/// quién la tiene. Apagarla deja de publicar y de mostrar enlaces, pero no despublica lo ya copiado.
+/// </summary>
+public sealed class PaymentProofsOptions
+{
+    public bool PublicLinks { get; init; }
 }

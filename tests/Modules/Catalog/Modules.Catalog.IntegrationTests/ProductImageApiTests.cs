@@ -589,6 +589,7 @@ public sealed class ProductImageApiTests
             builder.UseSetting("Storage:R2:PublicBaseUrl", PublicBaseUrl);
             // Fijado, nunca heredado de appsettings.json. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }
 }

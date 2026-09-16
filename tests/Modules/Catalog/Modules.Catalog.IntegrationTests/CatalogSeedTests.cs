@@ -105,6 +105,7 @@ public sealed class CatalogSeedTests
             // Notifications falla al arrancar y todas las pruebas del archivo mueren antes
             // de su aserción.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.UseSetting("Seed:Enabled", seedEnabled ? "true" : "false");
             builder.UseSetting("Seed:OwnerEmail", ownerEmail ?? string.Empty);
         }

@@ -3,10 +3,14 @@ using DocumentFormat.OpenXml.Spreadsheet;
 
 namespace Modules.Quotations.IntegrationTests;
 
+/// <param name="Formulas">La fórmula de cada celda, o null si no tiene. El enlace de un comprobante
+/// de pago es una fórmula HYPERLINK (spec 2026-09-15, E3), y en <c>Rows</c> sólo se ve su valor ya
+/// calculado.</param>
 internal sealed record ExportWorkbookSheet(
     string Name,
     IReadOnlyList<IReadOnlyList<string>> Rows,
-    IReadOnlyList<IReadOnlyList<bool>> NumericCells);
+    IReadOnlyList<IReadOnlyList<bool>> NumericCells,
+    IReadOnlyList<IReadOnlyList<string?>> Formulas);
 
 /// <summary>
 /// Abre el .xlsx que subió el worker con el SDK de OpenXML. Reabrir el archivo y leer celdas es la
@@ -31,6 +35,9 @@ internal static class ExportWorkbookReader
                 .ToArray()).ToArray(),
             rows.Select(row => (IReadOnlyList<bool>)row.Elements<Cell>()
                 .Select(cell => cell.DataType?.Value == CellValues.Number)
+                .ToArray()).ToArray(),
+            rows.Select(row => (IReadOnlyList<string?>)row.Elements<Cell>()
+                .Select(cell => cell.CellFormula?.Text)
                 .ToArray()).ToArray());
     }
 }

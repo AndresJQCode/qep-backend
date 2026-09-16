@@ -182,6 +182,7 @@ public sealed class QuotationsExportNotificationTests
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
             // Fijado, nunca heredado: deja explícito que el correo sale por el canal de log.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }
 }
