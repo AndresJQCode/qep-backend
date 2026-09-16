@@ -47,6 +47,9 @@ internal sealed class OrderPaymentProofUpdateRequestValidator
     {
         RuleFor(request => request.ProofId).NotEmpty();
         RuleFor(request => request.Amount).GreaterThan(0);
+        RuleFor(request => request.NewFileId)
+            .NotEqual(Guid.Empty)
+            .When(request => request.NewFileId is not null);
     }
 }
 
@@ -79,6 +82,15 @@ public sealed class AddOrderPaymentProofsHandler(
                 fileLookup, command.TenantId, proof.FileId, cancellationToken);
         }
 
+        foreach (var update in command.UpdatedProofs)
+        {
+            if (update.NewFileId is { } newFileId)
+            {
+                await OrderPaymentProofResolver.ResolveAsync(
+                    fileLookup, command.TenantId, newFileId, cancellationToken);
+            }
+        }
+
         var uploadedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
@@ -95,7 +107,7 @@ public sealed class AddOrderPaymentProofsHandler(
             now,
             command.UpdatedProofs
                 .Select(update => new OrderPaymentProofAmountUpdate(
-                    new OrderPaymentProofId(update.ProofId), update.Amount))
+                    new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId))
                 .ToArray());
 
         auditPublisher.Publish(

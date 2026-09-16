@@ -5,7 +5,8 @@ namespace Modules.Quotations.Domain;
 /// sumado después mientras el pedido sigue pendiente (<see cref="Order.AddPaymentProofs"/>).
 /// Entidad hija de <see cref="Order"/>: el archivo y quién lo subió no cambian una vez creado,
 /// pero el monto sí puede corregirse (a pedido, 2026-09) —ver <see cref="UpdateAmount"/>— si
-/// alguien lo tipeó mal.
+/// alguien lo tipeó mal, y desde 2026-09-15 también el archivo —ver <see cref="UpdateFile"/>—
+/// si el que se subió no era el correcto.
 /// </summary>
 public sealed class OrderPaymentProof
 {
@@ -86,5 +87,22 @@ public sealed class OrderPaymentProof
         }
 
         Amount = amount;
+    }
+
+    /// <summary>Reemplaza el archivo de un comprobante ya cargado (a pedido, 2026-09-15) — sólo
+    /// desde <see cref="Order.AddPaymentProofs"/>, que ya validó contra Storage que el archivo
+    /// nuevo existe, es del tenant y terminó de subir (mismo chequeo que un comprobante nuevo). El
+    /// archivo viejo no se borra de Storage: queda huérfano, mismo criterio que un comprobante
+    /// descartado sin guardar en el asistente.</summary>
+    internal void UpdateFile(Guid fileId)
+    {
+        if (fileId == Guid.Empty)
+        {
+            throw new QuotationsDomainException(
+                "order.payment_proof.file_required",
+                "The payment proof file is required.");
+        }
+
+        FileId = fileId;
     }
 }

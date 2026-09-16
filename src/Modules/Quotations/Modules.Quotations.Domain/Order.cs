@@ -179,6 +179,10 @@ public sealed class Order
                     $"Payment proof '{update.ProofId}' was not found on this order.");
 
             proof.UpdateAmount(update.Amount);
+            if (update.NewFileId is { } newFileId)
+            {
+                proof.UpdateFile(newFileId);
+            }
         }
 
         foreach (var proof in proofs)
@@ -222,6 +226,37 @@ public sealed class Order
             : proofsTotal >= quotationTotal
                 ? OrderPaymentStatus.FullPaymentReceived
                 : OrderPaymentStatus.PartialPaymentReceived;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>
+    /// Quita un comprobante ya cargado (a pedido, 2026-09-15) — a diferencia de corregir su
+    /// monto o su archivo (<see cref="AddPaymentProofs"/>), no queda ningún rastro de él en el
+    /// pedido: es para el caso de haber cargado uno equivocado, no para corregirlo. El estado del
+    /// pago no se recalcula acá — lo hace el caso de uso con
+    /// <see cref="RecalculatePaymentStatus"/>, que ya necesita el total de la cotización y no lo
+    /// tiene este agregado.
+    ///
+    /// Sólo sobre <see cref="OrderStatus.Pending"/>, mismo motivo que el resto: aprobado, el
+    /// pedido es el respaldo de un cobro que alguien ya revisó con los comprobantes que tenía en
+    /// ese momento.
+    /// </summary>
+    public void RemovePaymentProof(OrderPaymentProofId proofId, DateTimeOffset occurredAt)
+    {
+        if (Status != OrderStatus.Pending)
+        {
+            throw new QuotationsDomainException(
+                "order.order.not_pending",
+                "Payment proofs can only be removed from a pending order.");
+        }
+
+        var proof = _paymentProofs.FirstOrDefault(candidate => candidate.Id == proofId)
+            ?? throw new QuotationsDomainException(
+                "order.payment_proof.not_found",
+                $"Payment proof '{proofId}' was not found on this order.");
+
+        _paymentProofs.Remove(proof);
         UpdatedAt = occurredAt;
         Version++;
     }
@@ -286,5 +321,7 @@ public sealed record OrderPaymentProofInput(Guid FileId, decimal Amount);
 
 /// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
 /// <see cref="OrderPaymentProofInput"/>, sí lleva id — es el que dice cuál comprobante corregir,
-/// no uno nuevo que agregar.</summary>
-public sealed record OrderPaymentProofAmountUpdate(OrderPaymentProofId ProofId, decimal Amount);
+/// no uno nuevo que agregar. <paramref name="NewFileId"/> reemplaza el archivo (a pedido,
+/// 2026-09-15) — null cuando sólo se corrige el monto.</summary>
+public sealed record OrderPaymentProofAmountUpdate(
+    OrderPaymentProofId ProofId, decimal Amount, Guid? NewFileId = null);

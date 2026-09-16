@@ -335,6 +335,92 @@ public sealed class OrderTests
         Assert.Equal("order.order.not_pending", error.Code);
     }
 
+    // A pedido (2026-09-15): reemplazar el archivo de un comprobante mal cargado, junto con la
+    // corrección de monto que ya existía.
+    [Fact]
+    public void AddPaymentProofsReplacesTheFileOfAnExistingProofWhenGiven()
+    {
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 50_000m)]);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var newFileId = Guid.CreateVersion7();
+
+        order.AddPaymentProofs(
+            [],
+            OrderPaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1),
+            [new OrderPaymentProofAmountUpdate(proofId, 80_000m, newFileId)]);
+
+        var proof = Assert.Single(order.PaymentProofs);
+        Assert.Equal(newFileId, proof.FileId);
+        Assert.Equal(80_000m, proof.Amount);
+    }
+
+    [Fact]
+    public void AddPaymentProofsKeepsTheFileWhenNoNewFileIdIsGiven()
+    {
+        var existingFileId = Guid.CreateVersion7();
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(existingFileId, 50_000m)]);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        order.AddPaymentProofs(
+            [],
+            OrderPaymentStatus.FullPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1),
+            [new OrderPaymentProofAmountUpdate(proofId, 80_000m)]);
+
+        Assert.Equal(existingFileId, Assert.Single(order.PaymentProofs).FileId);
+    }
+
+    // A pedido (2026-09-15): quitar un comprobante cargado por error, distinto de corregirlo.
+    [Fact]
+    public void RemovePaymentProofRemovesAnExistingProof()
+    {
+        var order = NewOrder(proofs:
+        [
+            new OrderPaymentProofInput(Guid.CreateVersion7(), 30_000m),
+            new OrderPaymentProofInput(Guid.CreateVersion7(), 20_000m),
+        ]);
+        var proofId = order.PaymentProofs.First().Id;
+        var later = Now.AddDays(1);
+
+        order.RemovePaymentProof(proofId, later);
+
+        Assert.Single(order.PaymentProofs);
+        Assert.DoesNotContain(order.PaymentProofs, proof => proof.Id == proofId);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    [Fact]
+    public void RemovePaymentProofRejectsAnUnknownProof()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.RemovePaymentProof(OrderPaymentProofId.New(), Now.AddDays(1)));
+
+        Assert.Equal("order.payment_proof.not_found", error.Code);
+    }
+
+    // Aprobado, el pedido es el respaldo de un cobro que alguien ya revisó con los comprobantes
+    // que tenía en ese momento.
+    [Fact]
+    public void RemovePaymentProofRejectsAnAlreadyApprovedOrder()
+    {
+        var order = NewOrder();
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.RemovePaymentProof(proofId, Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
+
     // A pedido (2026-09): agregar un producto desde "Editar" pedido sube el total de la
     // cotización; lo cargado en comprobantes no cambia, pero el estado de pago sí puede.
     [Theory]
