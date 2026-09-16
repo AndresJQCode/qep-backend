@@ -149,4 +149,107 @@ public sealed class PaymentProofMoveTests
         Assert.False(factory.ObjectStorage.Exists(proof.StagingKey));
         Assert.True(await IsProcessedByMoveAsync(factory, messageId));
     }
+
+    // Revisión de Task 7 (I1): un mensaje mal formado nunca se va a poder aplicar. Se marca en el inbox
+    // en vez de reintentarse cada 3 s; si no, un lote entero de ellos (20, el tamaño del lote del
+    // procesador) taparía para siempre a los mensajes válidos que llegan después.
+    [Fact]
+    public async Task MalformedMessagesAreMarkedAndDoNotBlockALaterValidMessage()
+    {
+        const int batchSize = 20;
+        string[] malformedPayloads =
+        [
+            """{"orderId":"01900000-0000-7000-8000-0000000000aa","proofs":[]}""",
+            """{"tenantId":"not-a-guid","proofs":[]}""",
+            """[]""",
+        ];
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var malformedIds = new List<Guid>();
+        for (var index = 0; index < batchSize; index++)
+        {
+            malformedIds.Add(await AddAttachedEventPayloadAsync(
+                factory, malformedPayloads[index % malformedPayloads.Length]));
+        }
+
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var publicKey = NewPublicKey(".pdf");
+        var validId = await AddAttachedEventAsync(factory, (proof.FileId, publicKey));
+
+        await RunMoveAsync(factory);
+        await RunMoveAsync(factory);
+
+        Assert.Equal(publicKey, (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).PublicStorageKey);
+        Assert.True(await IsProcessedByMoveAsync(factory, validId));
+        foreach (var malformedId in malformedIds)
+        {
+            Assert.True(await IsProcessedByMoveAsync(factory, malformedId));
+        }
+    }
+
+    // Revisión de Task 7 (I1): una entrada sin clave pública se salta sin tocar su temporal, y las
+    // entradas válidas del mismo mensaje se mueven igual.
+    [Fact]
+    public async Task AnEntryWithoutPublicKeyIsSkippedAndTheValidOnesStillMove()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var invalid = await CreateAvailableAsync(client, factory, "PaymentProof", "sin-clave.pdf", "application/pdf", Pdf());
+        var valid = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var publicKey = NewPublicKey(".pdf");
+        var messageId = await AddAttachedEventAsync(factory, (invalid.FileId, null), (valid.FileId, publicKey));
+
+        Assert.Equal(1, await RunMoveAsync(factory));
+
+        Assert.Null((await ReadFileAsync(database.GetConnectionString(), invalid.FileId)).PublicStorageKey);
+        Assert.True(factory.ObjectStorage.Exists(invalid.StagingKey));
+        Assert.Equal(publicKey, (await ReadFileAsync(database.GetConnectionString(), valid.FileId)).PublicStorageKey);
+        Assert.False(factory.ObjectStorage.Exists(valid.StagingKey));
+        Assert.True(await IsProcessedByMoveAsync(factory, messageId));
+    }
+
+    // Revisión de Task 7 (I2): un timeout de R2 llega como TaskCanceledException sin que nadie haya
+    // pedido apagar el host. Es transitorio: el mensaje no se marca y vuelve en el tick siguiente.
+    [Fact]
+    public async Task ACancellationThatIsNotAShutdownIsRetriedOnTheNextTick()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var publicKey = NewPublicKey(".pdf");
+        var messageId = await AddAttachedEventAsync(factory, (proof.FileId, publicKey));
+        factory.ObjectStorage.FailingDeleteKey = proof.StagingKey;
+        factory.ObjectStorage.DeleteFailure = new TaskCanceledException("Simulated R2 timeout.");
+
+        Assert.Equal(0, await RunMoveAsync(factory));
+
+        Assert.False(await IsProcessedByMoveAsync(factory, messageId));
+        Assert.True(factory.ObjectStorage.Exists(proof.StagingKey));
+
+        factory.ObjectStorage.FailingDeleteKey = null;
+        Assert.Equal(1, await RunMoveAsync(factory));
+
+        Assert.Equal(publicKey, (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).PublicStorageKey);
+    }
+
+    // Revisión de Task 7 (M2): un archivo de otro tenant no se toca, y el mensaje se marca igual.
+    [Fact]
+    public async Task AnEntryWhoseFileBelongsToAnotherTenantIsSkipped()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var messageId = await AddAttachedEventForTenantAsync(
+            factory, Guid.CreateVersion7(), (proof.FileId, NewPublicKey(".pdf")));
+
+        Assert.Equal(1, await RunMoveAsync(factory));
+
+        Assert.Null((await ReadFileAsync(database.GetConnectionString(), proof.FileId)).PublicStorageKey);
+        Assert.True(factory.ObjectStorage.Exists(proof.StagingKey));
+        Assert.True(await IsProcessedByMoveAsync(factory, messageId));
+    }
 }

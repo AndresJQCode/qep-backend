@@ -27,7 +27,9 @@ internal sealed partial class PaymentProofMoveWorker(
                 var processor = scope.ServiceProvider.GetRequiredService<IPaymentProofMoveProcessor>();
                 await processor.ProcessPendingAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            // Sólo el apagado del host detiene el worker. Otra cancelación (un timeout de R2 que llega
+            // como TaskCanceledException) es un tick fallido más: se registra y el siguiente reintenta.
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }

@@ -112,8 +112,26 @@ internal static class PaymentProofStorageHarness
     /// <summary>Escribe en el outbox de plataforma el evento que Quotations escribe al adjuntar
     /// (spec 2026-09-16, D9), con el nombre y los campos del contrato escritos a mano: si Quotations
     /// o Storage los cambian por separado, estas pruebas lo ven. Devuelve el id del mensaje.</summary>
-    public static async Task<Guid> AddAttachedEventAsync(
-        StorageApiFactory factory, params (Guid FileId, string PublicStorageKey)[] proofs)
+    public static Task<Guid> AddAttachedEventAsync(
+        StorageApiFactory factory, params (Guid FileId, string? PublicStorageKey)[] proofs) =>
+        AddAttachedEventForTenantAsync(factory, TenantId, proofs);
+
+    /// <summary>El mismo evento con otro <c>tenantId</c>, para ejercer el aislamiento de tenant.</summary>
+    public static Task<Guid> AddAttachedEventForTenantAsync(
+        StorageApiFactory factory, Guid tenantId, params (Guid FileId, string? PublicStorageKey)[] proofs) =>
+        AddAttachedEventPayloadAsync(
+            factory,
+            JsonSerializer.Serialize(new
+            {
+                tenantId,
+                orderId = Guid.CreateVersion7(),
+                proofs = proofs
+                    .Select(proof => new { fileId = proof.FileId, publicStorageKey = proof.PublicStorageKey })
+                    .ToArray(),
+            }));
+
+    /// <summary>El evento de adjunto con el payload tal cual, para ejercer mensajes mal formados.</summary>
+    public static async Task<Guid> AddAttachedEventPayloadAsync(StorageApiFactory factory, string payloadJson)
     {
         var id = Guid.CreateVersion7();
         await using var scope = factory.Services.CreateAsyncScope();
@@ -122,14 +140,7 @@ internal static class PaymentProofStorageHarness
         {
             Id = id,
             EventName = "quotations.order.payment-proofs-attached.v1",
-            PayloadJson = JsonSerializer.Serialize(new
-            {
-                tenantId = TenantId,
-                orderId = Guid.CreateVersion7(),
-                proofs = proofs
-                    .Select(proof => new { fileId = proof.FileId, publicStorageKey = proof.PublicStorageKey })
-                    .ToArray(),
-            }),
+            PayloadJson = payloadJson,
             CorrelationId = id.ToString(),
             OccurredAt = DateTimeOffset.UtcNow,
         });
@@ -263,6 +274,10 @@ internal sealed class InMemoryObjectStorage : IObjectStorage
     /// <summary>La clave cuyo borrado falla, para ejercer el orden de D9 (Task 7); null si ninguna.</summary>
     public string? FailingDeleteKey { get; set; }
 
+    /// <summary>La excepción del borrado que falla; si es null, una <c>InvalidOperationException</c>.
+    /// Permite simular un timeout de R2 (<c>TaskCanceledException</c>) sin que el host se apague.</summary>
+    public Exception? DeleteFailure { get; set; }
+
     public IReadOnlyCollection<string> Keys => _objects.Keys.ToArray();
 
     public Task<Uri> CreatePresignedUploadUrlAsync(
@@ -287,7 +302,7 @@ internal sealed class InMemoryObjectStorage : IObjectStorage
         if (string.Equals(key, FailingDeleteKey, StringComparison.Ordinal))
         {
             return Task.FromException(
-                new InvalidOperationException("Simulated failure deleting from the private bucket."));
+                DeleteFailure ?? new InvalidOperationException("Simulated failure deleting from the private bucket."));
         }
 
         _objects.TryRemove(key, out _);
