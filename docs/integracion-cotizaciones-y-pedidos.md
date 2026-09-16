@@ -123,8 +123,10 @@ No hace falta publicar (paso 5 de esa guía). Un comprobante `PaymentProof` no s
 `staging/` y, si es imagen, `complete` ya lo deja en WebP de hasta 2000 px, así que el `mimeType` y la
 extensión del `name` de su respuesta cambian. Con `Quotations:PaymentProofs:PublicLinks` encendida, el
 backend copia cada comprobante nuevo al bucket público al convertir o al sumar comprobantes, para que
-el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. Un comprobante `User`
-sigue como antes. La respuesta de los endpoints de pedidos no cambia.
+el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. Desde ahí
+`POST /files/{id}/download-url` de ese comprobante devuelve la URL pública, que el navegador **abre**
+en vez de descargar con el nombre original. Un comprobante `User` sigue como antes. La respuesta de los
+endpoints de pedidos no cambia.
 
 - PDF de envío: sólo `application/pdf`.
 - Comprobante de pago: `application/pdf`, `image/jpeg`, `image/png` o `image/webp`, hasta 10 MB.

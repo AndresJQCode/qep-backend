@@ -15,6 +15,7 @@ public sealed record IssueDownloadUrlCommand(
 public sealed class IssueDownloadUrlHandler(
     IFileResourceRepository repository,
     IObjectStorage objectStorage,
+    IPublicObjectStorage publicObjectStorage,
     IStorageUnitOfWork unitOfWork,
     IStorageAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -39,16 +40,31 @@ public sealed class IssueDownloadUrlHandler(
         // Sólo un recurso disponible se puede descargar (invariante de la capacidad).
         resource.EnsureDownloadable();
 
-        var storageKey = string.IsNullOrWhiteSpace(command.Variant)
-            ? resource.StorageKey
-            : resource.GetVariant(command.Variant).StorageKey;
-        // Con el nombre original del recurso, que firma `Content-Disposition: attachment`. Sin
-        // el, R2 sirve el objeto sin disposicion y el navegador **abre** el PDF o la imagen en
-        // una pestana en vez de bajarlos: el endpoint se llama "download-url" y hasta ahora no
-        // descargaba nada. Una variante conserva el nombre del original -- lo que cambia es el
-        // tamano, no que archivo es.
-        var url = await objectStorage.CreatePresignedDownloadUrlAsync(
-            storageKey, resource.Name, cancellationToken);
+        string url;
+        if (string.IsNullOrWhiteSpace(command.Variant)
+            && resource.OwnerType is FileOwnerType.PaymentProof
+            && resource.PublicStorageKey is { } publicKey)
+        {
+            // Spec 2026-09-16, D5: un comprobante movido vive en el bucket público y su temporal ya no
+            // existe. Se abre en una pestaña en vez de bajarse con su nombre, porque un objeto público
+            // no lleva Content-Disposition por request: es el cambio aceptado en la sección 3, y es lo
+            // mismo que hace el enlace «Ver» del Excel.
+            url = publicObjectStorage.GetUrl(publicKey);
+        }
+        else
+        {
+            var storageKey = string.IsNullOrWhiteSpace(command.Variant)
+                ? resource.StorageKey
+                : resource.GetVariant(command.Variant).StorageKey;
+            // Con el nombre original del recurso, que firma `Content-Disposition: attachment`. Sin
+            // el, R2 sirve el objeto sin disposicion y el navegador **abre** el PDF o la imagen en
+            // una pestana en vez de bajarlos: el endpoint se llama "download-url" y hasta ahora no
+            // descargaba nada. Una variante conserva el nombre del original -- lo que cambia es el
+            // tamano, no que archivo es.
+            var signed = await objectStorage.CreatePresignedDownloadUrlAsync(
+                storageKey, resource.Name, cancellationToken);
+            url = signed.AbsoluteUri;
+        }
 
         auditPublisher.Publish(
             resource.TenantId,
@@ -61,6 +77,6 @@ public sealed class IssueDownloadUrlHandler(
             clock.UtcNow);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return new DownloadUrlDto(url.AbsoluteUri);
+        return new DownloadUrlDto(url);
     }
 }
