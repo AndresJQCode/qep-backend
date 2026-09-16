@@ -637,6 +637,28 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         return Task.FromResult(page);
     }
 
+    /// <summary>Con qué pedidos se pidieron comprobantes, en orden: una vez por lote, no por pedido
+    /// (spec 2026-09-15, E6).</summary>
+    public List<IReadOnlyCollection<OrderId>> PaymentProofRequests { get; } = [];
+
+    // Los comprobantes que el dominio tiene cargados, en el orden en que se agregaron. El orden por
+    // fecha de subida e id es SQL y lo prueba OrderExportApiTests contra Postgres.
+    public Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>> ListPaymentProofsForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<OrderId> orderIds,
+        CancellationToken cancellationToken)
+    {
+        PaymentProofRequests.Add(orderIds);
+        return Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>>(
+            rows
+                .Where(row => orderIds.Contains(row.Order.Id) && row.Order.PaymentProofs.Count > 0)
+                .ToDictionary(
+                    row => row.Order.Id,
+                    row => (IReadOnlyList<OrderExportPaymentProof>)row.Order.PaymentProofs
+                        .Select(proof => new OrderExportPaymentProof(proof.Id, proof.PublicStorageKey, proof.UploadedAt))
+                        .ToArray()));
+    }
+
     private IEnumerable<OrderWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
         clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
 

@@ -161,7 +161,10 @@ public sealed class OrderExportApiTests
             $"{OrdersUrl(tenantId)}?{CurrentRange()}", TestContext.Current.CancellationToken);
         var items = list!.Items.ToArray();
         Assert.Equal("Pedidos", sheet.Name);
-        Assert.Equal(["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total"], sheet.Rows[0]);
+        Assert.Equal(
+            ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total",
+                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
+            sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[0]));
         var first = sheet.Rows[1];
         Assert.Equal(items[0].ClientName, first[1]);
@@ -174,6 +177,11 @@ public sealed class OrderExportApiTests
         Assert.Equal(items[0].Currency, first[6]);
         Assert.True(sheet.NumericCells[1][7]);
         Assert.Equal(items[0].Total, decimal.Parse(first[7], CultureInfo.InvariantCulture));
+        // Sin comprobantes (spec 2026-09-15, E2): la cantidad en cero y las tres celdas vacías, que
+        // igual salen (E7).
+        Assert.True(sheet.NumericCells[1][8]);
+        Assert.Equal("0", first[8]);
+        Assert.Equal([string.Empty, string.Empty, string.Empty], first.Skip(9));
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -326,6 +334,155 @@ public sealed class OrderExportApiTests
         var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return order;
+    }
+
+    // Spec 2026-09-15, de punta a punta con la opción encendida: el comprobante que se subió primero
+    // es el enlace «Ver» a su copia pública, uno privado dice «Sin enlace» y el tercero queda vacío.
+    // El privado se simula borrando su clave en la base: es lo que tienen los comprobantes de antes
+    // de la opción (P8).
+    [Fact]
+    public async Task TheOrdersWorkbookLinksEachPublicProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderWithProofsAsync(client, factory, tenantId, proofCount: 1);
+        var firstProofId = Assert.Single(order.PaymentProofs).Id;
+        var withSecond = await AddProofAsync(client, factory, tenantId, order.QuotationId);
+        var secondProofId = Assert.Single(withSecond.PaymentProofs, proof => proof.Id != firstProofId).Id;
+        await ClearPublicStorageKeyAsync(factory, secondProofId);
+        var firstKey = await PublicStorageKeyOfAsync(factory, firstProofId);
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}", content: null, TestContext.Current.CancellationToken);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+
+        var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        Assert.Equal(
+            ["Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
+            sheet.Rows[0].Skip(8));
+        var row = sheet.Rows[1];
+        Assert.Equal(order.OrderNumber, row[0]);
+        Assert.True(sheet.NumericCells[1][8]);
+        Assert.Equal("2", row[8]);
+        Assert.Equal(
+            $"HYPERLINK(\"{InMemoryPublicObjectStorage.BaseUrl}/{firstKey}\",\"Ver\")",
+            sheet.Formulas[1][9]);
+        Assert.Equal("Ver", row[9]);
+        Assert.Null(sheet.Formulas[1][10]);
+        Assert.Equal("Sin enlace", row[10]);
+        Assert.Equal(string.Empty, row[11]);
+    }
+
+    // E6 contra Postgres: una sola lectura por lote, por pedido y en el orden de las columnas —fecha de
+    // subida, y el id como desempate entre los que llegaron en el mismo request—, y sólo del tenant: la
+    // tabla de comprobantes no tiene tenant y el filtro va por el join con `orders`. Un pedido sin
+    // comprobantes no aparece.
+    [Fact]
+    public async Task PaymentProofsForTheExportComeInUploadOrderAndOnlyFromTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (otherTenantId, _, otherClient) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        using var __ = otherClient;
+        var order = await CreateOrderWithProofsAsync(client, factory, tenantId, proofCount: 2);
+        var withThird = await AddProofAsync(client, factory, tenantId, order.QuotationId);
+        var withoutProofs = await CreateOrderAsync(client, factory, tenantId);
+        var otherOrder = await CreateOrderWithProofsAsync(otherClient, factory, otherTenantId, proofCount: 1);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var proofs = await scope.ServiceProvider.GetRequiredService<IOrderRepository>()
+            .ListPaymentProofsForExportAsync(
+                tenantId,
+                [new OrderId(order.Id), new OrderId(withoutProofs.Id), new OrderId(otherOrder.Id)],
+                TestContext.Current.CancellationToken);
+
+        var read = Assert.Single(proofs);
+        Assert.Equal(new OrderId(order.Id), read.Key);
+        // Los dos de la conversión comparten la fecha de subida: los ordena el id, que Postgres
+        // compara como el texto canónico del uuid.
+        var sameRequest = order.PaymentProofs
+            .Select(proof => proof.Id)
+            .OrderBy(id => id.ToString("D", CultureInfo.InvariantCulture), StringComparer.Ordinal);
+        var added = Assert.Single(
+            withThird.PaymentProofs, proof => order.PaymentProofs.All(existing => existing.Id != proof.Id)).Id;
+        Assert.Equal(sameRequest.Append(added), read.Value.Select(proof => proof.Id.Value));
+    }
+
+    /// <summary>Un pedido convertido hoy con <paramref name="proofCount"/> comprobantes (pago
+    /// parcial), en un mismo request: comparten la fecha de subida.</summary>
+    private static async Task<OrderResponse> CreateOrderWithProofsAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, int proofCount)
+    {
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, customerId, productId);
+        var proofs = new List<OrderPaymentProofRequest>();
+        for (var index = 0; index < proofCount; index++)
+        {
+            proofs.Add(new OrderPaymentProofRequest(
+                await CreateAvailablePaymentProofFileAsync(client, factory, tenantId), 10_000m));
+        }
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest("PartialPaymentReceived", null, proofs),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
+    }
+
+    /// <summary>Suma un comprobante a un pedido pendiente: su fecha de subida es posterior a la de
+    /// los que ya tenía.</summary>
+    private static async Task<OrderResponse> AddProofAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid quotationId)
+    {
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotationId}/order/proofs",
+            new AddOrderPaymentProofsRequest(
+                "PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 5_000m)]),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
+    }
+
+    // Directo en la base: así queda un comprobante de antes de la opción (P8), sin copia pública.
+    private static async Task ClearPublicStorageKeyAsync(QepApiFactory factory, Guid proofId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var id = new OrderPaymentProofId(proofId);
+        var updated = await dbContext.OrderPaymentProofs
+            .Where(proof => proof.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(proof => proof.PublicStorageKey, (string?)null),
+                TestContext.Current.CancellationToken);
+        Assert.Equal(1, updated);
+    }
+
+    private static async Task<string> PublicStorageKeyOfAsync(QepApiFactory factory, Guid proofId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var id = new OrderPaymentProofId(proofId);
+        var key = await dbContext.OrderPaymentProofs
+            .AsNoTracking()
+            .Where(proof => proof.Id == id)
+            .Select(proof => proof.PublicStorageKey)
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(key);
+        return key;
     }
 
     private sealed record AcceptedDto(Guid JobId, DateTimeOffset RequestedAt);

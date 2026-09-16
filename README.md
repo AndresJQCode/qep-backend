@@ -943,6 +943,30 @@ configura `Storage:ClamAv:Enabled=true`, junto con `Host`, `Port` y
 `TimeoutSeconds`. Si ClamAV no responde, el archivo no se promociona. El modo
 deshabilitado existe únicamente para desarrollo local y pruebas.
 
+### Comprobantes de pago públicos (`payment-proofs/`)
+
+Con `Quotations:PaymentProofs:PublicLinks=true`, cada comprobante de pago **nuevo** —al convertir
+una cotización en pedido o al sumarle comprobantes— se copia del bucket privado al **bucket
+público** con la clave aleatoria `payment-proofs/{guid}.{pdf|jpg|png}`, y el Excel de pedidos lo
+enlaza en las columnas «Comprobante 1» a «Comprobante 3», con la cantidad total en «Comprobantes».
+La base guarda la clave, no la URL: la URL se arma al exportar con `Storage:R2:PublicBaseUrl`, así
+que cambiar el dominio no rompe los enlaces. Los comprobantes de antes, y los que se adjunten con la
+opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Producción la enciende en
+`k8s/prod-configMap.yaml`.
+
+- **Riesgo aceptado por el owner (2026-09-14):** quien tenga la URL abre el comprobante sin sesión
+  y sin revisar el tenant, y no se puede revocar si el Excel se reenvía. La clave aleatoria impide
+  adivinarla; no controla quién la tiene.
+- **Sobre `payment-proofs/` no va ninguna regla de lifecycle.** El prefijo `quotations/` del mismo
+  bucket (los PDF que se mandan por WhatsApp) sí puede tener una; confundirlos borraría
+  comprobantes cuyos enlaces siguen en Excels ya enviados.
+- **Nada se despublica solo:** apagar la opción deja de publicar y de mostrar enlaces, pero las
+  copias ya hechas siguen en el bucket, y borrar el archivo en Storage tampoco toca su copia.
+- La copia conserva el `Content-Type` del original (`CopyObject` usa `MetadataDirective = COPY` por
+  defecto), así que un PDF se abre en el navegador en vez de descargarse.
+- Un Excel bajado de internet abre en **Vista protegida**, y ahí ningún enlace responde hasta que
+  se toca «Habilitar edición». Es comportamiento de Office, igual para cualquier enlace.
+
 ### Plantilla de WhatsApp (Zenvia)
 
 Enviar una cotización (`POST /quotations/{id}/send`) manda un WhatsApp al cliente con el PDF

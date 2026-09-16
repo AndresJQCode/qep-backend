@@ -236,5 +236,37 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         return (orders, quotations);
     }
 
+    // Una consulta por lote del Excel (spec 2026-09-15, E6), no una por pedido. La tabla de
+    // comprobantes no tiene tenant: el filtro va por el join con `orders`, que sí lo tiene. El orden
+    // —fecha de subida, y el id como desempate entre los que llegaron en el mismo request— es el de
+    // las columnas del Excel. Se agrupa en memoria, donde GroupBy conserva ese orden.
+    public async Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>> ListPaymentProofsForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<OrderId> orderIds,
+        CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return new Dictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>();
+        }
+
+        var ids = orderIds.ToArray();
+        var rows = await (
+                from proof in dbContext.OrderPaymentProofs.AsNoTracking()
+                join order in dbContext.Orders.AsNoTracking() on proof.OrderId equals order.Id
+                where order.TenantId == tenantId && ids.Contains(order.Id)
+                orderby proof.UploadedAt, proof.Id
+                select new { proof.OrderId, proof.Id, proof.PublicStorageKey, proof.UploadedAt })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(row => row.OrderId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<OrderExportPaymentProof>)group
+                    .Select(row => new OrderExportPaymentProof(row.Id, row.PublicStorageKey, row.UploadedAt))
+                    .ToArray());
+    }
+
     public void Add(Order order) => dbContext.Orders.Add(order);
 }
