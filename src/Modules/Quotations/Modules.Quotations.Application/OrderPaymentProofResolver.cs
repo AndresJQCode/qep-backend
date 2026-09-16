@@ -10,9 +10,10 @@ namespace Modules.Quotations.Application;
 /// </summary>
 internal static class OrderPaymentProofResolver
 {
-    // US-14: "Acepta PDF, JPG, PNG, hasta 10 MB por archivo".
+    // US-14: "Acepta PDF, JPG, PNG, hasta 10 MB por archivo". WebP desde el 2026-09-16: Storage
+    // procesa a WebP toda imagen de un comprobante v2 al completar la subida (spec, D7 y D8).
     private static readonly string[] AllowedMimeTypes =
-        ["application/pdf", "image/jpeg", "image/png"];
+        ["application/pdf", "image/jpeg", "image/png", "image/webp"];
 
     private const long MaxSizeBytes = 10 * 1024 * 1024;
 
@@ -44,7 +45,7 @@ internal static class OrderPaymentProofResolver
         {
             throw new QuotationsDomainException(
                 "order.payment_proof.file_type_not_allowed",
-                "The payment proof must be a PDF, JPG or PNG file.");
+                "The payment proof must be a PDF, JPG, PNG or WEBP file.");
         }
 
         if (file.SizeBytes > MaxSizeBytes)

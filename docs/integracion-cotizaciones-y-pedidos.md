@@ -124,7 +124,7 @@ que el Excel de pedidos lo enlace; el frontend no hace nada distinto, y la respu
 cambia.
 
 - PDF de envío: sólo `application/pdf`.
-- Comprobante de pago: `application/pdf`, `image/jpeg` o `image/png`, hasta 10 MB.
+- Comprobante de pago: `application/pdf`, `image/jpeg`, `image/png` o `image/webp`, hasta 10 MB.
 
 ## Códigos de error propios del módulo
 
