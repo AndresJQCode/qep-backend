@@ -13,9 +13,11 @@ namespace Bootstrapper;
 ///
 /// No pasa por <c>FileResource.Publish</c> a propósito (P6): esa regla —sólo imágenes— protege el
 /// endpoint de publicación de Storage, y relajarla dejaría a cualquiera con <c>FilePublish</c>
-/// publicar un PDF desde la API. Por lo mismo el <c>FileResource</c> no se entera de esta copia: si
-/// alguien lo borra (<c>SoftDeleteFileHandler</c>), la copia pública queda en el bucket. Despublicar
-/// es trabajo aparte.
+/// publicar un PDF desde la API. Por lo mismo, para un comprobante <c>User</c> (v1) el
+/// <c>FileResource</c> no se entera de esta copia: si alguien lo borra (<c>SoftDeleteFileHandler</c>),
+/// la copia pública queda en el bucket. Un <c>PaymentProof</c> (spec 2026-09-16) sí: Storage registra
+/// la clave cuando lo mueve (D10), y no deja borrarlo ni despublicarlo mientras un pedido lo
+/// referencie (D15).
 /// </summary>
 internal sealed class PublicPaymentProofPublisher(
     IFileResourceRepository repository,

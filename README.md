@@ -961,7 +961,12 @@ opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Produc
   bucket (los PDF que se mandan por WhatsApp) sí puede tener una; confundirlos borraría
   comprobantes cuyos enlaces siguen en Excels ya enviados.
 - **Nada se despublica solo:** apagar la opción deja de publicar y de mostrar enlaces, pero las
-  copias ya hechas siguen en el bucket, y borrar el archivo en Storage tampoco toca su copia.
+  copias ya hechas siguen en el bucket, y borrar un comprobante `User` en Storage tampoco toca su
+  copia. Un comprobante `PaymentProof` que algún pedido referencia **no** se puede borrar ni
+  despublicar: `DELETE /files/{id}` y `DELETE /files/{id}/publication` responden 422
+  `storage.file.invalid_state` sin tocar el bucket, porque su copia pública es la que enlaza el
+  Excel. `PUT /files/{id}/publication` rechaza siempre un `PaymentProof`, con el mismo código: sólo
+  llega al público al adjuntarse a un pedido.
 - La copia conserva el `Content-Type` del original (`CopyObject` usa `MetadataDirective = COPY` por
   defecto), así que un PDF se abre en el navegador en vez de descargarse.
 - Un Excel bajado de internet abre en **Vista protegida**, y ahí ningún enlace responde hasta que

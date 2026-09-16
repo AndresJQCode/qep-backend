@@ -123,3 +123,48 @@ internal sealed class FixedClock(DateTimeOffset now) : IClock
 {
     public DateTimeOffset UtcNow { get; } = now;
 }
+
+/// <summary>El bucket público que anota copias (clave pública → clave privada) y borrados, para ver
+/// qué tocó un handler (spec 2026-09-16, D15).</summary>
+internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
+{
+    public const string BaseUrl = "https://assets-qep.example.co";
+
+    public Dictionary<string, string> Copies { get; } = new(StringComparer.Ordinal);
+
+    public List<string> DeletedKeys { get; } = [];
+
+    public bool IsConfigured => true;
+
+    public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken)
+    {
+        Copies[publicKey] = privateKey;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
+    {
+        DeletedKeys.Add(publicKey);
+        return Task.CompletedTask;
+    }
+
+    public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
+
+    public Task<PublicObjectPage> ListAsync(
+        string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>La sonda de otro módulo, con una respuesta fija, y los archivos por los que le preguntaron.</summary>
+internal sealed class StubFileReferenceProbe(bool referenced) : IFileReferenceProbe
+{
+    public string Source => "test";
+
+    public List<Guid> Asked { get; } = [];
+
+    public Task<bool> HasReferencesAsync(Guid fileId, CancellationToken cancellationToken)
+    {
+        Asked.Add(fileId);
+        return Task.FromResult(referenced);
+    }
+}

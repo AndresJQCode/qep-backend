@@ -11,6 +11,7 @@ public sealed class SoftDeleteFileHandler(
     IFileResourceRepository repository,
     IStorageUnitOfWork unitOfWork,
     IPublicObjectStorage publicStorage,
+    IEnumerable<IFileReferenceProbe> fileReferenceProbes,
     IStorageAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock)
@@ -30,6 +31,10 @@ public sealed class SoftDeleteFileHandler(
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");
         }
+
+        // Spec 2026-09-16, D15: antes de tocar el bucket. La copia pública de un comprobante adjunto
+        // es la que enlaza el Excel.
+        await PaymentProofGuard.EnsureNotReferencedAsync(resource, fileReferenceProbes, cancellationToken);
 
         var now = clock.UtcNow;
         if (resource.PublicStorageKey is { } publicKey)
