@@ -212,6 +212,64 @@ public sealed class PaymentProofFileResourceTests
         Assert.Equal("storage.file.invalid_state", error.Code);
     }
 
+    // D19: un comprobante movido que se reemplaza o se quita de su pedido se purga. Su copia pública era
+    // la única, y el procesador ya la borró.
+    [Fact]
+    public void AMovedProofCanBePurgedWhenItsOrderLetsItGo()
+    {
+        var proof = AvailableProof("comprobante.pdf", "application/pdf");
+        proof.MoveToPublic("payment-proofs/abc.pdf", Now);
+
+        proof.PurgeDetachedPaymentProof(Now.AddHours(1));
+
+        Assert.Equal(FileResourceStatus.Purged, proof.Status);
+        Assert.Equal(Now.AddHours(1), proof.DeletedAt);
+        Assert.Equal(Now.AddHours(1), proof.UpdatedAt);
+        Assert.Equal("payment-proofs/abc.pdf", proof.PublicStorageKey);
+    }
+
+    // D19: uno que todavía espera en staging/ también.
+    [Fact]
+    public void AStagedProofCanBePurgedWhenItsOrderLetsItGo()
+    {
+        var proof = AvailableProof("comprobante.pdf", "application/pdf");
+
+        proof.PurgeDetachedPaymentProof(Now);
+
+        Assert.Equal(FileResourceStatus.Purged, proof.Status);
+        Assert.Equal(Now, proof.DeletedAt);
+        Assert.Null(proof.PublicStorageKey);
+    }
+
+    // Un segundo mensaje por el mismo archivo no lo vuelve a purgar: el procesador lo salta antes.
+    [Fact]
+    public void PurgingALetGoProofRequiresAnAvailableResource()
+    {
+        var proof = AvailableProof("comprobante.pdf", "application/pdf");
+        proof.PurgeDetachedPaymentProof(Now);
+
+        var error = Assert.Throws<StorageDomainException>(() => proof.PurgeDetachedPaymentProof(Now.AddHours(1)));
+
+        Assert.Equal("storage.file.invalid_state", error.Code);
+        Assert.Equal(Now, proof.DeletedAt);
+    }
+
+    // D13: el archivo User de un comprobante v1 nunca se purga por esto.
+    [Fact]
+    public void PurgingALetGoProofRequiresAPaymentProof()
+    {
+        var file = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), FileOwnerType.User,
+            "comprobante.pdf", "application/pdf", 4096, "staging/tenants/a/c", Now);
+        file.CompleteUpload("checksum", 4096, Now);
+        file.MarkClean(Now);
+
+        var error = Assert.Throws<StorageDomainException>(() => file.PurgeDetachedPaymentProof(Now));
+
+        Assert.Equal("storage.file.invalid_state", error.Code);
+        Assert.Equal(FileResourceStatus.Available, file.Status);
+    }
+
     private static FileResource PendingScanProof(string name, string mimeType)
     {
         var proof = FileResource.CreatePendingUpload(

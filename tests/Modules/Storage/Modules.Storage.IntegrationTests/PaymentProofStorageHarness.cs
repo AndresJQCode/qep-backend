@@ -207,6 +207,64 @@ internal static class PaymentProofStorageHarness
             TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Escribe en el outbox el evento que Quotations escribe al reemplazar o quitar un
+    /// comprobante (spec 2026-09-16, D19), con el nombre y los campos del contrato escritos a mano, igual
+    /// que <see cref="AddAttachedEventAsync"/>. Una clave null es un comprobante sin copia. Devuelve el id
+    /// del mensaje.</summary>
+    public static Task<Guid> AddDetachedEventAsync(
+        StorageApiFactory factory, params (Guid FileId, string? PublicStorageKey)[] proofs) =>
+        AddDetachedEventForTenantAsync(factory, TenantId, proofs);
+
+    /// <summary>El mismo evento con otro <c>tenantId</c>, para ejercer el aislamiento de tenant.</summary>
+    public static Task<Guid> AddDetachedEventForTenantAsync(
+        StorageApiFactory factory, Guid tenantId, params (Guid FileId, string? PublicStorageKey)[] proofs) =>
+        AddDetachedEventPayloadAsync(
+            factory,
+            JsonSerializer.Serialize(new
+            {
+                tenantId,
+                orderId = Guid.CreateVersion7(),
+                proofs = proofs
+                    .Select(proof => new { fileId = proof.FileId, publicStorageKey = proof.PublicStorageKey })
+                    .ToArray(),
+            }));
+
+    /// <summary>El evento de retiro con el payload tal cual, para ejercer mensajes mal formados.</summary>
+    public static async Task<Guid> AddDetachedEventPayloadAsync(StorageApiFactory factory, string payloadJson)
+    {
+        var id = Guid.CreateVersion7();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        dbContext.Outbox.Add(new StorageOutboxMessage
+        {
+            Id = id,
+            EventName = "quotations.order.payment-proofs-detached.v1",
+            PayloadJson = payloadJson,
+            CorrelationId = id.ToString(),
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return id;
+    }
+
+    /// <summary>Un lote del retiro, a mano: en producción lo corre PaymentProofMoveWorker, que no corre
+    /// en este host (ver <see cref="StorageApiFactory"/>).</summary>
+    public static async Task<int> RunDetachAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IPaymentProofDetachProcessor>()
+            .ProcessPendingAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static async Task<bool> IsProcessedByDetachAsync(StorageApiFactory factory, Guid messageId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        return await dbContext.Inbox.AnyAsync(
+            entry => entry.Consumer == "storage.payment-proof-detach" && entry.MessageId == messageId,
+            TestContext.Current.CancellationToken);
+    }
+
     /// <summary>La fila de storage.file_resources y cuántas variantes tiene, leída con SQL para no
     /// depender de lo que expone la API.</summary>
     public static async Task<FileRow> ReadFileAsync(string connectionString, Guid fileId)

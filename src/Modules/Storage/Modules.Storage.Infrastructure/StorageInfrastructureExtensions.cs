@@ -59,6 +59,9 @@ public static class StorageInfrastructureExtensions
         services.AddHostedService<StagingCleanupWorker>();
         // Spec 2026-09-16, D9: borra el temporal de cada comprobante adjuntado y registra el movimiento.
         services.AddScoped<IPaymentProofMoveProcessor, PaymentProofMoveProcessor>();
+        // Spec 2026-09-16, D19: borra y purga lo que un pedido suelta. Lo corre PaymentProofMoveWorker,
+        // después del movimiento.
+        services.AddScoped<IPaymentProofDetachProcessor, PaymentProofDetachProcessor>();
         services.AddHostedService<PaymentProofMoveWorker>();
 
         return services;

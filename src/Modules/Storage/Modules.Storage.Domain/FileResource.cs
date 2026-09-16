@@ -260,6 +260,19 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
+    // Spec 2026-09-16, D19: un comprobante que su pedido soltó —se reemplazó o se quitó— se purga, esté
+    // movido o no. Quien llama ya borró su objeto (el público si se movió, el de staging/ si no).
+    // PublicStorageKey se conserva como registro de dónde estuvo: un recurso Purged no se descarga ni se
+    // vuelve a adjuntar.
+    public void PurgeDetachedPaymentProof(DateTimeOffset occurredAt)
+    {
+        RequirePaymentProof();
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
     public void UpdateMetadata(
         string? category,
         IEnumerable<string>? tags,
