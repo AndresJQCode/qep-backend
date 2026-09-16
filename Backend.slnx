@@ -88,6 +88,9 @@
   <Folder Name="/tests/ArchitectureTests/">
     <Project Path="tests/ArchitectureTests/ArchitectureTests/ArchitectureTests.csproj" />
   </Folder>
+  <Folder Name="/tests/Bootstrapper/">
+    <Project Path="tests/Bootstrapper/Bootstrapper.UnitTests/Bootstrapper.UnitTests.csproj" />
+  </Folder>
   <Folder Name="/tests/Modules/" />
   <Folder Name="/tests/Modules/Audit/">
     <Project Path="tests/Modules/Audit/Modules.Audit.UnitTests/Modules.Audit.UnitTests.csproj" />

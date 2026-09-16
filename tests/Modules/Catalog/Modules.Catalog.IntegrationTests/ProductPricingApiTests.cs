@@ -309,6 +309,7 @@ public sealed class ProductPricingApiTests
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }
 

@@ -637,8 +637,88 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         return Task.FromResult(page);
     }
 
+    /// <summary>Con qué pedidos se pidieron comprobantes, en orden: una vez por lote, no por pedido
+    /// (spec 2026-09-15, E6).</summary>
+    public List<IReadOnlyCollection<OrderId>> PaymentProofRequests { get; } = [];
+
+    // Los comprobantes que el dominio tiene cargados, en el orden en que se agregaron. El orden por
+    // fecha de subida e id es SQL y lo prueba OrderExportApiTests contra Postgres.
+    public Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>> ListPaymentProofsForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<OrderId> orderIds,
+        CancellationToken cancellationToken)
+    {
+        PaymentProofRequests.Add(orderIds);
+        return Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>>(
+            rows
+                .Where(row => orderIds.Contains(row.Order.Id) && row.Order.PaymentProofs.Count > 0)
+                .ToDictionary(
+                    row => row.Order.Id,
+                    row => (IReadOnlyList<OrderExportPaymentProof>)row.Order.PaymentProofs
+                        .Select(proof => new OrderExportPaymentProof(proof.Id, proof.PublicStorageKey, proof.UploadedAt))
+                        .ToArray()));
+    }
+
     private IEnumerable<OrderWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
         clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
 
     public void Add(Order order) { }
+}
+
+/// <summary>
+/// El publicador de comprobantes (spec 2026-09-15): anota qué se publicó y qué se borró, y con qué
+/// token. La clave sale del id del archivo para que la prueba la pueda predecir; la real es
+/// aleatoria. Con <c>enabled</c> en false se porta como la opción apagada.
+/// </summary>
+internal sealed class RecordingPaymentProofPublisher(bool enabled = true) : IPaymentProofPublisher
+{
+    public const string BaseUrl = "https://assets-qep.example.co";
+
+    private int _publishCalls;
+
+    /// <summary>La llamada a <see cref="PublishAsync"/> (desde 1) que falla; null si ninguna.</summary>
+    public int? FailingPublishCall { get; set; }
+
+    /// <summary>La clave cuyo borrado falla, para probar que el rollback sigue con las demás.</summary>
+    public string? FailingDeleteKey { get; set; }
+
+    public List<string> PublishedKeys { get; } = [];
+
+    public List<string> DeletedKeys { get; } = [];
+
+    public List<CancellationToken> DeleteTokens { get; } = [];
+
+    public static string KeyFor(Guid fileId) => $"payment-proofs/{fileId:N}.pdf";
+
+    public Task<string?> PublishAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
+    {
+        _publishCalls++;
+        if (_publishCalls == FailingPublishCall)
+        {
+            return Task.FromException<string?>(new InvalidOperationException("Simulated copy failure."));
+        }
+
+        if (!enabled)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        var key = KeyFor(fileId);
+        PublishedKeys.Add(key);
+        return Task.FromResult<string?>(key);
+    }
+
+    public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
+    {
+        DeleteTokens.Add(cancellationToken);
+        if (publicKey == FailingDeleteKey)
+        {
+            return Task.FromException(new InvalidOperationException("Simulated delete failure."));
+        }
+
+        DeletedKeys.Add(publicKey);
+        return Task.CompletedTask;
+    }
+
+    public string? UrlFor(string publicKey) => enabled ? $"{BaseUrl}/{publicKey}" : null;
 }

@@ -129,6 +129,26 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// La clave de la copia pública de un comprobante (spec 2026-09-15, P5). Nullable, porque los
+    /// privados no tienen, y sin índice, porque nadie busca por ella. Sin el mapeo a mano EF la
+    /// llamaría "PublicStorageKey", y el error lo vería recién la migración.
+    /// </summary>
+    [Fact]
+    public void OrderPaymentProofPublicStorageKeyMapsToANullableColumnWithoutIndex()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var proof = model.FindEntityType(typeof(OrderPaymentProof))!;
+        var property = proof.FindProperty(nameof(OrderPaymentProof.PublicStorageKey))!;
+
+        Assert.Equal("public_storage_key", property.GetColumnName());
+        Assert.True(property.IsNullable);
+        Assert.Equal(200, property.GetMaxLength());
+        Assert.DoesNotContain(proof.GetIndexes(), index => index.Properties.Contains(property));
+    }
+
+    /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
     /// generada y después escrita a mano tiene que dejar el snapshot al día (Tasks 2 y 5). No abre

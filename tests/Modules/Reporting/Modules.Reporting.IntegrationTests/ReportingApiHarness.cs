@@ -450,6 +450,7 @@ internal static class ReportingApiHarness
             // NotificationsOptionsValidator falla al arrancar y todas las pruebas de este archivo
             // mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
 
             // Vaciadas, nunca heredadas: `WebApplicationFactory` corre en Development y ahí
             // `CreateBuilder` carga los user-secrets de quien corre las pruebas. Con Zenvia

@@ -92,7 +92,8 @@ siguen yendo por [secretos de usuario](#secretos-de-usuario), nunca en un
 Las claves obligatorias no se deducen de ese archivo sino de los validadores que
 corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
-`AuditOptionsValidator`): si algo falta, la API **no arranca**.
+`AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator` y
+`PaymentProofsOptionsValidator`): si algo falta, la API **no arranca**.
 
 `ConnectionStrings:QepDatabase` **no está en `appsettings.json`**, a propósito:
 lleva una contraseña, y la regla de este repositorio es que una credencial nunca
@@ -123,6 +124,7 @@ local y por variable de entorno en k8s
 | `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
 | `Storage:ClamAv:Enabled`                               | `false`                                                                                       | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                         |
 | `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                      | Destino del escaneo. `Port` entre 1 y 65535                                                                         |
+| `Quotations:PaymentProofs:PublicLinks`                 | `false` en `appsettings.json`                                                                 | Con `true`, cada comprobante de pago nuevo se copia al bucket público al adjuntarse y el Excel de pedidos lo enlaza. **Exige `Storage:R2:PublicBucket` y `Storage:R2:PublicBaseUrl` en cualquier ambiente**: sin ellos la API no arranca. Apagarla no despublica lo ya copiado |
 
 Ejemplo con variables de entorno:
 
@@ -940,6 +942,30 @@ El análisis antimalware usa el protocolo `INSTREAM` de ClamAV. En producción
 configura `Storage:ClamAv:Enabled=true`, junto con `Host`, `Port` y
 `TimeoutSeconds`. Si ClamAV no responde, el archivo no se promociona. El modo
 deshabilitado existe únicamente para desarrollo local y pruebas.
+
+### Comprobantes de pago públicos (`payment-proofs/`)
+
+Con `Quotations:PaymentProofs:PublicLinks=true`, cada comprobante de pago **nuevo** —al convertir
+una cotización en pedido o al sumarle comprobantes— se copia del bucket privado al **bucket
+público** con la clave aleatoria `payment-proofs/{guid}.{pdf|jpg|png}`, y el Excel de pedidos lo
+enlaza en las columnas «Comprobante 1» a «Comprobante 3», con la cantidad total en «Comprobantes».
+La base guarda la clave, no la URL: la URL se arma al exportar con `Storage:R2:PublicBaseUrl`, así
+que cambiar el dominio no rompe los enlaces. Los comprobantes de antes, y los que se adjunten con la
+opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Producción la enciende en
+`k8s/prod-configMap.yaml`.
+
+- **Riesgo aceptado por el owner (2026-09-14):** quien tenga la URL abre el comprobante sin sesión
+  y sin revisar el tenant, y no se puede revocar si el Excel se reenvía. La clave aleatoria impide
+  adivinarla; no controla quién la tiene.
+- **Sobre `payment-proofs/` no va ninguna regla de lifecycle.** El prefijo `quotations/` del mismo
+  bucket (los PDF que se mandan por WhatsApp) sí puede tener una; confundirlos borraría
+  comprobantes cuyos enlaces siguen en Excels ya enviados.
+- **Nada se despublica solo:** apagar la opción deja de publicar y de mostrar enlaces, pero las
+  copias ya hechas siguen en el bucket, y borrar el archivo en Storage tampoco toca su copia.
+- La copia conserva el `Content-Type` del original (`CopyObject` usa `MetadataDirective = COPY` por
+  defecto), así que un PDF se abre en el navegador en vez de descargarse.
+- Un Excel bajado de internet abre en **Vista protegida**, y ahí ningún enlace responde hasta que
+  se toca «Habilitar edición». Es comportamiento de Office, igual para cualquier enlace.
 
 ### Plantilla de WhatsApp (Zenvia)
 

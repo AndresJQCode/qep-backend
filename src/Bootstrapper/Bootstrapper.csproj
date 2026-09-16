@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- Los adaptadores y validadores de acá son internal; sus pruebas unitarias los construyen
+         directo (spec 2026-09-15). -->
+    <InternalsVisibleTo Include="Bootstrapper.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\BuildingBlocks\BuildingBlocks.Observability\BuildingBlocks.Observability.csproj" />
     <ProjectReference Include="..\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />

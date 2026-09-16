@@ -209,6 +209,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("order_id");
 
+                    b.Property<string>("PublicStorageKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("public_storage_key");
+
                     b.Property<DateTimeOffset>("UploadedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("uploaded_at");

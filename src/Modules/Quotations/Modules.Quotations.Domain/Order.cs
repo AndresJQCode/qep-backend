@@ -181,14 +181,15 @@ public sealed class Order
             proof.UpdateAmount(update.Amount);
             if (update.NewFileId is { } newFileId)
             {
-                proof.UpdateFile(newFileId);
+                proof.UpdateFile(newFileId, update.NewPublicStorageKey);
             }
         }
 
         foreach (var proof in proofs)
         {
             _paymentProofs.Add(OrderPaymentProof.Create(
-                OrderPaymentProofId.New(), Id, proof.FileId, proof.Amount, uploadedBy, occurredAt));
+                OrderPaymentProofId.New(), Id, proof.FileId, proof.PublicStorageKey, proof.Amount, uploadedBy,
+                occurredAt));
         }
 
         PaymentStatus = paymentStatus;
@@ -277,7 +278,8 @@ public sealed class Order
         foreach (var proof in proofs)
         {
             _paymentProofs.Add(OrderPaymentProof.Create(
-                OrderPaymentProofId.New(), Id, proof.FileId, proof.Amount, uploadedBy, occurredAt));
+                OrderPaymentProofId.New(), Id, proof.FileId, proof.PublicStorageKey, proof.Amount, uploadedBy,
+                occurredAt));
         }
     }
 
@@ -316,12 +318,20 @@ public sealed class Order
 
 /// <summary>Un comprobante de pago tal como lo manda el cliente, sin id: <see cref="Order"/>
 /// asigna un <see cref="OrderPaymentProofId"/> nuevo a cada uno — mismo criterio que
-/// <c>PriceScaleInput</c> en Catalog.</summary>
-public sealed record OrderPaymentProofInput(Guid FileId, decimal Amount);
+/// <c>PriceScaleInput</c> en Catalog. <c>PublicStorageKey</c> es la clave de la copia pública que
+/// el handler ya hizo (spec 2026-09-15, P5), o null si el comprobante queda privado. Va última y con
+/// default para no romper a quien lo construye posicionalmente.</summary>
+public sealed record OrderPaymentProofInput(Guid FileId, decimal Amount, string? PublicStorageKey = null);
 
 /// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
 /// <see cref="OrderPaymentProofInput"/>, sí lleva id — es el que dice cuál comprobante corregir,
 /// no uno nuevo que agregar. <paramref name="NewFileId"/> reemplaza el archivo (a pedido,
-/// 2026-09-15) — null cuando sólo se corrige el monto.</summary>
+/// 2026-09-15) — null cuando sólo se corrige el monto. <paramref name="NewPublicStorageKey"/> es
+/// la copia pública que el handler ya publicó para ese archivo de reemplazo (o null si la opción
+/// está apagada) — mismo criterio que <see cref="OrderPaymentProofInput.PublicStorageKey"/> para
+/// un comprobante nuevo.</summary>
 public sealed record OrderPaymentProofAmountUpdate(
-    OrderPaymentProofId ProofId, decimal Amount, Guid? NewFileId = null);
+    OrderPaymentProofId ProofId,
+    decimal Amount,
+    Guid? NewFileId = null,
+    string? NewPublicStorageKey = null);

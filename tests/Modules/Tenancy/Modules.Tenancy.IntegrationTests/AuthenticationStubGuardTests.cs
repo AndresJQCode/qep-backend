@@ -42,6 +42,7 @@ public sealed class AuthenticationStubGuardTests
             // del archivo mueren antes de llegar a su aserción.
             // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }
 }

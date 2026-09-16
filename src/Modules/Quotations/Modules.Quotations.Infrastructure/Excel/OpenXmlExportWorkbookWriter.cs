@@ -31,6 +31,15 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
     // Índice 1 de CellFormats: la fuente en negrita de BuildStylesheet.
     private const uint HeaderStyleIndex = 1;
 
+    // Índice 2 de CellFormats: la fuente azul y subrayada de un enlace (spec 2026-09-15, E3).
+    private const uint LinkStyleIndex = 2;
+
+    // El color de los enlaces de Office, en ARGB.
+    private const string LinkColor = "FF0563C1";
+
+    // El tope de Excel para una cadena dentro de una fórmula (E4).
+    private const int MaxFormulaStringLength = 255;
+
     // El id con que workbook.xml apunta a la hoja; lo resuelve xl/_rels/workbook.xml.rels.
     private const string SheetRelationshipId = "rId1";
 
@@ -245,27 +254,71 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
     }
 
     // Texto inline y no la tabla de strings compartidos: la tabla se arma en memoria hasta el
-    // final, que es justo lo que el streaming evita.
+    // final, que es justo lo que el streaming evita. Por lo mismo el enlace es una fórmula y no un
+    // hipervínculo de relación (spec 2026-09-15, E3): ése vive en <hyperlinks>, después de
+    // <sheetData>, y en sheet1.xml.rels, y el zip admite una sola entrada abierta a la vez, así que
+    // habría que guardar todos los enlaces en memoria hasta el final.
     private static Cell ToCell(ExportCell value, string reference, uint? styleIndex)
     {
-        var cell = value.Number is { } number
-            ? new Cell { DataType = CellValues.Number, CellValue = new CellValue(number) }
-            : new Cell
-            {
-                DataType = CellValues.InlineString,
-                InlineString = new InlineString(new Text(RemoveInvalidXmlChars(value.Text ?? string.Empty))
-                {
-                    Space = SpaceProcessingModeValues.Preserve,
-                }),
-            };
-        cell.CellReference = reference;
-        if (styleIndex is { } style)
+        Cell cell;
+        var style = styleIndex;
+        if (value.Number is { } number)
         {
-            cell.StyleIndex = style;
+            cell = new Cell { DataType = CellValues.Number, CellValue = new CellValue(number) };
+        }
+        else if (value.Url is { } url && HyperlinkFormula(url, value.Text ?? string.Empty) is { } formula)
+        {
+            // <v> lleva el valor ya calculado: el archivo se ve bien antes de que Excel recalcule, y
+            // en visores que no calculan.
+            cell = new Cell
+            {
+                DataType = CellValues.String,
+                CellFormula = new CellFormula(formula),
+                CellValue = new CellValue(RemoveInvalidXmlChars(value.Text ?? string.Empty)),
+            };
+            style ??= LinkStyleIndex;
+        }
+        else
+        {
+            // E4: una URL que no entra en la fórmula sale como texto plano, para que se vea en vez de
+            // perderse.
+            cell = TextCell(value.Url ?? value.Text);
+        }
+
+        cell.CellReference = reference;
+        if (style is { } appliedStyle)
+        {
+            cell.StyleIndex = appliedStyle;
         }
 
         return cell;
     }
+
+    private static Cell TextCell(string? text) =>
+        new()
+        {
+            DataType = CellValues.InlineString,
+            InlineString = new InlineString(new Text(RemoveInvalidXmlChars(text ?? string.Empty))
+            {
+                Space = SpaceProcessingModeValues.Preserve,
+            }),
+        };
+
+    // HYPERLINK("url","texto"). En el XML los argumentos van separados con coma sin importar la
+    // configuración regional: Excel la muestra con el separador de quien abre el archivo. Las
+    // comillas dobles se escapan duplicándolas. Null si alguna de las dos cadenas pasa el tope de
+    // Excel (E4); se mide ya escapada, que es lo que Excel lee dentro de la fórmula.
+    private static string? HyperlinkFormula(string url, string text)
+    {
+        var escapedUrl = EscapeFormulaString(RemoveInvalidXmlChars(url));
+        var escapedText = EscapeFormulaString(RemoveInvalidXmlChars(text));
+        return escapedUrl.Length > MaxFormulaStringLength || escapedText.Length > MaxFormulaStringLength
+            ? null
+            : $"HYPERLINK(\"{escapedUrl}\",\"{escapedText}\")";
+    }
+
+    private static string EscapeFormulaString(string value) =>
+        value.Replace("\"", "\"\"", StringComparison.Ordinal);
 
     // Un dato de otro sistema puede traer un caracter de control que XML no admite (p. ej.
     // U+0001 colado en un nombre): OpenXmlWriter usa XmlWriter por debajo, que revienta con
@@ -337,11 +390,18 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
             WorkbookViewId = 0U,
         });
 
-    // Lo mínimo que Excel acepta sin quejarse: dos fuentes (normal y negrita), los dos rellenos
-    // que la especificación exige, un borde vacío y dos formatos de celda.
+    // Lo mínimo que Excel acepta sin quejarse: tres fuentes (normal, negrita y la azul subrayada de
+    // los enlaces), los dos rellenos que la especificación exige, un borde vacío y tres formatos de
+    // celda (normal, cabecera y enlace).
     private static Stylesheet BuildStylesheet() =>
         new(
-            new Fonts(new Font(), new Font(new Bold())) { Count = 2U },
+            new Fonts(
+                new Font(),
+                new Font(new Bold()),
+                new Font(new Underline(), new Color { Rgb = HexBinaryValue.FromString(LinkColor) }))
+            {
+                Count = 3U,
+            },
             new Fills(
                 new Fill(new PatternFill { PatternType = PatternValues.None }),
                 new Fill(new PatternFill { PatternType = PatternValues.Gray125 }))
@@ -355,8 +415,9 @@ internal sealed class OpenXmlExportWorkbook : IExportWorkbook
             },
             new CellFormats(
                 new CellFormat { FontId = 0U, FillId = 0U, BorderId = 0U },
-                new CellFormat { FontId = 1U, FillId = 0U, BorderId = 0U, ApplyFont = true })
+                new CellFormat { FontId = 1U, FillId = 0U, BorderId = 0U, ApplyFont = true },
+                new CellFormat { FontId = 2U, FillId = 0U, BorderId = 0U, ApplyFont = true })
             {
-                Count = 2U,
+                Count = 3U,
             });
 }

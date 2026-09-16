@@ -58,6 +58,7 @@ public sealed class AddOrderPaymentProofsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationFileLookup fileLookup,
+    IPaymentProofPublisher paymentProofPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -97,27 +98,80 @@ public sealed class AddOrderPaymentProofsHandler(
         var now = clock.UtcNow;
         var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
-        order.AddPaymentProofs(
-            command.PaymentProofs
-                .Select(proof => new OrderPaymentProofInput(proof.FileId, proof.Amount))
-                .ToArray(),
-            paymentStatus,
-            command.Notes,
-            uploadedBy,
-            now,
-            command.UpdatedProofs
-                .Select(update => new OrderPaymentProofAmountUpdate(
-                    new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId))
-                .ToArray());
+        // Sólo se publica lo que de verdad cambia de archivo: un comprobante nuevo siempre, y uno
+        // que se reemplaza (a pedido, 2026-09-15) — corregir sólo el monto no toca el archivo.
+        // Antes del dominio y con rollback, igual que al convertir (P7): si otra persona acaba de
+        // aprobar el pedido, AddPaymentProofs lo rechaza con order.order.not_pending después de
+        // copiar, y esas copias se borran.
+        var copies = new PaymentProofCopies(paymentProofPublisher);
+        // La clave vieja de cada comprobante que se reemplaza: capturada ANTES de mutar el
+        // agregado, porque después de AddPaymentProofs ya no queda forma de leerla. Sólo se borra
+        // si el guardado termina saliendo bien — best-effort, fuera del try de arriba: un archivo
+        // público huérfano no es motivo para fallar un request que sí guardó.
+        var oldPublicKeysToReplace = command.UpdatedProofs
+            .Where(update => update.NewFileId is not null)
+            .Select(update => order.PaymentProofs
+                .FirstOrDefault(proof => proof.Id.Value == update.ProofId)
+                ?.PublicStorageKey)
+            .Where(publicKey => publicKey is not null)
+            .Cast<string>()
+            .ToArray();
 
-        auditPublisher.Publish(
-            command.TenantId,
-            executionContext.SubjectId,
-            "quotation.order.payment_proofs_added",
-            order.Id.ToString(),
-            "success",
-            now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            var proofs = await copies.PublishAsync(
+                command.TenantId, command.PaymentProofs, cancellationToken);
+
+            var updatedProofs = new List<OrderPaymentProofAmountUpdate>(command.UpdatedProofs.Count);
+            foreach (var update in command.UpdatedProofs)
+            {
+                string? newPublicStorageKey = null;
+                if (update.NewFileId is { } newFileId)
+                {
+                    newPublicStorageKey = await copies.PublishReplacementAsync(
+                        command.TenantId, newFileId, cancellationToken);
+                }
+
+                updatedProofs.Add(new OrderPaymentProofAmountUpdate(
+                    new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId,
+                    newPublicStorageKey));
+            }
+
+            order.AddPaymentProofs(
+                proofs,
+                paymentStatus,
+                command.Notes,
+                uploadedBy,
+                now,
+                updatedProofs);
+
+            auditPublisher.Publish(
+                command.TenantId,
+                executionContext.SubjectId,
+                "quotation.order.payment_proofs_added",
+                order.Id.ToString(),
+                "success",
+                now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            await copies.RollbackAsync();
+            throw;
+        }
+
+        foreach (var oldPublicKey in oldPublicKeysToReplace)
+        {
+            try
+            {
+                await paymentProofPublisher.DeleteAsync(oldPublicKey, CancellationToken.None);
+            }
+            catch
+            {
+                // Best-effort, mismo criterio que PaymentProofCopies.RollbackAsync: el archivo
+                // viejo queda huérfano en el bucket público, pero el pedido ya guardó el cambio.
+            }
+        }
 
         return order.ToDto();
     }

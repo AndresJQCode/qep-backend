@@ -52,6 +52,7 @@ internal static class GeographyApiHarness
             // ausentes, NotificationsOptionsValidator falla al arrancar y todas las pruebas de
             // este proyecto mueren antes de llegar a su aserción.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }
 }
