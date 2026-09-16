@@ -57,4 +57,9 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
     }
 
     public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
+
+    // El publicador de comprobantes no lista el bucket: eso es de la reconciliación de Storage.
+    public Task<PublicObjectPage> ListAsync(
+        string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }

@@ -865,5 +865,17 @@ internal static class QuotationsApiHarness
         }
 
         public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
+
+        /// <summary>Las copias vigentes bajo el prefijo, en una sola página. La reconciliación de
+        /// Storage no corre en estas pruebas (su intervalo es de horas): existe porque el puerto lo
+        /// pide.</summary>
+        public Task<PublicObjectPage> ListAsync(
+            string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+            Task.FromResult(new PublicObjectPage(
+                _copies.Keys
+                    .Where(key => key.StartsWith(prefix, StringComparison.Ordinal))
+                    .Select(key => new PublicStoredObject(key, DateTimeOffset.UtcNow))
+                    .ToArray(),
+                ContinuationToken: null));
     }
 }
