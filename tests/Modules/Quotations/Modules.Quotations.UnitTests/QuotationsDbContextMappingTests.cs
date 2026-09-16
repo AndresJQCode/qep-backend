@@ -118,7 +118,9 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("order_payment_proofs", proof.GetTableName());
         Assert.Equal("order_id", proof.FindProperty(nameof(OrderPaymentProof.OrderId))!.GetColumnName());
         Assert.Equal("PK_order_payment_proofs", proof.FindPrimaryKey()!.GetName());
-        Assert.Equal("IX_order_payment_proofs_order", Assert.Single(proof.GetIndexes()).GetDatabaseName());
+        Assert.Equal(
+            ["IX_order_payment_proofs_file", "IX_order_payment_proofs_order", "IX_order_payment_proofs_public_key"],
+            proof.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
         Assert.Equal(
             "FK_order_payment_proofs_orders_order_id",
             Assert.Single(proof.GetForeignKeys()).GetConstraintName());
@@ -130,11 +132,11 @@ public sealed class QuotationsDbContextMappingTests
 
     /// <summary>
     /// La clave de la copia pública de un comprobante (spec 2026-09-15, P5). Nullable, porque los
-    /// privados no tienen, y sin índice, porque nadie busca por ella. Sin el mapeo a mano EF la
-    /// llamaría "PublicStorageKey", y el error lo vería recién la migración.
+    /// privados no tienen. Sin el mapeo a mano EF la llamaría "PublicStorageKey", y el error lo vería
+    /// recién la migración.
     /// </summary>
     [Fact]
-    public void OrderPaymentProofPublicStorageKeyMapsToANullableColumnWithoutIndex()
+    public void OrderPaymentProofPublicStorageKeyMapsToANullableColumn()
     {
         using var context = new QuotationsDbContextFactory().CreateDbContext([]);
         var model = context.GetService<IDesignTimeModel>().Model;
@@ -145,7 +147,30 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("public_storage_key", property.GetColumnName());
         Assert.True(property.IsNullable);
         Assert.Equal(200, property.GetMaxLength());
-        Assert.DoesNotContain(proof.GetIndexes(), index => index.Properties.Contains(property));
+    }
+
+    /// <summary>
+    /// Spec 2026-09-16, D17: Storage consulta esta tabla en cada barrido, por archivo
+    /// (IFileReferenceProbe) y por clave pública (IPublicObjectReferenceProbe). Un índice por columna,
+    /// con nombre fijo: un nombre por convención no lo ve el compilador, lo ve la próxima migración.
+    /// </summary>
+    [Fact]
+    public void OrderPaymentProofsHaveAnIndexForEachReferenceProbe()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var indexes = model.FindEntityType(typeof(OrderPaymentProof))!.GetIndexes().ToArray();
+
+        var byFile = Assert.Single(indexes, index => index.GetDatabaseName() == "IX_order_payment_proofs_file");
+        Assert.Equal([nameof(OrderPaymentProof.FileId)], byFile.Properties.Select(property => property.Name));
+        Assert.False(byFile.IsUnique);
+
+        var byPublicKey = Assert.Single(
+            indexes, index => index.GetDatabaseName() == "IX_order_payment_proofs_public_key");
+        Assert.Equal(
+            [nameof(OrderPaymentProof.PublicStorageKey)], byPublicKey.Properties.Select(property => property.Name));
+        Assert.False(byPublicKey.IsUnique);
     }
 
     /// <summary>
