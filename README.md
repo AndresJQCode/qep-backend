@@ -1001,14 +1001,19 @@ Desde el 2026-09-16 el frontend sube los comprobantes con `ownerType: "PaymentPr
 4. **El barrido de staging** (cada `Storage:StagingCleanupMinutes`) purga el comprobante que sigue
    sin mover después de `Storage:StagingRetentionHours` si ningún módulo lo referencia, y lo audita
    como `storage.file.purged` / `payment_proof_not_attached`.
-5. **`PaymentProofOrphanCleanupWorker`** (cada `Storage:PaymentProofOrphanCleanup:IntervalHours`)
-   recorre sólo `payment-proofs/` del bucket público y borra lo que tiene más de `MinimumAgeHours` y
-   no referencia ningún `FileResource` ni `OrderPaymentProof`, auditándolo como
-   `storage.public_object.purged`. **Arranca con `DryRun=true`** en `appsettings.json` y en el
+5. **`PaymentProofOrphanCleanupWorker`** (unos 5 minutos después de arrancar y desde ahí cada
+   `Storage:PaymentProofOrphanCleanup:IntervalHours`) recorre sólo `payment-proofs/` del bucket
+   público y borra lo que tiene más de `MinimumAgeHours` y que ningún `FileResource` ni
+   `OrderPaymentProof` referencia, auditándolo como `storage.public_object.purged`. La primera
+   corrida no espera un intervalo completo porque el temporizador no se guarda: con deploys más
+   seguidos que `IntervalHours` nunca correría. Cada réplica corre la suya, a la vez que las demás;
+   se acepta porque borrar un objeto que ya no existe no falla, y en producción `DryRun` arranca en
+   `true`. **Arranca con `DryRun=true`** en `appsettings.json` y en el
    ConfigMap: sólo escribe `Payment proof orphan cleanup (dry run) would delete …` en el log. Se pasa
    a `false` a mano, en un commit propio, después de revisar esos logs en producción. Si no hay
    ninguna sonda de referencias registrada no borra nada y lo avisa con un Warning; un objeto cuyo
-   borrado falla se registra como Error y se reintenta en la corrida siguiente.
+   borrado falla se registra como Error y se reintenta en la corrida siguiente; si lo que falla es
+   auditar un borrado ya hecho, el Error lo dice y no hay reintento.
 
 Un comprobante ya movido no se puede adjuntar a otro pedido (422 `order.payment_proof.file_not_available`),
 y uno que un pedido referencia no se borra ni se despublica desde la API de Storage (ver «Nada se

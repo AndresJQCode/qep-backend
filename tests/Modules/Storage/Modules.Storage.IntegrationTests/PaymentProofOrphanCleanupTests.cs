@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Storage.Application;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using static Modules.Storage.IntegrationTests.PaymentProofStorageHarness;
 
@@ -131,6 +132,46 @@ public sealed class PaymentProofOrphanCleanupTests
             new PaymentProofOrphanCleanupResult(Listed: 1, Recent: 0, Referenced: 0, Orphans: 1, Deleted: 1),
             retry);
         Assert.False(factory.PublicObjectStorage.Exists(failing));
+    }
+
+    // Revisión de Task 10 (M2): si el borrado ya ocurrió y lo que falla es auditarlo, el objeto no vuelve
+    // en la corrida siguiente. Cuenta como borrado, y el log lo dice en vez de prometer un reintento.
+    [Fact]
+    public async Task ADeleteWhoseAuditFailsStillCountsAsDeleted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString(), orphanCleanupDryRun: false);
+        var orphan = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(orphan, DateTimeOffset.UtcNow.AddHours(-48));
+
+        PaymentProofOrphanCleanupResult result;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var processor = ActivatorUtilities.CreateInstance<PaymentProofOrphanCleanupProcessor>(
+                scope.ServiceProvider, (IStorageAuditPublisher)new FailingAuditPublisher());
+            result = await processor.CleanupAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            new PaymentProofOrphanCleanupResult(Listed: 1, Recent: 0, Referenced: 0, Orphans: 1, Deleted: 1),
+            result);
+        Assert.False(factory.PublicObjectStorage.Exists(orphan));
+    }
+
+    private sealed class FailingAuditPublisher : IStorageAuditPublisher
+    {
+        public void Publish(
+            Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+            throw new InvalidOperationException("Simulated audit failure.");
+
+        public void PublishSystem(
+            Guid? tenantId,
+            string action,
+            string resourceType,
+            string resourceId,
+            string outcome,
+            DateTimeOffset occurredAt) =>
+            throw new InvalidOperationException("Simulated audit failure.");
     }
 
     // Un comprobante v2 ya movido: su FileResource guarda la clave, y la sonda de Storage lo retiene.

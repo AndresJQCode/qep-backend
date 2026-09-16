@@ -29,7 +29,9 @@ internal sealed record PaymentProofOrphanCleanupResult(
 //
 // Los errores siguen el criterio del barrido de staging (Task 9): un objeto cuya sonda o cuyo borrado
 // falla se registra como Error, se descarta lo pendiente y se sigue con el siguiente; como no se borró,
-// la corrida siguiente lo vuelve a listar. Un listado que falla corta la corrida y lo registra el worker.
+// la corrida siguiente lo vuelve a listar. Si el borrado ya ocurrió y lo que falla es la auditoría, el
+// objeto no vuelve a aparecer: cuenta como borrado y el Error lo dice. Un listado que falla corta la
+// corrida y lo registra el worker.
 internal sealed partial class PaymentProofOrphanCleanupProcessor(
     StorageDbContext dbContext,
     IPublicObjectStorage publicObjectStorage,
@@ -69,6 +71,11 @@ internal sealed partial class PaymentProofOrphanCleanupProcessor(
         Level = LogLevel.Error,
         Message = "Payment proof orphan cleanup could not process {Key}; the next run retries it.")]
     private static partial void LogObjectFailed(ILogger logger, string key, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Payment proof orphan cleanup deleted {Key} but could not audit the purge; it will not be retried.")]
+    private static partial void LogPurgeNotAudited(ILogger logger, string key, Exception exception);
 
     [LoggerMessage(
         Level = LogLevel.Information,
@@ -116,6 +123,7 @@ internal sealed partial class PaymentProofOrphanCleanupProcessor(
                     continue;
                 }
 
+                var objectDeleted = false;
                 try
                 {
                     if (await IsReferencedAsync(stored.Key, cancellationToken))
@@ -132,6 +140,7 @@ internal sealed partial class PaymentProofOrphanCleanupProcessor(
                     }
 
                     await publicObjectStorage.DeleteAsync(stored.Key, cancellationToken);
+                    objectDeleted = true;
                     // Auditado y guardado por objeto, no al final: si el proceso muere a mitad del
                     // recorrido, lo ya borrado queda auditado.
                     auditPublisher.PublishSystem(
@@ -153,8 +162,18 @@ internal sealed partial class PaymentProofOrphanCleanupProcessor(
                 }
                 catch (Exception exception)
                 {
-                    LogObjectFailed(logger, stored.Key, exception);
                     DiscardPendingChanges();
+                    if (objectDeleted)
+                    {
+                        // Ya no está en el bucket, así que ninguna corrida lo vuelve a listar: el log es
+                        // el único rastro de la purga.
+                        LogPurgeNotAudited(logger, stored.Key, exception);
+                        deleted++;
+                    }
+                    else
+                    {
+                        LogObjectFailed(logger, stored.Key, exception);
+                    }
                 }
             }
 
