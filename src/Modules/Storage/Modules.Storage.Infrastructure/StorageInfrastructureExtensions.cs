@@ -41,6 +41,8 @@ public static class StorageInfrastructureExtensions
         services.AddScoped<IUserReferenceProbe, FileUserReferenceProbe>();
         services.AddSingleton<IFileContentInspector, FileContentInspector>();
         services.AddSingleton<IImageVariantGenerator, ImageSharpVariantGenerator>();
+        // Spec 2026-09-16, D7: sin estado, una instancia por proceso alcanza.
+        services.AddSingleton<IPaymentProofImageProcessor, ImageSharpPaymentProofImageProcessor>();
         services.AddSingleton<IFileScanner>(serviceProvider =>
         {
             var options = serviceProvider.GetRequiredService<IOptions<StorageOptions>>();
