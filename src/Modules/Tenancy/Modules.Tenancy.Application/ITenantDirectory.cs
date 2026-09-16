@@ -8,5 +8,11 @@ namespace Modules.Tenancy.Application;
 public interface ITenantDirectory
 {
     Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Nombre visible del tenant. Lo usa Notifications para nombrar la organización
+    /// en el correo de invitación: se lee al entregar y no viaja en el evento, así que un tenant
+    /// renombrado entre la invitación y el envío sale con el nombre vigente.</summary>
+    Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken);
+
     Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken);
 }

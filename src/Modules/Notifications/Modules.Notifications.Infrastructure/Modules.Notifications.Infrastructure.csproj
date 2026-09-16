@@ -10,6 +10,7 @@
     <ProjectReference Include="..\Modules.Notifications.Application\Modules.Notifications.Application.csproj" />
     <ProjectReference Include="..\Modules.Notifications.Domain\Modules.Notifications.Domain.csproj" />
     <ProjectReference Include="..\..\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
