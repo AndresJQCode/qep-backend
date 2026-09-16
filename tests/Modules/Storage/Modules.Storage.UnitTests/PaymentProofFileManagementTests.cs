@@ -81,6 +81,43 @@ public sealed class PaymentProofFileManagementTests
         Assert.Null(proof.PublicStorageKey);
     }
 
+    // Fix round 1 (I1): sin sondas registradas no hay forma de saber si un pedido lo referencia.
+    // Fallar cerrado, no abierto.
+    [Fact]
+    public async Task DeletingAPaymentProofWithNoProbesRegisteredIsRejected()
+    {
+        var proof = MovedPaymentProof();
+        var storage = new RecordingPublicObjectStorage();
+        var unitOfWork = new CountingStorageUnitOfWork();
+
+        var error = await Assert.ThrowsAsync<StorageDomainException>(() =>
+            DeleteHandler(proof, storage, unitOfWork)
+                .HandleAsync(new SoftDeleteFileCommand(TenantId, proof.Id.Value), TestContext.Current.CancellationToken));
+
+        Assert.Equal("storage.file.invalid_state", error.Code);
+        Assert.Empty(storage.DeletedKeys);
+        Assert.Equal(PublicKey, proof.PublicStorageKey);
+        Assert.Equal(FileResourceStatus.Available, proof.Status);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task UnpublishingAPaymentProofWithNoProbesRegisteredIsRejected()
+    {
+        var proof = MovedPaymentProof();
+        var storage = new RecordingPublicObjectStorage();
+        var unitOfWork = new CountingStorageUnitOfWork();
+
+        var error = await Assert.ThrowsAsync<StorageDomainException>(() =>
+            UnpublishHandler(proof, storage, unitOfWork)
+                .HandleAsync(new UnpublishFileCommand(TenantId, proof.Id.Value), TestContext.Current.CancellationToken));
+
+        Assert.Equal("storage.file.invalid_state", error.Code);
+        Assert.Empty(storage.DeletedKeys);
+        Assert.Equal(PublicKey, proof.PublicStorageKey);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
     // Un comprobante sólo llega al público por el movimiento (sección 2). Una imagen, para que el
     // rechazo no sea el de «sólo imágenes» de FileResource.Publish.
     [Fact]
@@ -124,6 +161,27 @@ public sealed class PaymentProofFileManagementTests
         Assert.True(result.Deleted);
         Assert.Equal([imageKey], storage.DeletedKeys);
         Assert.Empty(probe.Asked);
+    }
+
+    // Fix round 1 (I1): la guarda de "sin sondas" es sólo para PaymentProof; un archivo User se borra
+    // igual que siempre, sin que le importe si hay sondas registradas.
+    [Fact]
+    public async Task AUserImageIsDeletedWithNoProbesRegistered()
+    {
+        var image = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.CreateVersion7(), FileOwnerType.User,
+            "producto.png", "image/png", 2048, $"staging/tenants/{TenantId:N}/producto", Now);
+        image.CompleteUpload("checksum", 2048, Now);
+        image.Promote($"files/tenants/{TenantId:N}/producto", Now);
+        var imageKey = $"tenants/{TenantId:N}/media/producto/original.png";
+        image.Publish(imageKey, Now);
+        var storage = new RecordingPublicObjectStorage();
+
+        var result = await DeleteHandler(image, storage, new CountingStorageUnitOfWork())
+            .HandleAsync(new SoftDeleteFileCommand(TenantId, image.Id.Value), TestContext.Current.CancellationToken);
+
+        Assert.True(result.Deleted);
+        Assert.Equal([imageKey], storage.DeletedKeys);
     }
 
     private static FileResource AvailablePaymentProof()

@@ -1,3 +1,4 @@
+using System.Linq;
 using BuildingBlocks.Application;
 using Modules.Storage.Domain;
 
@@ -20,8 +21,20 @@ internal static class PaymentProofGuard
             return;
         }
 
+        // Fix round 1 (I1): sin sondas registradas no hay forma de saber si un pedido lo referencia.
+        // Fallar cerrado, igual que StagingCleanupProcessor cuando no hay sondas para el barrido: no
+        // se puede tratar "nadie contestó" como "nadie lo referencia".
+        var probeList = probes as ICollection<IFileReferenceProbe> ?? probes.ToList();
+        if (probeList.Count == 0)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "No file reference probe is registered; the payment proof cannot be deleted or " +
+                "unpublished safely.");
+        }
+
         // Secuencial y cortando en la primera que retiene, igual que StagingCleanupProcessor.
-        foreach (var probe in probes)
+        foreach (var probe in probeList)
         {
             if (await probe.HasReferencesAsync(resource.Id.Value, cancellationToken))
             {
