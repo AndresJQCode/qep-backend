@@ -651,14 +651,26 @@ internal static class QuotationsApiHarness
 
     private sealed record UploadSessionResponseDto(Guid FileResourceId, string UploadUrl, string StorageKey);
 
-    public sealed class QepApiFactory(string connectionString, bool runExportWorker = false)
+    public sealed class QepApiFactory(
+        string connectionString, bool runExportWorker = false, bool publicPaymentProofLinks = false)
         : WebApplicationFactory<Program>
     {
+        // Copia del flag para ConfigureWebHost. Si ese método leyera el parámetro, que además
+        // inicializa PublicObjectStorage, el compilador avisaría CS9124 (parámetro capturado y usado
+        // en un inicializador), y con TreatWarningsAsErrors el build falla.
+        private readonly bool _publicPaymentProofLinks = publicPaymentProofLinks;
+
         /// <summary>Doble de <c>IObjectStorage</c> en memoria, mismo mecanismo que
         /// StorageFlowTests en el propio módulo Storage: la subida real a R2 no existe en un
         /// test, así que este harness sustituye la implementación real por una que guarda los
         /// bytes en un diccionario.</summary>
         public InMemoryObjectStorage ObjectStorage { get; } = new();
+
+        /// <summary>Doble de <c>IPublicObjectStorage</c> (spec 2026-09-15): el publicador real de
+        /// comprobantes copia entre buckets de R2, que en una prueba no existen. Anota las copias y
+        /// los borrados para que la prueba los vea. Queda configurado sólo con
+        /// <c>publicPaymentProofLinks</c>, como el adaptador real sólo lo está con bucket público.</summary>
+        public InMemoryPublicObjectStorage PublicObjectStorage { get; } = new() { IsConfigured = publicPaymentProofLinks };
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -673,6 +685,20 @@ internal static class QuotationsApiHarness
             // ausentes, NotificationsOptionsValidator falla al arrancar y todas las pruebas de
             // este proyecto mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+
+            // Fijado, nunca heredado, mismo criterio que Notifications:EmailProvider: con la opción
+            // prendida en los user-secrets de quien corre las pruebas y sin bucket público,
+            // PaymentProofsOptionsValidator no deja arrancar el host, y todas las pruebas de este
+            // proyecto mueren antes de su aserción (spec 2026-09-15, P2). Las pruebas de los
+            // comprobantes públicos la prenden con publicPaymentProofLinks, que además fija el bucket
+            // público que el validador exige.
+            builder.UseSetting(
+                "Quotations:PaymentProofs:PublicLinks", _publicPaymentProofLinks ? "true" : "false");
+            if (_publicPaymentProofLinks)
+            {
+                builder.UseSetting("Storage:R2:PublicBucket", "test-public-bucket");
+                builder.UseSetting("Storage:R2:PublicBaseUrl", InMemoryPublicObjectStorage.BaseUrl);
+            }
 
             // Fijado, nunca heredado: con un número en los user-secrets de quien corre las pruebas,
             // cada host de este proyecto sembraría la carga de exportación. Las pruebas de la carga lo
@@ -693,6 +719,12 @@ internal static class QuotationsApiHarness
             {
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
+
+                // El publicador real de comprobantes copia al bucket público de R2 por este puerto
+                // (spec 2026-09-15); acá las copias quedan en memoria, donde la prueba las ve. El
+                // adaptador real llamaría a S3 aunque el bucket no esté configurado.
+                services.RemoveAll<IPublicObjectStorage>();
+                services.AddSingleton<IPublicObjectStorage>(PublicObjectStorage);
 
                 // El renderer real hace un POST a `qcode-pdf`. Sin sustituirlo, en cuanto el
                 // envio genere el PDF estas pruebas saldrian a la red: lentas, dependientes de
@@ -782,5 +814,56 @@ internal static class QuotationsApiHarness
         }
 
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
+    }
+
+    /// <summary>
+    /// El bucket público en memoria (spec 2026-09-15). Anota cada copia y cada borrado de los
+    /// comprobantes de pago, y puede fallar a propósito en una copia para ejercer el rollback de P7.
+    /// <see cref="GetUrl"/> arma la URL con <see cref="BaseUrl"/>, como R2PublicObjectStorage con
+    /// Storage:R2:PublicBaseUrl.
+    /// </summary>
+    public sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
+    {
+        public const string BaseUrl = "https://assets.qep.test";
+
+        private readonly Dictionary<string, string> _copies = new(StringComparer.Ordinal);
+        private int _copyAttempts;
+
+        /// <summary>El intento de copia (desde 1, contando todos los del host) que falla; null si
+        /// ninguno.</summary>
+        public int? FailingCopyAttempt { get; set; }
+
+        /// <summary>Las copias que siguen en el bucket: clave pública → clave privada de origen.</summary>
+        public IReadOnlyDictionary<string, string> Copies => _copies;
+
+        public List<string> DeletedKeys { get; } = [];
+
+        /// <summary>Como R2PublicObjectStorage, configurado sólo con bucket público: la factoría lo
+        /// prende con <c>publicPaymentProofLinks</c>, que además fija el bucket. Apagado, lo que lo
+        /// consulta —la URL pública de las imágenes de producto, por ejemplo— se porta como en CI,
+        /// sin bucket público.</summary>
+        public bool IsConfigured { get; init; }
+
+        public Task CopyFromPrivateAsync(
+            string privateKey, string publicKey, CancellationToken cancellationToken)
+        {
+            _copyAttempts++;
+            if (_copyAttempts == FailingCopyAttempt)
+            {
+                throw new InvalidOperationException("Simulated failure copying to the public bucket.");
+            }
+
+            _copies[publicKey] = privateKey;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
+        {
+            _copies.Remove(publicKey);
+            DeletedKeys.Add(publicKey);
+            return Task.CompletedTask;
+        }
+
+        public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
     }
 }

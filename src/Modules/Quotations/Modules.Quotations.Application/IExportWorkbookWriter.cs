@@ -25,12 +25,16 @@ public interface IExportWorkbook : IDisposable
 public sealed record ExportColumn(string Header, double Width);
 
 /// <summary>
-/// Una celda: texto o número, nunca los dos. Las fechas viajan como texto ISO a propósito; los
-/// importes como número, porque quien abre el archivo los suma y filtra.
+/// Una celda: texto, número o enlace, nunca dos a la vez. Las fechas viajan como texto ISO a
+/// propósito; los importes como número, porque quien abre el archivo los suma y filtra. El enlace
+/// (spec 2026-09-15, E5) lo usa el Excel de pedidos para los comprobantes de pago: <c>Url</c> es el
+/// destino y <c>Text</c> lo que se ve.
 /// </summary>
-public readonly record struct ExportCell(string? Text, decimal? Number)
+public readonly record struct ExportCell(string? Text, decimal? Number, string? Url)
 {
-    public static ExportCell OfText(string? value) => new(value ?? string.Empty, null);
+    public static ExportCell OfText(string? value) => new(value ?? string.Empty, null, null);
 
-    public static ExportCell OfNumber(decimal value) => new(null, value);
+    public static ExportCell OfNumber(decimal value) => new(null, value, null);
+
+    public static ExportCell OfLink(string url, string text) => new(text, null, url);
 }

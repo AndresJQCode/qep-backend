@@ -17,6 +17,13 @@ public sealed record OrderWithQuotation(Order Order, Quotation Quotation);
 /// </summary>
 public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderNumber);
 
+/// <summary>
+/// Lo mínimo de un comprobante de pago que el Excel de pedidos necesita (spec 2026-09-15, E6): cuál
+/// es, para el orden, y su copia pública, si tiene. Sin monto ni archivo: la hoja no los muestra.
+/// </summary>
+public sealed record OrderExportPaymentProof(
+    OrderPaymentProofId Id, string? PublicStorageKey, DateTimeOffset UploadedAt);
+
 public interface IOrderRepository
 {
     Task<Order?> FindByQuotationIdAsync(
@@ -92,6 +99,15 @@ public interface IOrderRepository
         string? orderNumber,
         OrderExportCursor? after,
         int limit,
+        CancellationToken cancellationToken);
+
+    /// <summary>Los comprobantes de un lote de pedidos del Excel (spec 2026-09-15, E6), en una sola
+    /// consulta: por pedido, ordenados por fecha de subida y después por id, así «Comprobante 1» es
+    /// el primero que se subió. Un pedido sin comprobantes, o de otro tenant, no aparece en el
+    /// diccionario.</summary>
+    Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>> ListPaymentProofsForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken);
 
     void Add(Order order);

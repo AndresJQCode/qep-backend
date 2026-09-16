@@ -118,7 +118,10 @@ existe (`docs/integracion-imagenes-de-producto.md`, pasos 2-4: sesión → `PUT`
 3. `POST /files/{fileResourceId}/complete` → el archivo queda `Available`.
 4. Usar ese `fileResourceId` como `pdfFileId` (send) o `fileId` de cada comprobante (convert).
 
-No hace falta publicar (paso 5 de esa guía) — estos archivos no necesitan URL pública.
+No hace falta publicar (paso 5 de esa guía). Con `Quotations:PaymentProofs:PublicLinks` encendida,
+el backend copia cada comprobante nuevo al bucket público al convertir o al sumar comprobantes, para
+que el Excel de pedidos lo enlace; el frontend no hace nada distinto, y la respuesta de la API no
+cambia.
 
 - PDF de envío: sólo `application/pdf`.
 - Comprobante de pago: `application/pdf`, `image/jpeg` o `image/png`, hasta 10 MB.

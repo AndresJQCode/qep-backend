@@ -46,6 +46,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
+    IPaymentProofPublisher paymentProofPublisher,
     IOrderNumberGenerator numberGenerator,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -85,39 +86,56 @@ public sealed class ConvertQuotationToOrderHandler(
         var orderNumber = OrderNumberFormatter.Format(now.Year, sequence);
         var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
-        // Pasar la cotización a Converted y crear el pedido en la misma unidad de trabajo
-        // (modelo-datos-cotizaciones.md §3): si guardar falla, no queda ninguna de las dos cosas.
-        // ConvertToOrder valida las precondiciones antes de mutar. El historial (Approved) y la
-        // auditoría (quotation.quotation.approved) no cambian de nombre: son contrato, no el
-        // nombre del estado.
-        quotation.ConvertToOrder(convertedBy, now);
-        var order = Order.Create(
-            OrderId.New(),
-            command.TenantId,
-            orderNumber,
-            quotation.Id,
-            paymentStatus,
-            command.Notes,
-            convertedBy,
-            command.PaymentProofs.Select(proof => new OrderPaymentProofInput(proof.FileId, proof.Amount)).ToArray(),
-            now);
+        // Las copias públicas de los comprobantes (spec 2026-09-15, P4 y P7) van antes del dominio,
+        // porque OrderPaymentProof recibe la clave al crearse. Desde la primera copia, cualquier
+        // falla —un rechazo de ConvertToOrder incluido— borra las copias y relanza: un pedido que no
+        // se guardó no puede dejar comprobantes publicados.
+        var copies = new PaymentProofCopies(paymentProofPublisher);
+        Order order;
+        try
+        {
+            var proofs = await copies.PublishAsync(
+                command.TenantId, command.PaymentProofs, cancellationToken);
 
-        orderRepository.Add(order);
-        quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
-            QuotationHistoryEntryId.New(),
-            quotation.Id,
-            QuotationHistoryEventType.Approved,
-            convertedBy,
-            QuotationChangeSummary.ConvertedToOrder(order.OrderNumber),
-            now));
-        auditPublisher.Publish(
-            command.TenantId,
-            executionContext.SubjectId,
-            "quotation.quotation.approved",
-            quotation.Id.ToString(),
-            "success",
-            now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+            // Pasar la cotización a Converted y crear el pedido en la misma unidad de trabajo
+            // (modelo-datos-cotizaciones.md §3): si guardar falla, no queda ninguna de las dos cosas.
+            // ConvertToOrder valida las precondiciones antes de mutar. El historial (Approved) y la
+            // auditoría (quotation.quotation.approved) no cambian de nombre: son contrato, no el
+            // nombre del estado.
+            quotation.ConvertToOrder(convertedBy, now);
+            order = Order.Create(
+                OrderId.New(),
+                command.TenantId,
+                orderNumber,
+                quotation.Id,
+                paymentStatus,
+                command.Notes,
+                convertedBy,
+                proofs,
+                now);
+
+            orderRepository.Add(order);
+            quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
+                QuotationHistoryEntryId.New(),
+                quotation.Id,
+                QuotationHistoryEventType.Approved,
+                convertedBy,
+                QuotationChangeSummary.ConvertedToOrder(order.OrderNumber),
+                now));
+            auditPublisher.Publish(
+                command.TenantId,
+                executionContext.SubjectId,
+                "quotation.quotation.approved",
+                quotation.Id.ToString(),
+                "success",
+                now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            await copies.RollbackAsync();
+            throw;
+        }
 
         return order.ToDto();
     }
