@@ -8,7 +8,8 @@ namespace Modules.Quotations.Application;
 /// Quita un comprobante ya cargado (a pedido, 2026-09-15) — para el caso de haber cargado uno
 /// equivocado, no para corregirlo (eso ya lo cubre <see cref="AddOrderPaymentProofsCommand"/> vía
 /// <c>UpdatedProofs</c>). Sólo mientras el pedido sigue <see cref="OrderStatus.Pending"/> — ver
-/// <see cref="Order.RemovePaymentProof"/>.
+/// <see cref="Order.RemovePaymentProof"/>. Desde D19 (spec 2026-09-16) el archivo que el pedido deja de
+/// usar se borra: lo hace Storage, al consumir el evento que se escribe con el pedido.
 /// </summary>
 public sealed record RemoveOrderPaymentProofCommand(
     Guid TenantId, Guid QuotationId, Guid ProofId) : ICommand<OrderDto>;
@@ -18,6 +19,7 @@ public sealed class RemoveOrderPaymentProofHandler(
     IQuotationRepository quotationRepository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
+    IOrderPaymentProofEventPublisher paymentProofEvents,
     IExecutionContext executionContext,
     IClock clock)
     : ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>
@@ -38,7 +40,11 @@ public sealed class RemoveOrderPaymentProofHandler(
             ?? throw QuotationNotFound.For(command.QuotationId);
 
         var now = clock.UtcNow;
-        order.RemovePaymentProof(new OrderPaymentProofId(command.ProofId), now);
+        var proofId = new OrderPaymentProofId(command.ProofId);
+        // D19: el archivo y su clave, leídos antes de quitarlo. Si el comprobante no es de este pedido,
+        // RemovePaymentProof lanza order.payment_proof.not_found y no se publica nada.
+        var removed = order.PaymentProofs.FirstOrDefault(proof => proof.Id == proofId);
+        order.RemovePaymentProof(proofId, now);
         // El estado del pago cambia con lo que quede cargado -- mismo motivo que
         // AddOrderItemsHandler recalcula tras sumar un producto: el agregado no tiene el total de
         // la cotización a mano.
@@ -51,6 +57,16 @@ public sealed class RemoveOrderPaymentProofHandler(
             order.Id.ToString(),
             "success",
             now);
+        // D19: en la misma transacción que el pedido. `removed` no es null: RemovePaymentProof ya habría
+        // lanzado. Si otro comprobante del pedido usa el mismo archivo, no se suelta.
+        var detached = PaymentProofCopies.DetachedFrom(
+            [new DetachedPaymentProof(removed!.FileId, removed.PublicStorageKey)],
+            order.PaymentProofs.Select(proof => proof.FileId));
+        if (detached.Length > 0)
+        {
+            paymentProofEvents.PublishDetached(command.TenantId, order.Id, detached, now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return order.ToDto();

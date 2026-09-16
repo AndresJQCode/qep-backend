@@ -128,6 +128,11 @@ el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. De
 en vez de descargar con el nombre original. Un comprobante `User` sigue como antes. La respuesta de los
 endpoints de pedidos no cambia.
 
+Reemplazar el archivo de un comprobante (`updatedProofs[].newFileId`) o quitarlo
+(`DELETE /order/proofs/{proofId}`) borra, segundos después, el archivo que el pedido deja de usar: su
+URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a adjuntar
+(`order.payment_proof.file_not_available`). Para corregir, sube un archivo nuevo.
+
 - PDF de envío: sólo `application/pdf`.
 - Comprobante de pago: `application/pdf`, `image/jpeg`, `image/png` o `image/webp`, hasta 10 MB.
 

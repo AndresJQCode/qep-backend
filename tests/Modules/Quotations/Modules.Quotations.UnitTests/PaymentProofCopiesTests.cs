@@ -133,4 +133,20 @@ public sealed class PaymentProofCopiesTests
 
         Assert.Equal([new AttachedPaymentProof(replacedWithKey, "payment-proofs/def.webp")], attached);
     }
+
+    // D19 (spec 2026-09-16): se suelta sólo el archivo que el pedido dejó de usar. Si otro comprobante
+    // del mismo pedido lo sigue usando, no hay nada que borrar.
+    [Fact]
+    public void OnlyTheFilesTheOrderNoLongerUsesAreDetached()
+    {
+        var replaced = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/abc.webp");
+        var stillUsed = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/def.webp");
+        var withoutKey = new DetachedPaymentProof(Guid.CreateVersion7(), null);
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [replaced, stillUsed, withoutKey],
+            [stillUsed.FileId, Guid.CreateVersion7()]);
+
+        Assert.Equal([replaced, withoutKey], detached);
+    }
 }

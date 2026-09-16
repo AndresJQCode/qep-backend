@@ -846,7 +846,9 @@ internal static class QuotationsApiHarness
     {
         public const string BaseUrl = "https://assets.qep.test";
 
-        private readonly Dictionary<string, string> _copies = new(StringComparer.Ordinal);
+        // Concurrente desde D19 (spec 2026-09-16): PaymentProofDetachProcessor borra copias desde el hilo
+        // de PaymentProofMoveWorker mientras la prueba lee.
+        private readonly ConcurrentDictionary<string, string> _copies = new(StringComparer.Ordinal);
         private int _copyAttempts;
 
         /// <summary>El intento de copia (desde 1, contando todos los del host) que falla; null si
@@ -856,7 +858,7 @@ internal static class QuotationsApiHarness
         /// <summary>Las copias que siguen en el bucket: clave pública → clave privada de origen.</summary>
         public IReadOnlyDictionary<string, string> Copies => _copies;
 
-        public List<string> DeletedKeys { get; } = [];
+        public ConcurrentQueue<string> DeletedKeys { get; } = new();
 
         /// <summary>Como R2PublicObjectStorage, configurado sólo con bucket público: la factoría lo
         /// prende con <c>publicPaymentProofLinks</c>, que además fija el bucket. Apagado, lo que lo
@@ -879,8 +881,8 @@ internal static class QuotationsApiHarness
 
         public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
         {
-            _copies.Remove(publicKey);
-            DeletedKeys.Add(publicKey);
+            _copies.TryRemove(publicKey, out _);
+            DeletedKeys.Enqueue(publicKey);
             return Task.CompletedTask;
         }
 

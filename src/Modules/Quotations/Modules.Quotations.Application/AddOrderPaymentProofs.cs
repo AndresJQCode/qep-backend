@@ -105,17 +105,16 @@ public sealed class AddOrderPaymentProofsHandler(
         // aprobar el pedido, AddPaymentProofs lo rechaza con order.order.not_pending después de
         // copiar, y esas copias se borran.
         var copies = new PaymentProofCopies(paymentProofPublisher);
-        // La clave vieja de cada comprobante que se reemplaza: capturada ANTES de mutar el
-        // agregado, porque después de AddPaymentProofs ya no queda forma de leerla. Sólo se borra
-        // si el guardado termina saliendo bien — best-effort, fuera del try de arriba: un archivo
-        // público huérfano no es motivo para fallar un request que sí guardó.
-        var oldPublicKeysToReplace = command.UpdatedProofs
+        // D19 (spec 2026-09-16): el archivo y la clave de cada comprobante que se reemplaza, capturados
+        // ANTES de mutar el agregado, porque UpdateFile los pisa. Quotations ya no borra la copia vieja
+        // después de guardar: la borra Storage al consumir el evento, junto con el archivo, y reintenta
+        // si falla. Un ProofId que no es de este pedido no aporta nada acá: AddPaymentProofs lo rechaza.
+        var replacedFiles = command.UpdatedProofs
             .Where(update => update.NewFileId is not null)
             .Select(update => order.PaymentProofs
-                .FirstOrDefault(proof => proof.Id.Value == update.ProofId)
-                ?.PublicStorageKey)
-            .Where(publicKey => publicKey is not null)
-            .Cast<string>()
+                .FirstOrDefault(proof => proof.Id.Value == update.ProofId))
+            .OfType<OrderPaymentProof>()
+            .Select(proof => new DetachedPaymentProof(proof.FileId, proof.PublicStorageKey))
             .ToArray();
 
         try
@@ -163,25 +162,22 @@ public sealed class AddOrderPaymentProofsHandler(
                 paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
             }
 
+            // D19: en la misma transacción, los archivos que el pedido dejó de usar. Storage los borra —del
+            // bucket público si ya se movieron, de staging/ si no— y los marca purgados. Sale también con
+            // la opción apagada: un PaymentProof sin copia igual tiene su temporal.
+            var detached = PaymentProofCopies.DetachedFrom(
+                replacedFiles, order.PaymentProofs.Select(proof => proof.FileId));
+            if (detached.Length > 0)
+            {
+                paymentProofEvents.PublishDetached(command.TenantId, order.Id, detached, now);
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch
         {
             await copies.RollbackAsync();
             throw;
-        }
-
-        foreach (var oldPublicKey in oldPublicKeysToReplace)
-        {
-            try
-            {
-                await paymentProofPublisher.DeleteAsync(oldPublicKey, CancellationToken.None);
-            }
-            catch
-            {
-                // Best-effort, mismo criterio que PaymentProofCopies.RollbackAsync: el archivo
-                // viejo queda huérfano en el bucket público, pero el pedido ya guardó el cambio.
-            }
         }
 
         return order.ToDto();

@@ -13,6 +13,8 @@ internal sealed class OrderPaymentProofEventPublisher(QuotationsDbContext dbCont
 {
     internal const string AttachedEventName = "quotations.order.payment-proofs-attached.v1";
 
+    internal const string DetachedEventName = "quotations.order.payment-proofs-detached.v1";
+
     public void PublishAttached(
         Guid tenantId,
         OrderId orderId,
@@ -34,6 +36,27 @@ internal sealed class OrderPaymentProofEventPublisher(QuotationsDbContext dbCont
             OccurredAt = occurredAt,
         });
 
+    // D19: mismo esquema que el de adjuntos, con publicStorageKey null cuando el comprobante no tenía
+    // copia. Lo consume PaymentProofDetachProcessor, en Storage, que también lo lee por nombre.
+    public void PublishDetached(
+        Guid tenantId,
+        OrderId orderId,
+        IReadOnlyCollection<DetachedPaymentProof> proofs,
+        DateTimeOffset occurredAt) =>
+        dbContext.Outbox.Add(new QuotationsOutboxMessage
+        {
+            Id = Guid.CreateVersion7(),
+            EventName = DetachedEventName,
+            PayloadJson = JsonSerializer.Serialize(new DetachedPayload(
+                tenantId,
+                orderId.Value,
+                proofs
+                    .Select(proof => new DetachedProofPayload(proof.FileId, proof.PublicStorageKey))
+                    .ToArray())),
+            CorrelationId = orderId.Value.ToString("D", CultureInfo.InvariantCulture),
+            OccurredAt = occurredAt,
+        });
+
     // Nombres en minúscula como el resto de los payloads del outbox: el consumidor los lee por nombre
     // con JsonDocument.
     private sealed record AttachedPayload(
@@ -42,4 +65,12 @@ internal sealed class OrderPaymentProofEventPublisher(QuotationsDbContext dbCont
         IReadOnlyCollection<AttachedProofPayload> proofs);
 
     private sealed record AttachedProofPayload(Guid fileId, string publicStorageKey);
+
+    private sealed record DetachedPayload(
+        Guid tenantId,
+        Guid orderId,
+        IReadOnlyCollection<DetachedProofPayload> proofs);
+
+    // System.Text.Json escribe el null: el consumidor distingue «sin copia» de un campo que falta.
+    private sealed record DetachedProofPayload(Guid fileId, string? publicStorageKey);
 }

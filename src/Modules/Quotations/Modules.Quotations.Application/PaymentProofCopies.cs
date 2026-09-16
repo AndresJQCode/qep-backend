@@ -91,4 +91,15 @@ internal sealed class PaymentProofCopies(IPaymentProofPublisher publisher)
             .Where(update => update.NewFileId is not null && update.NewPublicStorageKey is not null)
             .Select(update => new AttachedPaymentProof(update.NewFileId!.Value, update.NewPublicStorageKey!))
             .ToArray();
+
+    /// <summary>Los archivos que el pedido dejó de usar, para el evento de D19 (spec 2026-09-16):
+    /// <paramref name="candidates"/> se leen antes de mutar el pedido y
+    /// <paramref name="remainingFileIds"/> después. Un archivo que otro comprobante del mismo pedido
+    /// sigue usando no se suelta; los de otros pedidos los retiene la sonda de Storage.</summary>
+    public static DetachedPaymentProof[] DetachedFrom(
+        IEnumerable<DetachedPaymentProof> candidates, IEnumerable<Guid> remainingFileIds)
+    {
+        var remaining = remainingFileIds.ToHashSet();
+        return candidates.Where(candidate => !remaining.Contains(candidate.FileId)).ToArray();
+    }
 }

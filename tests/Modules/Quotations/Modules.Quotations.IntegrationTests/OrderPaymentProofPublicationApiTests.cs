@@ -26,6 +26,9 @@ public sealed class OrderPaymentProofPublicationApiTests
     // lado, estas pruebas lo ven.
     private const string AttachedEventName = "quotations.order.payment-proofs-attached.v1";
 
+    // D19: el evento de retiro, también escrito a mano.
+    private const string DetachedEventName = "quotations.order.payment-proofs-detached.v1";
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
@@ -554,6 +557,276 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.Single(factory.PublicObjectStorage.Copies);
     }
 
+    // D19 (spec 2026-09-16): reemplazar el archivo de un comprobante escribe, con el pedido, el archivo
+    // viejo y la clave de su copia.
+    [Fact]
+    public async Task ReplacingAProofFileWritesTheDetachedEventWithTheOldFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var oldFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", oldFileId);
+        var oldKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var newFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, newFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
+        var payload = JsonSerializer.Deserialize<DetachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        Assert.Equal(tenantId, payload.TenantId);
+        Assert.Equal(order.Id, payload.OrderId);
+        var detached = Assert.Single(payload.Proofs);
+        Assert.Equal(oldFileId, detached.FileId);
+        Assert.Equal(oldKey, detached.PublicStorageKey);
+    }
+
+    // D19: quitar un comprobante también.
+    [Fact]
+    public async Task RemovingAProofWritesTheDetachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var publicKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
+        var payload = JsonSerializer.Deserialize<DetachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        Assert.Equal(order.Id, payload.OrderId);
+        var detached = Assert.Single(payload.Proofs);
+        Assert.Equal(fileId, detached.FileId);
+        Assert.Equal(publicKey, detached.PublicStorageKey);
+    }
+
+    // D19 con la opción apagada: el evento sale igual, sin clave, para que Storage borre el temporal.
+    [Fact]
+    public async Task RemovingAProofWithPublicLinksOffWritesTheDetachedEventWithoutKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
+        var payload = JsonSerializer.Deserialize<DetachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        var detached = Assert.Single(payload.Proofs);
+        Assert.Equal(fileId, detached.FileId);
+        Assert.Null(detached.PublicStorageKey);
+        // El null va escrito, no omitido: PaymentProofDetachProcessor lee la propiedad con GetProperty y
+        // un campo que falta descarta el mensaje entero. Se lee del JSON crudo porque el record de arriba
+        // deserializa igual un null y un campo ausente; jsonb reformatea espacios, así que no se compara
+        // el texto.
+        using var raw = JsonDocument.Parse(message.PayloadJson);
+        var rawProof = Assert.Single(raw.RootElement.GetProperty("proofs").EnumerateArray());
+        Assert.True(rawProof.TryGetProperty("publicStorageKey", out var rawKey));
+        Assert.Equal(JsonValueKind.Null, rawKey.ValueKind);
+    }
+
+    // Corregir sólo un monto no suelta ningún archivo. Ya pasa antes de esta tarea.
+    [Fact]
+    public async Task CorrectingOnlyAmountsWritesNoDetachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived", [], UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(await OutboxMessagesAsync(factory, DetachedEventName));
+    }
+
+    // D19, «misma transacción»: un retiro que el dominio rechaza no deja evento. Ya pasa antes de esta
+    // tarea.
+    [Fact]
+    public async Task ARejectedRemovalWritesNoDetachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{Guid.CreateVersion7()}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.payment_proof.not_found", problem?.Code);
+        Assert.Empty(await OutboxMessagesAsync(factory, DetachedEventName));
+    }
+
+    // D19 de punta a punta: reemplazar el archivo de un comprobante movido borra su copia pública —la
+    // única que tenía— y lo deja Purged. El reemplazo se mueve como cualquier comprobante nuevo.
+    [Fact]
+    public async Task AReplacedPaymentProofImageIsPurgedWithItsPublicCopy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var oldFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", oldFileId);
+        var oldKey = await WaitForMovedKeyAsync(database.GetConnectionString(), oldFileId);
+        Assert.NotNull(oldKey);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var newFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, newFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Purged", await WaitForStatusAsync(database.GetConnectionString(), oldFileId, "Purged"));
+        Assert.Contains(oldKey, factory.PublicObjectStorage.DeletedKeys);
+        // Sólo queda la copia del reemplazo.
+        Assert.Single(factory.PublicObjectStorage.Copies);
+        Assert.NotNull(await WaitForMovedKeyAsync(database.GetConnectionString(), newFileId));
+    }
+
+    // D19 de punta a punta: quitar un comprobante movido, lo mismo.
+    [Fact]
+    public async Task ARemovedPaymentProofImageIsPurgedWithItsPublicCopy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var publicKey = await WaitForMovedKeyAsync(database.GetConnectionString(), fileId);
+        Assert.NotNull(publicKey);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Purged", await WaitForStatusAsync(database.GetConnectionString(), fileId, "Purged"));
+        Assert.Contains(publicKey, factory.PublicObjectStorage.DeletedKeys);
+        Assert.Empty(factory.PublicObjectStorage.Copies);
+    }
+
+    // D13 y D19: un comprobante User conserva su original privado, pero la copia pública de ese adjunto
+    // se borra al quitarlo. Antes de D19, quitar un comprobante no borraba nada.
+    [Fact]
+    public async Task ARemovedUserProofLosesItsPublicCopyAndKeepsItsOriginal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var privateKey = await StorageKeyOfAsync(database.GetConnectionString(), fileId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var publicKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        Assert.NotNull(publicKey);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(await WaitForDeletedKeyAsync(factory, publicKey));
+        Assert.Equal("Available", await StatusOfAsync(database.GetConnectionString(), fileId));
+        Assert.True(factory.ObjectStorage.Exists(privateKey));
+    }
+
+    private static async Task<string?> StatusOfAsync(string connectionString, Guid fileId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT status FROM storage.file_resources WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", fileId);
+        return await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+    }
+
+    // El retiro lo corre PaymentProofMoveWorker cada 3 s en el host: se espera con plazo, como
+    // WaitForMovedKeyAsync. Devuelve el último estado leído.
+    private static async Task<string?> WaitForStatusAsync(string connectionString, Guid fileId, string expected)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        string? status = null;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            status = await StatusOfAsync(connectionString, fileId);
+            if (status == expected)
+            {
+                return status;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return status;
+    }
+
+    private static async Task<bool> WaitForDeletedKeyAsync(QepApiFactory factory, string publicKey)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (factory.PublicObjectStorage.DeletedKeys.Contains(publicKey))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return false;
+    }
+
     private static async Task AssertMovedAsync(
         string connectionString, QepApiFactory factory, Guid orderId, Guid fileId, string stagingKey)
     {
@@ -669,4 +942,8 @@ public sealed class OrderPaymentProofPublicationApiTests
     private sealed record AttachedEventPayload(Guid TenantId, Guid OrderId, IReadOnlyList<AttachedEventProof> Proofs);
 
     private sealed record AttachedEventProof(Guid FileId, string PublicStorageKey);
+
+    private sealed record DetachedEventPayload(Guid TenantId, Guid OrderId, IReadOnlyList<DetachedEventProof> Proofs);
+
+    private sealed record DetachedEventProof(Guid FileId, string? PublicStorageKey);
 }

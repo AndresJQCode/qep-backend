@@ -17,7 +17,9 @@ namespace Bootstrapper;
 /// <c>FileResource</c> no se entera de esta copia: si alguien lo borra (<c>SoftDeleteFileHandler</c>),
 /// la copia pública queda en el bucket. Un <c>PaymentProof</c> (spec 2026-09-16) sí: Storage registra
 /// la clave cuando lo mueve (D10), y no deja borrarlo ni despublicarlo mientras un pedido lo
-/// referencie (D15).
+/// referencie (D15). Desde D19, reemplazar o quitar un comprobante de un pedido hace que Storage borre
+/// la copia de ese adjunto y, en un <c>PaymentProof</c> que nadie más usa, el archivo entero: este
+/// publicador sólo borra sus copias en el rollback de un request que falló.
 /// </summary>
 internal sealed class PublicPaymentProofPublisher(
     IFileResourceRepository repository,
