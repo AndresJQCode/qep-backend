@@ -17,9 +17,10 @@ public interface IOrderPaymentProofEventPublisher
         IReadOnlyCollection<AttachedPaymentProof> proofs,
         DateTimeOffset occurredAt);
 
-    /// <summary><c>quotations.order.payment-proofs-detached.v1</c> (spec 2026-09-16, D19): los archivos
-    /// que el pedido dejó de usar al reemplazar o quitar comprobantes. Lo consume
-    /// <c>PaymentProofDetachProcessor</c>, en Storage, que los borra y los marca purgados.</summary>
+    /// <summary><c>quotations.order.payment-proofs-detached.v1</c> (spec 2026-09-16, D19): los adjuntos
+    /// que el pedido soltó al reemplazar o quitar comprobantes (ver
+    /// <see cref="PaymentProofCopies.DetachedFrom"/>). Lo consume <c>PaymentProofDetachProcessor</c>, en
+    /// Storage, que borra la copia de cada uno y purga el archivo si nadie lo retiene.</summary>
     void PublishDetached(
         Guid tenantId,
         OrderId orderId,
@@ -30,6 +31,6 @@ public interface IOrderPaymentProofEventPublisher
 /// <summary>Un comprobante recién adjuntado y la clave de su copia en el bucket público.</summary>
 public sealed record AttachedPaymentProof(Guid FileId, string PublicStorageKey);
 
-/// <summary>Un archivo que el pedido dejó de usar y la clave de la copia pública que tenía ese
+/// <summary>Un adjunto que el pedido soltó: su archivo y la clave de la copia pública que tenía ese
 /// comprobante, o null si no tenía (la opción apagada, D19).</summary>
 public sealed record DetachedPaymentProof(Guid FileId, string? PublicStorageKey);

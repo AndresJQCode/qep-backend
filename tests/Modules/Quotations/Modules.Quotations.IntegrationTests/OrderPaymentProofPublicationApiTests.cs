@@ -592,6 +592,43 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.Equal(oldKey, detached.PublicStorageKey);
     }
 
+    // D19: reemplazar un comprobante User por su mismo archivo hace una copia nueva, con otra clave; la
+    // vieja se suelta aunque el pedido siga usando el archivo, y Storage la borra.
+    [Fact]
+    public async Task ReplacingAUserProofWithTheSameFileDetachesTheOldKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var oldKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        Assert.NotNull(oldKey);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, fileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var newKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        Assert.NotEqual(oldKey, newKey);
+        var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
+        var payload = JsonSerializer.Deserialize<DetachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        var detached = Assert.Single(payload.Proofs);
+        Assert.Equal(fileId, detached.FileId);
+        Assert.Equal(oldKey, detached.PublicStorageKey);
+        Assert.True(await WaitForDeletedKeyAsync(factory, oldKey));
+        Assert.Equal(newKey, Assert.Single(factory.PublicObjectStorage.Copies).Key);
+    }
+
     // D19: quitar un comprobante también.
     [Fact]
     public async Task RemovingAProofWritesTheDetachedEvent()

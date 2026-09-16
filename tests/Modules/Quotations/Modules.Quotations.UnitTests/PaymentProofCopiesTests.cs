@@ -134,10 +134,10 @@ public sealed class PaymentProofCopiesTests
         Assert.Equal([new AttachedPaymentProof(replacedWithKey, "payment-proofs/def.webp")], attached);
     }
 
-    // D19 (spec 2026-09-16): se suelta sólo el archivo que el pedido dejó de usar. Si otro comprobante
-    // del mismo pedido lo sigue usando, no hay nada que borrar.
+    // D19 (spec 2026-09-16): se suelta lo que el pedido dejó de usar. Una clave que sigue en el pedido
+    // no se suelta, y un comprobante sin clave sólo se suelta si su archivo ya no lo usa nadie del pedido.
     [Fact]
-    public void OnlyTheFilesTheOrderNoLongerUsesAreDetached()
+    public void OnlyWhatTheOrderNoLongerUsesIsDetached()
     {
         var replaced = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/abc.webp");
         var stillUsed = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/def.webp");
@@ -145,8 +145,48 @@ public sealed class PaymentProofCopiesTests
 
         var detached = PaymentProofCopies.DetachedFrom(
             [replaced, stillUsed, withoutKey],
-            [stillUsed.FileId, Guid.CreateVersion7()]);
+            [stillUsed, new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/ghi.webp")]);
 
         Assert.Equal([replaced, withoutKey], detached);
+    }
+
+    // D19: cada adjunto tiene su propia clave (PublicPaymentProofPublisher), así que reemplazar un
+    // comprobante por el mismo archivo deja una copia nueva y la vieja se suelta.
+    [Fact]
+    public void ReplacingAProofWithItsOwnFileDetachesTheOldKey()
+    {
+        var fileId = Guid.CreateVersion7();
+        var old = new DetachedPaymentProof(fileId, "payment-proofs/old.pdf");
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [old], [new DetachedPaymentProof(fileId, "payment-proofs/new.pdf")]);
+
+        Assert.Equal([old], detached);
+    }
+
+    // D19: dos comprobantes del mismo pedido con el mismo archivo: quitar uno suelta su copia, aunque el
+    // otro siga usando el archivo. Si es un PaymentProof, la sonda de Storage lo retiene.
+    [Fact]
+    public void RemovingOneOfTwoProofsSharingAFileDetachesItsKey()
+    {
+        var fileId = Guid.CreateVersion7();
+        var removed = new DetachedPaymentProof(fileId, "payment-proofs/first.pdf");
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [removed], [new DetachedPaymentProof(fileId, "payment-proofs/second.pdf")]);
+
+        Assert.Equal([removed], detached);
+    }
+
+    // D19: sin clave no hay copia que borrar, sólo el archivo; si el pedido lo sigue usando, no se suelta.
+    [Fact]
+    public void AKeylessProofWhoseFileIsStillUsedIsNotDetached()
+    {
+        var fileId = Guid.CreateVersion7();
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [new DetachedPaymentProof(fileId, null)], [new DetachedPaymentProof(fileId, null)]);
+
+        Assert.Empty(detached);
     }
 }

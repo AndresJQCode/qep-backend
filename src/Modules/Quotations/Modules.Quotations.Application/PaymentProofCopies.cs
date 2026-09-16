@@ -92,14 +92,27 @@ internal sealed class PaymentProofCopies(IPaymentProofPublisher publisher)
             .Select(update => new AttachedPaymentProof(update.NewFileId!.Value, update.NewPublicStorageKey!))
             .ToArray();
 
-    /// <summary>Los archivos que el pedido dejó de usar, para el evento de D19 (spec 2026-09-16):
-    /// <paramref name="candidates"/> se leen antes de mutar el pedido y
-    /// <paramref name="remainingFileIds"/> después. Un archivo que otro comprobante del mismo pedido
-    /// sigue usando no se suelta; los de otros pedidos los retiene la sonda de Storage.</summary>
+    /// <summary>Lo que el pedido dejó de usar, para el evento de D19 (spec 2026-09-16):
+    /// <paramref name="candidates"/> son los comprobantes reemplazados o quitados, leídos antes de mutar
+    /// el pedido, y <paramref name="remaining"/> los que quedan después. <c>PublicPaymentProofPublisher</c>
+    /// le da a cada adjunto su propia clave, así que un candidato con clave se suelta salvo que esa misma
+    /// clave siga en el pedido, aunque otro comprobante use su archivo: si no, la copia de ese adjunto
+    /// quedaría pública. Si el archivo es un <c>PaymentProof</c> que el pedido sigue usando, la sonda de
+    /// Storage lo retiene, porque el evento se guarda con el pedido. Un candidato sin clave no tiene
+    /// copia: sólo se suelta si ningún comprobante del pedido usa ya su archivo.</summary>
     public static DetachedPaymentProof[] DetachedFrom(
-        IEnumerable<DetachedPaymentProof> candidates, IEnumerable<Guid> remainingFileIds)
+        IEnumerable<DetachedPaymentProof> candidates, IEnumerable<DetachedPaymentProof> remaining)
     {
-        var remaining = remainingFileIds.ToHashSet();
-        return candidates.Where(candidate => !remaining.Contains(candidate.FileId)).ToArray();
+        var remainingProofs = remaining.ToArray();
+        var remainingKeys = remainingProofs
+            .Select(proof => proof.PublicStorageKey)
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        var remainingFileIds = remainingProofs.Select(proof => proof.FileId).ToHashSet();
+        return candidates
+            .Where(candidate => candidate.PublicStorageKey is { } key
+                ? !remainingKeys.Contains(key)
+                : !remainingFileIds.Contains(candidate.FileId))
+            .ToArray();
     }
 }

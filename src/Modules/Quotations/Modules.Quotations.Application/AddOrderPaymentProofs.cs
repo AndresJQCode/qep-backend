@@ -162,11 +162,14 @@ public sealed class AddOrderPaymentProofsHandler(
                 paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
             }
 
-            // D19: en la misma transacción, los archivos que el pedido dejó de usar. Storage los borra —del
-            // bucket público si ya se movieron, de staging/ si no— y los marca purgados. Sale también con
-            // la opción apagada: un PaymentProof sin copia igual tiene su temporal.
+            // D19: en la misma transacción, lo que el pedido dejó de usar. Storage borra la copia de cada
+            // adjunto soltado y, si el archivo es un PaymentProof que nadie retiene, el archivo —del
+            // bucket público si ya se movió, de staging/ si no— y lo marca purgado. Sale también con la
+            // opción apagada: un PaymentProof sin copia igual tiene su temporal. Reemplazar por el mismo
+            // archivo también suelta la clave vieja: la copia nueva tiene otra (ver DetachedFrom).
             var detached = PaymentProofCopies.DetachedFrom(
-                replacedFiles, order.PaymentProofs.Select(proof => proof.FileId));
+                replacedFiles,
+                order.PaymentProofs.Select(proof => new DetachedPaymentProof(proof.FileId, proof.PublicStorageKey)));
             if (detached.Length > 0)
             {
                 paymentProofEvents.PublishDetached(command.TenantId, order.Id, detached, now);

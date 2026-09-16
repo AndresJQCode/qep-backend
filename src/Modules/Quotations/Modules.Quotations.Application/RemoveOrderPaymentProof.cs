@@ -58,10 +58,11 @@ public sealed class RemoveOrderPaymentProofHandler(
             "success",
             now);
         // D19: en la misma transacción que el pedido. `removed` no es null: RemovePaymentProof ya habría
-        // lanzado. Si otro comprobante del pedido usa el mismo archivo, no se suelta.
+        // lanzado. Su copia se suelta aunque otro comprobante del pedido use el mismo archivo: cada
+        // adjunto tiene su propia clave (ver PaymentProofCopies.DetachedFrom).
         var detached = PaymentProofCopies.DetachedFrom(
             [new DetachedPaymentProof(removed!.FileId, removed.PublicStorageKey)],
-            order.PaymentProofs.Select(proof => proof.FileId));
+            order.PaymentProofs.Select(proof => new DetachedPaymentProof(proof.FileId, proof.PublicStorageKey)));
         if (detached.Length > 0)
         {
             paymentProofEvents.PublishDetached(command.TenantId, order.Id, detached, now);
