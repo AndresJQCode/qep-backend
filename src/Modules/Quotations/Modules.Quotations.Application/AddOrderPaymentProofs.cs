@@ -59,6 +59,7 @@ public sealed class AddOrderPaymentProofsHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
+    IOrderPaymentProofEventPublisher paymentProofEvents,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -152,6 +153,16 @@ public sealed class AddOrderPaymentProofsHandler(
                 order.Id.ToString(),
                 "success",
                 now);
+            // D9 y D19 (spec 2026-09-16): los comprobantes nuevos y los archivos de reemplazo; corregir
+            // sólo un monto no mueve nada.
+            var attached = PaymentProofCopies.AttachedFrom(proofs)
+                .Concat(PaymentProofCopies.AttachedFromReplacements(updatedProofs))
+                .ToArray();
+            if (attached.Length > 0)
+            {
+                paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch

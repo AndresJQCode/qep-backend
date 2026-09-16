@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
@@ -18,6 +19,12 @@ namespace Modules.Quotations.IntegrationTests;
 public sealed class OrderPaymentProofPublicationApiTests
 {
     private const string PublicKeyPattern = "^payment-proofs/[0-9a-f]{32}\\.pdf$";
+
+    // El contrato con Storage (spec 2026-09-16, D9), escrito a mano: si alguien lo cambia de un solo
+    // lado, estas pruebas lo ven.
+    private const string AttachedEventName = "quotations.order.payment-proofs-attached.v1";
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
@@ -265,6 +272,165 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.Equal(firstKey, Assert.Single(factory.PublicObjectStorage.Copies).Key);
     }
 
+    // D9 (spec 2026-09-16): convertir con copias públicas deja, con el pedido, un evento con cada
+    // comprobante nuevo y la clave de su copia.
+    [Fact]
+    public async Task ConvertingWithPublicLinksOnWritesTheAttachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var secondFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var order = await ConvertAsync(
+            client, tenantId, quotation.Id, "FullPaymentReceived", firstFileId, secondFileId);
+
+        var message = Assert.Single(await OutboxMessagesAsync(factory, AttachedEventName));
+        var payload = JsonSerializer.Deserialize<AttachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        Assert.Equal(tenantId, payload.TenantId);
+        Assert.Equal(order.Id, payload.OrderId);
+        Assert.Equal(
+            new[] { firstFileId, secondFileId }.Order(),
+            payload.Proofs.Select(proof => proof.FileId).Order());
+        Assert.Equal(
+            (await PublicKeysAsync(factory, order.Id)).Select(key => key!).Order(StringComparer.Ordinal),
+            payload.Proofs.Select(proof => proof.PublicStorageKey).Order(StringComparer.Ordinal));
+    }
+
+    // D9: sumar comprobantes escribe otro evento, sólo con el comprobante nuevo.
+    [Fact]
+    public async Task AddingProofsWithPublicLinksOnWritesAnEventWithOnlyTheNewProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", firstFileId);
+        var secondFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived", [new OrderPaymentProofRequest(secondFileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var messages = await OutboxMessagesAsync(factory, AttachedEventName);
+        Assert.Equal(2, messages.Count);
+        var added = JsonSerializer.Deserialize<AttachedEventPayload>(messages[1].PayloadJson, Json);
+        Assert.NotNull(added);
+        Assert.Equal(order.Id, added.OrderId);
+        var proof = Assert.Single(added.Proofs);
+        Assert.Equal(secondFileId, proof.FileId);
+        Assert.Contains(proof.PublicStorageKey, await PublicKeysAsync(factory, order.Id));
+    }
+
+    // D9 y D19: el archivo de reemplazo de un comprobante corregido (UpdatedProofs[].NewFileId, de
+    // develop) es un comprobante nuevo para Storage, así que entra en el evento con la clave de su copia.
+    [Fact]
+    public async Task ReplacingAProofFileWithPublicLinksOnWritesAnEventWithTheReplacement()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", firstFileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var replacementFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, replacementFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var messages = await OutboxMessagesAsync(factory, AttachedEventName);
+        Assert.Equal(2, messages.Count);
+        var replaced = JsonSerializer.Deserialize<AttachedEventPayload>(messages[1].PayloadJson, Json);
+        Assert.NotNull(replaced);
+        Assert.Equal(order.Id, replaced.OrderId);
+        var proof = Assert.Single(replaced.Proofs);
+        Assert.Equal(replacementFileId, proof.FileId);
+        Assert.Equal(Assert.Single(await PublicKeysAsync(factory, order.Id)), proof.PublicStorageKey);
+    }
+
+    // Sin copia pública no hay nada que mover: la opción apagada no escribe el evento. Ya pasa antes
+    // de esta tarea.
+    [Fact]
+    public async Task ConvertingWithPublicLinksOffWritesNoAttachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        await ConvertAsync(client, tenantId, quotation.Id, "FullPaymentReceived", fileId);
+
+        Assert.Empty(await OutboxMessagesAsync(factory, AttachedEventName));
+    }
+
+    // Corregir un monto no adjunta nada: no hay evento nuevo.
+    [Fact]
+    public async Task CorrectingOnlyAmountsWritesNoNewAttachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived", [], UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Single(await OutboxMessagesAsync(factory, AttachedEventName));
+    }
+
+    // D9, «misma transacción»: un request que falla antes de guardar no deja evento. Ya pasa antes de
+    // esta tarea.
+    [Fact]
+    public async Task AConversionWhoseCopyFailsWritesNoAttachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var secondFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        factory.PublicObjectStorage.FailingCopyAttempt = 2;
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived",
+                null,
+                [new OrderPaymentProofRequest(firstFileId, 10_000m), new OrderPaymentProofRequest(secondFileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Empty(await OutboxMessagesAsync(factory, AttachedEventName));
+    }
+
     private static async Task<QuotationResponse> NewSentQuotationAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId)
     {
@@ -303,4 +469,8 @@ public sealed class OrderPaymentProofPublicationApiTests
     }
 
     private sealed record ProblemDto(string? Code);
+
+    private sealed record AttachedEventPayload(Guid TenantId, Guid OrderId, IReadOnlyList<AttachedEventProof> Proofs);
+
+    private sealed record AttachedEventProof(Guid FileId, string PublicStorageKey);
 }

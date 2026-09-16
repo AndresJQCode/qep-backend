@@ -47,6 +47,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
+    IOrderPaymentProofEventPublisher paymentProofEvents,
     IOrderNumberGenerator numberGenerator,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -129,6 +130,14 @@ public sealed class ConvertQuotationToOrderHandler(
                 quotation.Id.ToString(),
                 "success",
                 now);
+            // D9 (spec 2026-09-16): en la misma unidad de trabajo que el pedido, así el evento sólo
+            // existe si el pedido se guardó, y Storage nunca borra un temporal que nadie adjuntó.
+            var attached = PaymentProofCopies.AttachedFrom(proofs);
+            if (attached.Length > 0)
+            {
+                paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch

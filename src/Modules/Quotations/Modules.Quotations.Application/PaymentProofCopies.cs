@@ -74,4 +74,21 @@ internal sealed class PaymentProofCopies(IPaymentProofPublisher publisher)
             }
         }
     }
+
+    /// <summary>Los comprobantes que quedaron con copia pública, para el evento de D9 (spec
+    /// 2026-09-16). Uno sin clave —la opción apagada— no tiene nada que mover.</summary>
+    public static AttachedPaymentProof[] AttachedFrom(IEnumerable<OrderPaymentProofInput> inputs) =>
+        inputs
+            .Where(input => input.PublicStorageKey is not null)
+            .Select(input => new AttachedPaymentProof(input.FileId, input.PublicStorageKey!))
+            .ToArray();
+
+    /// <summary>Los archivos de reemplazo que quedaron con copia pública (spec 2026-09-16, D9 y D19):
+    /// para Storage son comprobantes nuevos. Una corrección sólo de monto no trae archivo.</summary>
+    public static AttachedPaymentProof[] AttachedFromReplacements(
+        IEnumerable<OrderPaymentProofAmountUpdate> updates) =>
+        updates
+            .Where(update => update.NewFileId is not null && update.NewPublicStorageKey is not null)
+            .Select(update => new AttachedPaymentProof(update.NewFileId!.Value, update.NewPublicStorageKey!))
+            .ToArray();
 }

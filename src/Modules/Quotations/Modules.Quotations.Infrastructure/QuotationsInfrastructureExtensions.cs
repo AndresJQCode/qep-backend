@@ -41,6 +41,8 @@ public static class QuotationsInfrastructureExtensions
         // eventos para Notifications. El runner que los usa se registra en Bootstrapper.
         services.AddScoped<IExportJobQueue, ExportJobQueue>();
         services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
+        // Spec 2026-09-16, D9: el aviso a Storage de que un pedido adjuntó comprobantes públicos.
+        services.AddScoped<IOrderPaymentProofEventPublisher, OrderPaymentProofEventPublisher>();
         services.AddHostedService<ExportJobWorker>();
         // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
         services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();
