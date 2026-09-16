@@ -701,6 +701,9 @@ internal static class QuotationsApiHarness
             // ausentes, NotificationsOptionsValidator falla al arrancar y todas las pruebas de
             // este proyecto mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
 
             // Fijado, nunca heredado, mismo criterio que Notifications:EmailProvider: con la opción
             // prendida en los user-secrets de quien corre las pruebas y sin bucket público,

@@ -121,6 +121,9 @@ local y por variable de entorno en k8s
 | `Storage:ExportUrlHours`                               | `24`                                                                                          | Vigencia del enlace de descarga de un reporte exportado. Entre 1 y 168 (SigV4 no firma mas de 7 dias)               |
 | `Storage:StagingRetentionHours`                        | `24`                                                                                          | Retención de los objetos en staging. Debe ser positiva                                                              |
 | `Storage:StagingCleanupMinutes`                        | `60`                                                                                          | Período del barrido de staging. Debe ser positivo                                                                   |
+| `Storage:PaymentProofOrphanCleanup:MinimumAgeHours`    | `24`                                                                                          | Edad mínima de un objeto de `payment-proofs/` para que la reconciliación lo considere. Debe ser positiva             |
+| `Storage:PaymentProofOrphanCleanup:IntervalHours`      | `24`                                                                                          | Período de la reconciliación de `payment-proofs/`. Entre 1 y 1193                                                   |
+| `Storage:PaymentProofOrphanCleanup:DryRun`             | `true` en `appsettings.json` y en `k8s/prod-configMap.yaml`                                   | Con `true` la reconciliación sólo escribe en el log lo que borraría. Se pasa a `false` a mano, después de revisar esos logs en producción |
 | `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
 | `Storage:ClamAv:Enabled`                               | `false`                                                                                       | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                         |
 | `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                      | Destino del escaneo. `Port` entre 1 y 65535                                                                         |
@@ -947,7 +950,7 @@ deshabilitado existe únicamente para desarrollo local y pruebas.
 
 Con `Quotations:PaymentProofs:PublicLinks=true`, cada comprobante de pago **nuevo** —al convertir
 una cotización en pedido o al sumarle comprobantes— se copia del bucket privado al **bucket
-público** con la clave aleatoria `payment-proofs/{guid}.{pdf|jpg|png}`, y el Excel de pedidos lo
+público** con la clave aleatoria `payment-proofs/{guid}.{pdf|jpg|png|webp}`, y el Excel de pedidos lo
 enlaza en las columnas «Comprobante 1» a «Comprobante 3», con la cantidad total en «Comprobantes».
 La base guarda la clave, no la URL: la URL se arma al exportar con `Storage:R2:PublicBaseUrl`, así
 que cambiar el dominio no rompe los enlaces. Los comprobantes de antes, y los que se adjunten con la
@@ -978,6 +981,51 @@ opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Produc
   defecto), así que un PDF se abre en el navegador en vez de descargarse.
 - Un Excel bajado de internet abre en **Vista protegida**, y ahí ningún enlace responde hasta que
   se toca «Habilitar edición». Es comportamiento de Office, igual para cualquier enlace.
+
+### Comprobantes de pago v2: temporal, WebP y movimiento
+
+Desde el 2026-09-16 el frontend sube los comprobantes con `ownerType: "PaymentProof"`
+([spec](docs/superpowers/specs/2026-09-16-comprobantes-publicos-v2-design.md)). Uno así:
+
+1. **No se promueve a `files/`**: al completar la subida queda `Available` en `staging/`. Si es JPG,
+   PNG o WebP se reemplaza ahí mismo por un WebP de lado mayor ≤ 2000 px y calidad 80, sin agrandar
+   y sin EXIF; un PDF queda tal cual.
+2. **Al adjuntarse a un pedido** se copia al bucket público como en v1 y, en la misma transacción que
+   el pedido, Quotations escribe `quotations.order.payment-proofs-attached.v1` en el outbox.
+3. **`PaymentProofMoveWorker`** (cada 3 s) consume ese evento con el inbox `storage.inbox_messages`:
+   primero borra el temporal y después registra el movimiento en `FileResource.PublicStorageKey`.
+   Desde ahí la descarga desde la app devuelve la URL pública, que el navegador **abre** en vez de
+   bajar con el nombre original. En el mismo tick, después del movimiento, consume también
+   `quotations.order.payment-proofs-detached.v1` (D19, ver «Reemplazar o quitar un comprobante
+   borra su archivo», arriba).
+4. **El barrido de staging** (cada `Storage:StagingCleanupMinutes`) purga el comprobante que sigue
+   sin mover después de `Storage:StagingRetentionHours` si ningún módulo lo referencia, y lo audita
+   como `storage.file.purged` / `payment_proof_not_attached`.
+5. **`PaymentProofOrphanCleanupWorker`** (cada `Storage:PaymentProofOrphanCleanup:IntervalHours`)
+   recorre sólo `payment-proofs/` del bucket público y borra lo que tiene más de `MinimumAgeHours` y
+   no referencia ningún `FileResource` ni `OrderPaymentProof`, auditándolo como
+   `storage.public_object.purged`. **Arranca con `DryRun=true`** en `appsettings.json` y en el
+   ConfigMap: sólo escribe `Payment proof orphan cleanup (dry run) would delete …` en el log. Se pasa
+   a `false` a mano, en un commit propio, después de revisar esos logs en producción. Si no hay
+   ninguna sonda de referencias registrada no borra nada y lo avisa con un Warning; un objeto cuyo
+   borrado falla se registra como Error y se reintenta en la corrida siguiente.
+
+Un comprobante ya movido no se puede adjuntar a otro pedido (422 `order.payment_proof.file_not_available`),
+y uno que un pedido referencia no se borra ni se despublica desde la API de Storage (ver «Nada se
+despublica solo», arriba). Reemplazarlo o quitarlo del pedido sí lo borra (D19). `FileUserReferenceProbe`
+cuenta también los `PaymentProof`: quien subió un comprobante no se borra como usuario huérfano.
+
+Borrar o despublicar desde la API de Storage un `PaymentProof` movido que ya ningún pedido referencia
+lo deja **sin ninguna copia**: su temporal se borró al moverlo y la copia pública se va con la
+operación. D15 lo permite porque ya no es la evidencia de ningún pedido; el frontend no llama a esos
+endpoints.
+
+Los comprobantes `User` (los de v1) no cambian, salvo que reemplazarlos o quitarlos de un pedido borra
+la copia pública de ese adjunto. Con `Quotations:PaymentProofs:PublicLinks=false` no hay copia ni
+evento de adjunto, así que un `PaymentProof` adjunto se queda en `staging/`, retenido del barrido por
+la sonda de Quotations; si el pedido lo suelta, el evento de retiro sale igual y Storage borra el
+temporal. Una regla de lifecycle sobre `staging/` en el bucket privado borraría comprobantes que
+todavía no se adjuntaron o no se movieron: no debe haber ninguna.
 
 ### Plantilla de WhatsApp (Zenvia)
 

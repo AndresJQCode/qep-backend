@@ -550,6 +550,9 @@ public sealed class OrphanUserCleanupTests
             // Fijado y no heredado (SDD-CT-17): con el proveedor de correo de appsettings.json y
             // sus credenciales ausentes, el validador de opciones tira la aplicación al arrancar.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.UseSetting("Registration:PublicTenantSignupEnabled", "true");
         }

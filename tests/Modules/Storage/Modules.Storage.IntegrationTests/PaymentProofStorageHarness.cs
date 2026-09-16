@@ -147,6 +147,15 @@ internal static class PaymentProofStorageHarness
             .ToArray();
     }
 
+    /// <summary>Una corrida de la reconciliación, a mano: el worker espera IntervalHours antes de la
+    /// primera.</summary>
+    public static async Task<PaymentProofOrphanCleanupResult> RunOrphanCleanupAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IPaymentProofOrphanCleanupProcessor>()
+            .CleanupAsync(TestContext.Current.CancellationToken);
+    }
+
     public static string NewPublicKey(string extension) =>
         $"payment-proofs/{Guid.CreateVersion7():N}{extension}";
 
@@ -345,14 +354,34 @@ internal sealed class FixedFileReferenceProbe : IFileReferenceProbe
         Task.FromResult(_referenced.ContainsKey(fileId));
 }
 
-/// <summary>El host de la API con los dos buckets en memoria.</summary>
-internal sealed class StorageApiFactory(string connectionString) : WebApplicationFactory<Program>
+/// <summary>La sonda de claves públicas de otro módulo (en producción, Quotations), a mano.</summary>
+internal sealed class FixedPublicObjectReferenceProbe : IPublicObjectReferenceProbe
 {
+    private readonly ConcurrentDictionary<string, bool> _referenced = new(StringComparer.Ordinal);
+
+    public string Source => "test";
+
+    public void Reference(string publicStorageKey) => _referenced[publicStorageKey] = true;
+
+    public Task<bool> HasReferencesAsync(string publicStorageKey, CancellationToken cancellationToken) =>
+        Task.FromResult(_referenced.ContainsKey(publicStorageKey));
+}
+
+/// <summary>El host de la API con los dos buckets en memoria.</summary>
+internal sealed class StorageApiFactory(string connectionString, bool orphanCleanupDryRun = true)
+    : WebApplicationFactory<Program>
+{
+    // Copia del flag para ConfigureWebHost, mismo criterio que el QepApiFactory de Quotations: así el
+    // parámetro no queda capturado en un método y en un inicializador a la vez (CS9124).
+    private readonly bool _orphanCleanupDryRun = orphanCleanupDryRun;
+
     public InMemoryObjectStorage ObjectStorage { get; } = new();
 
     public InMemoryPublicObjectStorage PublicObjectStorage { get; } = new();
 
     public FixedFileReferenceProbe FileReferences { get; } = new();
+
+    public FixedPublicObjectReferenceProbe PublicReferences { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -366,6 +395,13 @@ internal sealed class StorageApiFactory(string connectionString) : WebApplicatio
         // Fijados, nunca heredados de appsettings.json ni de los user-secrets de quien corre las
         // pruebas: mismo criterio que StorageFlowTests.
         builder.UseSetting("Notifications:EmailProvider", "log");
+        // Fijado, nunca heredado (spec 2026-09-16): las pruebas de la reconciliación eligen la corrida
+        // real con orphanCleanupDryRun: false; todas las demás corren en seco. MinimumAgeHours e
+        // IntervalHours quedan fijos en 24, en las dos líneas de abajo.
+        builder.UseSetting(
+            "Storage:PaymentProofOrphanCleanup:DryRun", _orphanCleanupDryRun ? "true" : "false");
+        builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+        builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
         builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         builder.ConfigureServices(services =>
         {
@@ -374,6 +410,7 @@ internal sealed class StorageApiFactory(string connectionString) : WebApplicatio
             services.RemoveAll<IPublicObjectStorage>();
             services.AddSingleton<IPublicObjectStorage>(PublicObjectStorage);
             services.AddSingleton<IFileReferenceProbe>(FileReferences);
+            services.AddSingleton<IPublicObjectReferenceProbe>(PublicReferences);
 
             // El worker de movimiento consulta el outbox cada 3 s: competiría con el lote que la
             // prueba corre a mano (RunMoveAsync) y la volvería no determinista.
@@ -474,6 +511,10 @@ internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
 
     public List<string> DeletedKeys { get; } = [];
 
+    /// <summary>La clave cuyo borrado falla, para ejercer un error transitorio de R2 a mitad de la
+    /// reconciliación (D12); null si ninguna.</summary>
+    public string? FailingDeleteKey { get; set; }
+
     public bool IsConfigured => true;
 
     public void Put(string key, DateTimeOffset lastModified) => _objects[key] = lastModified;
@@ -488,6 +529,12 @@ internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
 
     public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
     {
+        if (string.Equals(publicKey, FailingDeleteKey, StringComparison.Ordinal))
+        {
+            return Task.FromException(
+                new InvalidOperationException("Simulated failure deleting from the public bucket."));
+        }
+
         _objects.TryRemove(publicKey, out _);
         DeletedKeys.Add(publicKey);
         return Task.CompletedTask;

@@ -40,6 +40,9 @@ public static class StorageInfrastructureExtensions
         services.AddScoped<IStorageAuditPublisher, StorageAuditPublisher>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, FileUserReferenceProbe>();
+        // Spec 2026-09-16, D12: un objeto público que un archivo tiene como PublicStorageKey no es
+        // huérfano.
+        services.AddScoped<IPublicObjectReferenceProbe, FilePublicObjectReferenceProbe>();
         services.AddSingleton<IFileContentInspector, FileContentInspector>();
         services.AddSingleton<IImageVariantGenerator, ImageSharpVariantGenerator>();
         // Spec 2026-09-16, D7: sin estado, una instancia por proceso alcanza.
@@ -63,6 +66,10 @@ public static class StorageInfrastructureExtensions
         // después del movimiento.
         services.AddScoped<IPaymentProofDetachProcessor, PaymentProofDetachProcessor>();
         services.AddHostedService<PaymentProofMoveWorker>();
+        // Spec 2026-09-16, D12: la reconciliación de payment-proofs/, en modo solo-registrar hasta
+        // que alguien apague Storage:PaymentProofOrphanCleanup:DryRun.
+        services.AddScoped<IPaymentProofOrphanCleanupProcessor, PaymentProofOrphanCleanupProcessor>();
+        services.AddHostedService<PaymentProofOrphanCleanupWorker>();
 
         return services;
     }

@@ -1,7 +1,10 @@
 using System.Net.Http.Json;
 using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
+using Modules.Quotations.Infrastructure.Persistence;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -32,6 +35,35 @@ public sealed class PaymentProofReferenceProbeTests
             candidate => candidate.Source == "quotations");
         Assert.True(await probe.HasReferencesAsync(attachedFileId, TestContext.Current.CancellationToken));
         Assert.False(await probe.HasReferencesAsync(looseFileId, TestContext.Current.CancellationToken));
+    }
+
+    // D12: la clave pública de un comprobante adjunto está referenciada; una que nadie guardó, no.
+    [Fact]
+    public async Task ThePublicObjectReferenceProbeSeesTheKeysOfAttachedProofs()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, fileId);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var orderId = new OrderId(order.Id);
+        var publicKey = await scope.ServiceProvider.GetRequiredService<QuotationsDbContext>()
+            .OrderPaymentProofs
+            .AsNoTracking()
+            .Where(proof => proof.OrderId == orderId)
+            .Select(proof => proof.PublicStorageKey)
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(publicKey);
+        var probe = Assert.Single(
+            scope.ServiceProvider.GetServices<IPublicObjectReferenceProbe>(),
+            candidate => candidate.Source == "quotations");
+        Assert.True(await probe.HasReferencesAsync(publicKey, TestContext.Current.CancellationToken));
+        Assert.False(await probe.HasReferencesAsync(
+            $"payment-proofs/{Guid.CreateVersion7():N}.pdf", TestContext.Current.CancellationToken));
     }
 
     private static async Task<QuotationResponse> NewSentQuotationAsync(

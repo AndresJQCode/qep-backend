@@ -427,6 +427,9 @@ public sealed class InvitationApiTests
             // producto, y una suite de integración que depende de eso termina dependiendo de las
             // credenciales de quien la corra (SDD-CT-17).
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }
