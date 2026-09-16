@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure.Imaging;
 using Modules.Storage.Infrastructure.ObjectStorage;
+using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.Scanning;
 
@@ -54,6 +55,9 @@ public static class StorageInfrastructureExtensions
         services.AddSingleton<IObjectStorage, R2ObjectStorage>();
         services.AddSingleton<IPublicObjectStorage, R2PublicObjectStorage>();
         services.AddHostedService<StagingCleanupWorker>();
+        // Spec 2026-09-16, D9: borra el temporal de cada comprobante adjuntado y registra el movimiento.
+        services.AddScoped<IPaymentProofMoveProcessor, PaymentProofMoveProcessor>();
+        services.AddHostedService<PaymentProofMoveWorker>();
 
         return services;
     }

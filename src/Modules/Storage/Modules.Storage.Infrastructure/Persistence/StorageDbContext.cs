@@ -10,10 +10,25 @@ public sealed class StorageDbContext(DbContextOptions<StorageDbContext> options)
 
     internal DbSet<StorageOutboxMessage> Outbox => Set<StorageOutboxMessage>();
 
+    internal DbSet<StorageInboxMessage> Inbox => Set<StorageInboxMessage>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureFileResource(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
+        ConfigureInbox(modelBuilder);
+    }
+
+    // Spec 2026-09-16, D9: el inbox de los consumidores de Storage. Tabla propia del esquema storage,
+    // igual que identity.inbox_messages.
+    private static void ConfigureInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<StorageInboxMessage>();
+        inbox.ToTable("inbox_messages", "storage");
+        inbox.HasKey(value => new { value.Consumer, value.MessageId });
+        inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(200);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id");
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
     }
 
     private static void ConfigureFileResource(ModelBuilder modelBuilder)

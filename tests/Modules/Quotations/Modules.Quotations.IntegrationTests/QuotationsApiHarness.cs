@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
@@ -15,6 +16,8 @@ using Modules.Quotations.Infrastructure.Exports;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Storage.Application;
 using Npgsql;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -338,14 +341,14 @@ internal static class QuotationsApiHarness
     /// </summary>
     public static async Task<Guid> CreateAvailableFileAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId,
-        string mimeType, byte[] payload, string fileName)
+        string mimeType, byte[] payload, string fileName, string ownerType = "User")
     {
         var sessionResponse = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/files",
             new
             {
                 ownerId = Guid.NewGuid(),
-                ownerType = "User",
+                ownerType,
                 name = fileName,
                 mimeType,
                 sizeBytes = payload.Length,
@@ -384,6 +387,19 @@ internal static class QuotationsApiHarness
         HttpClient client, QepApiFactory factory, Guid tenantId) =>
         CreateAvailableFileAsync(
             client, factory, tenantId, "application/pdf", "%PDF-1.7\nproof"u8.ToArray(), "proof.pdf");
+
+    /// <summary>Spec 2026-09-16: un comprobante v2 (<c>PaymentProof</c>) de imagen. Storage lo deja
+    /// en WebP y en staging/ al completarlo (D7, D8), y lo mueve al público cuando se adjunta (D9).
+    /// </summary>
+    public static async Task<Guid> CreateAvailablePaymentProofImageAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId)
+    {
+        using var image = new Image<Rgba32>(64, 48, Color.CornflowerBlue);
+        await using var png = new MemoryStream();
+        await image.SaveAsPngAsync(png, TestContext.Current.CancellationToken);
+        return await CreateAvailableFileAsync(
+            client, factory, tenantId, "image/png", png.ToArray(), "comprobante.png", ownerType: "PaymentProof");
+    }
 
     /// <summary>Crea una cotización, le agrega un ítem y la marca como enviada -- el punto de
     /// partida que necesita toda prueba de conversión a pedido (US-13 exige <c>Sent</c>).</summary>
@@ -759,7 +775,9 @@ internal static class QuotationsApiHarness
 
     public sealed class InMemoryObjectStorage : IObjectStorage
     {
-        private readonly Dictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
+        // Concurrente desde el 2026-09-16: PaymentProofMoveWorker corre en el host cada 3 s y borra
+        // temporales mientras la prueba sube y lee (hallazgo 9 del plan).
+        private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
 
         public Task<Uri> CreatePresignedUploadUrlAsync(
             string key, string contentType, CancellationToken cancellationToken) =>
@@ -789,7 +807,7 @@ internal static class QuotationsApiHarness
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken)
         {
-            _objects.Remove(key);
+            _objects.TryRemove(key, out _);
             return Task.CompletedTask;
         }
 
@@ -814,6 +832,8 @@ internal static class QuotationsApiHarness
         }
 
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
+
+        public bool Exists(string key) => _objects.ContainsKey(key);
     }
 
     /// <summary>

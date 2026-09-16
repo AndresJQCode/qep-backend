@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
+using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -429,6 +431,172 @@ public sealed class OrderPaymentProofPublicationApiTests
 
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         Assert.Empty(await OutboxMessagesAsync(factory, AttachedEventName));
+    }
+
+    // D8, D9 y D3 de punta a punta (spec 2026-09-16): la imagen de un PaymentProof llega procesada, se
+    // copia al público al convertir y PaymentProofMoveWorker —que corre solo en el host— borra el
+    // temporal y registra el movimiento.
+    [Fact]
+    public async Task ConvertingWithAPaymentProofImageMovesItToThePublicBucket()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var stagingKey = await StorageKeyOfAsync(database.GetConnectionString(), fileId);
+
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "FullPaymentReceived", fileId);
+
+        await AssertMovedAsync(database.GetConnectionString(), factory, order.Id, fileId, stagingKey);
+    }
+
+    [Fact]
+    public async Task AddingAPaymentProofImageMovesItToThePublicBucket()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PaymentPending");
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var stagingKey = await StorageKeyOfAsync(database.GetConnectionString(), fileId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived", [new OrderPaymentProofRequest(fileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await AssertMovedAsync(database.GetConnectionString(), factory, order.Id, fileId, stagingKey);
+    }
+
+    // D9, paso 3: si algo falla antes de guardar, el rollback borra las copias públicas y los
+    // temporales siguen en staging/. Ya pasa antes de esta tarea.
+    [Fact]
+    public async Task AConversionWhoseCopyFailsLeavesThePaymentProofsInStaging()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var firstFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var secondFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var firstStagingKey = await StorageKeyOfAsync(database.GetConnectionString(), firstFileId);
+        var secondStagingKey = await StorageKeyOfAsync(database.GetConnectionString(), secondFileId);
+        factory.PublicObjectStorage.FailingCopyAttempt = 2;
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived",
+                null,
+                [new OrderPaymentProofRequest(firstFileId, 10_000m), new OrderPaymentProofRequest(secondFileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Matches("^payment-proofs/[0-9a-f]{32}\\.webp$", Assert.Single(factory.PublicObjectStorage.DeletedKeys));
+        Assert.Empty(factory.PublicObjectStorage.Copies);
+        Assert.True(factory.ObjectStorage.Exists(firstStagingKey));
+        Assert.True(factory.ObjectStorage.Exists(secondStagingKey));
+    }
+
+    // D13: un comprobante User se copia como en v1, pero Storage no lo mueve: el original sigue en el
+    // bucket privado y el archivo no gana clave pública.
+    [Fact]
+    public async Task AUserProofIsCopiedButNeverMoved()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var privateKey = await StorageKeyOfAsync(database.GetConnectionString(), fileId);
+
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "FullPaymentReceived", fileId);
+
+        Assert.Matches(PublicKeyPattern, Assert.Single(await PublicKeysAsync(factory, order.Id)));
+        Assert.True(await WaitForMoveInboxAsync(database.GetConnectionString()));
+        Assert.Null(await PublicStorageKeyOfAsync(database.GetConnectionString(), fileId));
+        Assert.True(factory.ObjectStorage.Exists(privateKey));
+    }
+
+    private static async Task AssertMovedAsync(
+        string connectionString, QepApiFactory factory, Guid orderId, Guid fileId, string stagingKey)
+    {
+        var publicKey = Assert.Single(await PublicKeysAsync(factory, orderId));
+        Assert.NotNull(publicKey);
+        Assert.Matches("^payment-proofs/[0-9a-f]{32}\\.webp$", publicKey);
+        Assert.Equal(stagingKey, factory.PublicObjectStorage.Copies[publicKey]);
+        Assert.Equal(publicKey, await WaitForMovedKeyAsync(connectionString, fileId));
+        Assert.False(factory.ObjectStorage.Exists(stagingKey));
+    }
+
+    private static async Task<string> StorageKeyOfAsync(string connectionString, Guid fileId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT storage_key FROM storage.file_resources WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", fileId);
+        return Assert.IsType<string>(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+    }
+
+    private static async Task<string?> PublicStorageKeyOfAsync(string connectionString, Guid fileId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT public_storage_key FROM storage.file_resources WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", fileId);
+        return await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+    }
+
+    // PaymentProofMoveWorker corre solo en el host de pruebas, cada 3 s: se espera con plazo, igual
+    // que WaitForEmailStatusAsync.
+    private static async Task<string?> WaitForMovedKeyAsync(string connectionString, Guid fileId)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await PublicStorageKeyOfAsync(connectionString, fileId) is { } key)
+            {
+                return key;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> WaitForMoveInboxAsync(string connectionString)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            await using var command = new NpgsqlCommand(
+                "SELECT count(*) FROM storage.inbox_messages WHERE consumer = 'storage.payment-proof-move'",
+                connection);
+            var count = Convert.ToInt64(
+                await command.ExecuteScalarAsync(TestContext.Current.CancellationToken),
+                CultureInfo.InvariantCulture);
+            if (count > 0)
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return false;
     }
 
     private static async Task<QuotationResponse> NewSentQuotationAsync(

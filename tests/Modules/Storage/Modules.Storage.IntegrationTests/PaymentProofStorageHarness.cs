@@ -2,11 +2,16 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Modules.Storage.Application;
+using Modules.Storage.Infrastructure.PaymentProofs;
+using Modules.Storage.Infrastructure.Persistence;
 using Npgsql;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -101,6 +106,55 @@ internal static class PaymentProofStorageHarness
 
     public static byte[] Pdf() => "%PDF-1.7\ncomprobante"u8.ToArray();
 
+    public static string NewPublicKey(string extension) =>
+        $"payment-proofs/{Guid.CreateVersion7():N}{extension}";
+
+    /// <summary>Escribe en el outbox de plataforma el evento que Quotations escribe al adjuntar
+    /// (spec 2026-09-16, D9), con el nombre y los campos del contrato escritos a mano: si Quotations
+    /// o Storage los cambian por separado, estas pruebas lo ven. Devuelve el id del mensaje.</summary>
+    public static async Task<Guid> AddAttachedEventAsync(
+        StorageApiFactory factory, params (Guid FileId, string PublicStorageKey)[] proofs)
+    {
+        var id = Guid.CreateVersion7();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        dbContext.Outbox.Add(new StorageOutboxMessage
+        {
+            Id = id,
+            EventName = "quotations.order.payment-proofs-attached.v1",
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                tenantId = TenantId,
+                orderId = Guid.CreateVersion7(),
+                proofs = proofs
+                    .Select(proof => new { fileId = proof.FileId, publicStorageKey = proof.PublicStorageKey })
+                    .ToArray(),
+            }),
+            CorrelationId = id.ToString(),
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return id;
+    }
+
+    /// <summary>Un lote del worker de movimiento, a mano: el hosted service no corre en este host
+    /// (ver <see cref="StorageApiFactory"/>).</summary>
+    public static async Task<int> RunMoveAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IPaymentProofMoveProcessor>()
+            .ProcessPendingAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static async Task<bool> IsProcessedByMoveAsync(StorageApiFactory factory, Guid messageId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        return await dbContext.Inbox.AnyAsync(
+            entry => entry.Consumer == "storage.payment-proof-move" && entry.MessageId == messageId,
+            TestContext.Current.CancellationToken);
+    }
+
     /// <summary>La fila de storage.file_resources y cuántas variantes tiene, leída con SQL para no
     /// depender de lo que expone la API.</summary>
     public static async Task<FileRow> ReadFileAsync(string connectionString, Guid fileId)
@@ -185,6 +239,17 @@ internal sealed class StorageApiFactory(string connectionString) : WebApplicatio
             services.AddSingleton<IObjectStorage>(ObjectStorage);
             services.RemoveAll<IPublicObjectStorage>();
             services.AddSingleton<IPublicObjectStorage>(PublicObjectStorage);
+
+            // El worker de movimiento consulta el outbox cada 3 s: competiría con el lote que la
+            // prueba corre a mano (RunMoveAsync) y la volvería no determinista.
+            var moveWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(PaymentProofMoveWorker))
+                .ToList();
+            foreach (var descriptor in moveWorkers)
+            {
+                services.Remove(descriptor);
+            }
         });
     }
 }

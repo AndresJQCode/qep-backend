@@ -113,15 +113,18 @@ Tanto el PDF de envío como los comprobantes de pago se suben con el flujo de St
 existe (`docs/integracion-imagenes-de-producto.md`, pasos 2-4: sesión → `PUT` al storage →
 `complete`). Acá sólo cambia qué se referencia:
 
-1. `POST /files` → `{ ownerId, ownerType: "User", name, mimeType, sizeBytes }` → trae `uploadUrl`.
+1. `POST /files` → `{ ownerId, ownerType, name, mimeType, sizeBytes }` → trae `uploadUrl`.
+   `ownerType` es `"PaymentProof"` para un comprobante de pago y `"User"` para el PDF de envío.
 2. `PUT` directo a `uploadUrl` con los bytes.
 3. `POST /files/{fileResourceId}/complete` → el archivo queda `Available`.
 4. Usar ese `fileResourceId` como `pdfFileId` (send) o `fileId` de cada comprobante (convert).
 
-No hace falta publicar (paso 5 de esa guía). Con `Quotations:PaymentProofs:PublicLinks` encendida,
-el backend copia cada comprobante nuevo al bucket público al convertir o al sumar comprobantes, para
-que el Excel de pedidos lo enlace; el frontend no hace nada distinto, y la respuesta de la API no
-cambia.
+No hace falta publicar (paso 5 de esa guía). Un comprobante `PaymentProof` no se promueve: espera en
+`staging/` y, si es imagen, `complete` ya lo deja en WebP de hasta 2000 px, así que el `mimeType` y la
+extensión del `name` de su respuesta cambian. Con `Quotations:PaymentProofs:PublicLinks` encendida, el
+backend copia cada comprobante nuevo al bucket público al convertir o al sumar comprobantes, para que
+el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. Un comprobante `User`
+sigue como antes. La respuesta de los endpoints de pedidos no cambia.
 
 - PDF de envío: sólo `application/pdf`.
 - Comprobante de pago: `application/pdf`, `image/jpeg`, `image/png` o `image/webp`, hasta 10 MB.
