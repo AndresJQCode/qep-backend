@@ -138,6 +138,22 @@ En `ConvertQuotationToOrderHandler` y `AddOrderPaymentProofsHandler`, sin cambia
 
 **Frontend (`qep-frontend`):** `uploadQuoteFile` manda `ownerType: 'PaymentProof'` (Vitest).
 
+## Enmiendas (2026-09-16, después de escribir el plan)
+
+Al escribir el plan aparecieron conflictos entre el código y este spec. Se resuelven así:
+
+| # | Decisión | Por qué |
+| --- | --- | --- |
+| D15 | `SoftDeleteFileHandler` y `UnpublishFileHandler` rechazan un `PaymentProof` que algún pedido referencia (`IFileReferenceProbe`) con `storage.file.invalid_state`. `PublishFileHandler` rechaza siempre un `PaymentProof`, con el mismo código: un comprobante sólo llega al público por el movimiento de la sección 2. | Decidido por el owner. Hoy los dos primeros borran lo que haya en `PublicStorageKey` (`SoftDeleteFile.cs:35-44`, `SetFilePublication.cs:98-111`), y para un comprobante movido eso es la copia que enlaza el Excel: la evidencia del pago. `PublishFileHandler` copiaría desde un temporal que ya no existe. |
+| D16 | Un comprobante ya movido no se puede adjuntar a otro pedido. `QuotationFileLookup` lo informa como no disponible (`IsAvailable = false` si es `PaymentProof` y ya tiene `PublicStorageKey`), y `OrderPaymentProofResolver` lo rechaza con el código que ya usa, `order.payment_proof.file_not_available`. | Sin esto, la copia al público sale de un temporal borrado y el request termina en 500. No se inventa un código: el archivo ya no está disponible para adjuntar. |
+| D17 | Una migración de Quotations agrega índices sobre `order_payment_proofs.file_id` y `order_payment_proofs.public_storage_key`. | Las dos sondas nuevas consultan esa tabla en cada barrido. |
+| D18 | `FileUserReferenceProbe` cuenta también los archivos `PaymentProof` de un usuario, no sólo los `User`. | El frontend sube los comprobantes con `ownerId` = el usuario. Sin esto, pasarlos a `PaymentProof` dejaría de retener a quien los subió, y `OrphanUserCleanupWorker` podría borrar un usuario que todavía es dueño de comprobantes. |
+
+Dos consecuencias que se aceptan y quedan documentadas:
+
+- Con `Quotations:PaymentProofs:PublicLinks=false`, un `PaymentProof` adjunto no tiene clave pública, no genera evento y se queda en `staging/`. Se sigue descargando desde la app, y el barrido de la sección 3 lo respeta porque está referenciado. Producción tiene la opción encendida.
+- Storage no tiene inbox: la sección 2 necesita una tabla de inbox nueva y su migración, con el mismo diseño que los inbox de los demás módulos.
+
 ## Fuera de alcance
 
 - Migrar los comprobantes v1 (`User`) al esquema v2.
