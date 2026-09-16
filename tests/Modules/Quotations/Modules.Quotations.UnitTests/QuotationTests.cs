@@ -1300,6 +1300,88 @@ public sealed class QuotationTests
         Assert.Equal("quotation.item.duplicate_product", error.Code);
     }
 
+    // A pedido (2026-09-15): "Editar" un pedido pendiente también admite corregir la cantidad de
+    // una línea que ya tenía — mismo endpoint que UpdateItemQuantity, sin EnsureEditable.
+    [Fact]
+    public void UpdateItemQuantityAfterConversionChangesTheQuantityOfAConvertedQuotation()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToOrder(AdvisorId, Now);
+        var itemId = Assert.Single(quotation.Items).Id;
+        var totalBefore = quotation.Total;
+        var later = Now.AddDays(1);
+
+        quotation.UpdateItemQuantityAfterConversion(
+            itemId, quantity: 5, discountPercentage: 0m, taxPercentage: 19, AdvisorId, later);
+
+        Assert.Equal(5, Assert.Single(quotation.Items).Quantity);
+        Assert.True(quotation.Total > totalBefore);
+        Assert.Equal(later, quotation.UpdatedAt);
+    }
+
+    [Fact]
+    public void UpdateItemQuantityAfterConversionRejectsAnUnknownItem()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToOrder(AdvisorId, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.UpdateItemQuantityAfterConversion(
+                QuotationItemId.New(), 1, 0m, 0, AdvisorId, Now.AddDays(1)));
+
+        Assert.Equal("quotation.item.not_found", error.Code);
+    }
+
+    // A pedido (2026-09-15): quitar un producto que ya no correspondía, sin recrear el pedido.
+    [Fact]
+    public void RemoveItemAfterConversionRemovesALineWhenMoreThanOneRemains()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 50_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now);
+        var itemToRemove = quotation.Items.First().Id;
+        var later = Now.AddDays(1);
+
+        quotation.RemoveItemAfterConversion(itemToRemove, AdvisorId, later);
+
+        Assert.Single(quotation.Items);
+        Assert.DoesNotContain(quotation.Items, item => item.Id == itemToRemove);
+        Assert.Equal(later, quotation.UpdatedAt);
+    }
+
+    // Sin este chequeo, un pedido pendiente podía quedarse con una cotización en cero productos
+    // y un total en cero, sin ninguna vuelta atrás (items_required sólo se valida al convertir).
+    [Fact]
+    public void RemoveItemAfterConversionRejectsRemovingTheLastRemainingItem()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.ConvertToOrder(AdvisorId, Now);
+        var itemId = Assert.Single(quotation.Items).Id;
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.RemoveItemAfterConversion(itemId, AdvisorId, Now.AddDays(1)));
+
+        Assert.Equal("quotation.item.last_item_required", error.Code);
+        Assert.Single(quotation.Items);
+    }
+
+    [Fact]
+    public void RemoveItemAfterConversionRejectsAnUnknownItem()
+    {
+        var quotation = ConvertibleSentQuotation();
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 50_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.RemoveItemAfterConversion(QuotationItemId.New(), AdvisorId, Now.AddDays(1)));
+
+        Assert.Equal("quotation.item.not_found", error.Code);
+    }
+
     /// <summary>Enviada y con los cuatro datos que el pedido hereda: productos, vigencia, forma
     /// de pago y cuenta de cobro.</summary>
     private static Quotation ConvertibleSentQuotation()

@@ -104,11 +104,14 @@ public sealed class OrderApiTests
         Assert.Equal(0, sent.Total);
     }
 
-    // US-10/US-11: convertida, la cotizacion queda de solo lectura. Mientras se quedaba en Sent
-    // despues de convertirse, todo esto seguia permitido: se podia editar, anular o reenviar una
-    // cotizacion cuyo pedido ya existia.
+    // US-10/US-11: convertida y con el pedido ya aprobado, la cotizacion queda de solo lectura
+    // del todo. Mientras se quedaba en Sent despues de convertirse, todo esto seguia permitido:
+    // se podia editar, anular o reenviar una cotizacion cuyo pedido ya existia. Se aprueba el
+    // pedido a proposito (a pedido, 2026-09-15): mientras sigue Pending, la cantidad de una
+    // linea SI se puede editar desde "Editar" pedido -- ver OrderItemEditApiTests -- asi que
+    // esta prueba usa el estado en el que ni siquiera eso queda permitido.
     [Fact]
-    public async Task AConvertedQuotationCanNoLongerBeEditedVoidedOrResent()
+    public async Task AConvertedQuotationWithAnApprovedOrderCanNoLongerBeEditedVoidedOrResent()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -120,6 +123,10 @@ public sealed class OrderApiTests
         (await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        (await client.PostAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
         var itemId = Assert.Single(quotation.Items).Id;
@@ -137,7 +144,7 @@ public sealed class OrderApiTests
             new SendQuotationRequest(pdfFileId),
             TestContext.Current.CancellationToken);
 
-        await AssertUnprocessableAsync(edited, "quotation.quotation.not_editable");
+        await AssertUnprocessableAsync(edited, "order.order.not_pending");
         await AssertUnprocessableAsync(voided, "quotation.quotation.not_editable");
         await AssertUnprocessableAsync(resent, "quotation.quotation.not_draft");
 
@@ -820,6 +827,141 @@ public sealed class OrderApiTests
         Assert.Contains("quotation.order.payment_proofs_added", actions);
         Assert.Contains("quotation.order.approved", actions);
         Assert.DoesNotContain(actions, action => action.StartsWith("quotation.sale.", StringComparison.Ordinal));
+    }
+
+    // A pedido (2026-09-15): reemplazar el archivo de un comprobante mal cargado, junto con la
+    // corrección de monto que ya existía como `UpdatedProofs`.
+    [Fact]
+    public async Task AddOrderPaymentProofsReplacesTheFileOfAnExistingProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var convert = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null, [new OrderPaymentProofRequest(firstFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        var order = await ReadOrderAsync(convert);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var replacementFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                null,
+                [new OrderPaymentProofUpdateRequest(proofId, quotation.Total, replacementFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadOrderAsync(response);
+        var updatedProof = Assert.Single(updated.PaymentProofs);
+        Assert.Equal(replacementFileId, updatedProof.FileId);
+    }
+
+    // A pedido (2026-09-15): quitar un comprobante cargado por error, distinto de corregirlo.
+    [Fact]
+    public async Task RemoveOrderPaymentProofRemovesAnExistingProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var convert = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "PartialPaymentReceived", null,
+                [new OrderPaymentProofRequest(firstFileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+        var order = await ReadOrderAsync(convert);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadOrderAsync(response);
+        Assert.Empty(updated.PaymentProofs);
+        // Sin comprobantes, el pago vuelve a pendiente -- mismo cálculo que agregar/quitar un
+        // producto.
+        Assert.Equal("PaymentPending", updated.PaymentStatus);
+    }
+
+    [Fact]
+    public async Task RemoveOrderPaymentProofRejectsAnUnknownProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{Guid.CreateVersion7()}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("order.payment_proof.not_found", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RemoveOrderPaymentProofOnAnApprovedOrderIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var convert = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null, [new OrderPaymentProofRequest(fileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        var order = await ReadOrderAsync(convert);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        (await client.PostAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            null,
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("order.order.not_pending", body, StringComparison.Ordinal);
+    }
+
+    private static async Task<OrderResponse> ReadOrderAsync(HttpResponseMessage response)
+    {
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
     }
 
     private static string ActionOf(QuotationsOutboxMessage message)
