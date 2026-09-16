@@ -1,3 +1,6 @@
+using BuildingBlocks.Application;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Storage.Infrastructure.ObjectStorage;
 using static Modules.Storage.IntegrationTests.PaymentProofStorageHarness;
 
 namespace Modules.Storage.IntegrationTests;
@@ -114,5 +117,62 @@ public sealed class PaymentProofStagingCleanupTests
         var row = await ReadFileAsync(database.GetConnectionString(), file.FileId);
         Assert.Equal("Available", row.Status);
         Assert.True(factory.ObjectStorage.Exists(row.StorageKey));
+    }
+
+    // Guardar por archivo: si el borrado de uno falla, los purgados antes ya quedaron guardados, los
+    // que siguen se purgan igual y el que falla sigue Available con su objeto. Sin esto, un fallo a
+    // mitad de lote dejaba comprobantes Available sin objeto en staging/.
+    [Fact]
+    public async Task AFailingProofDoesNotStopTheOthersNorLeaveThemWithoutTheirObject()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var first = await CreateAvailableAsync(client, factory, "PaymentProof", "primero.pdf", "application/pdf", Pdf());
+        var failing = await CreateAvailableAsync(client, factory, "PaymentProof", "falla.pdf", "application/pdf", Pdf());
+        var last = await CreateAvailableAsync(client, factory, "PaymentProof", "ultimo.pdf", "application/pdf", Pdf());
+        // El orden del barrido es por CreatedAt: el que falla queda en el medio.
+        await BackdateAsync(database.GetConnectionString(), first.FileId, TimeSpan.FromHours(27));
+        await BackdateAsync(database.GetConnectionString(), failing.FileId, TimeSpan.FromHours(26));
+        await BackdateAsync(database.GetConnectionString(), last.FileId, TimeSpan.FromHours(25));
+        factory.ObjectStorage.FailingDeleteKey = failing.StagingKey;
+
+        await RunStagingCleanupAsync(factory);
+
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), first.FileId)).Status);
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), last.FileId)).Status);
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), failing.FileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(failing.StagingKey));
+        var purged = (await AuditEventsAsync(factory))
+            .Where(entry => entry.Action == "storage.file.purged")
+            .Select(entry => entry.ResourceId)
+            .Order()
+            .ToArray();
+        Assert.Equal(new[] { first.FileId.ToString(), last.FileId.ToString() }.Order().ToArray(), purged);
+    }
+
+    // Sin ninguna sonda registrada no se puede saber si un comprobante está adjunto: no se purga
+    // ninguno. Las subidas abandonadas no dependen de las sondas y se siguen purgando.
+    [Fact]
+    public async Task WithoutProbesNoProofIsPurgedButAbandonedUploadsAre()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var abandoned = await UploadAsync(client, factory, "User", "contrato.pdf", "application/pdf", Pdf());
+        await BackdateAsync(database.GetConnectionString(), proof.FileId, OlderThanTheRetention);
+        await BackdateAsync(database.GetConnectionString(), abandoned.FileId, OlderThanTheRetention);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var processor = ActivatorUtilities.CreateInstance<StagingCleanupProcessor>(
+                scope.ServiceProvider, new List<IFileReferenceProbe>());
+            await processor.CleanupAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(proof.StagingKey));
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), abandoned.FileId)).Status);
     }
 }

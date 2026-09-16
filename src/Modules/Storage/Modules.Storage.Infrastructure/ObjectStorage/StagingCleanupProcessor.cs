@@ -28,7 +28,7 @@ internal sealed partial class StagingCleanupProcessor(
 {
     private const int BatchSize = 100;
 
-    private readonly IReadOnlyList<IFileReferenceProbe> _probes = probes.ToList();
+    private readonly List<IFileReferenceProbe> _probes = probes.ToList();
 
     [LoggerMessage(
         Level = LogLevel.Information,
@@ -39,6 +39,21 @@ internal sealed partial class StagingCleanupProcessor(
         Level = LogLevel.Information,
         Message = "Payment proof {FileId} purged from staging: no module references it.")]
     private static partial void LogProofPurged(ILogger logger, Guid fileId);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Payment proof {FileId} could not be purged from staging: invalid state.")]
+    private static partial void LogProofRejected(ILogger logger, Guid fileId, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Payment proof {FileId} could not be purged from staging; the next tick retries it.")]
+    private static partial void LogProofFailed(ILogger logger, Guid fileId, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "No file reference probe is registered: unattached payment proofs are not purged.")]
+    private static partial void LogNoProbes(ILogger logger);
 
     public async Task CleanupAsync(CancellationToken cancellationToken)
     {
@@ -70,11 +85,19 @@ internal sealed partial class StagingCleanupProcessor(
     private async Task PurgeUnattachedPaymentProofsAsync(
         DateTimeOffset cutoff, CancellationToken cancellationToken)
     {
-        // Un comprobante retenido sigue cumpliendo el filtro en la vuelta siguiente, así que se saltean
-        // los ya vistos: sin esto, cien retenidos viejos (por ejemplo, con
+        // Sin sondas no hay forma de saber si un comprobante está adjunto: purgar sería borrar
+        // comprobantes de pedidos. Se falla cerrado y se avisa.
+        if (_probes.Count == 0)
+        {
+            LogNoProbes(logger);
+            return;
+        }
+
+        // Un comprobante retenido, o uno cuya purga falló, sigue cumpliendo el filtro en la vuelta
+        // siguiente, así que se saltan los ya vistos: sin esto, cien retenidos viejos (por ejemplo, con
         // Quotations:PaymentProofs:PublicLinks apagada, donde nunca se mueven) taparían para siempre a
-        // los huérfanos más nuevos. Los purgados salen del filtro al guardar cada lote.
-        var retained = 0;
+        // los huérfanos más nuevos. Los purgados salen del filtro porque cada uno se guarda enseguida.
+        var skipped = 0;
         while (true)
         {
             var batch = await dbContext.FileResources
@@ -84,41 +107,85 @@ internal sealed partial class StagingCleanupProcessor(
                 .Where(file => file.CreatedAt < cutoff)
                 .OrderBy(file => file.CreatedAt)
                 .ThenBy(file => file.Id)
-                .Skip(retained)
+                .Skip(skipped)
                 .Take(BatchSize)
                 .ToArrayAsync(cancellationToken);
 
             foreach (var file in batch)
             {
-                var retainedBy = await FindRetainingSourceAsync(file.Id.Value, cancellationToken);
-                if (retainedBy is not null)
+                if (!await TryPurgeUnattachedPaymentProofAsync(file, cancellationToken))
                 {
-                    // Un comprobante adjunto cuyo evento de D9 todavía no se procesó.
-                    LogProofRetained(logger, file.Id.Value, retainedBy);
-                    retained++;
-                    continue;
+                    skipped++;
                 }
-
-                // Mismo orden que el movimiento (D9): primero el objeto, después la fila. Si guardar
-                // falla, el tick siguiente borra una clave que ya no existe y guarda.
-                await objectStorage.DeleteAsync(file.StorageKey, cancellationToken);
-                var now = clock.UtcNow;
-                file.PurgeUnattachedPaymentProof(now);
-                auditPublisher.PublishSystem(
-                    file.TenantId,
-                    "storage.file.purged",
-                    "file",
-                    file.Id.ToString(),
-                    "payment_proof_not_attached",
-                    now);
-                LogProofPurged(logger, file.Id.Value);
             }
 
-            await dbContext.SaveChangesAsync(cancellationToken);
             if (batch.Length < BatchSize)
             {
                 return;
             }
+        }
+    }
+
+    // Un comprobante por vez, con su propio SaveChanges: si el borrado del siguiente falla, los ya
+    // borrados de staging/ no quedan Available sin objeto (se podrían adjuntar o descargar). Devuelve
+    // false si el comprobante sigue en el filtro: retenido por una sonda o con una purga fallida.
+    private async Task<bool> TryPurgeUnattachedPaymentProofAsync(
+        FileResource file, CancellationToken cancellationToken)
+    {
+        var fileId = file.Id.Value;
+        try
+        {
+            var retainedBy = await FindRetainingSourceAsync(fileId, cancellationToken);
+            if (retainedBy is not null)
+            {
+                // Un comprobante adjunto cuyo evento de D9 todavía no se procesó.
+                LogProofRetained(logger, fileId, retainedBy);
+                return false;
+            }
+
+            // Mismo orden que el movimiento (D9): primero el objeto, después la fila. Si guardar
+            // falla, el tick siguiente borra una clave que ya no existe y guarda.
+            await objectStorage.DeleteAsync(file.StorageKey, cancellationToken);
+            var now = clock.UtcNow;
+            file.PurgeUnattachedPaymentProof(now);
+            auditPublisher.PublishSystem(
+                file.TenantId,
+                "storage.file.purged",
+                "file",
+                file.Id.ToString(),
+                "payment_proof_not_attached",
+                now);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            LogProofPurged(logger, fileId);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (StorageDomainException exception)
+        {
+            LogProofRejected(logger, fileId, exception);
+            DiscardPendingChanges();
+            return false;
+        }
+        catch (Exception exception)
+        {
+            LogProofFailed(logger, fileId, exception);
+            DiscardPendingChanges();
+            return false;
+        }
+    }
+
+    // Los comprobantes anteriores ya se guardaron, así que lo pendiente es sólo del que falló: su fila
+    // y su auditoría. Se sueltan para que no viajen en el SaveChanges del siguiente.
+    private void DiscardPendingChanges()
+    {
+        foreach (var entry in dbContext.ChangeTracker.Entries()
+            .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
+            .ToList())
+        {
+            entry.State = EntityState.Detached;
         }
     }
 
