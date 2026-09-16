@@ -4,7 +4,7 @@
 
 **Goal:** Un comprobante de pago subido como `PaymentProof` espera en `staging/` (las imágenes ya reducidas a WebP), se copia al bucket público al adjuntarse a un pedido, y un worker de Storage borra el temporal y registra el movimiento; dos barridos limpian lo que nadie adjuntó y los huérfanos de `payment-proofs/`.
 
-**Architecture:** Storage gana un dueño nuevo (`FileOwnerType.PaymentProof`), un puerto de procesamiento de imágenes, un listado por prefijo en `IPublicObjectStorage`, un inbox propio (`storage.inbox_messages`) y tres procesadores con su worker: el movimiento (consume `quotations.order.payment-proofs-attached.v1`), el barrido de staging extendido y la reconciliación del bucket público. Quotations escribe ese evento en el outbox de la misma unidad de trabajo que el pedido, acepta WebP, y responde dos sondas nuevas de BuildingBlocks (`IFileReferenceProbe`, `IPublicObjectReferenceProbe`) con el mismo diseño que `IUserReferenceProbe`. En `qep-frontend`, `uploadQuoteFile` manda `ownerType: 'PaymentProof'`.
+**Architecture:** Storage gana un dueño nuevo (`FileOwnerType.PaymentProof`), un puerto de procesamiento de imágenes, un listado por prefijo en `IPublicObjectStorage`, un inbox propio (`storage.inbox_messages`) y cuatro procesadores: el movimiento (consume `quotations.order.payment-proofs-attached.v1`) y, en el mismo worker, el retiro de D19 (consume `quotations.order.payment-proofs-detached.v1`, purga lo que un pedido suelta), el barrido de staging extendido y la reconciliación del bucket público. Quotations escribe esos dos eventos en el outbox de la misma unidad de trabajo que el pedido —el de retiro al reemplazar o quitar un comprobante, en vez del borrado best-effort que trajo `develop`—, acepta WebP, y responde dos sondas nuevas de BuildingBlocks (`IFileReferenceProbe`, `IPublicObjectReferenceProbe`) con el mismo diseño que `IUserReferenceProbe`. En `qep-frontend`, `uploadQuoteFile` manda `ownerType: 'PaymentProof'`.
 
 **Tech Stack:** .NET 10 (SDK de `global.json`), EF Core 10.0.11 + Npgsql 10.0.3, AWSSDK.S3 4.0.100.2 (Cloudflare R2), SixLabors.ImageSharp 3.1.12, xUnit v3 3.2.2, Testcontainers.PostgreSql 4.14.0 (`postgres:18-alpine`, Docker corriendo para las pruebas de integración). Frontend: React 19 + Vitest (`bun run test`).
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-**Del spec** (valores copiados tal cual; D1–D14 son las filas de su tabla de decisiones y D15–D18 las de su sección «Enmiendas», commit `2ac3728`):
+**Del spec** (valores copiados tal cual; D1–D14 son las filas de su tabla de decisiones y D15–D19 las de su sección «Enmiendas»: D15–D18 en el commit `df294d7` y D19 en `da80432`):
 
 - D1: «Los PDF se mueven tal cual; sólo las imágenes se recomprimen y pasan a WebP.»
 - D2: «Aplica sólo a comprobantes de pago, con `FileOwnerType.PaymentProof = 5`.»
@@ -32,6 +32,8 @@
 - D16: «Un comprobante ya movido no se puede adjuntar a otro pedido. `QuotationFileLookup` lo informa como no disponible (`IsAvailable = false` si es `PaymentProof` y ya tiene `PublicStorageKey`), y `OrderPaymentProofResolver` lo rechaza con el código que ya usa, `order.payment_proof.file_not_available`.»
 - D17: «Una migración de Quotations agrega índices sobre `order_payment_proofs.file_id` y `order_payment_proofs.public_storage_key`.»
 - D18: «`FileUserReferenceProbe` cuenta también los archivos `PaymentProof` de un usuario, no sólo los `User`.»
+- D19: «Reemplazar el archivo de un comprobante (`UpdatedProofs[].NewFileId`) o quitarlo (`RemoveOrderPaymentProof`) **borra el archivo que el pedido deja de usar**, esté en `staging/` o ya movido al bucket público. En la misma transacción que el pedido, Quotations escribe `quotations.order.payment-proofs-detached.v1` con `tenantId`, `orderId` y, por cada archivo soltado, `fileId` y la `publicStorageKey` que tenía ese comprobante (null si no tenía copia); lo escribe también con `Quotations:PaymentProofs:PublicLinks=false`, y el borrado best-effort de la copia vieja después de guardar desaparece. El archivo de reemplazo cuenta como comprobante nuevo: entra en `quotations.order.payment-proofs-attached.v1` con su clave. Storage consume el evento con su inbox, en el mismo worker que el movimiento y después de él. Por cada archivo `PaymentProof` `Available` que ninguna `IFileReferenceProbe` retiene: borra el objeto público si tiene `PublicStorageKey`; si no, el de `staging/` y la copia que trae el evento; después, en un solo `SaveChanges`, `FileResource.PurgeDetachedPaymentProof`, la auditoría `storage.file.purged` con motivo `payment_proof_detached` y el inbox. Uno retenido, ya purgado o en otro estado se salta. De un archivo `User` sólo borra la copia de ese adjunto y audita `storage.public_object.purged` / `payment_proof_detached`.»
+- D19, convivencia (del spec): «Si un comprobante se adjunta y se reemplaza enseguida, Storage puede soltarlo antes de moverlo: la purga de un archivo sin mover borra su temporal y la copia que el adjunto alcanzó a hacer. `PaymentProofMoveWorker`, al llegar después, lo salta sin fallar —ya no está `Available`— y marca su mensaje.» «Una copia que quede sin dueño por ese camino es un huérfano de `payment-proofs/`, y la recoge la reconciliación de la sección 4 (D12).» D15 y D16 no cambian: «un archivo purgado no está `Available`, así que adjuntarlo de nuevo responde `order.payment_proof.file_not_available`».
 - Consecuencias aceptadas de las enmiendas: «Con `Quotations:PaymentProofs:PublicLinks=false`, un `PaymentProof` adjunto no tiene clave pública, no genera evento y se queda en `staging/`.» «Storage no tiene inbox: la sección 2 necesita una tabla de inbox nueva y su migración».
 - `CompleteUpload` con un `PaymentProof` limpio: `image/jpeg`, `image/png`, `image/webp` → «Se redimensiona a lado mayor ≤ 2000 px, sin agrandar, y se codifica WebP calidad 80 con ImageSharp […]. El resultado **reemplaza** al objeto en `staging/`, y el `FileResource` actualiza tipo (`image/webp`), extensión del nombre (`.webp`), tamaño y checksum.» `application/pdf` → «Queda tal cual.» En los dos casos: «sin promoción a `files/`, sin miniatura, y el recurso pasa a `Available` con `MarkClean`».
 - «Si la imagen no se puede procesar, cuarentena y `storage.file.rejected` / `image_processing_failed`».
@@ -45,7 +47,7 @@
 - «`DryRun` va en `true` en `appsettings.json` y en `k8s/prod-configMap.yaml`.»
 - «toda factoría de integración fija `Storage:PaymentProofOrphanCleanup:DryRun` explícitamente.» Por la regla de proceso de abajo, este plan fija además `MinimumAgeHours` e `IntervalHours` en todas.
 - Frontend: «`uploadQuoteFile` manda `ownerType: 'PaymentProof'` (Vitest).»
-- **Fuera de alcance, no se implementa:** migrar los comprobantes v1 (`User`) al esquema v2; cambiar el flujo de imágenes de producto u otros archivos de Storage; una API o `CronJob` para disparar la limpieza, y el botón en el panel de operadores; despublicar un comprobante o revocar su URL; configuración por tenant.
+- **Fuera de alcance, no se implementa:** migrar los comprobantes v1 (`User`) al esquema v2; cambiar el flujo de imágenes de producto u otros archivos de Storage; una API o `CronJob` para disparar la limpieza, y el botón en el panel de operadores; despublicar un comprobante o revocar su URL (salvo lo que D19 borra al reemplazar o quitar un comprobante); configuración por tenant.
 
 **Del proceso:**
 
@@ -65,7 +67,7 @@
 - Un parámetro de constructor primario usado a la vez en un inicializador de miembro y en un método dispara CS9124, que `TreatWarningsAsErrors` convierte en error: en ese caso se copia a un campo.
 - Toda factoría de integración que arranca la API fija **cada** clave de configuración nueva explícitamente (los user-secrets de quien corre las pruebas nunca deben llegar a una prueba). Todo miembro nuevo de una interfaz actualiza **todas** sus implementaciones, dobles incluidos, en la misma tarea.
 - Las pruebas de xUnit v3 pasan `TestContext.Current.CancellationToken` a toda llamada que acepte un `CancellationToken` (xUnit1051 es error con `TreatWarningsAsErrors`).
-- Idioma: la prosa del plan, los comentarios de código, los `<summary>` y los mensajes de commit van en español de Colombia, tuteando (tienes, puedes, revisa); nunca voseo. Identificadores, claves de configuración, códigos de error y mensajes de excepción quedan en inglés. Los comentarios nuevos explican el porqué y citan la decisión del spec (D1–D18) cuando ayuda.
+- Idioma: la prosa del plan, los comentarios de código, los `<summary>` y los mensajes de commit van en español de Colombia, tuteando (tienes, puedes, revisa); nunca voseo. Identificadores, claves de configuración, códigos de error y mensajes de excepción quedan en inglés. Los comentarios nuevos explican el porqué y citan la decisión del spec (D1–D19) cuando ayuda.
 - Archivos nuevos: UTF-8 **sin BOM** (el `.editorconfig` pide `charset = utf-8` y `end_of_line = lf`).
 - **Chequeo de formato**, sobre los `.cs` que toca cada tarea (los de `Migrations/` no, que el `.editorconfig` marca como generados). El repo tiene `core.autocrlf=true` y ningún `.gitattributes`, así que `dotnet format` reporta `ENDOFLINE` en cada archivo y muchos viejos traen además `CHARSET` (BOM): los dos son ruido previo y se filtran. Cualquier otro diagnóstico en una línea que tocaste se corrige; uno en una línea que no tocaste se anota en el handoff y no se arregla en esta rama. El comando es siempre este (lo llamamos **«el chequeo de formato»** en cada tarea):
 
@@ -101,8 +103,12 @@ El spec llama «nombres propuestos» a los de abajo; éstos son los definitivos 
 | Purgar uno no adjuntado (D11) | `FileResource.PurgeUnattachedPaymentProof(DateTimeOffset occurredAt)` |
 | Puerto de imágenes | `IPaymentProofImageProcessor` + `ProcessedPaymentProofImage` (Storage.Application); `ImageSharpPaymentProofImageProcessor` (Storage.Infrastructure/Imaging) |
 | Listado del bucket público | `IPublicObjectStorage.ListAsync(string prefix, string? continuationToken, CancellationToken)` → `PublicObjectPage(IReadOnlyList<PublicStoredObject> Objects, string? ContinuationToken)`, `PublicStoredObject(string Key, DateTimeOffset LastModified)` |
-| Evento | `quotations.order.payment-proofs-attached.v1`, payload `{ tenantId, orderId, proofs: [{ fileId, publicStorageKey }] }` |
-| Puerto del evento | `IOrderPaymentProofEventPublisher.PublishAttached(Guid tenantId, OrderId orderId, IReadOnlyCollection<AttachedPaymentProof> proofs, DateTimeOffset occurredAt)`, `AttachedPaymentProof(Guid FileId, string PublicStorageKey)`; implementación `OrderPaymentProofEventPublisher` |
+| Evento | `quotations.order.payment-proofs-attached.v1`, payload `{ tenantId, orderId, proofs: [{ fileId, publicStorageKey }] }`: los comprobantes nuevos y los archivos de reemplazo con copia |
+| Evento de retiro (D19) | `quotations.order.payment-proofs-detached.v1`, payload `{ tenantId, orderId, proofs: [{ fileId, publicStorageKey \| null }] }` |
+| Puerto del evento | `IOrderPaymentProofEventPublisher.PublishAttached(Guid tenantId, OrderId orderId, IReadOnlyCollection<AttachedPaymentProof> proofs, DateTimeOffset occurredAt)`, `AttachedPaymentProof(Guid FileId, string PublicStorageKey)`; desde Task 9D también `PublishDetached(Guid tenantId, OrderId orderId, IReadOnlyCollection<DetachedPaymentProof> proofs, DateTimeOffset occurredAt)`, `DetachedPaymentProof(Guid FileId, string? PublicStorageKey)`; implementación `OrderPaymentProofEventPublisher` |
+| Qué entra en cada evento | `PaymentProofCopies.AttachedFrom(IEnumerable<OrderPaymentProofInput>)` y `PaymentProofCopies.AttachedFromReplacements(IEnumerable<OrderPaymentProofAmountUpdate>)` (Task 6); `PaymentProofCopies.DetachedFrom(IEnumerable<DetachedPaymentProof> candidates, IEnumerable<Guid> remainingFileIds)` (Task 9D) |
+| Purgar uno soltado (D19) | `FileResource.PurgeDetachedPaymentProof(DateTimeOffset occurredAt)` |
+| Retiro en Storage (D19) | `IPaymentProofDetachProcessor.ProcessPendingAsync`, `PaymentProofDetachProcessor` (consumidor `storage.payment-proof-detach`, motivo de auditoría `payment_proof_detached`); lo corre `PaymentProofMoveWorker` en el mismo tick, después del movimiento |
 | Inbox de Storage | `StorageInboxMessage` en `storage.inbox_messages`, `StorageDbContext.Inbox`, migración `AddStorageInbox` |
 | Movimiento | `IPaymentProofMoveProcessor.ProcessPendingAsync`, `PaymentProofMoveProcessor` (consumidor `storage.payment-proof-move`), `PaymentProofMoveWorker` |
 | Barrido de staging | `IStagingCleanupProcessor.CleanupAsync`, `StagingCleanupProcessor`; `StagingCleanupWorker` queda como temporizador |
@@ -117,7 +123,7 @@ El spec llama «nombres propuestos» a los de abajo; éstos son los definitivos 
 
 ## Hallazgos contra el código (2026-09-16)
 
-Verificados en `feature/comprobantes-publicos-v2` (HEAD `aa1c6dd`, el commit del spec, sobre `origin/develop` en `03d3758`), con el árbol limpio. Revisados de nuevo el 2026-09-16 sobre `2ac3728`, el commit de las enmiendas D15–D18 del spec: los hallazgos 13, 15, 16 y 20 quedan **resueltos** por D15, D16, D17 y D18, y las tareas 1B, 7B, 8B y 9B los implementan.
+Verificados primero en `feature/comprobantes-publicos-v2` sobre `origin/develop` en `03d3758`, con el árbol limpio, y revisados con las enmiendas D15–D18: los hallazgos 13, 15, 16 y 20 quedan **resueltos** por D15, D16, D17 y D18, y las tareas 1B, 7B, 8B y 9B los implementan. El 2026-09-16 la rama se **rebasó** sobre `origin/develop` en `528d368` (spec `a8a5424`, `df294d7` y `da80432`; plan `01a56fe` y su versión rebasada), y cada número de línea de abajo se volvió a verificar contra ese código. El hallazgo 22 queda **resuelto** por D19, y las tareas 6, 9C y 9D lo implementan.
 
 1. **El outbox es una sola tabla de plataforma y no hay mapeo de nombres que aprender.** Cada módulo escribe en `platform.outbox_messages` (propiedad de Tenancy) con su propia proyección de escritura: Quotations mapea `QuotationsOutboxMessage` en `QuotationsDbContext.cs:500-513` y la escriben publicadores de Infrastructure con el nombre del evento como constante (`ExportJobEventPublisher.cs:12-49`, `QuotationAuditPublisher.cs:9-26`). Application no ve el `DbContext`, así que el evento pasa por un puerto (`IOrderPaymentProofEventPublisher`), igual que `IExportEventPublisher`. Un evento sin `IIntegrationEventHandler` no reintenta para siempre: `IntegrationEventDispatcher.cs:25-50` no lanza si nadie coincide y `OutboxProcessor.cs:47-51` marca `processed_at`. Los consumidores leen la tabla por `event_name` y **no** miran `processed_at`.
 2. **Storage no tiene inbox.** `StorageDbContext.cs:9-17` mapea sólo `FileResources` y la proyección `Outbox`. El patrón a seguir es Identity: `IdentityInboxMessage.cs:5-12`, `IdentityDbContext.cs` (`ConfigureInbox`, PK `(consumer, message_id)` sobre `identity.inbox_messages`), y el anti-join de `SessionRevocationWorker.cs:62-68` y `OrphanUserCleanupWorker.cs:93-99`, con inbox y efecto en el mismo `SaveChanges` (`OrphanUserCleanupWorker.cs:173-179`) y `ChangeTracker.Clear()` cuando un mensaje falla (`:111-118`). Task 7 suma `storage.inbox_messages` con su migración. Para **leer** el outbox, Storage reusa su proyección `StorageOutboxMessage` (`StorageDbContext.cs:81-95`): EF no deja mapear un segundo tipo a la misma tabla sin table splitting.
@@ -132,19 +138,20 @@ Verificados en `feature/comprobantes-publicos-v2` (HEAD `aa1c6dd`, el commit del
 11. **`ResizeMode.Max` de ImageSharp también agranda**, así que «sin agrandar» (D7) necesita el chequeo explícito del lado mayor. `ImageSharpVariantGenerator.cs:24-67` fija los códigos que se reusan (`storage.image.invalid`, `storage.image.dimensions_too_large`) y el tope de 40 000 000 píxeles de entrada.
 12. **AWSSDK.S3 4.0.100.2**: `ListObjectsV2Response.S3Objects` queda en `null` cuando no hay objetos, y `S3Object.LastModified` es `DateTime?` (verificado en `AWSSDK.S3.xml` del paquete). `R2PublicObjectStorage.ListAsync` cubre las dos cosas.
 13. **Resuelto por D15 (Task 9B). Borrar o despublicar un comprobante movido borraba su copia pública.** `SoftDeleteFileHandler` (`SoftDeleteFile.cs:35-44`) y `UnpublishFileHandler` (`SetFilePublication.cs:98-111`) borran el objeto de `PublicStorageKey`; con v2 esa clave es la que enlaza el Excel. `PublishFileHandler` (`SetFilePublication.cs:32-43`) valida `FileResource.Publish` antes de copiar, y `Publish` sólo acepta imágenes (`FileResource.cs:248-256`): un comprobante movido en PDF falla ahí con `storage.file.public_image_required`, sin copiar nada, y sólo uno de imagen (WebP) llegaría a `CopyFromPrivateAsync` desde el temporal ya borrado. `README.md:963-964` dice que borrar el archivo no toca su copia, que sólo es cierto para v1. `qep-frontend` no llama a ninguno de los tres endpoints (`git grep` en `origin/develop`). Con D15, los dos primeros rechazan un `PaymentProof` referenciado por un pedido y `PublishFileHandler` rechaza siempre un `PaymentProof`, los tres con `storage.file.invalid_state` (422, `ApiExceptionHandler.cs:145-146`), antes de tocar el bucket; Task 9B corrige también el README.
-14. **Con `Quotations:PaymentProofs:PublicLinks` apagada, un `PaymentProof` adjunto se queda en `staging/` para siempre.** `DisabledPaymentProofPublisher.cs:13-14` devuelve `null`, no hay clave, no hay evento y la sonda de Quotations lo retiene del barrido. Producción la tiene encendida (`k8s/prod-configMap.yaml:73`). Es coherente con D4 y el spec lo acepta como consecuencia de las enmiendas; el barrido itera con `Skip` sobre los retenidos para que no tapen a los demás (Task 9).
-15. **Resuelto por D16 (Task 7B). Adjuntar a otro pedido un `PaymentProof` ya movido fallaba con 500 en R2**, porque el publicador copia desde `resource.StorageKey` (`PublicPaymentProofPublisher.cs:63-64`) y ese temporal ya no existe (el doble en memoria de las pruebas no falla, así que ahí respondía 200). El resolver corre antes que la copia (`ConvertQuotationToOrder.cs:77`, `AddOrderPaymentProofs.cs:79`) y ya rechaza lo no disponible (`OrderPaymentProofResolver.cs:36-41`); con D16, `QuotationFileLookup.FindAsync` (`src/Bootstrapper/QuotationFileLookup.cs:26-38`) informa `IsAvailable = false` para un `PaymentProof` con `PublicStorageKey`. El frontend siempre sube un archivo nuevo por comprobante.
+14. **Con `Quotations:PaymentProofs:PublicLinks` apagada, un `PaymentProof` adjunto se queda en `staging/` mientras el pedido lo use.** `DisabledPaymentProofPublisher.cs:13-14` devuelve `null`, no hay clave, no hay evento de adjunto y la sonda de Quotations lo retiene del barrido. Si el pedido lo suelta, el evento de retiro sale igual y Storage borra el temporal (D19, Tasks 9C y 9D). Producción la tiene encendida (`k8s/prod-configMap.yaml:73`). Es coherente con D4 y el spec lo acepta como consecuencia de las enmiendas; el barrido itera con `Skip` sobre los retenidos para que no tapen a los demás (Task 9).
+15. **Resuelto por D16 (Task 7B). Adjuntar a otro pedido un `PaymentProof` ya movido fallaba con 500 en R2**, porque el publicador copia desde `resource.StorageKey` (`PublicPaymentProofPublisher.cs:63-64`) y ese temporal ya no existe (el doble en memoria de las pruebas no falla, así que ahí respondía 200). El resolver corre antes que la copia (`ConvertQuotationToOrder.cs:77`; `AddOrderPaymentProofs.cs:82` para un comprobante nuevo y `:90` para un archivo de reemplazo) y ya rechaza lo no disponible (`OrderPaymentProofResolver.cs:36-41`); con D16, `QuotationFileLookup.FindAsync` (`src/Bootstrapper/QuotationFileLookup.cs:26-38`) informa `IsAvailable = false` para un `PaymentProof` con `PublicStorageKey`. El frontend siempre sube un archivo nuevo por comprobante.
 16. **Resuelto por D17 (Task 8B). `order_payment_proofs.file_id` y `public_storage_key` no tenían índice** (`QuotationsDbContext.cs:407-431`, con sólo `IX_order_payment_proofs_order`): las dos sondas de Quotations recorrerían la tabla en cada barrido. Dos pruebas de `QuotationsDbContextMappingTests` fijaban ese estado y Task 8B las actualiza: `OrdersMapToTheirRenamedTablesColumnsIndexesAndConstraints` (`:121`, `Assert.Single` sobre los índices del comprobante) y `OrderPaymentProofPublicStorageKeyMapsToANullableColumnWithoutIndex` (`:137-149`).
 17. **`qep-frontend` está en `develop`, dos commits por delante de `origin/develop`** (`1dacc54`, `34aa8d2`) y con 260 archivos marcados como modificados que sólo difieren en fin de línea (`git diff --ignore-all-space --ignore-cr-at-eol` vacío). Por eso Task 11 trabaja en un worktree desde `origin/develop`. `uploadQuoteFile` sólo lo usan los dos hooks de comprobantes (`use-convert-quote-to-order.ts:36`, `use-add-order-payment-proofs.ts:31`); su comentario todavía nombra «el PDF de envío», que el backend ya ignora (`QuotationsDtos.cs:199`).
 18. **`ConfigurationExampleTests.EveryBoundConfigurationKeyIsDocumentedInTheExample`** (`ConfigurationExampleTests.cs:31-48`) se pone rojo en cuanto `StorageOptions` bindea las claves nuevas sin que `appsettings.example.json` las traiga. Es el RED de Task 10.
 19. **`FileResource` no tiene token de concurrencia.** Si un comprobante de más de 24 h se adjunta justo entre la sonda y el `SaveChanges` del barrido, el barrido lo marca `Purged` y el worker de movimiento lo salta: el Excel sigue funcionando con la copia pública y la descarga desde la app falla. Es la «carrera aceptada» de la sección 3 del spec, un paso más allá.
 20. **Resuelto por D18 (Task 1B). `FileUserReferenceProbe` sólo contaba archivos `User`** (`FileUserReferenceProbe.cs:17-20`). Un `PaymentProof` guarda el id del usuario en `OwnerId` (el frontend sube con `ownerId` = el usuario), y sin D18 dejaría de retenerlo en `OrphanUserCleanupWorker`. No hay pruebas directas de la sonda: la cubre `OrphanUserCleanupTests.OwningAFileKeepsTheUser` (`tests/Modules/Identity/Modules.Identity.IntegrationTests/OrphanUserCleanupTests.cs:130-149`, que siembra con `SeedFileAsync`, `:367-382`), y Task 1B la extiende con un comprobante.
 21. **El nombre de un archivo mide hasta 260** (`StorageDbContext.cs:34`, `FileUploadPolicy.cs:33-38`). Pasar de `.png` a `.webp` puede superar el tope por uno: `ReplaceContentWithProcessedImage` recorta la base, nunca la extensión.
+22. **Resuelto por D19 (Tasks 6, 9C y 9D; conflicto C1 del pre-flight). `develop` agregó reemplazar y quitar comprobantes** (`1439897`, en la base desde el rebase). `AddOrderPaymentProofsHandler` (`AddOrderPaymentProofs.cs:56-178`) resuelve cada `UpdatedProofs[].NewFileId` (`:86-93`), captura la clave vieja antes de mutar (`:111-118`), publica el reemplazo con `PaymentProofCopies.PublishReplacementAsync` (`:125-138`, `PaymentProofCopies.cs:46-56`) y, después de guardar, borra la clave vieja best-effort (`:163-174`). `Order.AddPaymentProofs` llama a `OrderPaymentProof.UpdateFile(fileId, publicStorageKey)` (`Order.cs:182-185`, `OrderPaymentProof.cs:113-124`), que pisa `FileId` y `PublicStorageKey`. `RemoveOrderPaymentProofHandler` (`RemoveOrderPaymentProof.cs:16-58`) llama a `Order.RemovePaymentProof` (`Order.cs:246-263`) y no borra nada; el mapeo en cascada de `order_payment_proofs` (`QuotationsDbContext.cs:435-438`) borra la fila. Sin D19, en v2 el archivo de reemplazo no entraba en el evento de adjuntos (nunca se movía) y el borrado best-effort de Quotations dejaba al `FileResource` movido apuntando a un objeto borrado. Ninguna prueba construye estos handlers a mano (`git grep "new AddOrderPaymentProofsHandler\|new RemoveOrderPaymentProofHandler" -- tests` vacío): se registran por tipo en `QepServiceCollectionExtensions.cs:365-367`. Las pruebas de `develop` que los ejercen son `OrderApiTests.AddOrderPaymentProofsReplacesTheFileOfAnExistingProof`, `RemoveOrderPaymentProofRemovesAnExistingProof`, `RemoveOrderPaymentProofRejectsAnUnknownProof` y `RemoveOrderPaymentProofOnAnApprovedOrderIsRejected` (`OrderApiTests.cs:834-956`), todas con `publicPaymentProofLinks` apagado y archivos `User`: D19 no cambia lo que afirman.
 
 **Decisiones de este plan donde el spec deja margen:**
 
 - **`occurredAt` de `MoveToPublic` es el `occurred_at` del mensaje**, es decir, cuando se guardó el pedido: desde ahí el comprobante es público (la copia ya existía). Reintentar el mensaje no mueve la fecha.
-- **El worker de movimiento salta, sin fallar, un `fileId` que no es `PaymentProof`, que no es del tenant del evento, que no está `Available` o que ya tiene clave pública**, y marca el inbox igual. Un mensaje que no puede aplicarse nunca no debe reintentarse cada 3 s para siempre.
+- **El worker de movimiento salta, sin fallar, un `fileId` que no es `PaymentProof`, que no es del tenant del evento, que no está `Available` o que ya tiene clave pública**, y marca el inbox igual. Un mensaje que no puede aplicarse nunca no debe reintentarse cada 3 s para siempre. La misma regla cubre la carrera de D19: un comprobante que su pedido soltó y Storage purgó antes de moverlo ya no está `Available` (Task 9C lo prueba).
 - **La auditoría de los barridos va por `PublishSystem`**, con `actorType = "System"` y `actorId = Guid.Empty` (hallazgo 10). La purga de un objeto huérfano va con `tenantId = null`, `resourceType = "public_object"`, `resourceId` = la clave y `outcome = "success"`; la de un comprobante no adjuntado, con `resourceType = "file"` y `outcome = "payment_proof_not_attached"`.
 - **Storage registra su propia `IPublicObjectReferenceProbe`** para `FileResource.PublicStorageKey`, así la reconciliación sólo recorre sondas y no mezcla una consulta propia con las de otros módulos.
 - **`IntervalHours` va de 1 a 1193.** `PeriodicTimer` no acepta períodos de más de `uint.MaxValue - 1` ms (≈ 1193 h) y con uno mayor el worker tumbaría el host. `MinimumAgeHours` sólo tiene que ser mayor que cero.
@@ -154,12 +161,19 @@ Verificados en `feature/comprobantes-publicos-v2` (HEAD `aa1c6dd`, el commit del
 - **Tasks 1, 2 y 3 tienen RED de compilación**: agregan API nueva (métodos de dominio, una clase y un miembro de interfaz) y no hay comportamiento previo que contradecir. Task 2 suma además un RED de aserción para el descarte de EXIF, ICC y XMP: la implementación entra primero sin esas tres líneas. Task 1B y desde Task 4 cada tarea tiene al menos un RED de aserción.
 - **Las enmiendas van en tareas propias con sufijo B** (1B, 7B, 8B y 9B), justo después de la tarea de la que dependen, para no renumerar las referencias cruzadas entre tareas. D18 (1B) necesita `FileOwnerType.PaymentProof` (Task 1); D16 (7B), el movimiento real (Task 7); D17 (8B) va antes de Task 9 para que las dos sondas de Quotations (Tasks 9 y 10) nazcan con su índice; D15 (9B) necesita `IFileReferenceProbe` (Task 9).
 - **D15 se ejerce por los handlers, no por el dominio.** La referencia la sabe Quotations, y `FileResource` no puede preguntar a una sonda: la guarda vive en `Modules.Storage.Application` (`PaymentProofGuard`) y `SoftDeleteFileHandler` y `UnpublishFileHandler` reciben `IEnumerable<IFileReferenceProbe>`, igual que `StagingCleanupProcessor`. Un `PaymentProof` referenciado se rechaza esté movido o no: el spec no distingue.
+- **D19 va en dos tareas con sufijo C y D, después de 9B**, para no renumerar: Task 9C (Storage) necesita el inbox de Task 7 e `IFileReferenceProbe` y `PublishSystem` de Task 9; Task 9D (Quotations) escribe el evento que 9C consume. Storage va primero para que cada commit quede coherente: hasta 9D nadie escribe el evento y el borrado best-effort de `develop` sigue en su lugar; 9D lo quita en el mismo commit en que empieza a publicar. El archivo de reemplazo entra en el evento de adjuntos desde Task 6, porque es el mismo evento.
+- **El retiro corre en `PaymentProofMoveWorker`, en el mismo tick y después del movimiento, cada procesador en su scope.** Un worker aparte podría tocar el mismo `FileResource` a la vez que el movimiento en la misma réplica (hallazgo 19: `FileResource` no tiene token de concurrencia), y el harness de Storage ya saca ese worker del host. La carrera que queda —el retiro antes del movimiento, por un tick fallido o por otra réplica— la cubren las dos reglas de D19: la purga de uno sin mover borra el temporal y la copia del evento, y el movimiento ya salta lo que no está `Available` (Task 7).
+- **La fecha de la purga de D19 es `clock.UtcNow`**, como el barrido, no el `occurred_at` del mensaje: registra cuándo se borró el objeto, no cuándo se soltó.
+- **`PurgeDetachedPaymentProof` conserva `PublicStorageKey`** como registro de dónde estuvo el comprobante. El objeto ya está borrado cuando se guarda, un recurso `Purged` no se descarga (`EnsureDownloadable`) ni se adjunta (D16), y `FilePublicObjectReferenceProbe` (Task 10) lo cuenta como referenciado sin efecto: la reconciliación no lista un objeto que ya no existe.
+- **Quotations sólo suelta los archivos que el pedido deja de usar** (`PaymentProofCopies.DetachedFrom`, contra los `FileId` que quedan después de mutar): si otro comprobante del mismo pedido usa el mismo archivo, no hay evento para ese archivo. Los de otros pedidos los retiene la sonda, en Storage.
+- **Un archivo `User` soltado sólo pierde la copia de ese adjunto**, sin preguntar a las sondas: `PublicPaymentProofPublisher` genera una clave aleatoria por adjunto (`PublicPaymentProofPublisher.cs:63`), así que ningún otro comprobante la usa, y el original privado no se toca (D13). Si un `PaymentProof` retenido, o ya movido con otra clave, deja una copia sin dueño, es un huérfano para la reconciliación (D12).
+- **Task 9C tiene RED de aserción en dos fases**, como Task 2: el procesador entra primero sin las líneas que borran la copia de un comprobante soltado antes de moverse, y la prueba de la carrera lo ve.
 
 ## Entrega
 
 | Commit | Tarea |
 | --- | --- |
-| `docs(orders): plan de comprobantes de pago v2` | 0 |
+| Ninguno: el spec (`a8a5424`, `df294d7`, `da80432`) y el plan (`01a56fe`, `docs(storage): plan v2 rebasado sobre develop y con D19`) ya están commiteados | 0 |
 | `feat(storage): comprobantes de pago como dueño propio en el dominio` | 1 |
 | `feat(storage): los comprobantes de pago retienen a quien los subió` | 1B |
 | `feat(storage): procesar imágenes de comprobantes a WebP` | 2 |
@@ -173,6 +187,8 @@ Verificados en `feature/comprobantes-publicos-v2` (HEAD `aa1c6dd`, el commit del
 | `feat(orders): índices de las sondas de comprobantes` | 8B |
 | `feat(storage): purgar los comprobantes que nadie adjuntó` | 9 |
 | `feat(storage): proteger la copia pública de un comprobante adjunto` | 9B |
+| `feat(storage): purgar el comprobante que un pedido suelta` | 9C |
+| `feat(orders): soltar el archivo al reemplazar o quitar un comprobante` | 9D |
 | `feat(storage): reconciliar los huérfanos de payment-proofs/` | 10 |
 | `feat(quotes): subir los comprobantes de pago como PaymentProof` (en `qep-frontend`) | 11 |
 | sólo si la verificación final pide cambios | 12 |
@@ -187,20 +203,20 @@ Ninguna rama se publica ni se mergea desde este plan. El orden de despliegue es 
 
 | Archivo | Tarea | Responsabilidad |
 | --- | --- | --- |
-| `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileResourceTests.cs` | 1 | Los tres métodos de dominio nuevos |
+| `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileResourceTests.cs` | 1, 9C | Los métodos de dominio nuevos; la purga de D19 desde 9C |
 | `src/Modules/Storage/Modules.Storage.Application/IPaymentProofImageProcessor.cs` | 2 | Puerto y resultado del procesamiento (D7) |
 | `src/Modules/Storage/Modules.Storage.Infrastructure/Imaging/ImageSharpPaymentProofImageProcessor.cs` | 2 | ImageSharp: 2000 px, sin agrandar, WebP 80 |
 | `tests/Modules/Storage/Modules.Storage.UnitTests/ImageSharpPaymentProofImageProcessorTests.cs` | 2 | Tamaños, calidad y corruptos |
 | `tests/Modules/Storage/Modules.Storage.UnitTests/R2PublicObjectStorageTests.cs` | 3 | El listado contra el cliente S3 |
-| `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofStorageHarness.cs` | 4, 7, 9, 10 | Factoría, dobles de los dos buckets y helpers |
+| `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofStorageHarness.cs` | 4, 7, 9, 9C, 10 | Factoría, dobles de los dos buckets y helpers |
 | `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofUploadTests.cs` | 4 | `CompleteUpload` con `PaymentProof` |
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/OrderPaymentProofResolverTests.cs` | 5 | Tipos aceptados |
-| `src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs` | 6 | Puerto del evento (D9) |
-| `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs` | 6 | Escribe el evento en el outbox |
+| `src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs` | 6, 9D | Puerto de los eventos de adjunto (D9) y de retiro (D19) |
+| `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs` | 6, 9D | Escribe los dos eventos en el outbox |
 | `src/Modules/Storage/Modules.Storage.Infrastructure/Persistence/StorageInboxMessage.cs` | 7 | Guarda de idempotencia |
 | `src/Modules/Storage/Modules.Storage.Infrastructure/Persistence/Migrations/<ts>_AddStorageInbox.cs` (+ `.Designer.cs`) | 7 | `storage.inbox_messages` (generada) |
 | `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveProcessor.cs` | 7 | Borrar el temporal y registrar el movimiento |
-| `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveWorker.cs` | 7 | Temporizador de 3 s |
+| `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveWorker.cs` | 7, 9C | Temporizador de 3 s; desde 9C corre también el retiro, después del movimiento |
 | `tests/Modules/Storage/Modules.Storage.UnitTests/StorageDbContextMappingTests.cs` | 7 | Mapeo del inbox y modelo sin migración pendiente |
 | `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofMoveTests.cs` | 7 | El procesador de movimiento |
 | `tests/Bootstrapper/Bootstrapper.UnitTests/QuotationFileLookupTests.cs` | 7B | Un comprobante movido no está disponible (D16) |
@@ -216,6 +232,8 @@ Ninguna rama se publica ni se mergea desde este plan. El orden de despliegue es 
 | `src/Modules/Storage/Modules.Storage.Application/PaymentProofGuard.cs` | 9B | La guarda de D15 |
 | `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileManagementTests.cs` | 9B | Borrar, despublicar y publicar un comprobante (D15) |
 | `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofFileManagementApiTests.cs` | 9B | `DELETE /files/{id}` de un comprobante movido |
+| `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofDetachProcessor.cs` | 9C | Borrar y purgar lo que un pedido suelta (D19) |
+| `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofDetachTests.cs` | 9C | El procesador de retiro y la carrera con el movimiento |
 | `src/BuildingBlocks/BuildingBlocks.Application/IPublicObjectReferenceProbe.cs` | 10 | Sonda de claves públicas (D12) |
 | `src/Modules/Storage/Modules.Storage.Infrastructure/Persistence/FilePublicObjectReferenceProbe.cs` | 10 | Storage: `FileResource.PublicStorageKey` |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofPublicObjectReferenceProbe.cs` | 10 | Quotations: `OrderPaymentProof.PublicStorageKey` |
@@ -228,26 +246,27 @@ Ninguna rama se publica ni se mergea desde este plan. El orden de despliegue es 
 | Archivo | Tarea | Qué cambia |
 | --- | --- | --- |
 | `src/Modules/Storage/Modules.Storage.Domain/FileResourceEnums.cs:19-28` | 1 | `PaymentProof = 5` |
-| `src/Modules/Storage/Modules.Storage.Domain/FileResource.cs` | 1 | Tres métodos y un helper |
-| `src/Modules/Storage/Modules.Storage.Infrastructure/Persistence/FileUserReferenceProbe.cs:7-20` | 1B | Cuenta también los `PaymentProof` (D18) |
+| `src/Modules/Storage/Modules.Storage.Domain/FileResource.cs` | 1, 9C | Tres métodos, un helper y la constante `MaxNameLength` (1); `PurgeDetachedPaymentProof` (9C) |
+| `src/Modules/Storage/Modules.Storage.Infrastructure/Persistence/FileUserReferenceProbe.cs:1-21` | 1B | Cuenta también los `PaymentProof` (D18) |
 | `tests/Modules/Identity/Modules.Identity.IntegrationTests/OrphanUserCleanupTests.cs:130-149,367-382` | 1B | Un comprobante retiene al usuario |
 | `src/Modules/Storage/Modules.Storage.Application/IPublicObjectStorage.cs` | 3 | `ListAsync` y sus records |
 | `src/Modules/Storage/Modules.Storage.Infrastructure/ObjectStorage/R2PublicObjectStorage.cs` | 3 | `ListAsync` con `ListObjectsV2` |
 | `tests/Bootstrapper/Bootstrapper.UnitTests/StorageTestDoubles.cs:36-60` | 3 | `ListAsync` en el doble |
-| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs` | 3, 7 | `ListAsync`; `ConcurrentDictionary`, `ownerType` y helper de imagen |
+| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs` | 3, 7, 9D | `ListAsync`; `ConcurrentDictionary`, `ownerType` y helper de imagen; el bucket público en memoria, concurrente |
 | `src/Modules/Storage/Modules.Storage.Application/CompleteUpload.cs` | 4 | Rama de `PaymentProof` |
-| `src/Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs:37-54` | 4, 7, 9, 10 | Registros nuevos |
+| `src/Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs:37-54` | 4, 7, 9, 9C, 10 | Registros nuevos |
 | `src/Modules/Quotations/Modules.Quotations.Application/OrderPaymentProofResolver.cs:13-48` | 5, 7B | `image/webp`; mensaje de no disponible |
 | `src/Bootstrapper/QuotationFileLookup.cs:26-38` | 7B | `IsAvailable = false` para un comprobante movido (D16) |
-| `src/Bootstrapper/PublicPaymentProofPublisher.cs:31-39,73-78` | 5 | `image/webp → .webp` |
+| `src/Bootstrapper/PublicPaymentProofPublisher.cs:8-19,31-39,73-78` | 5, 9B, 9D | `image/webp → .webp` (5); el resumen de la clase con D15 (9B) y D19 (9D) |
 | `tests/Bootstrapper/Bootstrapper.UnitTests/PaymentProofPublisherTests.cs:55-58` | 5 | Fila `.webp` |
-| `docs/integracion-cotizaciones-y-pedidos.md:110-128` | 5, 7 | WebP; `PaymentProof` y el movimiento |
-| `src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs` | 6 | `AttachedFrom` |
+| `docs/integracion-cotizaciones-y-pedidos.md:110-128` | 5, 7, 8, 9D | WebP; `PaymentProof` y el movimiento (7); la URL de descarga (8); reemplazar y quitar (9D) |
+| `src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs:70-77` | 6, 9D | `AttachedFrom` y `AttachedFromReplacements` (6); `DetachedFrom` (9D) |
 | `src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs:42-132` | 6 | Escribe el evento |
-| `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs:53-117` | 6 | Escribe el evento |
+| `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs:56-178` | 6, 9D | Evento de adjuntos con los reemplazos (6); evento de retiro y sin el borrado best-effort (9D) |
+| `src/Modules/Quotations/Modules.Quotations.Application/RemoveOrderPaymentProof.cs:16-58` | 9D | Evento de retiro (D19) |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:43,51` | 6, 9, 10 | Publicador y sondas |
-| `tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs` | 6 | `AttachedFrom` |
-| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs` | 6, 7, 7B | Evento; movimiento de punta a punta; adjuntar uno movido |
+| `tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs` | 6, 9D | `AttachedFrom`, `AttachedFromReplacements` y `DetachedFrom` |
+| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs` | 6, 7, 7B, 9D | Evento; movimiento de punta a punta; adjuntar uno movido; reemplazar y quitar (D19) |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationsDbContext.cs:425-431` | 8B | Dos índices (D17) |
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/Migrations/QuotationsDbContextModelSnapshot.cs` | 8B | Regenerado por `dotnet ef` |
 | `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsDbContextMappingTests.cs:117-149` | 8B | Los índices del comprobante |
@@ -266,8 +285,8 @@ Ninguna rama se publica ni se mergea desde este plan. El orden de despliegue es 
 | `src/Api/appsettings.json:22-33`, `src/Api/appsettings.example.json:51-71` | 10 | Las tres claves |
 | `k8s/prod-configMap.yaml:53` | 10 | `DryRun: "true"` literal |
 | Las 39 factorías (hallazgo 6) | 10 | Fijan `DryRun`, `MinimumAgeHours` e `IntervalHours` |
-| `README.md:963-964` | 9B | Borrar y despublicar un comprobante (D15) |
-| `README.md:123,950,970` | 10 | Claves y la sección de comprobantes |
+| `README.md:963-964` | 9B, 9D | Borrar y despublicar un comprobante (D15); reemplazar o quitar borra el archivo (D19, un bullet nuevo debajo) |
+| `README.md:123,950,982` | 10 | Claves y la sección de comprobantes |
 
 **Frontend (`qep-frontend`, Task 11)**
 
@@ -278,14 +297,14 @@ Ninguna rama se publica ni se mergea desde este plan. El orden de despliegue es 
 
 El worktree y el baseline de Vitest, lint y build se crean en Task 0 (Step 6); la suite completa se vuelve a correr en Task 12 (Step 4).
 
-**No se tocan, a propósito:** `FileResource.Publish` (D10), `FileUploadPolicy` (ya acepta `.webp`), `OrderPaymentProofResponse` y los endpoints de Quotations, las migraciones históricas, `Dockerfile` y `ci.yml` (no hay proyectos nuevos ni paquetes nuevos: ImageSharp llega transitivo a los proyectos de prueba y ningún `packages.lock.json` cambia).
+**No se tocan, a propósito:** `FileResource.Publish` (D10), `FileUploadPolicy` (ya acepta `.webp`), `OrderPaymentProofResponse` y los endpoints de Quotations (D19 cambia los handlers, no las rutas ni las respuestas), las migraciones históricas, `Dockerfile` y `ci.yml` (no hay proyectos nuevos ni paquetes nuevos: ImageSharp llega transitivo a los proyectos de prueba y ningún `packages.lock.json` cambia).
 
 ---
 
 ### Task 0: Rama, herramientas y baseline
 
 **Files:**
-- Ninguno de código. Commitea este plan.
+- Ninguno. El spec y este plan ya están commiteados (pre-flight C5): Step 7 sólo lo comprueba.
 
 **Interfaces:**
 - Consumes: nada.
@@ -312,8 +331,9 @@ bun --version
 
 Esperado:
 - la rama es `feature/comprobantes-publicos-v2`. Si es otra, **para y pregunta**;
-- `git status` vacío, o sólo `?? docs/superpowers/plans/2026-09-16-comprobantes-publicos-v2.md`;
-- el `git log` desde la base trae `docs(orders): spec de comprobantes de pago v2 (temporal, procesar y mover al público)`, `docs(orders): enmiendas D15-D18 al spec de comprobantes v2` y, si ya está commiteado, el del plan; nada más. Si aparece otro commit, **para y pregunta**;
+- `git status` vacío;
+- la base (`git merge-base origin/develop HEAD`) es `528d368` o un commit posterior de `origin/develop` que ya contiene a `1439897`. Si es anterior, la rama no está rebasada: **para y pregunta**;
+- el `git log` desde la base trae exactamente cinco commits de documentación, en este orden: `docs(orders): spec de comprobantes de pago v2 (temporal, procesar y mover al público)`, `docs(orders): enmiendas D15-D18 al spec de comprobantes v2`, `docs(storage): plan de implementación de comprobantes públicos v2`, `docs(orders): enmienda D19 al spec de comprobantes v2 (reemplazo y retiro)` y `docs(storage): plan v2 rebasado sobre develop y con D19`. Si aparece otro commit, **para y pregunta**;
 - `git rev-parse ... @{u}` falla con `no upstream configured`: es a propósito, no lo corrijas;
 - `Get-Process` sin salida; `docker info` devuelve una versión; `dotnet ef` devuelve `10.0.11`; `bun` devuelve una versión.
 
@@ -453,22 +473,18 @@ Get-Content (Join-Path $env:TEMP "qep-comprobantes-v2-frontend-baseline-failed.t
 
 Esperado: el JSON existe; el total de pruebas es mayor que cero; la lista de fallas previas, posiblemente vacía; y los dos exit codes. Pega todo en el handoff: un lint o un build con exit distinto de `0` en `origin/develop` es deuda previa, y Task 12 sólo exige no empeorarla. Si `bun run test` no escribe el JSON (por ejemplo, porque la versión de Vitest no acepta `--outputFile.json`), **para y pregunta** antes de cambiar el comando.
 
-- [ ] **Step 7: Commitear el plan**
+- [ ] **Step 7: Comprobar que el plan y el spec ya están commiteados**
+
+No hay nada que commitear en esta tarea (pre-flight C5): el spec va en `a8a5424`, `df294d7` y `da80432`, y el plan en `01a56fe` y en su versión rebasada con D19.
 
 ```powershell
 Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
-git status --short -- docs/superpowers/plans/2026-09-16-comprobantes-publicos-v2.md
+git status --short -- docs/superpowers
+$base = git merge-base origin/develop HEAD
+git log --format=%B "$base..HEAD" | Select-String -SimpleMatch "Co-Authored-By"
 ```
 
-Si la salida muestra el plan (`??` o ` M`):
-
-```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
-if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add docs/superpowers/plans/2026-09-16-comprobantes-publicos-v2.md; git commit -m "docs(orders): plan de comprobantes de pago v2"
-git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
-```
-
-Esperado: el commit creado y el `Select-String` sin salida. Si el primer comando no mostró nada, el plan ya estaba commiteado.
+Esperado: las dos salidas vacías. Si `git status` muestra el plan o el spec modificados, **para y pregunta**: alguien los cambió después de commitearlos.
 
 ---
 
@@ -478,7 +494,7 @@ Esperado: el commit creado y el `Select-String` sin salida. Si el primer comando
 
 **Files:**
 - Modify: `src/Modules/Storage/Modules.Storage.Domain/FileResourceEnums.cs:25-27`
-- Modify: `src/Modules/Storage/Modules.Storage.Domain/FileResource.cs` (después de `PurgeAbandonedUpload`, `:168-174`, y antes de `RequireStatus`, `:288`)
+- Modify: `src/Modules/Storage/Modules.Storage.Domain/FileResource.cs` (la constante `MaxNameLength` antes del constructor, `:13`; los métodos después de `PurgeAbandonedUpload`, `:168-174`, y el helper antes de `RequireStatus`, `:288`)
 - Test: `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileResourceTests.cs` (nuevo)
 
 **Interfaces:**
@@ -2770,25 +2786,25 @@ Esperado: `git status --short` vacío y el `Select-String` sin salida.
 
 ### Task 6: El evento `quotations.order.payment-proofs-attached.v1` en el outbox
 
-D9, paso 2: al convertir y al sumar comprobantes, en la misma unidad de trabajo que el pedido, Quotations escribe un evento con `tenantId`, `orderId` y, por cada comprobante nuevo **con copia pública**, `fileId` y `publicStorageKey`. Todavía nadie lo consume: eso es Task 7. Un comprobante sin clave (opción apagada) no tiene nada que mover y no entra en el evento; si ningún comprobante tiene clave, no hay evento.
+D9, paso 2: al convertir y al sumar comprobantes, en la misma unidad de trabajo que el pedido, Quotations escribe un evento con `tenantId`, `orderId` y, por cada comprobante nuevo **con copia pública**, `fileId` y `publicStorageKey`. Desde el rebase sobre `develop` (hallazgo 22) un comprobante corregido con `UpdatedProofs[].NewFileId` también cambia de archivo, y D19 lo cuenta como comprobante nuevo: su archivo de reemplazo entra en el mismo evento con la clave que le dio `PaymentProofCopies.PublishReplacementAsync`. Todavía nadie lo consume: eso es Task 7. Un comprobante sin clave (opción apagada) no tiene nada que mover y no entra en el evento; si ningún comprobante tiene clave, no hay evento. El borrado best-effort de la clave vieja que `develop` hace después de guardar (`AddOrderPaymentProofs.cs:163-174`) **no** se toca acá: lo quita Task 9D, en el mismo commit en que Quotations empieza a escribir el evento de retiro de D19.
 
 **Files:**
 - Create: `src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs`
 - Create: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs`
-- Modify: `src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs:52-59`
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs:70-77`
 - Modify: `src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs:49-50,125-132`
-- Modify: `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs:58-59,110-117`
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs:61-62,151-155`
 - Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:43`
-- Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs` (una prueba al final)
-- Test: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs` (cinco pruebas)
+- Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs` (dos pruebas al final)
+- Test: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs` (seis pruebas)
 
 **Interfaces:**
-- Consumes: `OrderPaymentProofInput(Guid FileId, decimal Amount, string? PublicStorageKey = null)` y `PaymentProofCopies` (v1); `QuotationsApiHarness.OutboxMessagesAsync(WebApplicationFactory<Program> factory, string eventName)` (`QuotationsApiHarness.cs:555-565`).
+- Consumes: `OrderPaymentProofInput(Guid FileId, decimal Amount, string? PublicStorageKey = null)` y `PaymentProofCopies` (v1); `OrderPaymentProofAmountUpdate(OrderPaymentProofId ProofId, decimal Amount, Guid? NewFileId = null, string? NewPublicStorageKey = null)` (`Order.cs:333-337`) y `OrderPaymentProofUpdateRequest(Guid ProofId, decimal Amount, Guid? NewFileId = null)` (`OrdersDtos.cs:34-35`), de `develop`; `QuotationsApiHarness.OutboxMessagesAsync(WebApplicationFactory<Program> factory, string eventName)` (`QuotationsApiHarness.cs:555-565`).
 - Produces:
   - `public interface IOrderPaymentProofEventPublisher { void PublishAttached(Guid tenantId, OrderId orderId, IReadOnlyCollection<AttachedPaymentProof> proofs, DateTimeOffset occurredAt); }` y `public sealed record AttachedPaymentProof(Guid FileId, string PublicStorageKey);` en `Modules.Quotations.Application`.
   - `internal sealed class OrderPaymentProofEventPublisher(QuotationsDbContext dbContext)` con `internal const string AttachedEventName = "quotations.order.payment-proofs-attached.v1"`.
   - Payload JSON (contrato que Task 7 lee por nombre): `{ "tenantId": Guid, "orderId": Guid, "proofs": [ { "fileId": Guid, "publicStorageKey": string } ] }`. `CorrelationId` = id del pedido; `OccurredAt` = el `now` del handler.
-  - `internal static AttachedPaymentProof[] PaymentProofCopies.AttachedFrom(IEnumerable<OrderPaymentProofInput> inputs)`.
+  - `public static AttachedPaymentProof[] PaymentProofCopies.AttachedFrom(IEnumerable<OrderPaymentProofInput> inputs)` y `public static AttachedPaymentProof[] PaymentProofCopies.AttachedFromReplacements(IEnumerable<OrderPaymentProofAmountUpdate> updates)`, públicos dentro de la clase `internal` (pre-flight C6), como los demás miembros de `PaymentProofCopies`. Task 9D les suma `DetachedFrom`.
 
 - [ ] **Step 1: Escribir las pruebas de integración (RED)**
 
@@ -2889,6 +2905,40 @@ por:
         var proof = Assert.Single(added.Proofs);
         Assert.Equal(secondFileId, proof.FileId);
         Assert.Contains(proof.PublicStorageKey, await PublicKeysAsync(factory, order.Id));
+    }
+
+    // D9 y D19: el archivo de reemplazo de un comprobante corregido (UpdatedProofs[].NewFileId, de
+    // develop) es un comprobante nuevo para Storage, así que entra en el evento con la clave de su copia.
+    [Fact]
+    public async Task ReplacingAProofFileWithPublicLinksOnWritesAnEventWithTheReplacement()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", firstFileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var replacementFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, replacementFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var messages = await OutboxMessagesAsync(factory, AttachedEventName);
+        Assert.Equal(2, messages.Count);
+        var replaced = JsonSerializer.Deserialize<AttachedEventPayload>(messages[1].PayloadJson, Json);
+        Assert.NotNull(replaced);
+        Assert.Equal(order.Id, replaced.OrderId);
+        var proof = Assert.Single(replaced.Proofs);
+        Assert.Equal(replacementFileId, proof.FileId);
+        Assert.Equal(Assert.Single(await PublicKeysAsync(factory, order.Id)), proof.PublicStorageKey);
     }
 
     // Sin copia pública no hay nada que mover: la opción apagada no escribe el evento. Ya pasa antes
@@ -3013,6 +3063,24 @@ por:
 
         Assert.Equal([new AttachedPaymentProof(withKey, "payment-proofs/abc.webp")], attached);
     }
+
+    // D9 y D19: de las correcciones, sólo un archivo de reemplazo con copia pública tiene algo que mover.
+    // Corregir sólo el monto no cambia el archivo.
+    [Fact]
+    public void OnlyTheReplacementFilesWithAPublicKeyAreAttached()
+    {
+        var replacedWithKey = Guid.CreateVersion7();
+        var replacedWithoutKey = Guid.CreateVersion7();
+
+        var attached = PaymentProofCopies.AttachedFromReplacements(
+        [
+            new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 10_000m, replacedWithKey, "payment-proofs/def.webp"),
+            new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 5_000m, replacedWithoutKey),
+            new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 7_000m),
+        ]);
+
+        Assert.Equal([new AttachedPaymentProof(replacedWithKey, "payment-proofs/def.webp")], attached);
+    }
 }
 ```
 
@@ -3023,13 +3091,13 @@ Con Docker corriendo:
 ```powershell
 Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
-dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests.ConvertingWithPublicLinksOnWritesTheAttachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.AddingProofsWithPublicLinksOnWritesAnEventWithOnlyTheNewProof|FullyQualifiedName~OrderPaymentProofPublicationApiTests.ConvertingWithPublicLinksOffWritesNoAttachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.CorrectingOnlyAmountsWritesNoNewAttachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.AConversionWhoseCopyFailsWritesNoAttachedEvent"
+dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests.ConvertingWithPublicLinksOnWritesTheAttachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.AddingProofsWithPublicLinksOnWritesAnEventWithOnlyTheNewProof|FullyQualifiedName~OrderPaymentProofPublicationApiTests.ReplacingAProofFileWithPublicLinksOnWritesAnEventWithTheReplacement|FullyQualifiedName~OrderPaymentProofPublicationApiTests.ConvertingWithPublicLinksOffWritesNoAttachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.CorrectingOnlyAmountsWritesNoNewAttachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.AConversionWhoseCopyFailsWritesNoAttachedEvent"
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --no-restore --filter "FullyQualifiedName~PaymentProofCopiesTests"
 ```
 
 Esperado:
-- integración (RED de aserción), `Con error: 3, Superado: 2`: `ConvertingWithPublicLinksOnWritesTheAttachedEvent` y `CorrectingOnlyAmountsWritesNoNewAttachedEvent` con `Assert.Single() Failure: The collection was empty`; `AddingProofsWithPublicLinksOnWritesAnEventWithOnlyTheNewProof` con `Assert.Equal() Failure: Values differ` → `Expected: 2`, `Actual: 0`. Pasan las dos que protegen caminos que ya existen;
-- unitarias (RED de compilación): `error CS0117: 'PaymentProofCopies' no contiene una definición para 'AttachedFrom'` y `CS0246` por `AttachedPaymentProof`.
+- integración (RED de aserción), `Con error: 4, Superado: 2`: `ConvertingWithPublicLinksOnWritesTheAttachedEvent` y `CorrectingOnlyAmountsWritesNoNewAttachedEvent` con `Assert.Single() Failure: The collection was empty`; `AddingProofsWithPublicLinksOnWritesAnEventWithOnlyTheNewProof` y `ReplacingAProofFileWithPublicLinksOnWritesAnEventWithTheReplacement` con `Assert.Equal() Failure: Values differ` → `Expected: 2`, `Actual: 0`. Pasan las dos que protegen caminos que ya existen;
+- unitarias (RED de compilación): `error CS0117: 'PaymentProofCopies' no contiene una definición para 'AttachedFrom'`, lo mismo para `'AttachedFromReplacements'`, y `CS0246` por `AttachedPaymentProof`.
 
 Pega las dos salidas.
 
@@ -3157,6 +3225,15 @@ por:
             .Where(input => input.PublicStorageKey is not null)
             .Select(input => new AttachedPaymentProof(input.FileId, input.PublicStorageKey!))
             .ToArray();
+
+    /// <summary>Los archivos de reemplazo que quedaron con copia pública (spec 2026-09-16, D9 y D19):
+    /// para Storage son comprobantes nuevos. Una corrección sólo de monto no trae archivo.</summary>
+    public static AttachedPaymentProof[] AttachedFromReplacements(
+        IEnumerable<OrderPaymentProofAmountUpdate> updates) =>
+        updates
+            .Where(update => update.NewFileId is not null && update.NewPublicStorageKey is not null)
+            .Select(update => new AttachedPaymentProof(update.NewFileId!.Value, update.NewPublicStorageKey!))
+            .ToArray();
 }
 ```
 
@@ -3211,7 +3288,7 @@ por:
             await unitOfWork.SaveChangesAsync(cancellationToken);
 ```
 
-En `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs`, reemplaza:
+En `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs` (el de `develop`, con `UpdatedProofs[].NewFileId`: `proofs` y `updatedProofs` son las dos variables que arma el `try` antes de `order.AddPaymentProofs`, `:122-146`), reemplaza:
 
 ```csharp
     IPaymentProofPublisher paymentProofPublisher,
@@ -3243,8 +3320,11 @@ por:
                 order.Id.ToString(),
                 "success",
                 now);
-            // D9 (spec 2026-09-16): sólo los comprobantes nuevos; corregir un monto no mueve nada.
-            var attached = PaymentProofCopies.AttachedFrom(proofs);
+            // D9 y D19 (spec 2026-09-16): los comprobantes nuevos y los archivos de reemplazo; corregir
+            // sólo un monto no mueve nada.
+            var attached = PaymentProofCopies.AttachedFrom(proofs)
+                .Concat(PaymentProofCopies.AttachedFromReplacements(updatedProofs))
+                .ToArray();
             if (attached.Length > 0)
             {
                 paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
@@ -3262,7 +3342,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests"
 ```
 
-Esperado: `Modules.Quotations.UnitTests` entero con `Con error: 0`; `OrderPaymentProofPublicationApiTests` con `Superado: 14`, `Con error: 0` (las 9 de v1 y las 5 nuevas). Pega los resúmenes.
+Esperado: `Modules.Quotations.UnitTests` entero con `Con error: 0`; `OrderPaymentProofPublicationApiTests` con `Superado: 15`, `Con error: 0` (las 9 de v1 y las 6 nuevas). Pega los resúmenes.
 
 - [ ] **Step 9: Build completo y chequeo de formato**
 
@@ -3278,7 +3358,7 @@ Esperado: `0 Advertencia(s)` y `0 Errores`. Después corre «el chequeo de forma
 
 ```powershell
 Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
-if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs; git commit -m "feat(orders): evento de comprobantes adjuntados en el outbox" -m "Convertir y sumar comprobantes escriben quotations.order.payment-proofs-attached.v1 en la misma transacción que el pedido, con cada comprobante nuevo que tiene copia pública (spec 2026-09-16, D9)."
+if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs; git commit -m "feat(orders): evento de comprobantes adjuntados en el outbox" -m "Convertir y sumar comprobantes escriben quotations.order.payment-proofs-attached.v1 en la misma transacción que el pedido, con cada comprobante nuevo y cada archivo de reemplazo que tiene copia pública (spec 2026-09-16, D9 y D19)."
 git status --short
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -3314,7 +3394,7 @@ D9, paso 4: `PaymentProofMoveWorker` consume el evento con un inbox nuevo de Sto
   - `internal sealed partial class PaymentProofMoveProcessor` con `internal const string Consumer = "storage.payment-proof-move"` e `internal const string AttachedEvent = "quotations.order.payment-proofs-attached.v1"`.
   - `internal sealed partial class PaymentProofMoveWorker` (3 s, corre al arrancar).
   - `InternalsVisibleTo Modules.Storage.IntegrationTests`.
-  - En el harness de Storage: `NewPublicKey(string extension)`, `AddAttachedEventAsync(StorageApiFactory factory, params (Guid FileId, string PublicStorageKey)[] proofs)` → `Guid` (id del mensaje), `RunMoveAsync(StorageApiFactory)` → `int`, `IsProcessedByMoveAsync(StorageApiFactory, Guid messageId)` → `bool`. Tasks 8, 9 y 10 los usan.
+  - En el harness de Storage: `NewPublicKey(string extension)`, `AddAttachedEventAsync(StorageApiFactory factory, params (Guid FileId, string PublicStorageKey)[] proofs)` → `Guid` (id del mensaje), `RunMoveAsync(StorageApiFactory)` → `int`, `IsProcessedByMoveAsync(StorageApiFactory, Guid messageId)` → `bool`. Tasks 8, 9, 9B, 9C y 10 los usan.
   - En el harness de Quotations: `CreateAvailableFileAsync(..., string ownerType = "User")`, `CreateAvailablePaymentProofImageAsync(HttpClient client, QepApiFactory factory, Guid tenantId)` e `InMemoryObjectStorage.Exists(string key)`.
 
 - [ ] **Step 1: Escribir la prueba del mapeo (RED)**
@@ -4325,7 +4405,7 @@ Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests"
 ```
 
-Esperado: `Superado: 18`, `Con error: 0` (las 14 de Task 6 y las 4 nuevas). Pega el resumen.
+Esperado: `Superado: 19`, `Con error: 0` (las 15 de Task 6 y las 4 nuevas). Pega el resumen.
 
 - [ ] **Step 11: La guía de integración**
 
@@ -4358,11 +4438,11 @@ No hace falta publicar (paso 5 de esa guía). Un comprobante `PaymentProof` no s
 `staging/` y, si es imagen, `complete` ya lo deja en WebP de hasta 2000 px, así que el `mimeType` y la
 extensión del `name` de su respuesta cambian. Con `Quotations:PaymentProofs:PublicLinks` encendida, el
 backend copia cada comprobante nuevo al bucket público al convertir o al sumar comprobantes, para que
-el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. Desde ahí
-`POST /files/{id}/download-url` de ese comprobante devuelve la URL pública, que el navegador **abre**
-en vez de descargar con el nombre original. Un comprobante `User` sigue como antes. La respuesta de los
-endpoints de pedidos no cambia.
+el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. Un comprobante `User`
+sigue como antes. La respuesta de los endpoints de pedidos no cambia.
 ```
+
+Lo que devuelve `POST /files/{id}/download-url` para un comprobante movido no se documenta acá: lo construye Task 8, y Task 8 lo documenta (pre-flight C3).
 
 - [ ] **Step 12: Build completo y chequeo de formato**
 
@@ -4391,7 +4471,7 @@ Esperado: antes del commit `$migrations` trae los dos archivos de la migración;
 
 ### Task 7B: Un comprobante ya movido no se adjunta a otro pedido (D16)
 
-Enmienda D16 (hallazgo 15): desde Task 7 un `PaymentProof` adjunto se mueve y su temporal se borra. Si alguien lo adjunta a otro pedido, `PublicPaymentProofPublisher` copiaría desde esa clave borrada y en R2 el request terminaría en 500. `QuotationFileLookup` lo informa como no disponible y `OrderPaymentProofResolver`, que corre antes de cualquier copia (`ConvertQuotationToOrder.cs:77`, `AddOrderPaymentProofs.cs:79`), lo rechaza con el código que ya usa. No se inventa un código.
+Enmienda D16 (hallazgo 15): desde Task 7 un `PaymentProof` adjunto se mueve y su temporal se borra. Si alguien lo adjunta a otro pedido, `PublicPaymentProofPublisher` copiaría desde esa clave borrada y en R2 el request terminaría en 500. `QuotationFileLookup` lo informa como no disponible y `OrderPaymentProofResolver`, que corre antes de cualquier copia (`ConvertQuotationToOrder.cs:77`; `AddOrderPaymentProofs.cs:82` para un comprobante nuevo y `:90` para el archivo de reemplazo de `develop`), lo rechaza con el código que ya usa. No se inventa un código. Un archivo purgado por D19 (Task 9C) tampoco está `Available`, así que el mismo chequeo lo rechaza.
 
 **Files:**
 - Modify: `src/Bootstrapper/QuotationFileLookup.cs:10-38`
@@ -4659,7 +4739,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests"
 ```
 
-Esperado: los tres con `Con error: 0`; `QuotationFileLookupTests` con 3 superadas; `OrderPaymentProofPublicationApiTests` con `Superado: 19` (las 18 de Task 7 y la nueva). Pega los resúmenes.
+Esperado: los tres con `Con error: 0`; `QuotationFileLookupTests` con 3 superadas; `OrderPaymentProofPublicationApiTests` con `Superado: 20` (las 19 de Task 7 y la nueva). Pega los resúmenes.
 
 - [ ] **Step 5: Build completo y chequeo de formato**
 
@@ -4691,6 +4771,7 @@ D5 y sección 3: si el recurso es `PaymentProof`, tiene `PublicStorageKey` y no 
 **Files:**
 - Modify: `src/Modules/Storage/Modules.Storage.Application/IssueDownloadUrl.cs:1-66` (archivo completo)
 - Create: `tests/Modules/Storage/Modules.Storage.UnitTests/StorageApplicationTestDoubles.cs`
+- Modify: `docs/integracion-cotizaciones-y-pedidos.md` (el párrafo de comprobantes que dejó Task 7; pre-flight C3)
 - Test: `tests/Modules/Storage/Modules.Storage.UnitTests/IssueDownloadUrlHandlerTests.cs` (nuevo)
 - Test: `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofDownloadTests.cs` (nuevo)
 
@@ -5091,7 +5172,25 @@ dotnet test tests/Modules/Storage/Modules.Storage.IntegrationTests --no-restore
 
 Esperado: los dos proyectos con `Con error: 0`; `IssueDownloadUrlHandlerTests` con 3 superadas y `PaymentProofDownloadTests` con 2. `StorageFlowTests.UploadScanDownloadDeleteFlowWithObjectStorageDoubleAndAudit` sigue verde: un archivo User se firma como antes. Pega los resúmenes.
 
-- [ ] **Step 5: Build completo y chequeo de formato**
+- [ ] **Step 5: La guía de integración**
+
+La URL pública de descarga se documenta en el commit que la construye (pre-flight C3). En `docs/integracion-cotizaciones-y-pedidos.md`, reemplaza:
+
+```markdown
+el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. Un comprobante `User`
+sigue como antes. La respuesta de los endpoints de pedidos no cambia.
+```
+
+por:
+
+```markdown
+el Excel de pedidos lo enlace, y segundos después Storage borra el temporal. Desde ahí
+`POST /files/{id}/download-url` de ese comprobante devuelve la URL pública, que el navegador **abre**
+en vez de descargar con el nombre original. Un comprobante `User` sigue como antes. La respuesta de los
+endpoints de pedidos no cambia.
+```
+
+- [ ] **Step 6: Build completo y chequeo de formato**
 
 ```powershell
 Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
@@ -5101,11 +5200,11 @@ dotnet build Backend.slnx --no-restore
 
 Esperado: `0 Advertencia(s)` y `0 Errores`. Después corre «el chequeo de formato»; esperado sin salida.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```powershell
 Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
-if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Storage/Modules.Storage.Application/IssueDownloadUrl.cs tests/Modules/Storage/Modules.Storage.UnitTests/StorageApplicationTestDoubles.cs tests/Modules/Storage/Modules.Storage.UnitTests/IssueDownloadUrlHandlerTests.cs tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofDownloadTests.cs; git commit -m "feat(storage): URL pública para descargar un comprobante movido" -m "Un PaymentProof con clave pública y sin variante pedida devuelve la URL del bucket público; todo lo demás se sigue firmando y la auditoría no cambia (spec 2026-09-16, D5)."
+if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Storage/Modules.Storage.Application/IssueDownloadUrl.cs tests/Modules/Storage/Modules.Storage.UnitTests/StorageApplicationTestDoubles.cs tests/Modules/Storage/Modules.Storage.UnitTests/IssueDownloadUrlHandlerTests.cs tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofDownloadTests.cs docs/integracion-cotizaciones-y-pedidos.md; git commit -m "feat(storage): URL pública para descargar un comprobante movido" -m "Un PaymentProof con clave pública y sin variante pedida devuelve la URL del bucket público; todo lo demás se sigue firmando y la auditoría no cambia (spec 2026-09-16, D5)."
 git status --short
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -5285,7 +5384,7 @@ dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests"
 ```
 
-Esperado: `Modules.Quotations.UnitTests` entero con `Con error: 0`; `OrderPaymentProofPublicationApiTests` con `Superado: 19`, `Con error: 0`. Pega los resúmenes.
+Esperado: `Modules.Quotations.UnitTests` entero con `Con error: 0`; `OrderPaymentProofPublicationApiTests` con `Superado: 20`, `Con error: 0`. Pega los resúmenes.
 
 - [ ] **Step 5: Build completo y chequeo de formato**
 
@@ -5333,11 +5432,11 @@ D11 y sección 3: `StagingCleanupWorker`, con el mismo reloj y `StagingRetention
 **Interfaces:**
 - Consumes: `FileResource.PurgeUnattachedPaymentProof(DateTimeOffset occurredAt)` (Task 1); el harness de Storage (Tasks 4 y 7); el índice `IX_order_payment_proofs_file` (Task 8B).
 - Produces:
-  - `public interface IFileReferenceProbe { string Source { get; } Task<bool> HasReferencesAsync(Guid fileId, CancellationToken cancellationToken); }` en `BuildingBlocks.Application`. Tasks 9B y 10 la usan.
+  - `public interface IFileReferenceProbe { string Source { get; } Task<bool> HasReferencesAsync(Guid fileId, CancellationToken cancellationToken); }` en `BuildingBlocks.Application`. Tasks 9B, 9C y 10 la usan.
   - `internal sealed class OrderPaymentProofFileReferenceProbe(QuotationsDbContext dbContext) : IFileReferenceProbe` con `Source => "quotations"`.
-  - `void IStorageAuditPublisher.PublishSystem(Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt)` (actor `System`, `Guid.Empty`). Task 10 lo usa.
+  - `void IStorageAuditPublisher.PublishSystem(Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt)` (actor `System`, `Guid.Empty`). Tasks 9C y 10 lo usan.
   - `internal interface IStagingCleanupProcessor { Task CleanupAsync(CancellationToken cancellationToken); }` y `internal sealed partial class StagingCleanupProcessor` en `Modules.Storage.Infrastructure.ObjectStorage`.
-  - En el harness de Storage: `StorageApiFactory.FileReferences` (`FixedFileReferenceProbe` con `Reference(Guid fileId)`), `BackdateAsync(string connectionString, Guid fileId, TimeSpan age)`, `RunStagingCleanupAsync(StorageApiFactory)`, `AuditEventsAsync(StorageApiFactory)` → `IReadOnlyList<AuditPayload>` y el record `AuditPayload(Guid? TenantId, string ActorType, string Action, string ResourceType, string ResourceId, string Outcome)`. Task 10 usa `AuditEventsAsync`; Task 9B usa `FileReferences`.
+  - En el harness de Storage: `StorageApiFactory.FileReferences` (`FixedFileReferenceProbe` con `Reference(Guid fileId)`), `BackdateAsync(string connectionString, Guid fileId, TimeSpan age)`, `RunStagingCleanupAsync(StorageApiFactory)`, `AuditEventsAsync(StorageApiFactory)` → `IReadOnlyList<AuditPayload>` y el record `AuditPayload(Guid? TenantId, string ActorType, string Action, string ResourceType, string ResourceId, string Outcome)`. Tasks 9C y 10 usan `AuditEventsAsync`; Tasks 9B y 9C usan `FileReferences`.
   - `PaymentProofReferenceProbeTests` con sus helpers privados `NewSentQuotationAsync` y `ConvertAsync`. Task 10 le suma una prueba.
 
 - [ ] **Step 1: La sonda y su prueba contra Postgres (RED)**
@@ -6174,11 +6273,12 @@ Enmienda D15 (hallazgo 13): `SoftDeleteFileHandler` y `UnpublishFileHandler` bor
 - Modify: `src/Modules/Storage/Modules.Storage.Application/SetFilePublication.cs:1-115` (archivo completo)
 - Modify: `tests/Modules/Storage/Modules.Storage.UnitTests/StorageApplicationTestDoubles.cs` (dos dobles al final)
 - Modify: `README.md:963-964`
+- Modify: `src/Bootstrapper/PublicPaymentProofPublisher.cs:14-19` (el resumen de la clase; pre-flight C4)
 - Test: `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileManagementTests.cs` (nuevo)
 - Test: `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofFileManagementApiTests.cs` (nuevo)
 
 **Interfaces:**
-- Consumes: `IFileReferenceProbe` (Task 9); `FileResource.MoveToPublic` (Task 1); del harness de Storage `CreateAvailableAsync`, `Pdf`, `NewPublicKey`, `AddAttachedEventAsync`, `RunMoveAsync`, `ReadFileAsync`, `FilesUrl`, `ProblemPayload`, `InMemoryPublicObjectStorage.Put`/`Exists`/`DeletedKeys` (Tasks 4 y 7) y `StorageApiFactory.FileReferences` (Task 9); de los dobles unitarios `InMemoryFileResourceRepository`, `CountingStorageUnitOfWork`, `RecordingStorageAuditPublisher`, `AllowAllExecutionContext` y `FixedClock` (Tasks 8 y 9).
+- Consumes: `IFileReferenceProbe` (Task 9); `FileResource.MoveToPublic` (Task 1); el resumen de `PublicPaymentProofPublisher` que dejó Task 5 (`:8-19`, sin cambios en esa tarea); del harness de Storage `CreateAvailableAsync`, `Pdf`, `NewPublicKey`, `AddAttachedEventAsync`, `RunMoveAsync`, `ReadFileAsync`, `FilesUrl`, `ProblemPayload`, `InMemoryPublicObjectStorage.Put`/`Exists`/`DeletedKeys` (Tasks 4 y 7) y `StorageApiFactory.FileReferences` (Task 9); de los dobles unitarios `InMemoryFileResourceRepository`, `CountingStorageUnitOfWork`, `RecordingStorageAuditPublisher`, `AllowAllExecutionContext` y `FixedClock` (Tasks 8 y 9).
 - Produces:
   - `internal static class PaymentProofGuard` en `Modules.Storage.Application`: `Task EnsureNotReferencedAsync(FileResource resource, IEnumerable<IFileReferenceProbe> probes, CancellationToken cancellationToken)` (no hace nada si el recurso no es `PaymentProof`; si alguna sonda responde `true`, lanza `StorageDomainException` `storage.file.invalid_state`) y `void EnsureNotPaymentProof(FileResource resource)` (lanza el mismo código para cualquier `PaymentProof`).
   - `SoftDeleteFileHandler(IFileResourceRepository repository, IStorageUnitOfWork unitOfWork, IPublicObjectStorage publicStorage, IEnumerable<IFileReferenceProbe> fileReferenceProbes, IStorageAuditPublisher auditPublisher, IExecutionContext executionContext, IClock clock)`.
@@ -6773,7 +6873,7 @@ public sealed class UnpublishFileHandler(
 }
 ```
 
-- [ ] **Step 5: El README**
+- [ ] **Step 5: El README y el resumen del publicador**
 
 En `README.md`, reemplaza:
 
@@ -6792,6 +6892,26 @@ por:
   `storage.file.invalid_state` sin tocar el bucket, porque su copia pública es la que enlaza el
   Excel. `PUT /files/{id}/publication` rechaza siempre un `PaymentProof`, con el mismo código: sólo
   llega al público al adjuntarse a un pedido.
+```
+
+El resumen de `PublicPaymentProofPublisher` dice que el `FileResource` nunca se entera de la copia y que borrarlo la deja en el bucket; desde Task 7 y esta tarea eso sólo es cierto para un comprobante `User` (pre-flight C4). En `src/Bootstrapper/PublicPaymentProofPublisher.cs`, reemplaza:
+
+```csharp
+/// publicar un PDF desde la API. Por lo mismo el <c>FileResource</c> no se entera de esta copia: si
+/// alguien lo borra (<c>SoftDeleteFileHandler</c>), la copia pública queda en el bucket. Despublicar
+/// es trabajo aparte.
+/// </summary>
+```
+
+por:
+
+```csharp
+/// publicar un PDF desde la API. Por lo mismo, para un comprobante <c>User</c> (v1) el
+/// <c>FileResource</c> no se entera de esta copia: si alguien lo borra (<c>SoftDeleteFileHandler</c>),
+/// la copia pública queda en el bucket. Un <c>PaymentProof</c> (spec 2026-09-16) sí: Storage registra
+/// la clave cuando lo mueve (D10), y no deja borrarlo ni despublicarlo mientras un pedido lo
+/// referencie (D15).
+/// </summary>
 ```
 
 - [ ] **Step 6: Correrlas (GREEN)**
@@ -6815,7 +6935,1628 @@ Corre «el chequeo de formato». Esperado: sin salida, o sólo líneas que no to
 
 ```powershell
 Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
-if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Storage/Modules.Storage.Application/PaymentProofGuard.cs src/Modules/Storage/Modules.Storage.Application/SoftDeleteFile.cs src/Modules/Storage/Modules.Storage.Application/SetFilePublication.cs tests/Modules/Storage/Modules.Storage.UnitTests/StorageApplicationTestDoubles.cs tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileManagementTests.cs tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofFileManagementApiTests.cs README.md; git commit -m "feat(storage): proteger la copia pública de un comprobante adjunto" -m "Borrar o despublicar un PaymentProof que algún pedido referencia se rechaza con storage.file.invalid_state antes de tocar el bucket, y publicar un PaymentProof se rechaza siempre: sólo llega al público por el movimiento (spec 2026-09-16, D15)."
+if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Storage/Modules.Storage.Application/PaymentProofGuard.cs src/Modules/Storage/Modules.Storage.Application/SoftDeleteFile.cs src/Modules/Storage/Modules.Storage.Application/SetFilePublication.cs tests/Modules/Storage/Modules.Storage.UnitTests/StorageApplicationTestDoubles.cs tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileManagementTests.cs tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofFileManagementApiTests.cs README.md src/Bootstrapper/PublicPaymentProofPublisher.cs; git commit -m "feat(storage): proteger la copia pública de un comprobante adjunto" -m "Borrar o despublicar un PaymentProof que algún pedido referencia se rechaza con storage.file.invalid_state antes de tocar el bucket, y publicar un PaymentProof se rechaza siempre: sólo llega al público por el movimiento (spec 2026-09-16, D15)."
+git status --short
+git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
+```
+
+Esperado: `git status --short` vacío y el `Select-String` sin salida.
+
+---
+
+### Task 9C: Storage purga el comprobante que un pedido suelta (D19)
+
+Enmienda D19, lado de Storage. `PaymentProofDetachProcessor` consume `quotations.order.payment-proofs-detached.v1` con el inbox de Task 7 y el mismo esqueleto que el movimiento. Por cada archivo: un `PaymentProof` `Available` que ninguna `IFileReferenceProbe` retiene pierde su objeto —el público si ya se movió; si no, el de `staging/` y la copia que trae el evento— y, en un solo `SaveChanges`, queda `Purged` con `FileResource.PurgeDetachedPaymentProof`, auditado como `storage.file.purged` / `payment_proof_detached`, junto con el inbox. Un archivo `User` sólo pierde la copia de ese adjunto (D13). Lo corre `PaymentProofMoveWorker`, en el mismo tick y después del movimiento. Todavía nadie escribe el evento: eso es Task 9D, así que las pruebas lo escriben a mano, como las de Task 7. El movimiento ya salta un comprobante que no está `Available` (`IsWaitingToMove`, Task 7): esta tarea lo prueba para la carrera de D19 sin cambiarlo.
+
+**Files:**
+- Modify: `src/Modules/Storage/Modules.Storage.Domain/FileResource.cs` (después de `PurgeUnattachedPaymentProof`, de Task 1)
+- Modify: `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileResourceTests.cs` (cuatro pruebas antes de `PendingScanProof`)
+- Create: `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofDetachProcessor.cs`
+- Modify: `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveWorker.cs` (el cuerpo del `try`, de Task 7)
+- Modify: `src/Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs` (después del registro de `IPaymentProofMoveProcessor`, de Task 7)
+- Modify: `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofStorageHarness.cs` (tres helpers después de `IsProcessedByMoveAsync`)
+- Test: `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofDetachTests.cs` (nuevo)
+
+**Interfaces:**
+- Consumes: `FileOwnerType.PaymentProof`, `FileResource.MoveToPublic` y el helper `RequirePaymentProof` (Task 1); `StorageInboxMessage`, `StorageDbContext.Inbox`/`Outbox`, `IPaymentProofMoveProcessor`, `PaymentProofMoveWorker` y la regla `IsWaitingToMove` de `PaymentProofMoveProcessor` (Task 7); `IFileReferenceProbe` e `IStorageAuditPublisher.PublishSystem(Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt)` (Task 9); del harness de Storage `TenantId`, `CreateClient`, `CreateAvailableAsync`, `Pdf`, `ReadFileAsync`, `NewPublicKey`, `AddAttachedEventAsync`, `RunMoveAsync`, `IsProcessedByMoveAsync`, `InMemoryObjectStorage.FailingDeleteKey`/`Exists`, `InMemoryPublicObjectStorage.Put`/`Exists`/`DeletedKeys` (Tasks 4 y 7), `StorageApiFactory.FileReferences` y `AuditEventsAsync` (Task 9).
+- Produces:
+  - `public void FileResource.PurgeDetachedPaymentProof(DateTimeOffset occurredAt)`: exige `PaymentProof` y `Available` (`storage.file.invalid_state` si no); acepta uno movido o no; deja `Purged` con `DeletedAt` y `UpdatedAt`; conserva `PublicStorageKey`.
+  - `internal interface IPaymentProofDetachProcessor { Task<int> ProcessPendingAsync(CancellationToken cancellationToken); }` y `internal sealed partial class PaymentProofDetachProcessor` en `Modules.Storage.Infrastructure.PaymentProofs`, con `internal const string Consumer = "storage.payment-proof-detach"`, `internal const string DetachedEvent = "quotations.order.payment-proofs-detached.v1"` e `internal const string Reason = "payment_proof_detached"`.
+  - Contrato del payload que lee por nombre (Task 9D lo escribe): `{ "tenantId": Guid, "orderId": Guid, "proofs": [ { "fileId": Guid, "publicStorageKey": string | null } ] }`.
+  - `PaymentProofMoveWorker` corre, en cada tick y en scopes separados, primero `IPaymentProofMoveProcessor` y después `IPaymentProofDetachProcessor`.
+  - En el harness de Storage: `AddDetachedEventAsync(StorageApiFactory factory, params (Guid FileId, string? PublicStorageKey)[] proofs)` → `Guid`, `RunDetachAsync(StorageApiFactory)` → `int` e `IsProcessedByDetachAsync(StorageApiFactory, Guid messageId)` → `bool`. Task 10 no los usa.
+
+- [ ] **Step 1: Las pruebas del dominio (RED)**
+
+En `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileResourceTests.cs`, reemplaza:
+
+```csharp
+    private static FileResource PendingScanProof(string name, string mimeType)
+```
+
+por:
+
+```csharp
+    // D19: un comprobante movido que se reemplaza o se quita de su pedido se purga. Su copia pública era
+    // la única, y el procesador ya la borró.
+    [Fact]
+    public void AMovedProofCanBePurgedWhenItsOrderLetsItGo()
+    {
+        var proof = AvailableProof("comprobante.pdf", "application/pdf");
+        proof.MoveToPublic("payment-proofs/abc.pdf", Now);
+
+        proof.PurgeDetachedPaymentProof(Now.AddHours(1));
+
+        Assert.Equal(FileResourceStatus.Purged, proof.Status);
+        Assert.Equal(Now.AddHours(1), proof.DeletedAt);
+        Assert.Equal(Now.AddHours(1), proof.UpdatedAt);
+        Assert.Equal("payment-proofs/abc.pdf", proof.PublicStorageKey);
+    }
+
+    // D19: uno que todavía espera en staging/ también.
+    [Fact]
+    public void AStagedProofCanBePurgedWhenItsOrderLetsItGo()
+    {
+        var proof = AvailableProof("comprobante.pdf", "application/pdf");
+
+        proof.PurgeDetachedPaymentProof(Now);
+
+        Assert.Equal(FileResourceStatus.Purged, proof.Status);
+        Assert.Equal(Now, proof.DeletedAt);
+        Assert.Null(proof.PublicStorageKey);
+    }
+
+    // Un segundo mensaje por el mismo archivo no lo vuelve a purgar: el procesador lo salta antes.
+    [Fact]
+    public void PurgingALetGoProofRequiresAnAvailableResource()
+    {
+        var proof = AvailableProof("comprobante.pdf", "application/pdf");
+        proof.PurgeDetachedPaymentProof(Now);
+
+        var error = Assert.Throws<StorageDomainException>(() => proof.PurgeDetachedPaymentProof(Now.AddHours(1)));
+
+        Assert.Equal("storage.file.invalid_state", error.Code);
+        Assert.Equal(Now, proof.DeletedAt);
+    }
+
+    // D13: el archivo User de un comprobante v1 nunca se purga por esto.
+    [Fact]
+    public void PurgingALetGoProofRequiresAPaymentProof()
+    {
+        var file = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), FileOwnerType.User,
+            "comprobante.pdf", "application/pdf", 4096, "staging/tenants/a/c", Now);
+        file.CompleteUpload("checksum", 4096, Now);
+        file.MarkClean(Now);
+
+        var error = Assert.Throws<StorageDomainException>(() => file.PurgeDetachedPaymentProof(Now));
+
+        Assert.Equal("storage.file.invalid_state", error.Code);
+        Assert.Equal(FileResourceStatus.Available, file.Status);
+    }
+
+    private static FileResource PendingScanProof(string name, string mimeType)
+```
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet test tests/Modules/Storage/Modules.Storage.UnitTests --no-restore --filter "FullyQualifiedName~PaymentProofFileResourceTests"
+```
+
+Esperado (RED de compilación; el de aserción llega en el Step 4): `error CS1061: 'FileResource' no contiene una definición para 'PurgeDetachedPaymentProof'` (o `does not contain a definition for 'PurgeDetachedPaymentProof'`). Pega la salida.
+
+- [ ] **Step 2: El método de dominio (GREEN del dominio)**
+
+En `src/Modules/Storage/Modules.Storage.Domain/FileResource.cs`, reemplaza:
+
+```csharp
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "A payment proof already moved to the public bucket cannot be purged.");
+        }
+
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+```
+
+por:
+
+```csharp
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "A payment proof already moved to the public bucket cannot be purged.");
+        }
+
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
+    // Spec 2026-09-16, D19: un comprobante que su pedido soltó —se reemplazó o se quitó— se purga, esté
+    // movido o no. Quien llama ya borró su objeto (el público si se movió, el de staging/ si no).
+    // PublicStorageKey se conserva como registro de dónde estuvo: un recurso Purged no se descarga ni se
+    // vuelve a adjuntar.
+    public void PurgeDetachedPaymentProof(DateTimeOffset occurredAt)
+    {
+        RequirePaymentProof();
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+```
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet test tests/Modules/Storage/Modules.Storage.UnitTests --no-restore --filter "FullyQualifiedName~PaymentProofFileResourceTests"
+```
+
+Esperado: `Superado: 20`, `Con error: 0` (las 16 de Task 1 y las 4 nuevas). Pega la salida.
+
+- [ ] **Step 3: El harness y las pruebas del procesador (RED)**
+
+En `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofStorageHarness.cs`, reemplaza:
+
+```csharp
+            entry => entry.Consumer == "storage.payment-proof-move" && entry.MessageId == messageId,
+            TestContext.Current.CancellationToken);
+    }
+```
+
+por:
+
+```csharp
+            entry => entry.Consumer == "storage.payment-proof-move" && entry.MessageId == messageId,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Escribe en el outbox el evento que Quotations escribe al reemplazar o quitar un
+    /// comprobante (spec 2026-09-16, D19), con el nombre y los campos del contrato escritos a mano, igual
+    /// que <see cref="AddAttachedEventAsync"/>. Una clave null es un comprobante sin copia. Devuelve el id
+    /// del mensaje.</summary>
+    public static async Task<Guid> AddDetachedEventAsync(
+        StorageApiFactory factory, params (Guid FileId, string? PublicStorageKey)[] proofs)
+    {
+        var id = Guid.CreateVersion7();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        dbContext.Outbox.Add(new StorageOutboxMessage
+        {
+            Id = id,
+            EventName = "quotations.order.payment-proofs-detached.v1",
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                tenantId = TenantId,
+                orderId = Guid.CreateVersion7(),
+                proofs = proofs
+                    .Select(proof => new { fileId = proof.FileId, publicStorageKey = proof.PublicStorageKey })
+                    .ToArray(),
+            }),
+            CorrelationId = id.ToString(),
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return id;
+    }
+
+    /// <summary>Un lote del retiro, a mano: en producción lo corre PaymentProofMoveWorker, que no corre
+    /// en este host (ver <see cref="StorageApiFactory"/>).</summary>
+    public static async Task<int> RunDetachAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IPaymentProofDetachProcessor>()
+            .ProcessPendingAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static async Task<bool> IsProcessedByDetachAsync(StorageApiFactory factory, Guid messageId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        return await dbContext.Inbox.AnyAsync(
+            entry => entry.Consumer == "storage.payment-proof-detach" && entry.MessageId == messageId,
+            TestContext.Current.CancellationToken);
+    }
+```
+
+Crea `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofDetachTests.cs`:
+
+```csharp
+using static Modules.Storage.IntegrationTests.PaymentProofStorageHarness;
+
+namespace Modules.Storage.IntegrationTests;
+
+/// <summary>
+/// El retiro de un comprobante que su pedido soltó (spec 2026-09-16, D19): uno movido pierde su copia
+/// pública y uno en staging/ su temporal y la copia que alcanzó a hacer el adjunto; los dos quedan
+/// Purged y auditados. Se respeta el que otro pedido todavía usa, cada mensaje se aplica una vez, un
+/// borrado fallido no guarda nada, un archivo User conserva su original y el movimiento salta lo que ya
+/// se purgó.
+/// </summary>
+public sealed class PaymentProofDetachTests
+{
+    [Fact]
+    public async Task AMovedProofIsPurgedAndItsPublicObjectDeleted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var (fileId, publicKey) = await MovedProofAsync(client, factory);
+        var messageId = await AddDetachedEventAsync(factory, (fileId, publicKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        var row = await ReadFileAsync(database.GetConnectionString(), fileId);
+        Assert.Equal("Purged", row.Status);
+        Assert.False(factory.PublicObjectStorage.Exists(publicKey));
+        Assert.Equal([publicKey], factory.PublicObjectStorage.DeletedKeys);
+        Assert.True(await IsProcessedByDetachAsync(factory, messageId));
+        var audit = Assert.Single(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+        Assert.Equal(fileId.ToString(), audit.ResourceId);
+        Assert.Equal("file", audit.ResourceType);
+        Assert.Equal("payment_proof_detached", audit.Outcome);
+        Assert.Equal("System", audit.ActorType);
+        Assert.Equal(TenantId, audit.TenantId);
+    }
+
+    // D19 con Quotations:PaymentProofs:PublicLinks apagada: sin copia, sólo el temporal.
+    [Fact]
+    public async Task AStagedProofWithoutACopyIsPurgedWithItsStagingObject()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var messageId = await AddDetachedEventAsync(factory, (proof.FileId, null));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        var row = await ReadFileAsync(database.GetConnectionString(), proof.FileId);
+        Assert.Equal("Purged", row.Status);
+        Assert.False(factory.ObjectStorage.Exists(proof.StagingKey));
+        Assert.Empty(factory.PublicObjectStorage.DeletedKeys);
+        Assert.True(await IsProcessedByDetachAsync(factory, messageId));
+    }
+
+    // La carrera de D19: el comprobante se suelta antes de que se procese su adjunto. Se borran el
+    // temporal y la copia que el adjunto alcanzó a hacer, y el movimiento, que llega después, lo salta
+    // sin fallar y marca su mensaje.
+    [Fact]
+    public async Task AProofDetachedBeforeItsMoveLosesItsCopyAndTheMoveSkipsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var publicKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(publicKey, DateTimeOffset.UtcNow);
+        var attachedId = await AddAttachedEventAsync(factory, (proof.FileId, publicKey));
+        await AddDetachedEventAsync(factory, (proof.FileId, publicKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        var row = await ReadFileAsync(database.GetConnectionString(), proof.FileId);
+        Assert.Equal("Purged", row.Status);
+        Assert.Null(row.PublicStorageKey);
+        Assert.False(factory.ObjectStorage.Exists(proof.StagingKey));
+        Assert.False(factory.PublicObjectStorage.Exists(publicKey));
+
+        Assert.Equal(1, await RunMoveAsync(factory));
+
+        row = await ReadFileAsync(database.GetConnectionString(), proof.FileId);
+        Assert.Equal("Purged", row.Status);
+        Assert.Null(row.PublicStorageKey);
+        Assert.True(await IsProcessedByMoveAsync(factory, attachedId));
+    }
+
+    // Otro pedido todavía lo usa: no se borra nada y el mensaje se marca igual.
+    [Fact]
+    public async Task AProofStillReferencedIsKept()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var (fileId, publicKey) = await MovedProofAsync(client, factory);
+        factory.FileReferences.Reference(fileId);
+        var messageId = await AddDetachedEventAsync(factory, (fileId, publicKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        var row = await ReadFileAsync(database.GetConnectionString(), fileId);
+        Assert.Equal("Available", row.Status);
+        Assert.Equal(publicKey, row.PublicStorageKey);
+        Assert.True(factory.PublicObjectStorage.Exists(publicKey));
+        Assert.Empty(factory.PublicObjectStorage.DeletedKeys);
+        Assert.True(await IsProcessedByDetachAsync(factory, messageId));
+        Assert.DoesNotContain(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+    }
+
+    // El inbox no repite un mensaje, y un segundo mensaje por un archivo ya purgado no borra ni audita
+    // de nuevo.
+    [Fact]
+    public async Task ADetachIsAppliedOnlyOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var (fileId, publicKey) = await MovedProofAsync(client, factory);
+        await AddDetachedEventAsync(factory, (fileId, publicKey));
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.Equal(0, await RunDetachAsync(factory));
+        await AddDetachedEventAsync(factory, (fileId, publicKey));
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), fileId)).Status);
+        Assert.Equal([publicKey], factory.PublicObjectStorage.DeletedKeys);
+        Assert.Single(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+    }
+
+    // Mismo orden que D9: si un borrado falla no se guarda nada y el mensaje vuelve en el tick siguiente.
+    [Fact]
+    public async Task WhenADeleteFailsNothingIsSavedAndTheMessageComesBack()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var messageId = await AddDetachedEventAsync(factory, (proof.FileId, null));
+        factory.ObjectStorage.FailingDeleteKey = proof.StagingKey;
+
+        Assert.Equal(0, await RunDetachAsync(factory));
+
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(proof.StagingKey));
+        Assert.False(await IsProcessedByDetachAsync(factory, messageId));
+        Assert.DoesNotContain(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+
+        factory.ObjectStorage.FailingDeleteKey = null;
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).Status);
+        Assert.False(factory.ObjectStorage.Exists(proof.StagingKey));
+    }
+
+    // D13 y D19: un comprobante User conserva su original privado; sólo se borra la copia de ese
+    // adjunto, que era única.
+    [Fact]
+    public async Task AUserFileKeepsItsOriginalAndLosesOnlyTheCopyOfThatAttachment()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var file = await CreateAvailableAsync(client, factory, "User", "comprobante.pdf", "application/pdf", Pdf());
+        var privateKey = (await ReadFileAsync(database.GetConnectionString(), file.FileId)).StorageKey;
+        var copyKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(copyKey, DateTimeOffset.UtcNow);
+        await AddDetachedEventAsync(factory, (file.FileId, copyKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), file.FileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(privateKey));
+        Assert.False(factory.PublicObjectStorage.Exists(copyKey));
+        var audit = Assert.Single(
+            await AuditEventsAsync(factory), entry => entry.Action == "storage.public_object.purged");
+        Assert.Equal(copyKey, audit.ResourceId);
+        Assert.Equal("public_object", audit.ResourceType);
+        Assert.Equal("payment_proof_detached", audit.Outcome);
+        Assert.Equal(TenantId, audit.TenantId);
+    }
+
+    // Un comprobante v2 ya movido, con su copia en el bucket público en memoria.
+    private static async Task<(Guid FileId, string PublicKey)> MovedProofAsync(
+        HttpClient client, StorageApiFactory factory)
+    {
+        var proof = await CreateAvailableAsync(
+            client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var publicKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(publicKey, DateTimeOffset.UtcNow);
+        await AddAttachedEventAsync(factory, (proof.FileId, publicKey));
+        Assert.Equal(1, await RunMoveAsync(factory));
+        return (proof.FileId, publicKey);
+    }
+}
+```
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet build tests/Modules/Storage/Modules.Storage.IntegrationTests --no-restore
+```
+
+Esperado (RED de compilación): `error CS0246: … 'IPaymentProofDetachProcessor' …`. Pega la salida.
+
+- [ ] **Step 4: El procesador, sin borrar todavía la copia de uno sin mover (RED de aserción)**
+
+Como en Task 2, la implementación entra primero incompleta: le faltan las líneas que borran la copia que trae el evento cuando el comprobante no se movió, y la prueba de la carrera lo tiene que ver.
+
+Crea `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofDetachProcessor.cs`:
+
+```csharp
+using System.Text.Json;
+using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Modules.Storage.Application;
+using Modules.Storage.Domain;
+using Modules.Storage.Infrastructure.Persistence;
+
+namespace Modules.Storage.Infrastructure.PaymentProofs;
+
+internal interface IPaymentProofDetachProcessor
+{
+    /// <returns>Cuántos mensajes quedaron procesados en este lote.</returns>
+    Task<int> ProcessPendingAsync(CancellationToken cancellationToken);
+}
+
+// Spec 2026-09-16, D19. Consume del outbox de plataforma el evento que Quotations escribe al reemplazar o
+// quitar comprobantes, con el mismo esqueleto que PaymentProofMoveProcessor: anti-join contra el inbox
+// propio, y purga, auditoría e inbox en el mismo SaveChanges.
+//
+// Mismo orden que D9 y por la misma razón: primero se borran los objetos y después se guarda. Borrar una
+// clave que ya no existe no falla, así que si el guardado falla el tick siguiente repite los borrados
+// (sin efecto) y guarda. Al revés, un borrado fallido con el inbox ya marcado dejaría expuesto para
+// siempre el comprobante que D19 quiere borrar.
+internal sealed partial class PaymentProofDetachProcessor(
+    StorageDbContext dbContext,
+    IObjectStorage objectStorage,
+    IPublicObjectStorage publicObjectStorage,
+    IEnumerable<IFileReferenceProbe> probes,
+    IStorageAuditPublisher auditPublisher,
+    IClock clock,
+    ILogger<PaymentProofDetachProcessor> logger) : IPaymentProofDetachProcessor
+{
+    internal const string Consumer = "storage.payment-proof-detach";
+    internal const string DetachedEvent = "quotations.order.payment-proofs-detached.v1";
+    internal const string Reason = "payment_proof_detached";
+    private const int BatchSize = 20;
+
+    private readonly IReadOnlyList<IFileReferenceProbe> _probes = probes.ToList();
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Payment proof detach failed for outbox message {MessageId}; it will be retried.")]
+    private static partial void LogMessageFailed(ILogger logger, Exception exception, Guid messageId);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Detached payment proof {FileId} kept: still referenced by {Source}.")]
+    private static partial void LogProofRetained(ILogger logger, Guid fileId, string source);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Detached payment proof {FileId} purged.")]
+    private static partial void LogProofPurged(ILogger logger, Guid fileId);
+
+    public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
+    {
+        var pending = await dbContext.Outbox
+            .AsNoTracking()
+            .Where(record => record.EventName == DetachedEvent)
+            .Where(record => !dbContext.Inbox.Any(entry =>
+                entry.Consumer == Consumer && entry.MessageId == record.Id))
+            .OrderBy(record => record.OccurredAt)
+            .Take(BatchSize)
+            .ToListAsync(cancellationToken);
+
+        var processed = 0;
+        foreach (var record in pending)
+        {
+            try
+            {
+                await DetachAsync(record, cancellationToken);
+                processed++;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // Un mensaje que falla no frena a los demás: se descarta lo rastreado (la purga y su
+                // auditoría) y, sin inbox, vuelve en el tick siguiente.
+                LogMessageFailed(logger, exception, record.Id);
+                dbContext.ChangeTracker.Clear();
+            }
+        }
+
+        return processed;
+    }
+
+    private async Task DetachAsync(StorageOutboxMessage record, CancellationToken cancellationToken)
+    {
+        var payload = DetachedPayload.Parse(record.PayloadJson);
+        var now = clock.UtcNow;
+        foreach (var proof in payload.Proofs)
+        {
+            var fileId = new FileResourceId(proof.FileId);
+            var resource = await dbContext.FileResources
+                .FirstOrDefaultAsync(file => file.Id == fileId, cancellationToken);
+            if (resource is null || resource.TenantId != payload.TenantId)
+            {
+                continue;
+            }
+
+            if (resource.OwnerType is not FileOwnerType.PaymentProof)
+            {
+                await DeleteAttachmentCopyAsync(payload.TenantId, proof.PublicStorageKey, now, cancellationToken);
+                continue;
+            }
+
+            // Ya purgado (por otro mensaje), borrado o en cuarentena: no hay nada que borrar, y reintentar
+            // no lo cambiaría.
+            if (resource.Status is not FileResourceStatus.Available)
+            {
+                continue;
+            }
+
+            var retainedBy = await FindRetainingSourceAsync(resource.Id.Value, cancellationToken);
+            if (retainedBy is not null)
+            {
+                // Otro comprobante todavía lo usa. Una copia que quede sin dueño la recoge la
+                // reconciliación de payment-proofs/ (D12).
+                LogProofRetained(logger, resource.Id.Value, retainedBy);
+                continue;
+            }
+
+            if (resource.PublicStorageKey is { } movedKey)
+            {
+                // Movido: la copia pública es su única copia (D9).
+                await publicObjectStorage.DeleteAsync(movedKey, cancellationToken);
+            }
+            else
+            {
+                // Sin mover: el temporal sigue en staging/.
+                await objectStorage.DeleteAsync(resource.StorageKey, cancellationToken);
+            }
+
+            resource.PurgeDetachedPaymentProof(now);
+            auditPublisher.PublishSystem(
+                resource.TenantId,
+                "storage.file.purged",
+                "file",
+                resource.Id.ToString(),
+                Reason,
+                now);
+            LogProofPurged(logger, resource.Id.Value);
+        }
+
+        dbContext.Inbox.Add(new StorageInboxMessage
+        {
+            Consumer = Consumer,
+            MessageId = record.Id,
+            ProcessedAt = now,
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    // D13 y D19: de un comprobante User sólo se borra la copia pública de ese adjunto.
+    // PublicPaymentProofPublisher le da a cada adjunto una clave aleatoria propia, así que ningún otro
+    // comprobante la usa; el original privado no se toca.
+    private async Task DeleteAttachmentCopyAsync(
+        Guid tenantId, string? copyKey, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (copyKey is null)
+        {
+            return;
+        }
+
+        await publicObjectStorage.DeleteAsync(copyKey, cancellationToken);
+        auditPublisher.PublishSystem(
+            tenantId,
+            "storage.public_object.purged",
+            "public_object",
+            copyKey,
+            Reason,
+            now);
+    }
+
+    // Secuencial y cortando en la primera que retiene, igual que StagingCleanupProcessor.
+    private async Task<string?> FindRetainingSourceAsync(Guid fileId, CancellationToken cancellationToken)
+    {
+        foreach (var probe in _probes)
+        {
+            if (await probe.HasReferencesAsync(fileId, cancellationToken))
+            {
+                return probe.Source;
+            }
+        }
+
+        return null;
+    }
+
+    private sealed record DetachedPayload(Guid TenantId, IReadOnlyList<DetachedProof> Proofs)
+    {
+        // Por nombre, igual que en PaymentProofMoveProcessor: el payload lo escribe
+        // OrderPaymentProofEventPublisher, en Quotations. publicStorageKey viene null cuando el
+        // comprobante no tenía copia.
+        public static DetachedPayload Parse(string payloadJson)
+        {
+            using var document = JsonDocument.Parse(payloadJson);
+            var root = document.RootElement;
+            return new DetachedPayload(
+                root.GetProperty("tenantId").GetGuid(),
+                root.GetProperty("proofs")
+                    .EnumerateArray()
+                    .Select(proof => new DetachedProof(
+                        proof.GetProperty("fileId").GetGuid(),
+                        proof.GetProperty("publicStorageKey").GetString()))
+                    .ToArray());
+        }
+    }
+
+    private sealed record DetachedProof(Guid FileId, string? PublicStorageKey);
+}
+```
+
+En `src/Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs`, reemplaza:
+
+```csharp
+        services.AddScoped<IPaymentProofMoveProcessor, PaymentProofMoveProcessor>();
+```
+
+por:
+
+```csharp
+        services.AddScoped<IPaymentProofMoveProcessor, PaymentProofMoveProcessor>();
+        // Spec 2026-09-16, D19: borra y purga lo que un pedido suelta. Lo corre PaymentProofMoveWorker,
+        // después del movimiento.
+        services.AddScoped<IPaymentProofDetachProcessor, PaymentProofDetachProcessor>();
+```
+
+En `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveWorker.cs`, reemplaza:
+
+```csharp
+            try
+            {
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var processor = scope.ServiceProvider.GetRequiredService<IPaymentProofMoveProcessor>();
+                await processor.ProcessPendingAsync(stoppingToken);
+            }
+```
+
+por:
+
+```csharp
+            try
+            {
+                await using (var moveScope = scopeFactory.CreateAsyncScope())
+                {
+                    await moveScope.ServiceProvider.GetRequiredService<IPaymentProofMoveProcessor>()
+                        .ProcessPendingAsync(stoppingToken);
+                }
+
+                // Spec 2026-09-16, D19: el retiro, en el mismo tick y después del movimiento, con su propio
+                // DbContext. Así, en una réplica, el movimiento y el retiro de un mismo archivo nunca corren
+                // a la vez (FileResource no tiene token de concurrencia); la carrera entre réplicas la
+                // cubre PaymentProofDetachProcessor.
+                await using var detachScope = scopeFactory.CreateAsyncScope();
+                await detachScope.ServiceProvider.GetRequiredService<IPaymentProofDetachProcessor>()
+                    .ProcessPendingAsync(stoppingToken);
+            }
+```
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet test tests/Modules/Storage/Modules.Storage.IntegrationTests --no-restore --filter "FullyQualifiedName~PaymentProofDetachTests"
+```
+
+Esperado (RED de aserción), `Con error: 1, Superado: 6`: `AProofDetachedBeforeItsMoveLosesItsCopyAndTheMoveSkipsIt` falla con `Assert.False() Failure` → `Expected: False`, `Actual: True`, en `factory.PublicObjectStorage.Exists(publicKey)` (el temporal ya se borró y el recurso quedó `Purged`; la copia no). Si falla otra prueba, o ésta falla en otra línea, **para y pregunta**. Pega la salida.
+
+- [ ] **Step 5: Borrar la copia de uno sin mover (GREEN)**
+
+En `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofDetachProcessor.cs`, reemplaza:
+
+```csharp
+                // Sin mover: el temporal sigue en staging/.
+                await objectStorage.DeleteAsync(resource.StorageKey, cancellationToken);
+            }
+```
+
+por:
+
+```csharp
+                // Sin mover: el temporal sigue en staging/ y, si el adjunto alcanzó a copiarse, su copia
+                // pública también existe aunque el movimiento nunca la registró. Es la carrera de D19: el
+                // pedido lo soltó antes de que PaymentProofMoveWorker procesara el adjunto, que después
+                // lo salta porque ya no está Available.
+                await objectStorage.DeleteAsync(resource.StorageKey, cancellationToken);
+                if (proof.PublicStorageKey is { } copyKey)
+                {
+                    await publicObjectStorage.DeleteAsync(copyKey, cancellationToken);
+                }
+            }
+```
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet test tests/Modules/Storage/Modules.Storage.UnitTests --no-restore
+dotnet test tests/Modules/Storage/Modules.Storage.IntegrationTests --no-restore
+dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests"
+```
+
+Esperado: los tres con `Con error: 0`; `PaymentProofFileResourceTests` con 20 superadas, `PaymentProofDetachTests` con 7 y `PaymentProofMoveTests` con 6 (el movimiento no cambió); `OrderPaymentProofPublicationApiTests` con `Superado: 20`: el worker del host de Quotations ya corre el retiro, pero todavía nadie escribe el evento. Pega los resúmenes.
+
+- [ ] **Step 6: Build completo y chequeo de formato**
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet build Backend.slnx --no-restore
+dotnet test tests/ArchitectureTests/ArchitectureTests --no-build
+```
+
+Esperado: `0 Advertencia(s)`, `0 Errores` y `ArchitectureTests` con `Con error: 0`. Después corre «el chequeo de formato»; esperado sin salida.
+
+- [ ] **Step 7: Commit**
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Storage/Modules.Storage.Domain/FileResource.cs tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileResourceTests.cs src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofDetachProcessor.cs src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveWorker.cs src/Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofStorageHarness.cs tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofDetachTests.cs; git commit -m "feat(storage): purgar el comprobante que un pedido suelta" -m "PaymentProofDetachProcessor consume quotations.order.payment-proofs-detached.v1 con el inbox de Storage: borra la copia pública de un PaymentProof movido, o su temporal y la copia del adjunto si no se movió, y en un solo SaveChanges lo marca Purged, lo audita como payment_proof_detached y marca el inbox. De un archivo User sólo borra la copia de ese adjunto. Lo corre PaymentProofMoveWorker después del movimiento (spec 2026-09-16, D19)."
+git status --short
+git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
+```
+
+Esperado: `git status --short` vacío y el `Select-String` sin salida.
+
+---
+
+### Task 9D: Quotations suelta el archivo al reemplazar o quitar un comprobante (D19)
+
+Enmienda D19, lado de Quotations (hallazgo 22). En la misma unidad de trabajo que el pedido, `AddOrderPaymentProofsHandler` (al reemplazar con `UpdatedProofs[].NewFileId`) y `RemoveOrderPaymentProofHandler` escriben `quotations.order.payment-proofs-detached.v1` con cada archivo que el pedido deja de usar y la clave que tenía ese comprobante, también con `Quotations:PaymentProofs:PublicLinks` apagada. `AddOrderPaymentProofsHandler` deja de borrar la clave vieja después de guardar (`AddOrderPaymentProofs.cs:163-174` en `develop`): desde acá la borra Storage (Task 9C), con reintento. El bucket público en memoria del harness de Quotations pasa a ser concurrente, porque el retiro borra copias desde el hilo del worker mientras la prueba lee.
+
+**Files:**
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs` (de Task 6)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs` (de Task 6)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs` (al final, después de `AttachedFromReplacements`)
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs:107-118,163-176` y el bloque de Task 6 antes de `SaveChangesAsync`
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/RemoveOrderPaymentProof.cs:1-58` (archivo completo)
+- Modify: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs` (`InMemoryPublicObjectStorage`)
+- Modify: `src/Bootstrapper/PublicPaymentProofPublisher.cs` (el resumen que dejó Task 9B)
+- Modify: `README.md` (un bullet debajo del que dejó Task 9B)
+- Modify: `docs/integracion-cotizaciones-y-pedidos.md` (el párrafo de comprobantes que dejó Task 8)
+- Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs` (una prueba al final)
+- Test: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs` (ocho pruebas)
+
+**Interfaces:**
+- Consumes: `IOrderPaymentProofEventPublisher`, `OrderPaymentProofEventPublisher`, `PaymentProofCopies.AttachedFrom`/`AttachedFromReplacements` y los records de payload de las pruebas (Task 6); `CreateAvailablePaymentProofImageAsync`, `InMemoryObjectStorage.Exists`, `StorageKeyOfAsync`, `WaitForMovedKeyAsync` y `AssertMovedAsync` como ancla (Tasks 7 y 7B); `PaymentProofDetachProcessor` corriendo en `PaymentProofMoveWorker` del host de Quotations (Task 9C); `OrderPaymentProof.FileId`/`PublicStorageKey`/`Id`, `Order.PaymentProofs` y `Order.RemovePaymentProof(OrderPaymentProofId proofId, DateTimeOffset occurredAt)` (`develop`, hallazgo 22).
+- Produces:
+  - `void IOrderPaymentProofEventPublisher.PublishDetached(Guid tenantId, OrderId orderId, IReadOnlyCollection<DetachedPaymentProof> proofs, DateTimeOffset occurredAt)` y `public sealed record DetachedPaymentProof(Guid FileId, string? PublicStorageKey)` en `Modules.Quotations.Application`.
+  - `internal const string OrderPaymentProofEventPublisher.DetachedEventName = "quotations.order.payment-proofs-detached.v1"`; payload `{ "tenantId": Guid, "orderId": Guid, "proofs": [ { "fileId": Guid, "publicStorageKey": string | null } ] }`, `CorrelationId` = id del pedido, `OccurredAt` = el `now` del handler. Es el contrato que Task 9C lee.
+  - `public static DetachedPaymentProof[] PaymentProofCopies.DetachedFrom(IEnumerable<DetachedPaymentProof> candidates, IEnumerable<Guid> remainingFileIds)`.
+  - `RemoveOrderPaymentProofHandler(IOrderRepository orderRepository, IQuotationRepository quotationRepository, IQuotationsUnitOfWork unitOfWork, IQuotationAuditPublisher auditPublisher, IOrderPaymentProofEventPublisher paymentProofEvents, IExecutionContext executionContext, IClock clock)`. Se registra por tipo (`QepServiceCollectionExtensions.cs:365-367`) y ninguna prueba lo construye a mano.
+  - `QuotationsApiHarness.InMemoryPublicObjectStorage.DeletedKeys` pasa a `ConcurrentQueue<string>` (todas las pruebas que lo leen usan `Assert.Empty`, `Assert.Single` o `Assert.Contains`, verificado con `git grep "PublicObjectStorage.DeletedKeys" -- tests`).
+
+- [ ] **Step 1: Las pruebas de integración (RED)**
+
+En `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs`, reemplaza:
+
+```csharp
+        private readonly Dictionary<string, string> _copies = new(StringComparer.Ordinal);
+```
+
+por:
+
+```csharp
+        // Concurrente desde D19 (spec 2026-09-16): PaymentProofDetachProcessor borra copias desde el hilo
+        // de PaymentProofMoveWorker mientras la prueba lee.
+        private readonly ConcurrentDictionary<string, string> _copies = new(StringComparer.Ordinal);
+```
+
+Reemplaza:
+
+```csharp
+        public List<string> DeletedKeys { get; } = [];
+```
+
+por:
+
+```csharp
+        public ConcurrentQueue<string> DeletedKeys { get; } = new();
+```
+
+Y reemplaza:
+
+```csharp
+            _copies.Remove(publicKey);
+            DeletedKeys.Add(publicKey);
+```
+
+por:
+
+```csharp
+            _copies.TryRemove(publicKey, out _);
+            DeletedKeys.Enqueue(publicKey);
+```
+
+En `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs`, reemplaza:
+
+```csharp
+    private const string AttachedEventName = "quotations.order.payment-proofs-attached.v1";
+```
+
+por:
+
+```csharp
+    private const string AttachedEventName = "quotations.order.payment-proofs-attached.v1";
+
+    // D19: el evento de retiro, también escrito a mano.
+    private const string DetachedEventName = "quotations.order.payment-proofs-detached.v1";
+```
+
+Reemplaza:
+
+```csharp
+    private static async Task AssertMovedAsync(
+```
+
+por:
+
+```csharp
+    // D19 (spec 2026-09-16): reemplazar el archivo de un comprobante escribe, con el pedido, el archivo
+    // viejo y la clave de su copia.
+    [Fact]
+    public async Task ReplacingAProofFileWritesTheDetachedEventWithTheOldFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var oldFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", oldFileId);
+        var oldKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var newFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, newFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
+        var payload = JsonSerializer.Deserialize<DetachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        Assert.Equal(tenantId, payload.TenantId);
+        Assert.Equal(order.Id, payload.OrderId);
+        var detached = Assert.Single(payload.Proofs);
+        Assert.Equal(oldFileId, detached.FileId);
+        Assert.Equal(oldKey, detached.PublicStorageKey);
+    }
+
+    // D19: quitar un comprobante también.
+    [Fact]
+    public async Task RemovingAProofWritesTheDetachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var publicKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
+        var payload = JsonSerializer.Deserialize<DetachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        Assert.Equal(order.Id, payload.OrderId);
+        var detached = Assert.Single(payload.Proofs);
+        Assert.Equal(fileId, detached.FileId);
+        Assert.Equal(publicKey, detached.PublicStorageKey);
+    }
+
+    // D19 con la opción apagada: el evento sale igual, sin clave, para que Storage borre el temporal.
+    [Fact]
+    public async Task RemovingAProofWithPublicLinksOffWritesTheDetachedEventWithoutKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
+        var payload = JsonSerializer.Deserialize<DetachedEventPayload>(message.PayloadJson, Json);
+        Assert.NotNull(payload);
+        var detached = Assert.Single(payload.Proofs);
+        Assert.Equal(fileId, detached.FileId);
+        Assert.Null(detached.PublicStorageKey);
+    }
+
+    // Corregir sólo un monto no suelta ningún archivo. Ya pasa antes de esta tarea.
+    [Fact]
+    public async Task CorrectingOnlyAmountsWritesNoDetachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived", [], UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(await OutboxMessagesAsync(factory, DetachedEventName));
+    }
+
+    // D19, «misma transacción»: un retiro que el dominio rechaza no deja evento. Ya pasa antes de esta
+    // tarea.
+    [Fact]
+    public async Task ARejectedRemovalWritesNoDetachedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{Guid.CreateVersion7()}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.payment_proof.not_found", problem?.Code);
+        Assert.Empty(await OutboxMessagesAsync(factory, DetachedEventName));
+    }
+
+    // D19 de punta a punta: reemplazar el archivo de un comprobante movido borra su copia pública —la
+    // única que tenía— y lo deja Purged. El reemplazo se mueve como cualquier comprobante nuevo.
+    [Fact]
+    public async Task AReplacedPaymentProofImageIsPurgedWithItsPublicCopy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var oldFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", oldFileId);
+        var oldKey = await WaitForMovedKeyAsync(database.GetConnectionString(), oldFileId);
+        Assert.NotNull(oldKey);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var newFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, newFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Purged", await WaitForStatusAsync(database.GetConnectionString(), oldFileId, "Purged"));
+        Assert.Contains(oldKey, factory.PublicObjectStorage.DeletedKeys);
+        // Sólo queda la copia del reemplazo.
+        Assert.Single(factory.PublicObjectStorage.Copies);
+        Assert.NotNull(await WaitForMovedKeyAsync(database.GetConnectionString(), newFileId));
+    }
+
+    // D19 de punta a punta: quitar un comprobante movido, lo mismo.
+    [Fact]
+    public async Task ARemovedPaymentProofImageIsPurgedWithItsPublicCopy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var publicKey = await WaitForMovedKeyAsync(database.GetConnectionString(), fileId);
+        Assert.NotNull(publicKey);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Purged", await WaitForStatusAsync(database.GetConnectionString(), fileId, "Purged"));
+        Assert.Contains(publicKey, factory.PublicObjectStorage.DeletedKeys);
+        Assert.Empty(factory.PublicObjectStorage.Copies);
+    }
+
+    // D13 y D19: un comprobante User conserva su original privado, pero la copia pública de ese adjunto
+    // se borra al quitarlo. Antes de D19, quitar un comprobante no borraba nada.
+    [Fact]
+    public async Task ARemovedUserProofLosesItsPublicCopyAndKeepsItsOriginal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var privateKey = await StorageKeyOfAsync(database.GetConnectionString(), fileId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var publicKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
+        Assert.NotNull(publicKey);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.DeleteAsync(
+            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(await WaitForDeletedKeyAsync(factory, publicKey));
+        Assert.Equal("Available", await StatusOfAsync(database.GetConnectionString(), fileId));
+        Assert.True(factory.ObjectStorage.Exists(privateKey));
+    }
+
+    private static async Task<string?> StatusOfAsync(string connectionString, Guid fileId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT status FROM storage.file_resources WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", fileId);
+        return await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+    }
+
+    // El retiro lo corre PaymentProofMoveWorker cada 3 s en el host: se espera con plazo, como
+    // WaitForMovedKeyAsync. Devuelve el último estado leído.
+    private static async Task<string?> WaitForStatusAsync(string connectionString, Guid fileId, string expected)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        string? status = null;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            status = await StatusOfAsync(connectionString, fileId);
+            if (status == expected)
+            {
+                return status;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return status;
+    }
+
+    private static async Task<bool> WaitForDeletedKeyAsync(QepApiFactory factory, string publicKey)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (factory.PublicObjectStorage.DeletedKeys.Contains(publicKey))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return false;
+    }
+
+    private static async Task AssertMovedAsync(
+```
+
+Y reemplaza:
+
+```csharp
+    private sealed record AttachedEventProof(Guid FileId, string PublicStorageKey);
+}
+```
+
+por:
+
+```csharp
+    private sealed record AttachedEventProof(Guid FileId, string PublicStorageKey);
+
+    private sealed record DetachedEventPayload(Guid TenantId, Guid OrderId, IReadOnlyList<DetachedEventProof> Proofs);
+
+    private sealed record DetachedEventProof(Guid FileId, string? PublicStorageKey);
+}
+```
+
+Con Docker corriendo:
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests.ReplacingAProofFileWritesTheDetachedEventWithTheOldFile|FullyQualifiedName~OrderPaymentProofPublicationApiTests.RemovingAProofWritesTheDetachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.RemovingAProofWithPublicLinksOffWritesTheDetachedEventWithoutKey|FullyQualifiedName~OrderPaymentProofPublicationApiTests.CorrectingOnlyAmountsWritesNoDetachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.ARejectedRemovalWritesNoDetachedEvent|FullyQualifiedName~OrderPaymentProofPublicationApiTests.AReplacedPaymentProofImageIsPurgedWithItsPublicCopy|FullyQualifiedName~OrderPaymentProofPublicationApiTests.ARemovedPaymentProofImageIsPurgedWithItsPublicCopy|FullyQualifiedName~OrderPaymentProofPublicationApiTests.ARemovedUserProofLosesItsPublicCopyAndKeepsItsOriginal"
+```
+
+Esperado (RED de aserción), `Con error: 6, Superado: 2`:
+- `ReplacingAProofFileWritesTheDetachedEventWithTheOldFile`, `RemovingAProofWritesTheDetachedEvent` y `RemovingAProofWithPublicLinksOffWritesTheDetachedEventWithoutKey` con `Assert.Single() Failure: The collection was empty` (nadie escribe el evento);
+- `AReplacedPaymentProofImageIsPurgedWithItsPublicCopy` y `ARemovedPaymentProofImageIsPurgedWithItsPublicCopy`, después de unos 30 s, con `Assert.Equal() Failure: Strings differ` → `Expected: "Purged"`, `Actual: "Available"`;
+- `ARemovedUserProofLosesItsPublicCopyAndKeepsItsOriginal`, después de unos 30 s, con `Assert.True() Failure` (quitar no borra nada todavía);
+- `CorrectingOnlyAmountsWritesNoDetachedEvent` y `ARejectedRemovalWritesNoDetachedEvent` pasan.
+
+Si una de imagen falla antes, en `Assert.NotNull` del primer `WaitForMovedKeyAsync`, el worker de Task 7 no movió el comprobante: **para y pregunta**. Pega la salida.
+
+- [ ] **Step 2: La prueba unitaria (RED)**
+
+En `tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs`, reemplaza:
+
+```csharp
+        Assert.Equal([new AttachedPaymentProof(replacedWithKey, "payment-proofs/def.webp")], attached);
+    }
+}
+```
+
+por:
+
+```csharp
+        Assert.Equal([new AttachedPaymentProof(replacedWithKey, "payment-proofs/def.webp")], attached);
+    }
+
+    // D19 (spec 2026-09-16): se suelta sólo el archivo que el pedido dejó de usar. Si otro comprobante
+    // del mismo pedido lo sigue usando, no hay nada que borrar.
+    [Fact]
+    public void OnlyTheFilesTheOrderNoLongerUsesAreDetached()
+    {
+        var replaced = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/abc.webp");
+        var stillUsed = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/def.webp");
+        var withoutKey = new DetachedPaymentProof(Guid.CreateVersion7(), null);
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [replaced, stillUsed, withoutKey],
+            [stillUsed.FileId, Guid.CreateVersion7()]);
+
+        Assert.Equal([replaced, withoutKey], detached);
+    }
+}
+```
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --no-restore --filter "FullyQualifiedName~PaymentProofCopiesTests"
+```
+
+Esperado (RED de compilación): `error CS0246: … 'DetachedPaymentProof' …` y `CS0117: 'PaymentProofCopies' no contiene una definición para 'DetachedFrom'`. Pega la salida.
+
+- [ ] **Step 3: El puerto**
+
+En `src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs`, reemplaza:
+
+```csharp
+    /// <summary><c>quotations.order.payment-proofs-attached.v1</c>.</summary>
+    void PublishAttached(
+        Guid tenantId,
+        OrderId orderId,
+        IReadOnlyCollection<AttachedPaymentProof> proofs,
+        DateTimeOffset occurredAt);
+}
+```
+
+por:
+
+```csharp
+    /// <summary><c>quotations.order.payment-proofs-attached.v1</c>.</summary>
+    void PublishAttached(
+        Guid tenantId,
+        OrderId orderId,
+        IReadOnlyCollection<AttachedPaymentProof> proofs,
+        DateTimeOffset occurredAt);
+
+    /// <summary><c>quotations.order.payment-proofs-detached.v1</c> (spec 2026-09-16, D19): los archivos
+    /// que el pedido dejó de usar al reemplazar o quitar comprobantes. Lo consume
+    /// <c>PaymentProofDetachProcessor</c>, en Storage, que los borra y los marca purgados.</summary>
+    void PublishDetached(
+        Guid tenantId,
+        OrderId orderId,
+        IReadOnlyCollection<DetachedPaymentProof> proofs,
+        DateTimeOffset occurredAt);
+}
+```
+
+Y reemplaza:
+
+```csharp
+public sealed record AttachedPaymentProof(Guid FileId, string PublicStorageKey);
+```
+
+por:
+
+```csharp
+public sealed record AttachedPaymentProof(Guid FileId, string PublicStorageKey);
+
+/// <summary>Un archivo que el pedido dejó de usar y la clave de la copia pública que tenía ese
+/// comprobante, o null si no tenía (la opción apagada, D19).</summary>
+public sealed record DetachedPaymentProof(Guid FileId, string? PublicStorageKey);
+```
+
+- [ ] **Step 4: La implementación**
+
+En `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs`, reemplaza:
+
+```csharp
+    internal const string AttachedEventName = "quotations.order.payment-proofs-attached.v1";
+```
+
+por:
+
+```csharp
+    internal const string AttachedEventName = "quotations.order.payment-proofs-attached.v1";
+
+    internal const string DetachedEventName = "quotations.order.payment-proofs-detached.v1";
+```
+
+Reemplaza:
+
+```csharp
+    // Nombres en minúscula como el resto de los payloads del outbox: el consumidor los lee por nombre
+    // con JsonDocument.
+```
+
+por:
+
+```csharp
+    // D19: mismo esquema que el de adjuntos, con publicStorageKey null cuando el comprobante no tenía
+    // copia. Lo consume PaymentProofDetachProcessor, en Storage, que también lo lee por nombre.
+    public void PublishDetached(
+        Guid tenantId,
+        OrderId orderId,
+        IReadOnlyCollection<DetachedPaymentProof> proofs,
+        DateTimeOffset occurredAt) =>
+        dbContext.Outbox.Add(new QuotationsOutboxMessage
+        {
+            Id = Guid.CreateVersion7(),
+            EventName = DetachedEventName,
+            PayloadJson = JsonSerializer.Serialize(new DetachedPayload(
+                tenantId,
+                orderId.Value,
+                proofs
+                    .Select(proof => new DetachedProofPayload(proof.FileId, proof.PublicStorageKey))
+                    .ToArray())),
+            CorrelationId = orderId.Value.ToString("D", CultureInfo.InvariantCulture),
+            OccurredAt = occurredAt,
+        });
+
+    // Nombres en minúscula como el resto de los payloads del outbox: el consumidor los lee por nombre
+    // con JsonDocument.
+```
+
+Y reemplaza:
+
+```csharp
+    private sealed record AttachedProofPayload(Guid fileId, string publicStorageKey);
+}
+```
+
+por:
+
+```csharp
+    private sealed record AttachedProofPayload(Guid fileId, string publicStorageKey);
+
+    private sealed record DetachedPayload(
+        Guid tenantId,
+        Guid orderId,
+        IReadOnlyCollection<DetachedProofPayload> proofs);
+
+    // System.Text.Json escribe el null: el consumidor distingue «sin copia» de un campo que falta.
+    private sealed record DetachedProofPayload(Guid fileId, string? publicStorageKey);
+}
+```
+
+- [ ] **Step 5: `DetachedFrom`**
+
+En `src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs`, reemplaza:
+
+```csharp
+            .Select(update => new AttachedPaymentProof(update.NewFileId!.Value, update.NewPublicStorageKey!))
+            .ToArray();
+}
+```
+
+por:
+
+```csharp
+            .Select(update => new AttachedPaymentProof(update.NewFileId!.Value, update.NewPublicStorageKey!))
+            .ToArray();
+
+    /// <summary>Los archivos que el pedido dejó de usar, para el evento de D19 (spec 2026-09-16):
+    /// <paramref name="candidates"/> se leen antes de mutar el pedido y
+    /// <paramref name="remainingFileIds"/> después. Un archivo que otro comprobante del mismo pedido
+    /// sigue usando no se suelta; los de otros pedidos los retiene la sonda de Storage.</summary>
+    public static DetachedPaymentProof[] DetachedFrom(
+        IEnumerable<DetachedPaymentProof> candidates, IEnumerable<Guid> remainingFileIds)
+    {
+        var remaining = remainingFileIds.ToHashSet();
+        return candidates.Where(candidate => !remaining.Contains(candidate.FileId)).ToArray();
+    }
+}
+```
+
+- [ ] **Step 6: Los dos handlers**
+
+En `src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs`, reemplaza:
+
+```csharp
+        // La clave vieja de cada comprobante que se reemplaza: capturada ANTES de mutar el
+        // agregado, porque después de AddPaymentProofs ya no queda forma de leerla. Sólo se borra
+        // si el guardado termina saliendo bien — best-effort, fuera del try de arriba: un archivo
+        // público huérfano no es motivo para fallar un request que sí guardó.
+        var oldPublicKeysToReplace = command.UpdatedProofs
+            .Where(update => update.NewFileId is not null)
+            .Select(update => order.PaymentProofs
+                .FirstOrDefault(proof => proof.Id.Value == update.ProofId)
+                ?.PublicStorageKey)
+            .Where(publicKey => publicKey is not null)
+            .Cast<string>()
+            .ToArray();
+```
+
+por:
+
+```csharp
+        // D19 (spec 2026-09-16): el archivo y la clave de cada comprobante que se reemplaza, capturados
+        // ANTES de mutar el agregado, porque UpdateFile los pisa. Quotations ya no borra la copia vieja
+        // después de guardar: la borra Storage al consumir el evento, junto con el archivo, y reintenta
+        // si falla. Un ProofId que no es de este pedido no aporta nada acá: AddPaymentProofs lo rechaza.
+        var replacedFiles = command.UpdatedProofs
+            .Where(update => update.NewFileId is not null)
+            .Select(update => order.PaymentProofs
+                .FirstOrDefault(proof => proof.Id.Value == update.ProofId))
+            .OfType<OrderPaymentProof>()
+            .Select(proof => new DetachedPaymentProof(proof.FileId, proof.PublicStorageKey))
+            .ToArray();
+```
+
+Reemplaza:
+
+```csharp
+                .Concat(PaymentProofCopies.AttachedFromReplacements(updatedProofs))
+                .ToArray();
+            if (attached.Length > 0)
+            {
+                paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
+            }
+
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+```
+
+por:
+
+```csharp
+                .Concat(PaymentProofCopies.AttachedFromReplacements(updatedProofs))
+                .ToArray();
+            if (attached.Length > 0)
+            {
+                paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
+            }
+
+            // D19: en la misma transacción, los archivos que el pedido dejó de usar. Storage los borra —del
+            // bucket público si ya se movieron, de staging/ si no— y los marca purgados. Sale también con
+            // la opción apagada: un PaymentProof sin copia igual tiene su temporal.
+            var detached = PaymentProofCopies.DetachedFrom(
+                replacedFiles, order.PaymentProofs.Select(proof => proof.FileId));
+            if (detached.Length > 0)
+            {
+                paymentProofEvents.PublishDetached(command.TenantId, order.Id, detached, now);
+            }
+
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+```
+
+Y reemplaza:
+
+```csharp
+        foreach (var oldPublicKey in oldPublicKeysToReplace)
+        {
+            try
+            {
+                await paymentProofPublisher.DeleteAsync(oldPublicKey, CancellationToken.None);
+            }
+            catch
+            {
+                // Best-effort, mismo criterio que PaymentProofCopies.RollbackAsync: el archivo
+                // viejo queda huérfano en el bucket público, pero el pedido ya guardó el cambio.
+            }
+        }
+
+        return order.ToDto();
+```
+
+por:
+
+```csharp
+        return order.ToDto();
+```
+
+Reemplaza el contenido completo de `src/Modules/Quotations/Modules.Quotations.Application/RemoveOrderPaymentProof.cs` por:
+
+```csharp
+using BuildingBlocks.Application;
+using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
+
+namespace Modules.Quotations.Application;
+
+/// <summary>
+/// Quita un comprobante ya cargado (a pedido, 2026-09-15) — para el caso de haber cargado uno
+/// equivocado, no para corregirlo (eso ya lo cubre <see cref="AddOrderPaymentProofsCommand"/> vía
+/// <c>UpdatedProofs</c>). Sólo mientras el pedido sigue <see cref="OrderStatus.Pending"/> — ver
+/// <see cref="Order.RemovePaymentProof"/>. Desde D19 (spec 2026-09-16) el archivo que el pedido deja de
+/// usar se borra: lo hace Storage, al consumir el evento que se escribe con el pedido.
+/// </summary>
+public sealed record RemoveOrderPaymentProofCommand(
+    Guid TenantId, Guid QuotationId, Guid ProofId) : ICommand<OrderDto>;
+
+public sealed class RemoveOrderPaymentProofHandler(
+    IOrderRepository orderRepository,
+    IQuotationRepository quotationRepository,
+    IQuotationsUnitOfWork unitOfWork,
+    IQuotationAuditPublisher auditPublisher,
+    IOrderPaymentProofEventPublisher paymentProofEvents,
+    IExecutionContext executionContext,
+    IClock clock)
+    : ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>
+{
+    public async Task<OrderDto> HandleAsync(
+        RemoveOrderPaymentProofCommand command,
+        CancellationToken cancellationToken)
+    {
+        QuotationsAuthorization.EnsureAuthorized(
+            executionContext, command.TenantId, OrdersPermissions.OrderManage);
+
+        var order = await orderRepository.FindByQuotationIdAsync(
+            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
+            ?? throw OrderNotFound.For(command.QuotationId);
+
+        var quotation = await quotationRepository.FindAsync(
+            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
+            ?? throw QuotationNotFound.For(command.QuotationId);
+
+        var now = clock.UtcNow;
+        var proofId = new OrderPaymentProofId(command.ProofId);
+        // D19: el archivo y su clave, leídos antes de quitarlo. Si el comprobante no es de este pedido,
+        // RemovePaymentProof lanza order.payment_proof.not_found y no se publica nada.
+        var removed = order.PaymentProofs.FirstOrDefault(proof => proof.Id == proofId);
+        order.RemovePaymentProof(proofId, now);
+        // El estado del pago cambia con lo que quede cargado -- mismo motivo que
+        // AddOrderItemsHandler recalcula tras sumar un producto: el agregado no tiene el total de
+        // la cotización a mano.
+        order.RecalculatePaymentStatus(quotation.Total, now);
+
+        auditPublisher.Publish(
+            command.TenantId,
+            executionContext.SubjectId,
+            "quotation.order.payment_proof_removed",
+            order.Id.ToString(),
+            "success",
+            now);
+        // D19: en la misma transacción que el pedido. `removed` no es null: RemovePaymentProof ya habría
+        // lanzado. Si otro comprobante del pedido usa el mismo archivo, no se suelta.
+        var detached = PaymentProofCopies.DetachedFrom(
+            [new DetachedPaymentProof(removed!.FileId, removed.PublicStorageKey)],
+            order.PaymentProofs.Select(proof => proof.FileId));
+        if (detached.Length > 0)
+        {
+            paymentProofEvents.PublishDetached(command.TenantId, order.Id, detached, now);
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return order.ToDto();
+    }
+}
+```
+
+- [ ] **Step 7: Correrlas (GREEN)**
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --no-restore
+dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~OrderPaymentProofPublicationApiTests"
+dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~Modules.Quotations.IntegrationTests.OrderApiTests"
+```
+
+Esperado: los tres con `Con error: 0`; `PaymentProofCopiesTests` con la prueba nueva entre las superadas; `OrderPaymentProofPublicationApiTests` con `Superado: 28` (las 20 de Tasks 6 a 8B y las 8 nuevas); `OrderApiTests` entero, que incluye las cuatro pruebas de reemplazar y quitar de `develop` (hallazgo 22). Pega los resúmenes.
+
+- [ ] **Step 8: El resumen del publicador, el README y la guía de integración**
+
+En `src/Bootstrapper/PublicPaymentProofPublisher.cs` (pre-flight C4: el resumen que dejó Task 9B no sabe de D19), reemplaza:
+
+```csharp
+/// la clave cuando lo mueve (D10), y no deja borrarlo ni despublicarlo mientras un pedido lo
+/// referencie (D15).
+/// </summary>
+```
+
+por:
+
+```csharp
+/// la clave cuando lo mueve (D10), y no deja borrarlo ni despublicarlo mientras un pedido lo
+/// referencie (D15). Desde D19, reemplazar o quitar un comprobante de un pedido hace que Storage borre
+/// la copia de ese adjunto y, en un <c>PaymentProof</c> que nadie más usa, el archivo entero: este
+/// publicador sólo borra sus copias en el rollback de un request que falló.
+/// </summary>
+```
+
+En `README.md`, reemplaza:
+
+```markdown
+  Excel. `PUT /files/{id}/publication` rechaza siempre un `PaymentProof`, con el mismo código: sólo
+  llega al público al adjuntarse a un pedido.
+```
+
+por:
+
+```markdown
+  Excel. `PUT /files/{id}/publication` rechaza siempre un `PaymentProof`, con el mismo código: sólo
+  llega al público al adjuntarse a un pedido.
+- **Reemplazar o quitar un comprobante borra su archivo** (spec 2026-09-16, D19): corregir el archivo
+  con `updatedProofs[].newFileId` o quitar el comprobante con `DELETE /order/proofs/{proofId}` escribe
+  `quotations.order.payment-proofs-detached.v1` con el pedido, y segundos después Storage borra la
+  copia pública de ese adjunto. Si es un `PaymentProof` que ningún otro comprobante usa, borra además
+  el archivo —del bucket público si ya se movió, de `staging/` si no— y lo marca `Purged`, auditado
+  como `storage.file.purged` / `payment_proof_detached`. El original privado de un comprobante `User`
+  no se toca. Un Excel ya enviado con la URL vieja muestra un enlace roto: es a propósito.
+```
+
+En `docs/integracion-cotizaciones-y-pedidos.md`, reemplaza:
+
+```markdown
+en vez de descargar con el nombre original. Un comprobante `User` sigue como antes. La respuesta de los
+endpoints de pedidos no cambia.
+```
+
+por:
+
+```markdown
+en vez de descargar con el nombre original. Un comprobante `User` sigue como antes. La respuesta de los
+endpoints de pedidos no cambia.
+
+Reemplazar el archivo de un comprobante (`updatedProofs[].newFileId`) o quitarlo
+(`DELETE /order/proofs/{proofId}`) borra, segundos después, el archivo que el pedido deja de usar: su
+URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a adjuntar
+(`order.payment_proof.file_not_available`). Para corregir, sube un archivo nuevo.
+```
+
+- [ ] **Step 9: Build completo y chequeo de formato**
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet build Backend.slnx --no-restore
+dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --no-build
+dotnet test tests/ArchitectureTests/ArchitectureTests --no-build
+```
+
+Esperado: `0 Advertencia(s)`, `0 Errores`, y los dos proyectos con `Con error: 0` (`CompositionRootTests` resuelve `RemoveOrderPaymentProofHandler` con su parámetro nuevo). Después corre «el chequeo de formato»: `AddOrderPaymentProofs.cs` y `RemoveOrderPaymentProof.cs` ya existían, así que un diagnóstico en una línea que no tocaste se anota y no se arregla.
+
+- [ ] **Step 10: Commit**
+
+```powershell
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\comprobantes-publicos
+if ((git branch --show-current) -ne "feature/comprobantes-publicos-v2") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Application/IOrderPaymentProofEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderPaymentProofEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Application/PaymentProofCopies.cs src/Modules/Quotations/Modules.Quotations.Application/AddOrderPaymentProofs.cs src/Modules/Quotations/Modules.Quotations.Application/RemoveOrderPaymentProof.cs src/Bootstrapper/PublicPaymentProofPublisher.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/PaymentProofCopiesTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderPaymentProofPublicationApiTests.cs README.md docs/integracion-cotizaciones-y-pedidos.md; git commit -m "feat(orders): soltar el archivo al reemplazar o quitar un comprobante" -m "Reemplazar un archivo con updatedProofs y quitar un comprobante escriben quotations.order.payment-proofs-detached.v1 en la misma transacción que el pedido, con cada archivo que el pedido deja de usar y su clave pública. El borrado best-effort de la copia vieja después de guardar desaparece: lo hace Storage al consumir el evento (spec 2026-09-16, D19)."
 git status --short
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -6843,13 +8584,13 @@ D12 y sección 4: `PaymentProofOrphanCleanupWorker` recorre sólo `payment-proof
 - Create: `src/Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofOrphanCleanupWorker.cs`
 - Modify: `src/Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs:41` y después del worker de movimiento
 - Modify: `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofStorageHarness.cs` (flag `DryRun`, sonda de prueba, helper)
-- Modify: `README.md:123,950,970` (las líneas 963-964 ya las corrigió Task 9B)
+- Modify: `README.md:123,950,982` (las líneas 963-964 ya las corrigió Task 9B, y Task 9D sumó debajo el bullet de D19; las anclas de abajo son de contenido)
 - Test: `tests/Modules/Storage/Modules.Storage.IntegrationTests/PaymentProofOrphanCleanupTests.cs` (nuevo)
 - Test: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/PaymentProofReferenceProbeTests.cs` (una prueba)
 - Test: `tests/ArchitectureTests/ArchitectureTests/ConfigurationExampleTests.cs` (sin cambios; es el RED de las claves, hallazgo 18)
 
 **Interfaces:**
-- Consumes: `IPublicObjectStorage.ListAsync`, `PublicObjectPage`, `PublicStoredObject` (Task 3); `InMemoryPublicObjectStorage` con `Put`, `Exists`, `DeletedKeys`, `ListedPrefixes` y `PageSize` (Task 4); `NewPublicKey`, `AddAttachedEventAsync`, `RunMoveAsync` (Task 7); `IStorageAuditPublisher.PublishSystem`, `AuditEventsAsync`, `FixedFileReferenceProbe` y `PaymentProofReferenceProbeTests` con sus helpers (Task 9); el índice `IX_order_payment_proofs_public_key` (Task 8B); la prueba nueva de `OrderPaymentProofPublicationApiTests` (Task 7B) y la sección del README que corrigió Task 9B.
+- Consumes: `IPublicObjectStorage.ListAsync`, `PublicObjectPage`, `PublicStoredObject` (Task 3); `InMemoryPublicObjectStorage` con `Put`, `Exists`, `DeletedKeys`, `ListedPrefixes` y `PageSize` (Task 4); `NewPublicKey`, `AddAttachedEventAsync`, `RunMoveAsync` (Task 7); `IStorageAuditPublisher.PublishSystem`, `AuditEventsAsync`, `FixedFileReferenceProbe` y `PaymentProofReferenceProbeTests` con sus helpers (Task 9); el índice `IX_order_payment_proofs_public_key` (Task 8B); las pruebas de `OrderPaymentProofPublicationApiTests` hasta Task 9D (28) y la sección del README que corrigieron Tasks 9B y 9D.
 - Produces:
   - `public sealed class PaymentProofOrphanCleanupOptions { int MinimumAgeHours = 24; int IntervalHours = 24; bool DryRun = true; }` y `StorageOptions.PaymentProofOrphanCleanup`.
   - Mensajes de validación: `Storage:PaymentProofOrphanCleanup:MinimumAgeHours must be greater than zero.` y `Storage:PaymentProofOrphanCleanup:IntervalHours must be between 1 and 1193.`
@@ -7758,7 +9499,7 @@ dotnet test tests/Modules/Storage/Modules.Storage.IntegrationTests --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --no-restore --filter "FullyQualifiedName~PaymentProofReferenceProbeTests|FullyQualifiedName~OrderPaymentProofPublicationApiTests"
 ```
 
-Esperado: los tres con `Con error: 0`; `PaymentProofOrphanCleanupTests` con 2 superadas; las 21 de Quotations (19 de `OrderPaymentProofPublicationApiTests` + 2 de `PaymentProofReferenceProbeTests`) superadas. Pega los resúmenes.
+Esperado: los tres con `Con error: 0`; `PaymentProofOrphanCleanupTests` con 2 superadas; las 30 de Quotations (28 de `OrderPaymentProofPublicationApiTests` + 2 de `PaymentProofReferenceProbeTests`) superadas. Pega los resúmenes.
 
 - [ ] **Step 12: README**
 
@@ -7811,7 +9552,9 @@ Desde el 2026-09-16 el frontend sube los comprobantes con `ownerType: "PaymentPr
 3. **`PaymentProofMoveWorker`** (cada 3 s) consume ese evento con el inbox `storage.inbox_messages`:
    primero borra el temporal y después registra el movimiento en `FileResource.PublicStorageKey`.
    Desde ahí la descarga desde la app devuelve la URL pública, que el navegador **abre** en vez de
-   bajar con el nombre original.
+   bajar con el nombre original. En el mismo tick, después del movimiento, consume también
+   `quotations.order.payment-proofs-detached.v1` (D19, ver «Reemplazar o quitar un comprobante
+   borra su archivo», arriba).
 4. **El barrido de staging** (cada `Storage:StagingCleanupMinutes`) purga el comprobante que sigue
    sin mover después de `Storage:StagingRetentionHours` si ningún módulo lo referencia, y lo audita
    como `storage.file.purged` / `payment_proof_not_attached`.
@@ -7824,13 +9567,20 @@ Desde el 2026-09-16 el frontend sube los comprobantes con `ownerType: "PaymentPr
 
 Un comprobante ya movido no se puede adjuntar a otro pedido (422 `order.payment_proof.file_not_available`),
 y uno que un pedido referencia no se borra ni se despublica desde la API de Storage (ver «Nada se
-despublica solo», arriba). `FileUserReferenceProbe` cuenta también los `PaymentProof`: quien subió un
-comprobante no se borra como usuario huérfano.
+despublica solo», arriba). Reemplazarlo o quitarlo del pedido sí lo borra (D19). `FileUserReferenceProbe`
+cuenta también los `PaymentProof`: quien subió un comprobante no se borra como usuario huérfano.
 
-Los comprobantes `User` (los de v1) no cambian. Con `Quotations:PaymentProofs:PublicLinks=false` no
-hay copia ni evento, así que un `PaymentProof` adjunto se queda en `staging/`, retenido del barrido
-por la sonda de Quotations. Una regla de lifecycle sobre `staging/` en el bucket privado borraría
-comprobantes que todavía no se adjuntaron o no se movieron: no debe haber ninguna.
+Borrar o despublicar desde la API de Storage un `PaymentProof` movido que ya ningún pedido referencia
+lo deja **sin ninguna copia**: su temporal se borró al moverlo y la copia pública se va con la
+operación. D15 lo permite porque ya no es la evidencia de ningún pedido; el frontend no llama a esos
+endpoints.
+
+Los comprobantes `User` (los de v1) no cambian, salvo que reemplazarlos o quitarlos de un pedido borra
+la copia pública de ese adjunto. Con `Quotations:PaymentProofs:PublicLinks=false` no hay copia ni
+evento de adjunto, así que un `PaymentProof` adjunto se queda en `staging/`, retenido del barrido por
+la sonda de Quotations; si el pedido lo suelta, el evento de retiro sale igual y Storage borra el
+temporal. Una regla de lifecycle sobre `staging/` en el bucket privado borraría comprobantes que
+todavía no se adjuntaron o no se movieron: no debe haber ninguna.
 
 ### Plantilla de WhatsApp (Zenvia)
 ```
@@ -7999,7 +9749,7 @@ Nada de código nuevo salvo lo que esta verificación pida arreglar (en ese caso
 - Ninguno, salvo correcciones.
 
 **Interfaces:**
-- Consumes: `$env:TEMP\qep-comprobantes-v2-baseline-failed.txt`, `$env:TEMP\qep-comprobantes-v2-frontend-baseline-failed.txt` y los exit codes de lint y build de `origin/develop` (Task 0) y todas las tareas anteriores, las B incluidas.
+- Consumes: `$env:TEMP\qep-comprobantes-v2-baseline-failed.txt`, `$env:TEMP\qep-comprobantes-v2-frontend-baseline-failed.txt` y los exit codes de lint y build de `origin/develop` (Task 0) y todas las tareas anteriores, las B, C y D incluidas.
 - Produces: el handoff final.
 
 - [ ] **Step 1: Restore y build desde cero**
@@ -8139,7 +9889,7 @@ if (Test-Path $reportFile) {
 }
 ```
 
-Esperado: el `log` con los dos commits del spec (`aa1c6dd` y el de las enmiendas, `2ac3728`) y los 15 de Tasks 0–10 con sus B (0, 1, 1B, 2, 3, 4, 5, 6, 7, 7B, 8, 8B, 9, 9B y 10), más los `fix` que hayan hecho falta; el `Select-String` sin salida; el bloque de formato sin salida o sólo con líneas previas ya anotadas.
+Esperado: el `log` con los cinco commits de documentación —el spec (`a8a5424`, `df294d7` y `da80432`) y el plan (`01a56fe` y `docs(storage): plan v2 rebasado sobre develop y con D19`)— y los 16 de Tasks 1–10 con sus B, C y D (1, 1B, 2, 3, 4, 5, 6, 7, 7B, 8, 8B, 9, 9B, 9C, 9D y 10): 21 commits, más los `fix` que hayan hecho falta. Task 0 no commitea nada (pre-flight C5). El `Select-String` sin salida; el bloque de formato sin salida o sólo con líneas previas ya anotadas.
 
 - [ ] **Step 6: Verificaciones manuales que las pruebas no cubren**
 
@@ -8149,10 +9899,11 @@ Anota el resultado de cada una en el handoff; ninguna se corre contra producció
 2. **Orden de despliegue (D14).** El backend va primero; la rama `feature/comprobantes-publicos-v2` de `qep-frontend` se mergea sólo con el backend nuevo en producción.
 3. **`DryRun`.** Después de desplegar, esperar al menos una corrida (24 h) y revisar en los logs del pod las líneas `Payment proof orphan cleanup (dry run) would delete …` y `Payment proof orphan cleanup finished: …`. Apagar `Storage__PaymentProofOrphanCleanup__DryRun` es un commit aparte, fuera de este plan.
 4. **D15 en un entorno con R2.** Si el developer lo pide, `DELETE /files/{id}` de un comprobante adjunto y movido responde 422 `storage.file.invalid_state` y su URL pública sigue abriendo.
+5. **D19 en un entorno con R2.** Si el developer lo pide, quitar de un pedido pendiente un comprobante movido (`DELETE /order/proofs/{proofId}`) deja, segundos después, su URL pública respondiendo 404 y su fila de `storage.file_resources` en `Purged`, con una entrada `storage.file.purged` / `payment_proof_detached` en `audit.entries`.
 
 - [ ] **Step 7: Handoff**
 
-Pega en el handoff: la lista de commits de las dos ramas, el resumen de cada proyecto de pruebas (Superado/Con error/Omitido), las dos comparaciones contra el baseline (backend, Step 3; frontend, Step 4), el resultado de Step 6 y cualquier diagnóstico de formato previo que hayas anotado. Ninguna rama se publica desde este plan.
+Pega en el handoff: la lista de commits de las dos ramas, el resumen de cada proyecto de pruebas (Superado/Con error/Omitido), las dos comparaciones contra el baseline (backend, Step 3; frontend, Step 4), el resultado de Step 6 y cualquier diagnóstico de formato previo que hayas anotado. Suma, tal cual, el riesgo aceptado del pre-flight C2: «Borrar o despublicar desde la API de Storage un `PaymentProof` movido que ningún pedido referencia lo deja sin ninguna copia (su temporal ya no existe); D15 lo permite y el frontend no llama a esos endpoints.» Ninguna rama se publica desde este plan.
 
 ---
 
@@ -8162,7 +9913,7 @@ Pega en el handoff: la lista de commits de las dos ramas, el resumen de cada pro
 | --- | --- |
 | D1 — PDF tal cual, imágenes a WebP | 2 (`Supports`), 4 (`APdfProofStaysUntouchedInStaging`), 7 (`AnAttachedPdfProofIsMovedAsIs`) |
 | D2 — `FileOwnerType.PaymentProof = 5` | 1, 4 (endpoint), 11 (frontend) |
-| D3 — se mueve al adjuntar | 6 (evento en los dos handlers), 7 |
+| D3 — se mueve al adjuntar | 6 (evento en los dos handlers, con los archivos de reemplazo), 7 |
 | D4 — espera en `staging/`, nunca a `files/` | 4 |
 | D5 — descarga con la URL pública | 8 |
 | D6 — workers dentro de la API | 7, 9, 10 (`BackgroundService` + procesador) |
@@ -8172,12 +9923,20 @@ Pega en el handoff: la lista de commits de las dos ramas, el resumen de cada pro
 | D10 — `MoveToPublic` propio, `Publish` intacto | 1, 7 |
 | D11 — barrido de `Available` sin mover y sin referencia | 1 (`PurgeUnattachedPaymentProof`), 9 |
 | D12 — reconciliación de `payment-proofs/`, 24 h, diaria, en seco | 3 (listado), 10 |
-| D13 — `User` sin cambios | 4 (`AUserImageIsStillPromotedWithItsThumbnail`), 7 (`AUserFileIsIgnored`, `AUserProofIsCopiedButNeverMoved`), 8 (`APublishedUserImageIsStillSigned`), 9 (`AUserFileIsNotSwept`) |
+| D13 — `User` sin cambios | 4 (`AUserImageIsStillPromotedWithItsThumbnail`), 7 (`AUserFileIsIgnored`, `AUserProofIsCopiedButNeverMoved`), 8 (`APublishedUserImageIsStillSigned`), 9 (`AUserFileIsNotSwept`), 9C (`AUserFileKeepsItsOriginalAndLosesOnlyTheCopyOfThatAttachment`), 9D (`ARemovedUserProofLosesItsPublicCopyAndKeepsItsOriginal`) |
 | D14 — backend primero | 11 (la rama del frontend espera), 12 (Step 6) |
 | D15 — borrar y despublicar rechazan un `PaymentProof` referenciado; publicar rechaza siempre un `PaymentProof` | 9B (`PaymentProofGuard`; `DeletingAReferencedPaymentProofIsRejectedAndKeepsItsPublicCopy`, `UnpublishingAReferencedPaymentProofIsRejectedAndKeepsItsPublicCopy`, `PublishingAPaymentProofIsAlwaysRejected`, sin referencia como antes; `DeletingAMovedProofThatAnOrderReferencesIsRejected` de punta a punta; README) |
 | D16 — un comprobante movido no se adjunta a otro pedido | 7B (`QuotationFileLookupTests.AMovedPaymentProofIsNotAvailable`; `AnAlreadyMovedPaymentProofCannotBeAttachedToAnotherOrder`: 422 `order.payment_proof.file_not_available` y sin copia nueva) |
 | D17 — índices sobre `order_payment_proofs.file_id` y `public_storage_key` | 8B (`OrderPaymentProofsHaveAnIndexForEachReferenceProbe`, `TheModelHasNoChangesPendingAMigration` RED/GREEN, migración generada `AddOrderPaymentProofReferenceIndexes`) |
-| D18 — `FileUserReferenceProbe` cuenta los `PaymentProof` | 1B (`OrphanUserCleanupTests.OwningAPaymentProofKeepsTheUser`) |
+| D18 — `FileUserReferenceProbe` cuenta los `PaymentProof` | 1B (`OrphanUserCleanupTests.OwningAPaymentProofKeepsTheUser`; cualquier estado, así que un purgado por D19 también retiene) |
+| D19 — reemplazar o quitar borra el archivo que el pedido suelta | 6 (el reemplazo entra en el evento de adjuntos: `ReplacingAProofFileWithPublicLinksOnWritesAnEventWithTheReplacement`, `OnlyTheReplacementFilesWithAPublicKeyAreAttached`), 9C (`PurgeDetachedPaymentProof` con sus 4 unitarias; `AMovedProofIsPurgedAndItsPublicObjectDeleted`, auditoría `payment_proof_detached`), 9D (evento de retiro en los dos handlers y sin el borrado best-effort: `ReplacingAProofFileWritesTheDetachedEventWithTheOldFile`, `RemovingAProofWritesTheDetachedEvent`, `OnlyTheFilesTheOrderNoLongerUsesAreDetached`; de punta a punta: `AReplacedPaymentProofImageIsPurgedWithItsPublicCopy`, `ARemovedPaymentProofImageIsPurgedWithItsPublicCopy`; README, guía de integración y resumen de `PublicPaymentProofPublisher`) |
+| D19 — misma transacción que el pedido | 9D (`CorrectingOnlyAmountsWritesNoDetachedEvent`, `ARejectedRemovalWritesNoDetachedEvent`) |
+| D19 — la carrera: retiro antes del movimiento | 9C (`AProofDetachedBeforeItsMoveLosesItsCopyAndTheMoveSkipsIt`, RED de aserción en dos fases; el movimiento lo salta por la regla de Task 7) |
+| D19 — con `PublicLinks=false` | 9C (`AStagedProofWithoutACopyIsPurgedWithItsStagingObject`), 9D (`RemovingAProofWithPublicLinksOffWritesTheDetachedEventWithoutKey`) |
+| D19 — retenido, una sola vez, orden borrar → guardar | 9C (`AProofStillReferencedIsKept`, `ADetachIsAppliedOnlyOnce`, `WhenADeleteFailsNothingIsSavedAndTheMessageComesBack`) |
+| D19 — D15 y D16 no cambian | 9C no pasa por los handlers de 9B; un `Purged` no está `Available`, así que la regla de 7B lo rechaza con `order.payment_proof.file_not_available` |
+| D19 — «Pruebas de D19» del spec | Unitarias: 9C (dominio), 6 y 9D (`PaymentProofCopies`). Quotations: 6 y 9D. Punta a punta: 9D. Storage: 9C |
+| Pre-flight C1–C7 | C1: hallazgo 22, D19 y Tasks 6, 9C y 9D. C2: README de Task 10 y handoff de Task 12, Step 7. C3: Task 7, Step 11 → Task 8, Step 5. C4: Task 9B, Step 5 y Task 9D, Step 8. C5: Task 0, Step 7, «Entrega» y Task 12, Step 5. C6: Task 6, Interfaces. C7: «File Structure», Task 1 Files y Task 10 Files |
 | Unit: el procesador reduce, no agranda, WebP 80, rechaza corrupta | 2 (y `TheResultCarriesNoExifIccOrXmpProfile`, RED sin las líneas del Step 6) |
 | Unit: `MoveToPublic` sólo `PaymentProof` `Available`, acepta PDF, idempotente | 1 |
 | Unit: `OrderPaymentProofResolver` acepta `image/webp` | 5 |
@@ -8195,4 +9954,4 @@ Pega en el handoff: la lista de commits de las dos ramas, el resumen de cada pro
 | Sección 3: `storage.file.purged` / `payment_proof_not_attached` | 9 |
 | Sección 4: `storage.public_object.purged` y `DryRun` en `appsettings.json` y ConfigMap | 10 |
 | Enmiendas: `PublicLinks=false` deja el `PaymentProof` adjunto en `staging/`; Storage necesita inbox y migración | 9 (retenido por la sonda, iteración con `Skip`), 7 (`AddStorageInbox`) |
-| Fuera de alcance (migrar v1, otros archivos, API/CronJob, despublicar, por tenant) | No se implementa. D15 no despublica nada: sólo impide borrar la copia de un comprobante adjunto |
+| Fuera de alcance (migrar v1, otros archivos, API/CronJob, despublicar, por tenant) | No se implementa. D15 no despublica nada: sólo impide borrar la copia de un comprobante adjunto. D19 es la excepción decidida por el owner: la copia de un comprobante reemplazado o quitado se borra (9C, 9D) |
