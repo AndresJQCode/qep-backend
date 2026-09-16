@@ -5,6 +5,8 @@ using Microsoft.Extensions.Options;
 using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
 using Modules.Notifications.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Notifications.Infrastructure.Messaging;
 
@@ -41,13 +43,29 @@ internal sealed class InvitationDeliveryWorker(
             return notification;
         }
 
+        // El nombre del tenant se lee al entregar y no viaja en el evento: así un tenant renombrado
+        // entre la invitación y el envío sale con el nombre vigente, y los mensajes ya encolados no
+        // necesitan un campo nuevo.
+        var tenantName = await context.TenantDirectory.GetDisplayNameAsync(
+            new TenantId(tenantId), stoppingToken);
+        if (string.IsNullOrWhiteSpace(tenantName))
+        {
+            // Sin nombre no hay asunto que armar. Se marca fallido en vez de mandar el correo con un
+            // hueco, mismo criterio que el token ausente.
+            notification.MarkFailed("tenant_name_unavailable", context.Clock.UtcNow);
+            return notification;
+        }
+
         string recipient = email;
         string invitationToken = token;
+        string organization = tenantName;
         await SendAsync(
             context,
             notification,
             () => InvitationEmailTemplate.Render(
-                recipient, InvitationLink.Compose(options.Value.InvitationUrl, invitationToken)),
+                recipient,
+                InvitationLink.Compose(options.Value.InvitationUrl, invitationToken),
+                organization),
             stoppingToken);
         return notification;
     }

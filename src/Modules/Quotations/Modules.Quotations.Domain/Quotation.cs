@@ -433,6 +433,48 @@ public sealed class Quotation
         Touch(updatedBy, occurredAt);
     }
 
+    /// <summary>
+    /// Cambia la cantidad de una línea desde "Editar" pedido pendiente (a pedido, 2026-09-15) —
+    /// mismo endpoint que <see cref="UpdateItemQuantity"/>, sin exigir <see cref="EnsureEditable"/>
+    /// por el mismo motivo que <see cref="AddItemAfterConversion"/>: el caso de uso ya encontró un
+    /// <c>Order</c> pendiente para esta cotización antes de llamar acá.
+    /// </summary>
+    public void UpdateItemQuantityAfterConversion(
+        QuotationItemId itemId,
+        decimal quantity,
+        decimal discountPercentage,
+        int taxPercentage,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, occurredAt);
+        Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Quita una línea desde "Editar" pedido pendiente (a pedido, 2026-09-15) — mismo endpoint que
+    /// <see cref="RemoveItem"/>, sin exigir <see cref="EnsureEditable"/>, mismo motivo que
+    /// <see cref="AddItemAfterConversion"/>.
+    ///
+    /// A diferencia de quitar de un borrador, acá no hay un paso posterior (enviar, convertir) que
+    /// vuelva a exigir al menos una línea (<see cref="EnsureConvertibleToOrder"/> ya se pasó): sin
+    /// este chequeo, el pedido se quedaría con una cotización en cero productos y un total en
+    /// cero, sin ninguna vuelta atrás.
+    /// </summary>
+    public void RemoveItemAfterConversion(
+        QuotationItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        if (_items.Count == 1)
+        {
+            throw new QuotationsDomainException(
+                "quotation.item.last_item_required",
+                "The last remaining item cannot be removed from the order.");
+        }
+
+        _items.Remove(FindItem(itemId));
+        Touch(updatedBy, occurredAt);
+    }
+
     /// <summary>Edita el encabezado (US-6, US-10): forma de pago, vigencia, notas y los datos de
     /// facturación/entrega. La tasa de impuesto no se edita acá — la trae
     /// cada línea desde su producto (RN-013). Reemplaza el recurso entero, mismo criterio que

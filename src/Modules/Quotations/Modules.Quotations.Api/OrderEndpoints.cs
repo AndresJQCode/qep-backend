@@ -85,6 +85,16 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Quitar un comprobante cargado por error (a pedido, 2026-09-15) — distinto de corregirlo
+        // (eso sigue siendo POST /proofs con `updatedProofs`). Sólo sobre Pending — ver
+        // Order.RemovePaymentProof.
+        group.MapDelete("/proofs/{proofId:guid}", RemoveOrderPaymentProofAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Produces<OrderResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // "Editar" un pedido pendiente para sumarle productos que faltaron al convertir (a
         // pedido, 2026-09) — sólo mientras Pending, ver AddOrderItemsHandler. Devuelve el pedido y
         // la cotización juntos, igual que GetOrderByIdAsync: el total nuevo vive en la segunda.
@@ -226,6 +236,20 @@ public static class OrderEndpoints
                 request.Notes,
                 request.PaymentProofs,
                 request.UpdatedProofs ?? []),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(order));
+    }
+
+    private static async Task<IResult> RemoveOrderPaymentProofAsync(
+        Guid tenantId,
+        Guid quotationId,
+        Guid proofId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var order = await dispatcher.SendAsync(
+            new RemoveOrderPaymentProofCommand(tenantId, quotationId, proofId),
             cancellationToken);
 
         return Results.Ok(ToResponse(order));

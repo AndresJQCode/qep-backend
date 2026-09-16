@@ -3,7 +3,9 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Las copias públicas de los comprobantes nuevos de un request (spec 2026-09-15, P4 y P7). La usan
+/// Las copias públicas de los comprobantes nuevos de un request (spec 2026-09-15, P4 y P7), y
+/// también del archivo de reemplazo cuando se corrige uno ya cargado
+/// (<see cref="PublishReplacementAsync"/>, a pedido, 2026-09-15). La usan
 /// <see cref="ConvertQuotationToOrderHandler"/> y <see cref="AddOrderPaymentProofsHandler"/>: cada
 /// uno publica antes de tocar el dominio —<see cref="OrderPaymentProof"/> recibe la clave al
 /// crearse— y, si algo falla después de la primera copia, llama a <see cref="RollbackAsync"/> y
@@ -35,6 +37,22 @@ internal sealed class PaymentProofCopies(IPaymentProofPublisher publisher)
         }
 
         return inputs.ToArray();
+    }
+
+    /// <summary>Publica el archivo de reemplazo de un comprobante ya cargado (a pedido,
+    /// 2026-09-15) — mismo publicador, mismo rollback compartido que <see cref="PublishAsync"/>:
+    /// si el request falla después de esta copia (por ejemplo, el pedido ya se aprobó), queda
+    /// anotada para que <see cref="RollbackAsync"/> también la borre.</summary>
+    public async Task<string?> PublishReplacementAsync(
+        Guid tenantId, Guid fileId, CancellationToken cancellationToken)
+    {
+        var publicKey = await publisher.PublishAsync(tenantId, fileId, cancellationToken);
+        if (publicKey is not null)
+        {
+            _publicKeys.Add(publicKey);
+        }
+
+        return publicKey;
     }
 
     /// <summary>Borra las copias hechas, best-effort, mismo criterio que el rollback de

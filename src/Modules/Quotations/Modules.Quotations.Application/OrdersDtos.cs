@@ -27,9 +27,12 @@ public sealed record OrderDto(
 public sealed record OrderPaymentProofRequest(Guid FileId, decimal Amount);
 
 /// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
-/// <see cref="OrderPaymentProofRequest"/>, lleva el id del comprobante a corregir en vez del
-/// archivo — ese no cambia.</summary>
-public sealed record OrderPaymentProofUpdateRequest(Guid ProofId, decimal Amount);
+/// <see cref="OrderPaymentProofRequest"/>, lleva el id del comprobante a corregir. El monto
+/// siempre se corrige; <paramref name="NewFileId"/> además reemplaza el archivo (a pedido,
+/// 2026-09-15) cuando el que se subió no era el correcto — null para corregir sólo el
+/// monto.</summary>
+public sealed record OrderPaymentProofUpdateRequest(
+    Guid ProofId, decimal Amount, Guid? NewFileId = null);
 
 /// <summary>US-13 a US-16: el asistente de conversión. No lleva cliente/productos/totales —
 /// todo eso se hereda de la cotización, que ya existe.</summary>

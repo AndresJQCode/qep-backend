@@ -7,6 +7,7 @@ using Modules.Identity.Application;
 using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
 using Modules.Notifications.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
 
 namespace Modules.Notifications.Infrastructure.Messaging;
 
@@ -98,6 +99,7 @@ internal abstract partial class OutboxDeliveryWorker(
         var context = new DeliveryContext(
             services.GetRequiredService<IEmailChannel>(),
             services.GetRequiredService<IUserDirectory>(),
+            services.GetRequiredService<ITenantDirectory>(),
             services.GetRequiredService<IClock>());
 
         // Candidatos: sin fila en el inbox, o con una reclamada y sin terminar cuyo lease venció.
@@ -228,4 +230,5 @@ internal abstract partial class OutboxDeliveryWorker(
 
 /// <summary>Lo que un worker concreto necesita para armar y mandar su correo, resuelto en el scope del
 /// tick.</summary>
-internal sealed record DeliveryContext(IEmailChannel Channel, IUserDirectory UserDirectory, IClock Clock);
+internal sealed record DeliveryContext(
+    IEmailChannel Channel, IUserDirectory UserDirectory, ITenantDirectory TenantDirectory, IClock Clock);
