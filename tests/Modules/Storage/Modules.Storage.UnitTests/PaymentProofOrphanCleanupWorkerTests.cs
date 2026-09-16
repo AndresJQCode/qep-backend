@@ -27,11 +27,10 @@ public sealed class PaymentProofOrphanCleanupWorkerTests
         using var worker = NewWorker(processor, TimeSpan.FromMilliseconds(10));
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
-        var ran = await Task.WhenAny(
-            processor.FirstRun, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        // Espera la señal de la corrida, no un tiempo fijo: el plazo sólo corta una prueba colgada.
+        await processor.FirstRun.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         await worker.StopAsync(TestContext.Current.CancellationToken);
 
-        Assert.Same(processor.FirstRun, ran);
         Assert.Equal(1, processor.Runs);
     }
 
@@ -39,13 +38,14 @@ public sealed class PaymentProofOrphanCleanupWorkerTests
     public async Task StoppingDuringTheInitialDelayExitsCleanlyWithoutRunning()
     {
         var processor = new CountingProcessor();
-        using var worker = NewWorker(processor, TimeSpan.FromHours(1));
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var worker = NewWorker(processor, TimeSpan.FromHours(1), () => waiting.TrySetResult());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
-        // BackgroundService arranca ExecuteAsync con Task.Run y el token de apagado: si se detiene antes
-        // de que el delegado empiece, la tarea queda Canceled sin haber corrido nada. Se le da tiempo de
-        // entrar en la espera inicial, que es lo que esta prueba ejerce.
-        await Task.Delay(TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken);
+        // BackgroundService arranca ExecuteAsync con Task.Run y el token de apagado: si se detiene antes de
+        // que el delegado empiece, la tarea queda Canceled sin haber corrido código del worker. Por eso se
+        // detiene recién cuando el worker avisa que entró en la espera inicial, que es lo que se ejerce.
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         await worker.StopAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(worker.ExecuteTask);
@@ -54,7 +54,7 @@ public sealed class PaymentProofOrphanCleanupWorkerTests
     }
 
     private static PaymentProofOrphanCleanupWorker NewWorker(
-        CountingProcessor processor, TimeSpan initialDelay)
+        CountingProcessor processor, TimeSpan initialDelay, Action? onInitialDelayStarted = null)
     {
         var services = new ServiceCollection()
             .AddScoped<IPaymentProofOrphanCleanupProcessor>(_ => processor)
@@ -65,6 +65,7 @@ public sealed class PaymentProofOrphanCleanupWorkerTests
             NullLogger<PaymentProofOrphanCleanupWorker>.Instance)
         {
             InitialDelay = initialDelay,
+            OnInitialDelayStarted = onInitialDelayStarted,
         };
     }
 

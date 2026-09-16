@@ -23,6 +23,10 @@ internal sealed partial class PaymentProofOrphanCleanupWorker(
     // Sólo las pruebas lo cambian; el contenedor usa el valor por defecto.
     internal TimeSpan InitialDelay { get; init; } = DefaultInitialDelay;
 
+    // Sólo para pruebas: avisa que ExecuteAsync ya entró en la espera inicial, para detener el worker
+    // sin carreras con el Task.Run de BackgroundService. En producción es null.
+    internal Action? OnInitialDelayStarted { get; init; }
+
     [LoggerMessage(Level = LogLevel.Error, Message = "Payment proof orphan cleanup tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
@@ -32,6 +36,7 @@ internal sealed partial class PaymentProofOrphanCleanupWorker(
             TimeSpan.FromHours(options.Value.PaymentProofOrphanCleanup.IntervalHours));
         try
         {
+            OnInitialDelayStarted?.Invoke();
             await Task.Delay(InitialDelay, stoppingToken);
             do
             {
