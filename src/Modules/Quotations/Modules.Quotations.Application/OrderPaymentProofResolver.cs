@@ -34,11 +34,13 @@ internal static class OrderPaymentProofResolver
                 $"File '{fileId}' was not found in this tenant.");
         }
 
+        // Dos casos con el mismo código: la subida no terminó, o el comprobante ya se movió al
+        // bucket público con otro pedido (spec 2026-09-16, D16).
         if (!file.IsAvailable)
         {
             throw new QuotationsDomainException(
                 "order.payment_proof.file_not_available",
-                "The payment proof file has not finished uploading yet.");
+                "The payment proof file is not available: it has not finished uploading or it was already attached to another order.");
         }
 
         if (!AllowedMimeTypes.Contains(file.MimeType, StringComparer.OrdinalIgnoreCase))

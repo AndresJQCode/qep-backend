@@ -15,8 +15,9 @@ namespace Bootstrapper;
 /// referencia al otro, y el composition root — que ya referencia a los dos — es el único lugar
 /// donde ese acoplamiento es legítimo.
 ///
-/// No decide nada: las reglas (PDF vs. comprobante, tamaño máximo, tenant, disponibilidad) son
-/// de <c>OrderPaymentProofResolver</c>, en Application.
+/// No decide las reglas (PDF vs. comprobante, tamaño máximo, tenant, disponibilidad): son de
+/// <c>OrderPaymentProofResolver</c>, en Application. Sólo traduce qué significa "disponible" en
+/// Storage, y desde el spec 2026-09-16 (D16) un comprobante ya movido no lo está.
 /// </summary>
 internal sealed class QuotationFileLookup(
     IFileResourceRepository repository,
@@ -34,8 +35,15 @@ internal sealed class QuotationFileLookup(
                 resource.TenantId,
                 resource.MimeType,
                 resource.SizeBytes,
-                resource.Status == FileResourceStatus.Available);
+                IsAvailableToAttach(resource));
     }
+
+    // Spec 2026-09-16, D16: un PaymentProof con PublicStorageKey ya se movió al bucket público y su
+    // temporal se borró, así que PublicPaymentProofPublisher no tendría de dónde copiarlo para otro
+    // pedido. Sólo un PaymentProof: una imagen User publicada conserva su original privado (D13).
+    private static bool IsAvailableToAttach(FileResource resource) =>
+        resource.Status == FileResourceStatus.Available
+        && !(resource.OwnerType == FileOwnerType.PaymentProof && resource.PublicStorageKey is not null);
 
     public async Task<string> CreateDownloadUrlAsync(
         Guid tenantId, Guid fileId, string downloadFileName, CancellationToken cancellationToken)

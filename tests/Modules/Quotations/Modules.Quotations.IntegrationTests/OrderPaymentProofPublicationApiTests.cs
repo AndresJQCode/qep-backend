@@ -526,6 +526,34 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.True(factory.ObjectStorage.Exists(privateKey));
     }
 
+    // D16 (spec 2026-09-16): un comprobante ya movido no se adjunta a otro pedido. Su temporal ya no
+    // existe; en R2 la copia fallaría con 500. Se rechaza antes de copiar, con el código de siempre.
+    [Fact]
+    public async Task AnAlreadyMovedPaymentProofCannotBeAttachedToAnotherOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var firstQuotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        await ConvertAsync(client, tenantId, firstQuotation.Id, "FullPaymentReceived", fileId);
+        Assert.NotNull(await WaitForMovedKeyAsync(database.GetConnectionString(), fileId));
+        var secondQuotation = await NewSentQuotationAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, secondQuotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null, [new OrderPaymentProofRequest(fileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.payment_proof.file_not_available", problem?.Code);
+        // Sólo la copia de la primera conversión: la segunda no copió nada.
+        Assert.Single(factory.PublicObjectStorage.Copies);
+    }
+
     private static async Task AssertMovedAsync(
         string connectionString, QepApiFactory factory, Guid orderId, Guid fileId, string stagingKey)
     {
