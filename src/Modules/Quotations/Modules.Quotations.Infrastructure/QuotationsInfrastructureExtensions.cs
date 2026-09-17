@@ -41,6 +41,8 @@ public static class QuotationsInfrastructureExtensions
         // eventos para Notifications. El runner que los usa se registra en Bootstrapper.
         services.AddScoped<IExportJobQueue, ExportJobQueue>();
         services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
+        // Spec 2026-09-16, D9: el aviso a Storage de que un pedido adjuntó comprobantes públicos.
+        services.AddScoped<IOrderPaymentProofEventPublisher, OrderPaymentProofEventPublisher>();
         services.AddHostedService<ExportJobWorker>();
         // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
         services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();
@@ -49,6 +51,10 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
+        // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).
+        services.AddScoped<IFileReferenceProbe, OrderPaymentProofFileReferenceProbe>();
+        // Sonda que Storage consulta antes de borrar un objeto huérfano de payment-proofs/ (D12).
+        services.AddScoped<IPublicObjectReferenceProbe, OrderPaymentProofPublicObjectReferenceProbe>();
 
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();

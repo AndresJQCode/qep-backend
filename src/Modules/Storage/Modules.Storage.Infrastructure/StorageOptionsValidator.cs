@@ -30,6 +30,19 @@ internal sealed class StorageOptionsValidator : IValidateOptions<StorageOptions>
             failures.Add("Storage:StagingCleanupMinutes must be greater than zero.");
         }
 
+        var orphanCleanup = options.PaymentProofOrphanCleanup;
+        if (orphanCleanup.MinimumAgeHours <= 0)
+        {
+            failures.Add("Storage:PaymentProofOrphanCleanup:MinimumAgeHours must be greater than zero.");
+        }
+
+        // PeriodicTimer no acepta períodos de más de uint.MaxValue - 1 ms (≈ 1193 h): con uno mayor
+        // PaymentProofOrphanCleanupWorker lanzaría al arrancar y tumbaría el host.
+        if (orphanCleanup.IntervalHours is < 1 or > 1193)
+        {
+            failures.Add("Storage:PaymentProofOrphanCleanup:IntervalHours must be between 1 and 1193.");
+        }
+
         if (options.ClamAv.Enabled && string.IsNullOrWhiteSpace(options.ClamAv.Host))
         {
             failures.Add("Storage:ClamAv:Host is required when malware scanning is enabled.");

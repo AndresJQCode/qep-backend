@@ -423,12 +423,17 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion(id => id.Value, value => new MemberId(value));
         proof.Property(value => value.UploadedAt).HasColumnName("uploaded_at");
         // La clave de la copia pública (spec 2026-09-15, P5): nullable, porque los comprobantes
-        // privados no tienen, y sin índice, porque nadie busca por ella. La clave mide 51
-        // caracteres (`payment-proofs/` + 32 hex + extensión); 200 deja margen.
+        // privados no tienen. La clave mide 51 caracteres (`payment-proofs/` + 32 hex + extensión);
+        // 200 deja margen.
         proof.Property(value => value.PublicStorageKey)
             .HasColumnName("public_storage_key")
             .HasMaxLength(200);
         proof.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_payment_proofs_order");
+        // Spec 2026-09-16, D17: Storage pregunta por esta tabla en cada barrido. El de staging busca
+        // por archivo (IFileReferenceProbe) y la reconciliación del bucket público por clave
+        // (IPublicObjectReferenceProbe). Sin estos índices, cada pregunta recorre la tabla entera.
+        proof.HasIndex(value => value.FileId).HasDatabaseName("IX_order_payment_proofs_file");
+        proof.HasIndex(value => value.PublicStorageKey).HasDatabaseName("IX_order_payment_proofs_public_key");
 
         // CASCADE: un comprobante no tiene sentido sin su pedido -- mismo criterio que
         // QuotationItem -> Quotation.

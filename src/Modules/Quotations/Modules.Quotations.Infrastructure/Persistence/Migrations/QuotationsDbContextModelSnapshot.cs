@@ -224,8 +224,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FileId")
+                        .HasDatabaseName("IX_order_payment_proofs_file");
+
                     b.HasIndex("OrderId")
                         .HasDatabaseName("IX_order_payment_proofs_order");
+
+                    b.HasIndex("PublicStorageKey")
+                        .HasDatabaseName("IX_order_payment_proofs_public_key");
 
                     b.ToTable("order_payment_proofs", "quotations");
                 });

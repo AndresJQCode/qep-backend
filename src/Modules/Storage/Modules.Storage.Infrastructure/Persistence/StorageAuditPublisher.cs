@@ -16,20 +16,43 @@ internal sealed class StorageAuditPublisher(StorageDbContext dbContext) : IStora
         string action,
         string resourceId,
         string outcome,
-        DateTimeOffset occurredAt)
-    {
-        var payload = JsonSerializer.Serialize(new AuditEventPayload(
-            tenantId,
-            actorId,
-            "Human",
-            action,
-            "file",
-            resourceId,
-            outcome,
-            [],
-            "storage",
-            occurredAt));
+        DateTimeOffset occurredAt) =>
+        Add(
+            JsonSerializer.Serialize(new AuditEventPayload(
+                tenantId,
+                actorId,
+                "Human",
+                action,
+                "file",
+                resourceId,
+                outcome,
+                [],
+                "storage",
+                occurredAt)),
+            occurredAt);
 
+    public void PublishSystem(
+        Guid? tenantId,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt) =>
+        Add(
+            JsonSerializer.Serialize(new SystemAuditEventPayload(
+                tenantId,
+                Guid.Empty,
+                "System",
+                action,
+                resourceType,
+                resourceId,
+                outcome,
+                [],
+                "storage",
+                occurredAt)),
+            occurredAt);
+
+    private void Add(string payload, DateTimeOffset occurredAt) =>
         dbContext.Outbox.Add(new StorageOutboxMessage
         {
             Id = Guid.CreateVersion7(),
@@ -38,10 +61,22 @@ internal sealed class StorageAuditPublisher(StorageDbContext dbContext) : IStora
             CorrelationId = Guid.NewGuid().ToString(),
             OccurredAt = occurredAt,
         });
-    }
 
     private sealed record AuditEventPayload(
         Guid tenantId,
+        Guid actorId,
+        string actorType,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        IReadOnlyCollection<string> changedFields,
+        string source,
+        DateTimeOffset occurredAt);
+
+    // tenantId nullable: AuditProjectionWorker lo acepta ausente o null.
+    private sealed record SystemAuditEventPayload(
+        Guid? tenantId,
         Guid actorId,
         string actorType,
         string action,

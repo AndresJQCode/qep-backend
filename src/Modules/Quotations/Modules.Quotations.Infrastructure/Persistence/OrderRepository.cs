@@ -268,5 +268,17 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                     .ToArray());
     }
 
+    public Task<bool> IsPaymentProofFileInUseAsync(
+        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
+    {
+        var proofs = dbContext.OrderPaymentProofs.AsNoTracking().Where(proof => proof.FileId == fileId);
+        if (exceptProofId is { } except)
+        {
+            proofs = proofs.Where(proof => proof.Id != except);
+        }
+
+        return proofs.AnyAsync(cancellationToken);
+    }
+
     public void Add(Order order) => dbContext.Orders.Add(order);
 }

@@ -12,6 +12,7 @@ public sealed class CompleteUploadHandler(
     IObjectStorage objectStorage,
     IFileContentInspector contentInspector,
     IImageVariantGenerator imageVariantGenerator,
+    IPaymentProofImageProcessor paymentProofImageProcessor,
     IFileScanner scanner,
     IStorageUnitOfWork unitOfWork,
     IStorageAuditPublisher auditPublisher,
@@ -65,7 +66,11 @@ public sealed class CompleteUploadHandler(
 
         string? promotedStagingKey = null;
         var verdict = await scanner.ScanAsync(content, cancellationToken);
-        if (verdict is FileScanResult.Clean)
+        if (verdict is FileScanResult.Clean && resource.OwnerType is FileOwnerType.PaymentProof)
+        {
+            await KeepPaymentProofInStagingAsync(resource, content, now, cancellationToken);
+        }
+        else if (verdict is FileScanResult.Clean)
         {
             var stagingKey = resource.StorageKey;
             var finalKey = StorageKey.FinalFor(resource.TenantId, resource.Id, resource.CreatedAt);
@@ -78,15 +83,7 @@ public sealed class CompleteUploadHandler(
             }
             catch (StorageDomainException)
             {
-                resource.Quarantine(now);
-                auditPublisher.Publish(
-                    resource.TenantId,
-                    executionContext.SubjectId,
-                    "storage.file.rejected",
-                    resource.Id.ToString(),
-                    "image_processing_failed",
-                    now);
-                await unitOfWork.SaveChangesAsync(cancellationToken);
+                await QuarantineUnprocessableImageAsync(resource, now, cancellationToken);
                 throw;
             }
             await objectStorage.PromoteAsync(
@@ -130,6 +127,59 @@ public sealed class CompleteUploadHandler(
             await objectStorage.DeleteAsync(promotedStagingKey, cancellationToken);
         }
         return resource.ToDto();
+    }
+
+    // Spec 2026-09-16, D4 y D8: un comprobante no se promueve a files/ ni lleva miniatura; espera en
+    // staging/ hasta que se adjunta a un pedido. Si es imagen se reemplaza ahí mismo por su versión
+    // procesada (D7), así la conversión sólo tiene que moverlo; un PDF queda tal cual (D1).
+    private async Task KeepPaymentProofInStagingAsync(
+        FileResource resource,
+        byte[] content,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (paymentProofImageProcessor.Supports(resource.MimeType))
+        {
+            ProcessedPaymentProofImage processed;
+            try
+            {
+                processed = await paymentProofImageProcessor.ProcessAsync(content, cancellationToken);
+            }
+            catch (StorageDomainException)
+            {
+                await QuarantineUnprocessableImageAsync(resource, now, cancellationToken);
+                throw;
+            }
+
+            await objectStorage.UploadAsync(
+                resource.StorageKey, processed.Content, processed.MimeType, cancellationToken);
+            // El checksum es el que calcula el almacenamiento sobre lo que quedó guardado, igual que
+            // al completar cualquier subida: se vuelve a leer en vez de calcularlo acá.
+            var replaced = await objectStorage.StatAsync(resource.StorageKey, cancellationToken)
+                ?? throw new PreconditionRequiredException(
+                    "storage.object.missing",
+                    "The object has not been uploaded to storage yet.");
+            resource.ReplaceContentWithProcessedImage(
+                processed.MimeType, processed.Extension, replaced.Checksum, replaced.SizeBytes, now);
+        }
+
+        resource.MarkClean(now);
+    }
+
+    private async Task QuarantineUnprocessableImageAsync(
+        FileResource resource,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        resource.Quarantine(now);
+        auditPublisher.Publish(
+            resource.TenantId,
+            executionContext.SubjectId,
+            "storage.file.rejected",
+            resource.Id.ToString(),
+            "image_processing_failed",
+            now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     private async Task<FileResource> LoadAsync(

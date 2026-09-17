@@ -252,6 +252,9 @@ internal sealed class NotificationsApiFactory(
         // Fijado, nunca heredado: con "infobip" y sus claves ausentes, el validador de Notifications
         // falla al arrancar y todas las pruebas del archivo mueren antes de su aserción.
         builder.UseSetting("Notifications:EmailProvider", "log");
+        builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+        builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+        builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
         builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         builder.ConfigureServices(services =>
         {

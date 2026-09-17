@@ -56,5 +56,14 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
         return Task.CompletedTask;
     }
 
+    // El publicador tampoco pregunta si una copia existe: eso es del movimiento de Storage.
+    public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
+
+    // El publicador de comprobantes no lista el bucket: eso es de la reconciliación de Storage.
+    public Task<PublicObjectPage> ListAsync(
+        string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }

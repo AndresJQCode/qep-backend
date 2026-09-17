@@ -27,5 +27,9 @@ public interface IQuotationFileLookup
         Guid tenantId, Guid fileId, string downloadFileName, CancellationToken cancellationToken);
 }
 
+/// <param name="IsPaymentProof">Si el archivo es un comprobante v2 (<c>FileOwnerType.PaymentProof</c>):
+/// un comprobante así se adjunta a un solo comprobante de un solo pedido (D16), así que
+/// <c>OrderPaymentProofResolver</c> rechaza uno que ya esté referenciado. Un archivo <c>User</c> (D13)
+/// no tiene esa regla.</param>
 public sealed record QuotationFileRef(
-    Guid FileId, Guid TenantId, string MimeType, long SizeBytes, bool IsAvailable);
+    Guid FileId, Guid TenantId, string MimeType, long SizeBytes, bool IsAvailable, bool IsPaymentProof = false);

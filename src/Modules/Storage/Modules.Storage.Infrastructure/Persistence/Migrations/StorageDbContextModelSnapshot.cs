@@ -17,7 +17,7 @@ namespace Modules.Storage.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -162,6 +162,26 @@ namespace Modules.Storage.Infrastructure.Persistence.Migrations
                     b.HasKey("FileResourceId", "Name");
 
                     b.ToTable("file_variants", "storage");
+                });
+
+            modelBuilder.Entity("Modules.Storage.Infrastructure.Persistence.StorageInboxMessage", b =>
+                {
+                    b.Property<string>("Consumer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("consumer");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTimeOffset>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Consumer", "MessageId");
+
+                    b.ToTable("inbox_messages", "storage");
                 });
 
             modelBuilder.Entity("Modules.Storage.Infrastructure.Persistence.StorageOutboxMessage", b =>

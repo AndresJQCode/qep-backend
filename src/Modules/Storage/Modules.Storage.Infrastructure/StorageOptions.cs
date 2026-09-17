@@ -18,9 +18,25 @@ public sealed class StorageOptions
 
     public int StagingCleanupMinutes { get; init; } = 60;
 
+    public PaymentProofOrphanCleanupOptions PaymentProofOrphanCleanup { get; init; } = new();
+
     public R2Options R2 { get; init; } = new();
 
     public ClamAvOptions ClamAv { get; init; } = new();
+}
+
+// Spec 2026-09-16, D12: la reconciliación de payment-proofs/ en el bucket público. Borra objetos cuya
+// URL puede estar en un Excel ya enviado, así que arranca en modo solo-registrar y DryRun se apaga a
+// mano, después de revisar en los logs de producción que lo marcado como huérfano realmente lo es.
+public sealed class PaymentProofOrphanCleanupOptions
+{
+    // Al adjuntar se copia antes de guardar el pedido (D9): un objeto recién copiado todavía no tiene
+    // quién lo referencie, y no es huérfano.
+    public int MinimumAgeHours { get; init; } = 24;
+
+    public int IntervalHours { get; init; } = 24;
+
+    public bool DryRun { get; init; } = true;
 }
 
 public sealed class ClamAvOptions

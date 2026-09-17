@@ -10,6 +10,10 @@ public sealed class FileResource
 {
     private readonly List<FileVariant> _variants = [];
 
+    // Mismo tope que FileUploadPolicy y que la columna name (StorageDbContext): un nombre que lo pase
+    // no se podría guardar.
+    private const int MaxNameLength = 260;
+
     private FileResource()
     {
     }
@@ -173,6 +177,102 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
+    // Spec 2026-09-16, D7 y D8: la imagen de un comprobante se reemplaza por su versión procesada
+    // antes de quedar Available, en la misma clave de staging (D4). El nombre conserva la base y
+    // toma la extensión del contenido nuevo, para que una descarga desde la app baje con la que
+    // corresponde.
+    public void ReplaceContentWithProcessedImage(
+        string mimeType,
+        string extension,
+        string checksum,
+        long sizeBytes,
+        DateTimeOffset occurredAt)
+    {
+        RequirePaymentProof();
+        RequireStatus(FileResourceStatus.PendingScan);
+        ArgumentException.ThrowIfNullOrWhiteSpace(mimeType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(extension);
+        ArgumentException.ThrowIfNullOrWhiteSpace(checksum);
+        if (sizeBytes <= 0)
+        {
+            throw new StorageDomainException(
+                "storage.file.empty",
+                "The uploaded object is empty or missing.");
+        }
+
+        var normalizedExtension = "." + extension.TrimStart('.').ToLowerInvariant();
+        var baseName = Path.GetFileNameWithoutExtension(Name);
+        var maxBaseLength = MaxNameLength - normalizedExtension.Length;
+        Name = (baseName.Length > maxBaseLength ? baseName[..maxBaseLength] : baseName)
+            + normalizedExtension;
+        MimeType = mimeType;
+        Checksum = checksum;
+        SizeBytes = sizeBytes;
+        UpdatedAt = occurredAt;
+    }
+
+    // Spec 2026-09-16, D9 y D10: registra que el comprobante ya vive en el bucket público. No es
+    // Publish, que sólo acepta imágenes y protege el endpoint de publicación: acá entra un PDF (D1).
+    // Idempotente con la misma clave, porque PaymentProofMoveWorker puede reintentar un mensaje.
+    public void MoveToPublic(string publicStorageKey, DateTimeOffset occurredAt)
+    {
+        RequirePaymentProof();
+        RequireStatus(FileResourceStatus.Available);
+        if (string.IsNullOrWhiteSpace(publicStorageKey))
+        {
+            throw new StorageDomainException(
+                "storage.file.public_key_required",
+                "A public storage key is required.");
+        }
+
+        if (PublicStorageKey is not null)
+        {
+            if (string.Equals(PublicStorageKey, publicStorageKey, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "The payment proof was already moved to another public key.");
+        }
+
+        PublicStorageKey = publicStorageKey;
+        PublishedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
+    // Spec 2026-09-16, D11: un comprobante que nadie adjuntó se purga como una subida abandonada.
+    // Uno ya movido no: su copia pública está enlazada en un Excel.
+    public void PurgeUnattachedPaymentProof(DateTimeOffset occurredAt)
+    {
+        RequirePaymentProof();
+        RequireStatus(FileResourceStatus.Available);
+        if (PublicStorageKey is not null)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "A payment proof already moved to the public bucket cannot be purged.");
+        }
+
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
+    // Spec 2026-09-16, D19: un comprobante que su pedido soltó —se reemplazó o se quitó— se purga, esté
+    // movido o no. Quien llama ya borró su objeto (el público si se movió, el de staging/ si no).
+    // PublicStorageKey se conserva como registro de dónde estuvo: un recurso Purged no se descarga ni se
+    // vuelve a adjuntar.
+    public void PurgeDetachedPaymentProof(DateTimeOffset occurredAt)
+    {
+        RequirePaymentProof();
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
     public void UpdateMetadata(
         string? category,
         IEnumerable<string>? tags,
@@ -282,6 +382,16 @@ public sealed class FileResource
             throw new StorageDomainException(
                 "storage.file.not_available",
                 "Only an available resource can be downloaded.");
+        }
+    }
+
+    private void RequirePaymentProof()
+    {
+        if (OwnerType is not FileOwnerType.PaymentProof)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                $"Expected a {FileOwnerType.PaymentProof} resource but it was {OwnerType}.");
         }
     }
 

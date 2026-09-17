@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure.Imaging;
 using Modules.Storage.Infrastructure.ObjectStorage;
+using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.Scanning;
 
@@ -39,8 +40,13 @@ public static class StorageInfrastructureExtensions
         services.AddScoped<IStorageAuditPublisher, StorageAuditPublisher>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, FileUserReferenceProbe>();
+        // Spec 2026-09-16, D12: un objeto público que un archivo tiene como PublicStorageKey no es
+        // huérfano.
+        services.AddScoped<IPublicObjectReferenceProbe, FilePublicObjectReferenceProbe>();
         services.AddSingleton<IFileContentInspector, FileContentInspector>();
         services.AddSingleton<IImageVariantGenerator, ImageSharpVariantGenerator>();
+        // Spec 2026-09-16, D7: sin estado, una instancia por proceso alcanza.
+        services.AddSingleton<IPaymentProofImageProcessor, ImageSharpPaymentProofImageProcessor>();
         services.AddSingleton<IFileScanner>(serviceProvider =>
         {
             var options = serviceProvider.GetRequiredService<IOptions<StorageOptions>>();
@@ -51,7 +57,19 @@ public static class StorageInfrastructureExtensions
         services.AddSingleton<IAmazonS3>(CreateR2Client);
         services.AddSingleton<IObjectStorage, R2ObjectStorage>();
         services.AddSingleton<IPublicObjectStorage, R2PublicObjectStorage>();
+        // Spec 2026-09-16, D11: el barrido sale del worker para poder probarlo.
+        services.AddScoped<IStagingCleanupProcessor, StagingCleanupProcessor>();
         services.AddHostedService<StagingCleanupWorker>();
+        // Spec 2026-09-16, D9: borra el temporal de cada comprobante adjuntado y registra el movimiento.
+        services.AddScoped<IPaymentProofMoveProcessor, PaymentProofMoveProcessor>();
+        // Spec 2026-09-16, D19: borra y purga lo que un pedido suelta. Lo corre PaymentProofMoveWorker,
+        // después del movimiento.
+        services.AddScoped<IPaymentProofDetachProcessor, PaymentProofDetachProcessor>();
+        services.AddHostedService<PaymentProofMoveWorker>();
+        // Spec 2026-09-16, D12: la reconciliación de payment-proofs/, en modo solo-registrar hasta
+        // que alguien apague Storage:PaymentProofOrphanCleanup:DryRun.
+        services.AddScoped<IPaymentProofOrphanCleanupProcessor, PaymentProofOrphanCleanupProcessor>();
+        services.AddHostedService<PaymentProofOrphanCleanupWorker>();
 
         return services;
     }

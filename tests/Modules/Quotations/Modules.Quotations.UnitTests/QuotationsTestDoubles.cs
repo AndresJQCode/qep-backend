@@ -662,6 +662,19 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
     private IEnumerable<OrderWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
         clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
 
+    /// <summary>Lo que responde <see cref="IsPaymentProofFileInUseAsync"/> (revisión final, I2).</summary>
+    public bool PaymentProofFileInUse { get; set; }
+
+    /// <summary>Cada pregunta de si un archivo ya se usa: el archivo y el comprobante excluido.</summary>
+    public List<(Guid FileId, OrderPaymentProofId? ExceptProofId)> PaymentProofFileQuestions { get; } = [];
+
+    public Task<bool> IsPaymentProofFileInUseAsync(
+        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
+    {
+        PaymentProofFileQuestions.Add((fileId, exceptProofId));
+        return Task.FromResult(PaymentProofFileInUse);
+    }
+
     public void Add(Order order) { }
 }
 

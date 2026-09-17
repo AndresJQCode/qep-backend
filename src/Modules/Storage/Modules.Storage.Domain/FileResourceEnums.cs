@@ -24,5 +24,10 @@ public enum FileOwnerType
 
     // CAT-05: un archivo puede pertenecer a un producto del catálogo. Antes quedaba guardado como
     // User, porque el endpoint caía en silencio a ese valor cuando el string no parseaba.
-    Product = 4
+    Product = 4,
+
+    // Spec 2026-09-16, D2: un comprobante de pago de un pedido. Espera en staging/ hasta que se
+    // adjunta (D4) y ahí se mueve al bucket público (D3). Los comprobantes subidos antes de v2
+    // siguen siendo User y no cambian (D13).
+    PaymentProof = 5
 }

@@ -234,6 +234,9 @@ public sealed class StorageFlowTests
             // antes de que la prueba llegue a su aserción — enmascarado en local por los
             // user-secrets de Infobip de cada developer, pero no en CI.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             AddR2TestSettings(builder);
             builder.ConfigureServices(services =>

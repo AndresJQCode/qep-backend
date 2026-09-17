@@ -56,6 +56,8 @@ public sealed class PaymentProofPublisherTests
     [InlineData("application/pdf", "comprobante.PDF", ".pdf")]
     [InlineData("image/jpeg", "foto.jpeg", ".jpg")]
     [InlineData("IMAGE/PNG", "captura", ".png")]
+    // Spec 2026-09-16, D7: la imagen de un comprobante v2 llega procesada a WebP.
+    [InlineData("image/webp", "comprobante.webp", ".webp")]
     public async Task TheExtensionComesFromTheMimeType(string mimeType, string name, string extension)
     {
         var file = AvailableFile(TenantId, mimeType, name);
