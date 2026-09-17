@@ -63,7 +63,12 @@ internal sealed class OrdersReportSource(
         int rankSize,
         CancellationToken cancellationToken)
     {
+        // Un pedido anulado no es una venta (spec 2026-09-16, decisión 6): no suma en el total, la
+        // serie ni los rankings, y tampoco en el período anterior, que pasa por este mismo método.
+        // Se filtra antes del join para que llegue a la base como WHERE. El listado (BuildQuery) no
+        // lo filtra: ahí el anulado se ve con su estado.
         var joined = from order in FilterOrders(criteria)
+                         .Where(candidate => candidate.Status != OrderStatus.Cancelled)
                      join quotation in FilterQuotations(criteria)
                          on order.QuotationId equals quotation.Id
                      select new { order, quotation };

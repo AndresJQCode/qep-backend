@@ -174,6 +174,31 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// Spec 2026-09-16: las tres columnas de la anulación, nullable (un pedido vivo no las tiene)
+    /// y con el nombre en snake_case que fija el mapeo a mano. `cancelled_by` necesita la
+    /// conversión de <see cref="MemberId"/>: sin ella EF no puede mapear el struct.
+    /// </summary>
+    [Fact]
+    public void OrderCancellationMapsToNullableSnakeCaseColumns()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var order = model.FindEntityType(typeof(Order))!;
+
+        var cancelledAt = order.FindProperty(nameof(Order.CancelledAt))!;
+        var cancelledBy = order.FindProperty(nameof(Order.CancelledBy))!;
+        var reason = order.FindProperty(nameof(Order.CancellationReason))!;
+
+        Assert.Equal("cancelled_at", cancelledAt.GetColumnName());
+        Assert.Equal("cancelled_by", cancelledBy.GetColumnName());
+        Assert.Equal("cancellation_reason", reason.GetColumnName());
+        Assert.True(cancelledAt.IsNullable);
+        Assert.True(cancelledBy.IsNullable);
+        Assert.True(reason.IsNullable);
+        Assert.Equal(Order.CancellationReasonMaxLength, reason.GetMaxLength());
+    }
+
+    /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
     /// generada y después escrita a mano tiene que dejar el snapshot al día (Tasks 2 y 5). No abre
