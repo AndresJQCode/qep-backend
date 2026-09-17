@@ -15,6 +15,32 @@ namespace Modules.Reporting.IntegrationTests;
 /// </summary>
 public sealed class QuotationsReportSummaryApiTests
 {
+    // Spec 2026-09-17, punto 6: el 31 de diciembre a las 23:00 en Bogotá, la cotización que vence el
+    // 31 vence hoy —por vencer, cero días— y no cuenta como vencida.
+    [Fact]
+    public async Task AQuotationDueOnTheTenantsTodayIsNotExpired()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId, validUntil: new DateOnly(2026, 12, 31));
+
+        var summary = await client.GetFromJsonAsync<QuotationsReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/quotations/summary",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(0, summary.Validity.Expired.Count);
+        Assert.Equal(1, summary.Validity.WithinSevenDays.Count);
+        var expiring = Assert.Single(summary.Expiring);
+        Assert.Equal(quotation.Id, expiring.QuotationId);
+        Assert.Equal(0, expiring.DaysLeft);
+    }
+
     // Spec 2026-09-17, punto 5: la cotización creada el 31 de diciembre a las 23:00 de Bogotá —ya
     // enero en UTC— cuenta en la serie de diciembre del tenant.
     [Fact]

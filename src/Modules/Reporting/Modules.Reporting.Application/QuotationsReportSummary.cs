@@ -136,10 +136,11 @@ public sealed class GetQuotationsReportSummaryHandler(
         // El rango y la ventana anterior se cortan con el mismo calendario (spec 2026-09-17, punto 4).
         var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
         var criteria = query.Filter.ToCriteria(calendar);
-        // "Hoy" todavía en UTC: el punto 6 de la spec lo pasa al día del tenant.
+        // "Hoy" es el día del tenant, el mismo en el que se corta el rango (spec 2026-09-17, punto 6):
+        // "vencidas", "por vencer" y DaysLeft no pueden adelantarse un día desde las 19:00 en Bogotá.
         var options = new QuotationsSummaryOptions(
             ReportSummaryRules.RankSize,
-            DateOnly.FromDateTime(calendar.UtcNow.UtcDateTime),
+            calendar.Today,
             ReportSummaryRules.ExpiringWithinDays,
             ReportSummaryRules.ExpiringSize);
 
