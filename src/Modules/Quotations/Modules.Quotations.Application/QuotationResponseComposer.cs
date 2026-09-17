@@ -185,9 +185,11 @@ public sealed class QuotationResponseComposer(
         party.CityId);
 
     // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
-    // tiene el frontend y tiene que ser uno solo para los dos módulos.
-    private static string ToWireValue(QuotationPriceScaleRestriction restriction) => restriction switch
+    // tiene el frontend y tiene que ser uno solo para los dos módulos. Null también igual que
+    // allá: leer una cotización cuyo producto quedó con escalas incompletas no puede romper.
+    private static string? ToWireValue(QuotationPriceScaleRestriction? restriction) => restriction switch
     {
+        null => null,
         QuotationPriceScaleRestriction.Multiple => "multiple",
         QuotationPriceScaleRestriction.PackagingUnit => "packaging_unit",
         _ => throw new ArgumentOutOfRangeException(nameof(restriction))

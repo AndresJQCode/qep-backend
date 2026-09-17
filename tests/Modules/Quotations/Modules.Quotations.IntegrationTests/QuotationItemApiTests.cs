@@ -401,6 +401,84 @@ public sealed class QuotationItemApiTests
         Assert.Null(scale.PackagingUnit);
     }
 
+    // Un producto con escalas copiadas de otro queda incompleto y no se cotiza hasta que alguien
+    // lo complete en el catálogo. Pasa por la cadena real: copia en Catalog, columna nullable en
+    // Postgres, adaptador de Bootstrapper y el 422 del mapeo central.
+    [Fact]
+    public async Task AddItemRejectsAProductWithIncompleteScales()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var source = await CreateProductWithScalesAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, scales: []);
+        await CopyScalesAsync(client, tenantId, source, productId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 10m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.item.product_price_scales_incomplete", problem.Code);
+    }
+
+    // La cotización que ya tenía el producto se sigue leyendo —con la escala sin restricción—,
+    // pero la línea no se puede volver a valorizar hasta completar el catálogo.
+    [Fact]
+    public async Task AQuotationWhoseProductLaterGotIncompleteScalesStaysReadable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var withItem = await ReadQuotationAsync(await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 10m),
+            TestContext.Current.CancellationToken));
+        var itemId = Assert.Single(withItem.Items).Id;
+
+        var source = await CreateProductWithScalesAsync(client, tenantId);
+        await CopyScalesAsync(client, tenantId, source, productId);
+
+        var fetched = await ReadQuotationAsync(await client.GetAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken));
+        var item = Assert.Single(fetched.Items);
+        Assert.Equal(5m, item.DiscountPercentage);
+        Assert.NotEmpty(item.PriceScales);
+        Assert.All(item.PriceScales, scale => Assert.Null(scale.Restriction));
+
+        var update = await client.PutAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
+            new UpdateQuotationItemRequest(20m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, update.StatusCode);
+        var problem = await update.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.item.product_price_scales_incomplete", problem.Code);
+    }
+
+    private static async Task CopyScalesAsync(
+        HttpClient client, Guid tenantId, Guid sourceProductId, Guid targetProductId)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products/price-scales/copy",
+            new { sourceProductId, targetProductIds = new[] { targetProductId } },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     /// <summary>Una sola escala 5-48 al 5%, de a 3 desde 5.</summary>
     private static object[] MultipleOfThreeFromFive(decimal baseCop) =>
     [

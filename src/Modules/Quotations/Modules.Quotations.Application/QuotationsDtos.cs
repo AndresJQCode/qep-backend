@@ -254,13 +254,13 @@ public sealed record QuotationClientAddressResponse(
 /// formulario puede evitar el 422 de <c>quotation.item.quantity_not_multiple</c> antes de
 /// enviar, en vez de sólo reaccionar a él. <c>Restriction</c> es texto
 /// ("multiple" | "packaging_unit") y no el enum, mismo criterio que
-/// <c>PriceScaleResponse.Restriction</c> en Catalog.
+/// <c>PriceScaleResponse.Restriction</c> en Catalog — null incluido, para la escala incompleta.
 /// </summary>
 public sealed record QuotationItemPriceScaleResponse(
     int FromUnit,
     int ToUnit,
     decimal Discount,
-    string Restriction,
+    string? Restriction,
     int? Multiple,
     int? PackagingUnit);
 

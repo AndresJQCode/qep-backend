@@ -69,6 +69,34 @@ public sealed class CopyPriceScalesApiTests
         Assert.Equal(200m, reloadedSecond.PriceBaseUsd);
     }
 
+    // La restricción no viaja: la escala llega incompleta y así se lee de vuelta desde Postgres,
+    // con la columna ya nullable. Es lo que el frontend usa para marcarla por completar.
+    [Fact]
+    public async Task CopiesTheScalesWithoutTheirRestriction()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var target = await CreateProductAsync(client, "Vela de cera", "VC-001", 100m);
+
+        var response = await CopyAsync(client, source.Id, [target.Id]);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var reloaded = await GetProductAsync(client, target.Id);
+        Assert.Equal(2, reloaded.PriceScales.Count);
+        Assert.All(reloaded.PriceScales, scale =>
+        {
+            Assert.Null(scale.Restriction);
+            Assert.Null(scale.Multiple);
+            Assert.Null(scale.PackagingUnit);
+            Assert.False(scale.AllowGrouping);
+        });
+        Assert.Contains(reloaded.PriceScales, scale => scale is { FromUnit: 1, Discount: 10m });
+        Assert.Contains(reloaded.PriceScales, scale => scale is { FromUnit: 10, Discount: 20m });
+    }
+
     // El reemplazo tiene que borrar las filas viejas de verdad. Contra el agregado en memoria esto
     // se ve igual con o sin cascada configurada; contra Postgres, no.
     [Fact]

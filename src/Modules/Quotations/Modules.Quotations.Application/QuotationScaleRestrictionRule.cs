@@ -32,6 +32,17 @@ public sealed record QuotationScaleRestrictionResult(
 /// </summary>
 internal static class QuotationScaleRestrictionRule
 {
+    /// <summary>
+    /// El producto tiene al menos una escala sin restricción —la que deja la copia de escalas en
+    /// Catalog— y no se cotiza hasta que alguien la complete.
+    /// </summary>
+    public const string IncompleteScalesCode = "quotation.item.product_price_scales_incomplete";
+
+    /// <summary>
+    /// Una escala incompleta nunca se cumple, y no por azar del <c>switch</c>: antes el
+    /// <c>_ =></c> la daba por satisfecha y regalaba su descuento. El bloqueo del producto vive en
+    /// <see cref="EnsureScalesComplete"/>; esto es la red para el recalculador, que nunca lanza.
+    /// </summary>
     public static QuotationScaleRestrictionResult Evaluate(
         QuotationPriceScaleRef scale, decimal quantity) =>
         scale.Restriction switch
@@ -40,8 +51,29 @@ internal static class QuotationScaleRestrictionRule
                 scale.Multiple, quantity, "quotation.item.quantity_not_multiple"),
             QuotationPriceScaleRestriction.PackagingUnit => EvaluateStep(
                 scale.PackagingUnit, quantity, "quotation.item.quantity_not_packaging_unit"),
-            _ => QuotationScaleRestrictionResult.Satisfied(quantity)
+            null => new QuotationScaleRestrictionResult(false, IncompleteScalesCode, quantity, 0m),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(scale), scale.Restriction, "Unknown price scale restriction.")
         };
+
+    /// <summary>
+    /// El 422 del producto con escalas incompletas. Mira **todas** las escalas y no sólo la que
+    /// cubre la cantidad: una línea de 3 unidades que hoy cae en un tramo completo pasaría a otro
+    /// incompleto con cambiarle la cantidad, y el producto a medio configurar no se cotiza en
+    /// ningún tramo.
+    /// </summary>
+    public static void EnsureScalesComplete(IEnumerable<QuotationPriceScaleRef> scales)
+    {
+        if (scales.All(scale => scale.Restriction is not null))
+        {
+            return;
+        }
+
+        throw new QuotationsDomainException(
+            IncompleteScalesCode,
+            "The product has price scales that are not fully configured. " +
+            "Complete them in the catalog before quoting it.");
+    }
 
     /// <summary>
     /// El 422 de la unidad de empaque, sobre la línea que el comando toca. No lo llama el

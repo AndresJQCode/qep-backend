@@ -52,6 +52,10 @@ public enum QuotationPriceScaleRestriction
     PackagingUnit
 }
 
+/// <param name="Restriction">Null en una escala incompleta: la que deja la copia de escalas en
+/// Catalog, con rango y descuento pero sin restricción. Un producto con una sola así no se cotiza
+/// (<see cref="QuotationProductPricingResolver"/>), pero una cotización que ya lo tenía se sigue
+/// pudiendo leer.</param>
 /// <param name="Multiple">Poblado sólo cuando <paramref name="Restriction"/> es
 /// <c>Multiple</c>; el dominio de Catalog garantiza la exclusión mutua con
 /// <paramref name="PackagingUnit"/>.</param>
@@ -62,7 +66,7 @@ public sealed record QuotationPriceScaleRef(
     int FromUnit,
     int ToUnit,
     decimal Discount,
-    QuotationPriceScaleRestriction Restriction,
+    QuotationPriceScaleRestriction? Restriction,
     int? Multiple,
     int? PackagingUnit,
     bool AllowGrouping = false);
