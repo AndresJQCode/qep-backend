@@ -4,7 +4,7 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-public sealed record CancelOrderCommand(Guid TenantId, Guid QuotationId, string? Reason)
+public sealed record CancelOrderCommand(Guid TenantId, Guid OrderId, string? Reason)
     : ICommand<OrderDto>;
 
 /// <summary>
@@ -37,9 +37,10 @@ public sealed class CancelOrderHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, OrdersPermissions.OrderCancel);
 
-        var order = await repository.FindByQuotationIdAsync(
-            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
-            ?? throw OrderNotFound.For(command.QuotationId);
+        // Por el id del pedido, igual que aprobar.
+        var order = await repository.FindByIdAsync(
+            command.TenantId, new OrderId(command.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
         // CancelledBy es un id de membresía, como ApprovedBy: el módulo nunca guarda el usuario.
         var cancelledBy = await QuotationAdvisorResolver.ResolveAsync(

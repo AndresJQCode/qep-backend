@@ -10,7 +10,7 @@ public sealed record OrderItemsAddedResult(OrderDto Order, QuotationDto Quotatio
 
 public sealed record AddOrderItemsCommand(
     Guid TenantId,
-    Guid QuotationId,
+    Guid OrderId,
     IReadOnlyList<OrderItemAddition> ToAdd) : ICommand<OrderItemsAddedResult>;
 
 public sealed class AddOrderItemsValidator : AbstractValidator<AddOrderItemsCommand>
@@ -48,13 +48,17 @@ public sealed class AddOrderItemsHandler(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var quotation = await quotationRepository.FindAsync(
-            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
-            ?? throw QuotationNotFound.For(command.QuotationId);
+        // Primero el pedido por su id y recién desde él su cotización, igual que
+        // SaveOrderEditsHandler: las líneas se suman a la cotización, pero se entra por el pedido.
+        // Que falte la cotización sería un pedido huérfano, imposible por la FK: mismo "no
+        // encontrado".
+        var order = await orderRepository.FindByIdAsync(
+            command.TenantId, new OrderId(command.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
-        var order = await orderRepository.FindByQuotationIdAsync(
-            command.TenantId, quotation.Id, cancellationToken)
-            ?? throw OrderNotFound.For(command.QuotationId);
+        var quotation = await quotationRepository.FindAsync(
+            command.TenantId, order.QuotationId, cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
         if (order.Status != OrderStatus.Pending)
         {

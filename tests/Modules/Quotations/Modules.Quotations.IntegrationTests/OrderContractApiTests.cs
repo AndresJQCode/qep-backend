@@ -90,8 +90,10 @@ public sealed class OrderContractApiTests
         }
     }
 
+    // Las acciones sobre el pedido cuelgan de su propio id (`/orders/{orderId}/…`); de la
+    // cotización sólo quedan convertir y leer su pedido.
     [Fact]
-    public async Task ProofsAndApprovalHangFromTheOrderSubresource()
+    public async Task ProofsAndApprovalHangFromTheOrderItself()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -100,19 +102,23 @@ public sealed class OrderContractApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var converted = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken);
+        converted.EnsureSuccessStatusCode();
+        using var created = JsonDocument.Parse(
+            await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var orderId = created.RootElement.GetProperty("id").GetGuid();
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var proofs = await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order/proofs",
+            $"/api/v1/tenants/{tenantId}/orders/{orderId}/proofs",
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         var approve = await client.PostAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order/approve",
+            $"/api/v1/tenants/{tenantId}/orders/{orderId}/approve",
             content: null,
             TestContext.Current.CancellationToken);
 
@@ -121,6 +127,36 @@ public sealed class OrderContractApiTests
         using var approved = JsonDocument.Parse(
             await approve.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Equal("Approved", approved.RootElement.GetProperty("status").GetString());
+    }
+
+    // Corte duro, igual que con `sale(s)`: las acciones que se mudaron a `/orders/{orderId}` no
+    // quedan como alias colgando de la cotización.
+    [Fact]
+    public async Task TheQuotationScopedOrderActionsNoLongerExist()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotationId = Guid.CreateVersion7();
+        var orderUrl = $"{QuotationsUrl(tenantId)}/{quotationId}/order";
+
+        string[] postRoutes =
+        [
+            $"{orderUrl}/approve",
+            $"{orderUrl}/cancel",
+            $"{orderUrl}/proofs",
+            $"{orderUrl}/items",
+        ];
+        foreach (var url in postRoutes)
+        {
+            var response = await client.PostAsync(url, content: null, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        var removed = await client.DeleteAsync(
+            $"{orderUrl}/proofs/{Guid.CreateVersion7()}", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.NotFound, removed.StatusCode);
     }
 
     // El export recibe el mismo filtro que el listado: con orderNumber sin coincidencias no hay

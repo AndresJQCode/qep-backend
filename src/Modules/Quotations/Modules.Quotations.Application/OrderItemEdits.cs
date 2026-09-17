@@ -52,7 +52,7 @@ internal static class OrderItemEdits
         foreach (var line in desired.Where(line => !current.ContainsKey(line.ProductId)))
         {
             // Rechaza inexistente, inactivo o sin precio en la moneda, con los mismos códigos que
-            // POST /order/items.
+            // POST /orders/{orderId}/items.
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
                 pricingLookup, tenantId, line.ProductId, line.Quantity, quotation.Currency, cancellationToken);
 

@@ -88,7 +88,7 @@ public sealed class OrderEditsApiTests
         Assert.True(order.Version >= 1);
 
         var approve = await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve", null, TestContext.Current.CancellationToken);
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
         var body = await approve.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
@@ -276,9 +276,9 @@ public sealed class OrderEditsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        var (quotation, _, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         var approve = await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve", null, TestContext.Current.CancellationToken);
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken);
         approve.EnsureSuccessStatusCode();
         var approved = await approve.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
         Assert.NotNull(approved);
@@ -480,9 +480,9 @@ public sealed class OrderEditsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve", null, TestContext.Current.CancellationToken))
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken))
             .EnsureSuccessStatusCode();
 
         var response = await client.PostAsJsonAsync(

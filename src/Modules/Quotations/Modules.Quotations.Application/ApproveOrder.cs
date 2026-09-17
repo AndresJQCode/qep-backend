@@ -4,7 +4,7 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-public sealed record ApproveOrderCommand(Guid TenantId, Guid QuotationId)
+public sealed record ApproveOrderCommand(Guid TenantId, Guid OrderId)
     : ICommand<OrderDto>;
 
 /// <summary>
@@ -34,9 +34,11 @@ public sealed class ApproveOrderHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
 
-        var order = await repository.FindByQuotationIdAsync(
-            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
-            ?? throw OrderNotFound.For(command.QuotationId);
+        // Por el id del pedido: quien aprueba llega desde el listado de pedidos, no desde la
+        // cotización. Un id que no es de este tenant es el mismo "no encontrado" de GET /orders/{id}.
+        var order = await repository.FindByIdAsync(
+            command.TenantId, new OrderId(command.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
         var approvedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

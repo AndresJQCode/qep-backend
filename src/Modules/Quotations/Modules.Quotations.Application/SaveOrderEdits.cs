@@ -29,7 +29,8 @@ public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEdits
 /// <summary>
 /// Pasos 1 a 9 del spec 2026-09-17: todo sobre los agregados rastreados y un único
 /// <c>SaveChangesAsync</c>, así que una falla en cualquier paso no deja nada a medio guardar.
-/// Los endpoints viejos (<c>/order/items</c>, <c>/order/proofs</c>, <c>/items/{id}</c>) no se tocan
+/// Los endpoints hermanos (<c>/orders/{orderId}/items</c>, <c>/orders/{orderId}/proofs</c>,
+/// <c>/quotations/{id}/items/{itemId}</c>) no se tocan
 /// (decisión 8).
 /// </summary>
 public sealed class SaveOrderEditsHandler(

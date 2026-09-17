@@ -88,9 +88,9 @@ public sealed class OrdersReportSummaryApiTests
         await ConvertToOrderAsync(client, factory, tenant.TenantId, kept);
         var cancelled = await CreateSentQuotationAsync(
             client, factory, tenant.TenantId, customer.Id, productId);
-        await ConvertToOrderAsync(client, factory, tenant.TenantId, cancelled);
+        var cancelledOrder = await ConvertToOrderAsync(client, factory, tenant.TenantId, cancelled);
         (await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenant.TenantId}/quotations/{cancelled.Id}/order/cancel",
+            $"/api/v1/tenants/{tenant.TenantId}/orders/{cancelledOrder.Id}/cancel",
             new CancelOrderRequest("El cliente desistió"),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
