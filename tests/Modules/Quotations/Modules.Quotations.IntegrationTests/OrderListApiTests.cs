@@ -231,8 +231,6 @@ public sealed class OrderListApiTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
-    /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el
-    /// que la conversion no los exige. Estas pruebas miran el listado, no el asistente.</summary>
     // Spec 2026-09-17, punto 3: el pedido convertido el 31 a las 23:00 de Bogotá —ya 2027 en UTC—
     // entra en el día 31 del tenant y no en el 1 de enero.
     [Fact]
@@ -262,6 +260,8 @@ public sealed class OrderListApiTests
         Assert.Equal(0, nextDay.Total);
     }
 
+    /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el
+    /// que la conversion no los exige. Estas pruebas miran el listado, no el asistente.</summary>
     private static async Task<OrderResponse> ConvertToOrderAsync(
         HttpClient client, Guid tenantId, Guid quotationId)
     {
