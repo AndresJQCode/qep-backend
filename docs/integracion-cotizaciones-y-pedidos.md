@@ -107,17 +107,21 @@ type OrderDetailResponse = { order: OrderResponse; quotation: QuotationResponse 
 `advisorId`/`createdBy`/`updatedBy`/`convertedBy` son ids de **membership** (Tenancy), no el
 `subject`/usuario — son valores distintos a propósito.
 
-## PDF y comprobantes de pago: no hay generación de PDF en el backend
+## Comprobantes de pago: se suben con el flujo de Storage
 
-Tanto el PDF de envío como los comprobantes de pago se suben con el flujo de Storage que ya
-existe (`docs/integracion-imagenes-de-producto.md`, pasos 2-4: sesión → `PUT` al storage →
-`complete`). Acá sólo cambia qué se referencia:
+El PDF de envío ya no lo sube el cliente: lo genera el backend, y `POST /quotations/{id}/send` va sin
+cuerpo (un `pdfFileId` que llegue se ignora). Los comprobantes de pago sí se suben con el flujo de
+Storage que ya existe (`docs/integracion-imagenes-de-producto.md`, pasos 2-4: sesión → `PUT` al
+storage → `complete`):
 
 1. `POST /files` → `{ ownerId, ownerType, name, mimeType, sizeBytes }` → trae `uploadUrl`.
-   `ownerType` es `"PaymentProof"` para un comprobante de pago y `"User"` para el PDF de envío.
+   `ownerType` es `"PaymentProof"`.
 2. `PUT` directo a `uploadUrl` con los bytes.
 3. `POST /files/{fileResourceId}/complete` → el archivo queda `Available`.
-4. Usar ese `fileResourceId` como `pdfFileId` (send) o `fileId` de cada comprobante (convert).
+4. Usar ese `fileResourceId` como `fileId` de cada comprobante (convert, sumar comprobantes o
+   `newFileId` de un reemplazo). Cada comprobante `PaymentProof` se adjunta **una sola vez**: el mismo
+   archivo repetido en un request responde `422 validation.failed`, y uno que ya usa otro comprobante
+   responde `422 order.payment_proof.file_not_available`. Para corregir, sube un archivo nuevo.
 
 No hace falta publicar (paso 5 de esa guía). Un comprobante `PaymentProof` no se promueve: espera en
 `staging/` y, si es imagen, `complete` ya lo deja en WebP de hasta 2000 px, así que el `mimeType` y la
