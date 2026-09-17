@@ -21,7 +21,8 @@ public sealed class OrderListApiTests
     public async Task ListReturnsTheOrderWithItsClientAdvisorAndTotalsResolved()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Reloj fijo: el número del pedido lleva el año del tenant (spec 2026-09-17, punto 2b).
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -35,7 +36,7 @@ public sealed class OrderListApiTests
         Assert.NotNull(page);
         Assert.Equal(1, page.Total);
         var row = Assert.Single(page.Items);
-        Assert.StartsWith($"PED-{DateTime.UtcNow.Year}-", row.OrderNumber, StringComparison.Ordinal);
+        Assert.StartsWith("PED-2026-", row.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(quotation.Id, row.QuotationId);
         Assert.Equal(quotation.QuotationNumber, row.QuotationNumber);
         Assert.Equal(clientId, row.ClientId);

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -44,6 +45,10 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 internal static class QuotationsApiHarness
 {
+    /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
+    /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
+    public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
+
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
@@ -672,7 +677,10 @@ internal static class QuotationsApiHarness
     private sealed record UploadSessionResponseDto(Guid FileResourceId, string UploadUrl, string StorageKey);
 
     public sealed class QepApiFactory(
-        string connectionString, bool runExportWorker = false, bool publicPaymentProofLinks = false)
+        string connectionString,
+        bool runExportWorker = false,
+        bool publicPaymentProofLinks = false,
+        DateTimeOffset? utcNow = null)
         : WebApplicationFactory<Program>
     {
         // Copia del flag para ConfigureWebHost. Si ese método leyera el parámetro, que además
@@ -742,6 +750,15 @@ internal static class QuotationsApiHarness
             {
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
+
+                // Reloj fijo sólo para las pruebas que lo piden (spec 2026-09-17): cortar un instante
+                // en días se prueba en la frontera, y el reloj real la cruza cuando quiere. Scoped,
+                // igual que SystemClock en QepServiceCollectionExtensions.
+                if (utcNow is { } fixedNow)
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddScoped<IClock>(_ => new FixedClock(fixedNow));
+                }
 
                 // El publicador real de comprobantes copia al bucket público de R2 por este puerto
                 // (spec 2026-09-15); acá las copias quedan en memoria, donde la prueba las ve. El
@@ -911,5 +928,11 @@ internal static class QuotationsApiHarness
                     .Select(key => new PublicStoredObject(key, DateTimeOffset.UtcNow))
                     .ToArray(),
                 ContinuationToken: null));
+    }
+
+    /// <summary>El reloj de <see cref="QepApiFactory"/> cuando la prueba pide <c>utcNow</c>.</summary>
+    public sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
     }
 }
