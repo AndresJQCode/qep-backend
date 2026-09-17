@@ -18,7 +18,7 @@ public sealed class QCodePdfRendererTests
 {
     private static readonly QuotationPdfDocument Document = new(
         QuotationNumber: "QUO-2026-0002",
-        CreatedAt: new DateTimeOffset(2026, 9, 6, 10, 0, 0, TimeSpan.Zero),
+        IssuedOn: new DateOnly(2026, 9, 6),
         ValidUntil: new DateOnly(2026, 9, 30),
         CustomerName: "Comercializadora del Norte S.A.S.",
         CustomerCuc: "CUC-0042",

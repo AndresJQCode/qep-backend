@@ -361,7 +361,7 @@ public sealed class SendQuotationHandlerTests
                 new StubQuotationResponseComposer(),
                 new CountingPdfRenderer(),
                 storage,
-                new FixedClock(Now)),
+                new FixedTenantClock(Now)),
             storage,
             new StubQuotationCustomerLookup(customer),
             whatsAppFailure is null

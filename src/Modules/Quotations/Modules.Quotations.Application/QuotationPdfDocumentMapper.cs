@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -20,10 +21,12 @@ public static class QuotationPdfDocumentMapper
     private const string ContactSeparator = " · ";
     private const string LocationSeparator = ", ";
 
-    public static QuotationPdfDocument From(QuotationResponse quotation) =>
+    /// <summary>El <paramref name="calendar"/> es el del tenant de la cotización: la fecha de emisión
+    /// se imprime en su día, no en el de UTC (spec 2026-09-17, punto 7).</summary>
+    public static QuotationPdfDocument From(QuotationResponse quotation, TenantCalendar calendar) =>
         new(
             quotation.QuotationNumber,
-            quotation.CreatedAt,
+            DateOnly.FromDateTime(calendar.ToLocal(quotation.CreatedAt).DateTime),
             quotation.ValidUntil,
             quotation.Client?.Name ?? string.Empty,
             quotation.Client?.Cuc ?? string.Empty,
