@@ -94,17 +94,20 @@ internal sealed class OrdersReportSource(
             return new OrdersReportAggregate(0, 0m, 0m, 0m, [], [], []);
         }
 
-        // La serie mensual todavía va en UTC: el punto 5 de la spec 2026-09-17 la pasa al huso del
-        // tenant. Agrupar en el huso de la sesión de PostgreSQL haría que el resultado dependiera
-        // de una configuración de conexión en vez del dato.
+        // La serie mensual va en el mes del tenant (spec 2026-09-17, punto 5): el pedido de las 20:00
+        // del último día en Bogotá es de ese mes, aunque en UTC ya sea el siguiente. Se agrupa en SQL
+        // con `AT TIME ZONE` y el ID IANA del tenant —lo que Npgsql traduce desde
+        // TimeZoneInfo.ConvertTimeBySystemTimeZoneId sobre UtcDateTime (spike de la Task 7)—, nunca
+        // en el huso de la sesión de PostgreSQL, que haría depender el resultado de la conexión.
         //
         // Solo vuelven los meses con pedidos: rellenar los huecos con cero depende del rango que
         // el eje dibuje, asi que es del frontend.
+        var timeZoneId = criteria.Period.TimeZone.Id;
         var monthRows = await joined
             .GroupBy(row => new
             {
-                row.order.ConvertedAt.UtcDateTime.Year,
-                row.order.ConvertedAt.UtcDateTime.Month,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Year,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Month,
             })
             .Select(group => new
             {

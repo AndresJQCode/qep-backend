@@ -10,19 +10,21 @@ namespace Modules.Reporting.IntegrationTests;
 /// Lo que se prueba aca y no en el handler es **la consulta**, y este resumen tiene dos que una
 /// prueba unitaria contra un doble no toca ni de lejos:
 ///
-/// - La serie mensual agrupa por <c>CreatedAt</c> en UTC, con la misma expresion que EF tiene que
-///   saber traducir a un <c>date_part</c>.
+/// - La serie mensual agrupa por <c>CreatedAt</c> en el mes del tenant (spec 2026-09-17, punto 5),
+///   con una expresión que EF tiene que saber traducir, o con la proyección que la reemplaza.
 /// - El reparto por departamento agrupa por **la ciudad de la direccion principal**, que en LINQ es
 ///   una subconsulta correlacionada dentro de un <c>GROUP BY</c>. Si EF no la traduce, la evalua en
 ///   cliente o revienta — y las dos cosas solo se ven contra PostgreSQL real.
 /// </summary>
 public sealed class CustomerReportSummaryApiTests
 {
+    // Con el reloj en el 31 de diciembre a las 23:00 de Bogotá: la serie es la del mes del tenant, y
+    // con DateTime.UtcNow la prueba además dependía de a qué hora corría.
     [Fact]
     public async Task SummaryCountsTheCustomersAndHowManyAreActive()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
         var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
         using var client = tenant.Client;
         var kept = await CreateActiveCustomerAsync(client, tenant.TenantId);
@@ -47,11 +49,11 @@ public sealed class CustomerReportSummaryApiTests
         // Los inactivos son la resta y no un campo del contrato.
         Assert.Equal(1, summary.CustomerCount - summary.ActiveCount);
 
-        // Los dos se dieron de alta hoy, asi que la serie tiene un solo mes con los dos.
+        // Los dos se dieron de alta el 31 de diciembre local: un solo mes, diciembre de 2026.
         var month = Assert.Single(summary.Monthly);
         Assert.Equal(2, month.Count);
-        Assert.Equal(DateTime.UtcNow.Year, month.Year);
-        Assert.Equal(DateTime.UtcNow.Month, month.Month);
+        Assert.Equal(2026, month.Year);
+        Assert.Equal(12, month.Month);
 
         // Cada cliente sembrado trae su propia clasificacion, asi que son dos grupos de uno.
         Assert.Equal(2, summary.ByClassification.Count);

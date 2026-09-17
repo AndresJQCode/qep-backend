@@ -15,6 +15,31 @@ namespace Modules.Reporting.IntegrationTests;
 /// </summary>
 public sealed class QuotationsReportSummaryApiTests
 {
+    // Spec 2026-09-17, punto 5: la cotización creada el 31 de diciembre a las 23:00 de Bogotá —ya
+    // enero en UTC— cuenta en la serie de diciembre del tenant.
+    [Fact]
+    public async Task TheMonthlySeriesGroupsByTheTenantsLocalMonth()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+
+        var summary = await client.GetFromJsonAsync<QuotationsReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/quotations/summary?from=2026-12-01&to=2026-12-31",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.QuotationCount);
+        var month = Assert.Single(summary.Monthly);
+        Assert.Equal((2026, 12), (month.Year, month.Month));
+        Assert.Equal(quotation.Total, month.Total);
+    }
+
     [Fact]
     public async Task SummaryAddsUpTheTenantsQuotationsAndClassifiesThem()
     {

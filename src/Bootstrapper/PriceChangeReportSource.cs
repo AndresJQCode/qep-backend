@@ -78,7 +78,7 @@ internal sealed class PriceChangeReportSource(
             .Distinct()
             .CountAsync(cancellationToken);
 
-        var monthly = await SummarizeByMonthAsync(changes, cancellationToken);
+        var monthly = await SummarizeByMonthAsync(changes, criteria.Period.TimeZone, cancellationToken);
         var byField = await SummarizeByFieldAsync(changes, cancellationToken);
         var byProduct = await RankProductsAsync(
             changes, rankSize, totals.Count, productCount, cancellationToken);
@@ -89,20 +89,22 @@ internal sealed class PriceChangeReportSource(
     }
 
     /// <summary>
-    /// La serie mensual por fecha del cambio, todavía en UTC: el punto 5 de la spec 2026-09-17 la
-    /// pasa al huso del tenant.
+    /// La serie mensual por fecha del cambio en el mes del tenant (spec 2026-09-17, punto 5),
+    /// agrupada en SQL con <c>AT TIME ZONE</c>. Ver <see cref="OrdersReportSource"/>.
     ///
     /// Es un conteo y no un monto: ver <c>PriceChangeReportSummaryDto</c>.
     /// </summary>
     private static async Task<IReadOnlyList<ReportCountPointDto>> SummarizeByMonthAsync(
         IQueryable<ProductPriceChange> changes,
+        TimeZoneInfo timeZone,
         CancellationToken cancellationToken)
     {
+        var timeZoneId = timeZone.Id;
         var months = await changes
             .GroupBy(change => new
             {
-                change.ChangedAt.UtcDateTime.Year,
-                change.ChangedAt.UtcDateTime.Month,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(change.ChangedAt.UtcDateTime, timeZoneId).Year,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(change.ChangedAt.UtcDateTime, timeZoneId).Month,
             })
             .Select(group => new
             {

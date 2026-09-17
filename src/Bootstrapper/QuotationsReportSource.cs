@@ -68,7 +68,7 @@ internal sealed class QuotationsReportSource(
                 0, 0m, 0m, 0m, [], EmptyStatusSlices(), [], EmptyValidity(), []);
         }
 
-        var monthly = await SummarizeByMonthAsync(rows, cancellationToken);
+        var monthly = await SummarizeByMonthAsync(rows, criteria.Period.TimeZone, cancellationToken);
         var byStatus = await SummarizeByStatusAsync(rows, cancellationToken);
         var byAdvisor = await RankAdvisorsAsync(
             rows, options.RankSize, totals.QuotationCount, totals.Total, cancellationToken);
@@ -81,17 +81,20 @@ internal sealed class QuotationsReportSource(
             monthly, byStatus, byAdvisor, validity, expiring);
     }
 
-    /// <summary>La serie mensual por fecha de creación, todavía en UTC: el punto 5 de la spec
-    /// 2026-09-17 la pasa al huso del tenant. Sólo vuelven los meses con cotizaciones.</summary>
+    /// <summary>La serie mensual por fecha de creación en el mes del tenant (spec 2026-09-17, punto
+    /// 5), agrupada en SQL con <c>AT TIME ZONE</c>. Ver <see cref="OrdersReportSource"/>. Sólo vuelven
+    /// los meses con cotizaciones.</summary>
     private static async Task<IReadOnlyList<ReportMonthlyPointDto>> SummarizeByMonthAsync(
         IQueryable<Quotation> rows,
+        TimeZoneInfo timeZone,
         CancellationToken cancellationToken)
     {
+        var timeZoneId = timeZone.Id;
         var months = await rows
             .GroupBy(quotation => new
             {
-                quotation.CreatedAt.UtcDateTime.Year,
-                quotation.CreatedAt.UtcDateTime.Month,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(quotation.CreatedAt.UtcDateTime, timeZoneId).Year,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(quotation.CreatedAt.UtcDateTime, timeZoneId).Month,
             })
             .Select(group => new
             {

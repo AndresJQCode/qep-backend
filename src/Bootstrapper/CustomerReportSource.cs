@@ -61,7 +61,7 @@ internal sealed class CustomerReportSource(
             return new CustomerReportAggregate(0, 0, [], [], []);
         }
 
-        var monthly = await SummarizeByMonthAsync(filtered, cancellationToken);
+        var monthly = await SummarizeByMonthAsync(filtered, criteria.Period.TimeZone, cancellationToken);
         var byClassification = await RankClassificationsAsync(
             filtered, rankSize, totals.Count, cancellationToken);
         var byDepartment = await RankDepartmentsAsync(
@@ -72,21 +72,23 @@ internal sealed class CustomerReportSource(
     }
 
     /// <summary>
-    /// Las altas por mes, todavía en UTC: el punto 5 de la spec 2026-09-17 las pasa al huso del
-    /// tenant.
+    /// Las altas por mes en el mes del tenant (spec 2026-09-17, punto 5), agrupadas en SQL con
+    /// <c>AT TIME ZONE</c>. Ver <see cref="OrdersReportSource"/>.
     ///
     /// Solo vienen los meses con altas: rellenar los huecos con cero depende del rango que el eje
     /// dibuje, asi que es del frontend.
     /// </summary>
     private static async Task<IReadOnlyList<ReportCountPointDto>> SummarizeByMonthAsync(
         IQueryable<Customer> filtered,
+        TimeZoneInfo timeZone,
         CancellationToken cancellationToken)
     {
+        var timeZoneId = timeZone.Id;
         var months = await filtered
             .GroupBy(customer => new
             {
-                customer.CreatedAt.UtcDateTime.Year,
-                customer.CreatedAt.UtcDateTime.Month,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(customer.CreatedAt.UtcDateTime, timeZoneId).Year,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(customer.CreatedAt.UtcDateTime, timeZoneId).Month,
             })
             .Select(group => new
             {
