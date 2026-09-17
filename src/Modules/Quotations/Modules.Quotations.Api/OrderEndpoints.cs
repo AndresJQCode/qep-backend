@@ -257,8 +257,10 @@ public static class OrderEndpoints
                 tenantId, quotationId, request.PaymentStatus, request.Notes, request.PaymentProofs),
             cancellationToken);
 
+        // El pedido tiene id propio desde SALE-01: el Location apunta a su recurso canónico bajo
+        // /orders, no a la cotización que lo originó.
         return Results.Created(
-            $"/api/v1/tenants/{tenantId}/quotations/{quotationId}/order",
+            $"/api/v1/tenants/{tenantId}/orders/{order.Id}",
             ToResponse(order));
     }
 

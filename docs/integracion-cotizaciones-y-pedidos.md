@@ -43,7 +43,11 @@ en pedido (`POST /quotations/{id}/order`) y leer el pedido que salió de ella
 `/orders/{orderId}/…`, porque quien llega desde el listado de pedidos tiene el id del pedido y no
 el de su cotización. Un `orderId` que no existe en el tenant responde **404
 `order.order.not_found`** en todas ellas. Las rutas viejas `/quotations/{id}/order/...` **no
-quedaron como alias**: responden 404.
+quedaron como alias**, pero la respuesta depende de si el segmento viejo existía: las seis con
+segmento propio (`/approve`, `/cancel`, `/proofs`, `/proofs/{proofId}`, `/items`, `/preview`)
+responden **404**, porque ese segmento ya no existe. `PUT /quotations/{id}/order` es distinto: ese
+path —sin segmento adicional— sigue vivo, porque de ahí cuelgan `GET` (leer) y `POST`
+(convertir); el `PUT` que se mudó a `/orders/{orderId}` responde ahí **405**, no 404.
 
 Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización, no del pedido.
 

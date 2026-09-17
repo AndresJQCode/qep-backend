@@ -39,14 +39,16 @@ public sealed class OrderContractApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, converted.StatusCode);
-        Assert.Equal(
-            $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/order",
-            converted.Headers.Location?.OriginalString);
         using var created = JsonDocument.Parse(
             await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         var orderId = created.RootElement.GetProperty("id").GetGuid();
         var orderNumber = created.RootElement.GetProperty("orderNumber").GetString();
         Assert.False(created.RootElement.TryGetProperty("saleNumber", out var ignoredSaleNumber));
+        // El pedido ya tiene id propio: el Location apunta a su recurso canónico bajo /orders, no
+        // a la cotización que lo originó.
+        Assert.Equal(
+            $"/api/v1/tenants/{tenantId}/orders/{orderId}",
+            converted.Headers.Location?.OriginalString);
 
         using (var byQuotation = await GetJsonAsync(client, $"{QuotationsUrl(tenantId)}/{quotation.Id}/order"))
         {
@@ -157,6 +159,17 @@ public sealed class OrderContractApiTests
         var removed = await client.DeleteAsync(
             $"{orderUrl}/proofs/{Guid.CreateVersion7()}", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NotFound, removed.StatusCode);
+
+        // Estas dos son del primer commit (mover el listado), no del segundo: la ruta
+        // `/quotations/{id}/order` sigue viva para GET (leer) y POST (convertir), así que el PUT
+        // que se mudó a `/orders/{orderId}` responde 405 y no 404. `/preview` en cambio nunca
+        // existió colgado de la cotización: ese segmento propio sí da 404, igual que los de arriba.
+        var putEdit = await client.PutAsJsonAsync(orderUrl, new { }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, putEdit.StatusCode);
+
+        var preview = await client.PostAsync(
+            $"{orderUrl}/preview", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.NotFound, preview.StatusCode);
     }
 
     // El export recibe el mismo filtro que el listado: con orderNumber sin coincidencias no hay
