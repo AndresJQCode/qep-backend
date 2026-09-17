@@ -106,8 +106,14 @@ internal static class QuotationsApiHarness
     /// <summary>Registra un tenant nuevo (signup publico) para conseguir una Membership de dueño
     /// ya en estado Active, y devuelve un cliente autenticado como ese dueño con los permisos
     /// pedidos.</summary>
-    public static async Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantAsync(
-        QepApiFactory factory, params string[] permissions)
+    public static Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantAsync(
+        QepApiFactory factory, params string[] permissions) =>
+        RegisterTenantInTimeZoneAsync(factory, "America/Bogota", permissions);
+
+    /// <summary>Lo mismo que <see cref="RegisterTenantAsync"/> con otro huso: el barrido de
+    /// vencimiento corta el día por tenant (spec 2026-09-17, punto 1).</summary>
+    public static async Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantInTimeZoneAsync(
+        QepApiFactory factory, string timeZone, params string[] permissions)
     {
         var email = $"owner-{Guid.CreateVersion7():N}@example.com";
         using var bootstrap = CreateClient(
@@ -122,7 +128,7 @@ internal static class QuotationsApiHarness
                 displayName = "Quotations Test Org",
                 slug = $"org-{Guid.NewGuid():N}"[..12],
                 defaultCulture = "es-CO",
-                timeZone = "America/Bogota",
+                timeZone,
                 dateFormat = "yyyy-MM-dd",
             },
             TestContext.Current.CancellationToken);
