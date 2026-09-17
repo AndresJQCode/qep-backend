@@ -116,6 +116,29 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Guardar «Editar pedido» de una vez (spec 2026-09-17): el estado deseado completo, con
+        // If-Match de Order.Version. Mismo contrato de precondición que PATCH /roles: sin If-Match
+        // 428, versión vieja 412. Responde el detalle compuesto, igual que GetOrderByIdAsync.
+        group.MapPut("/", SaveOrderEditsAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<SaveOrderEditsRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Cálculo previo (spec 2026-09-17, decisión 3): mismo cuerpo que el PUT, sin archivos y sin
+        // persistir. POST y no GET porque lleva el borrador entero en el cuerpo.
+        group.MapPost("/preview", PreviewOrderEditsAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<SaveOrderEditsRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -288,6 +311,65 @@ public static class OrderEndpoints
             await composer.ComposeAsync(tenantId, result.Quotation, cancellationToken)));
     }
 
+    private static async Task<IResult> SaveOrderEditsAsync(
+        Guid tenantId,
+        Guid quotationId,
+        SaveOrderEditsRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion))
+        {
+            throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded order version is required.");
+        }
+
+        var (items, proofs) = ToEdits(request);
+        var detail = await dispatcher.SendAsync(
+            new SaveOrderEditsCommand(tenantId, quotationId, expectedVersion, items, proofs, request.Notes),
+            cancellationToken);
+
+        httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
+        return Results.Ok(new OrderDetailResponse(
+            ToResponse(detail.Order),
+            await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
+    }
+
+    private static async Task<IResult> PreviewOrderEditsAsync(
+        Guid tenantId,
+        Guid quotationId,
+        SaveOrderEditsRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var (items, proofs) = ToEdits(request);
+        var detail = await dispatcher.QueryAsync(
+            new PreviewOrderEditsQuery(tenantId, quotationId, items, proofs, request.Notes),
+            cancellationToken);
+
+        return Results.Ok(new OrderDetailResponse(
+            ToResponse(detail.Order),
+            await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
+    }
+
+    // Ausentes o null equivalen a vacíos: así el validador y los handlers nunca ven colecciones null.
+    private static (IReadOnlyList<OrderItemAddition> Items, OrderEditProofs Proofs) ToEdits(
+        SaveOrderEditsRequest request) =>
+        (
+            (request.Items ?? [])
+                .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
+                .ToArray(),
+            new OrderEditProofs(
+                (request.Proofs?.Add ?? [])
+                    .Select(addition => new OrderEditProofAddition(addition.FileId, addition.Amount))
+                    .ToArray(),
+                request.Proofs?.Update ?? [],
+                request.Proofs?.RemoveIds ?? []));
+
     private static async Task<IResult> ApproveOrderAsync(
         Guid tenantId,
         Guid quotationId,
@@ -332,8 +414,29 @@ public static class OrderEndpoints
         order.RitualCollectionSyncId,
         order.CreatedAt,
         order.UpdatedAt,
+        order.Version,
         order.PaymentProofs
             .Select(proof => new OrderPaymentProofResponse(
                 proof.Id, proof.FileId, proof.Amount, proof.UploadedAt))
             .ToArray());
+
+    // Copia de RoleEndpoints.TryParseVersion (src/Api): este proyecto no puede referenciar Api, y
+    // TenantSettingsEndpoints y MembershipEndpoints ya llevan la suya. Acepta "3", 3 y W/"3".
+    private static bool TryParseVersion(string? etag, out long version)
+    {
+        version = 0;
+        if (string.IsNullOrWhiteSpace(etag))
+        {
+            return false;
+        }
+
+        var normalized = etag.Trim();
+        if (normalized.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[2..].Trim();
+        }
+
+        normalized = normalized.Trim('"');
+        return long.TryParse(normalized, out version) && version > 0;
+    }
 }

@@ -150,6 +150,10 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(quotation);
 
+    public Task<Quotation?> FindUntrackedAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<Quotation?>(quotation);
+
     public Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -306,6 +310,10 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
     : IQuotationRepository
 {
     public Task<Quotation?> FindAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<Quotation?>(quotations.FirstOrDefault());
+
+    public Task<Quotation?> FindUntrackedAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(quotations.FirstOrDefault());
 
@@ -549,6 +557,10 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
     public RecordedOrderExportSearch? LastExportSearch { get; private set; }
 
     public Task<Order?> FindByQuotationIdAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Order);
+
+    public Task<Order?> FindUntrackedAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Order);
 
