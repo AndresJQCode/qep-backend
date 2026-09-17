@@ -79,6 +79,9 @@ internal sealed class FixedPublicObjectStorage : IPublicObjectStorage
     public Task DeleteAsync(string publicKey, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
 
     public Task<PublicObjectPage> ListAsync(
@@ -147,6 +150,9 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
         DeletedKeys.Add(publicKey);
         return Task.CompletedTask;
     }
+
+    public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+        Task.FromResult(Copies.ContainsKey(publicKey) && !DeletedKeys.Contains(publicKey));
 
     public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
 

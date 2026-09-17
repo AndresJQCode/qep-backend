@@ -1,3 +1,4 @@
+using System.Net;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Options;
@@ -28,6 +29,27 @@ internal sealed class R2PublicObjectStorage(IAmazonS3 client, IOptions<StorageOp
         IsConfigured
             ? client.DeleteObjectAsync(Settings.PublicBucket, publicKey, cancellationToken)
             : Task.CompletedTask;
+
+    public async Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken)
+    {
+        // Sin bucket público no pudo haberse hecho ninguna copia.
+        if (!IsConfigured)
+        {
+            return false;
+        }
+
+        // HEAD, igual que StatAsync en R2ObjectStorage: sólo el 404 es «no existe»; cualquier otro error
+        // se propaga y el llamador reintenta.
+        try
+        {
+            await client.GetObjectMetadataAsync(Settings.PublicBucket, publicKey, cancellationToken);
+            return true;
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
 
     public string GetUrl(string publicKey)
     {

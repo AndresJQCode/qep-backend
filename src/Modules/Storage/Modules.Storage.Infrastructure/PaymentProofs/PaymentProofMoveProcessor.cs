@@ -28,12 +28,14 @@ internal interface IPaymentProofMoveProcessor
 //
 // Los errores se separan en dos. Los deterministas no se arreglan reintentando, así que no se
 // reintentan: un payload mal formado se registra y se marca en el inbox, y una entrada inválida (sin
-// clave pública, o que MoveToPublic rechaza) se salta mientras las válidas del mismo mensaje se mueven.
+// clave pública, cuya copia pública no existe, o que MoveToPublic rechaza) se salta mientras las válidas
+// del mismo mensaje se mueven.
 // Los transitorios —R2, la base, un timeout que llega como cancelación sin que nadie apague el host—
 // descartan el mensaje entero, que vuelve en el tick siguiente.
 internal sealed partial class PaymentProofMoveProcessor(
     StorageDbContext dbContext,
     IObjectStorage objectStorage,
+    IPublicObjectStorage publicObjectStorage,
     IClock clock,
     ILogger<PaymentProofMoveProcessor> logger) : IPaymentProofMoveProcessor
 {
@@ -60,6 +62,12 @@ internal sealed partial class PaymentProofMoveProcessor(
         Level = LogLevel.Warning,
         Message = "Outbox message {MessageId} cannot move payment proof file {FileId} ({Code}); the entry is skipped.")]
     private static partial void LogEntryRejected(ILogger logger, Guid messageId, Guid fileId, string code);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Outbox message {MessageId} lists payment proof file {FileId} whose public copy {PublicStorageKey} does not exist; the entry is skipped and its staging object kept.")]
+    private static partial void LogEntryWithoutPublicCopy(
+        ILogger logger, Guid messageId, Guid fileId, string publicStorageKey);
 
     public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
     {
@@ -121,6 +129,19 @@ internal sealed partial class PaymentProofMoveProcessor(
                     file => file.Id == fileId && file.TenantId == payload.TenantId, cancellationToken);
             if (!IsWaitingToMove(resource))
             {
+                continue;
+            }
+
+            // Revisión final (I1): el temporal sólo se borra si la copia pública existe. Un pedido puede
+            // quedar guardado con su evento aunque el request haya recibido un error —la conexión se
+            // cortó esperando el COMMIT, o el cliente cerró la pestaña—, y en ese caso el rollback del
+            // handler ya borró la copia. Borrar el temporal dejaría el comprobante sin ninguna copia, justo
+            // lo que D9 evita. Es determinista (reintentar no trae la copia): la entrada se salta con el
+            // temporal y el recurso intactos, y se sigue descargando desde la app. Un error de R2 al
+            // preguntar se propaga como cualquier transitorio y el mensaje vuelve.
+            if (!await publicObjectStorage.ExistsAsync(proof.PublicStorageKey, cancellationToken))
+            {
+                LogEntryWithoutPublicCopy(logger, record.Id, proof.FileId, proof.PublicStorageKey);
                 continue;
             }
 

@@ -11,6 +11,15 @@ public interface IPublicObjectStorage
 
     Task DeleteAsync(string publicKey, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Si el objeto existe en el bucket público. <c>PaymentProofMoveProcessor</c> lo pregunta antes de
+    /// borrar el temporal de un comprobante: un pedido guardado cuyo request igual falló (la conexión se
+    /// cortó esperando el COMMIT) ya borró su copia en el rollback, y borrar el temporal dejaría el
+    /// comprobante sin ninguna copia (revisión final, I1). Un error de R2 se propaga: no saber no es
+    /// «no existe».
+    /// </summary>
+    Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken);
+
     string GetUrl(string publicKey);
 
     /// <summary>

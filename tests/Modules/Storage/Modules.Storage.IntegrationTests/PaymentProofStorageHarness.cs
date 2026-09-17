@@ -166,10 +166,22 @@ internal static class PaymentProofStorageHarness
         StorageApiFactory factory, params (Guid FileId, string? PublicStorageKey)[] proofs) =>
         AddAttachedEventForTenantAsync(factory, TenantId, proofs);
 
-    /// <summary>El mismo evento con otro <c>tenantId</c>, para ejercer el aislamiento de tenant.</summary>
+    /// <summary>El mismo evento con otro <c>tenantId</c>, para ejercer el aislamiento de tenant.
+    /// Deja además en el bucket público la copia de cada clave, como la deja Quotations antes de guardar
+    /// el pedido (D9): el movimiento verifica que exista antes de borrar el temporal. Una prueba que
+    /// quiere la copia ausente la quita después con <c>PublicObjectStorage.Remove</c>.</summary>
     public static Task<Guid> AddAttachedEventForTenantAsync(
-        StorageApiFactory factory, Guid tenantId, params (Guid FileId, string? PublicStorageKey)[] proofs) =>
-        AddAttachedEventPayloadAsync(
+        StorageApiFactory factory, Guid tenantId, params (Guid FileId, string? PublicStorageKey)[] proofs)
+    {
+        foreach (var proof in proofs)
+        {
+            if (proof.PublicStorageKey is { } publicKey && !factory.PublicObjectStorage.Exists(publicKey))
+            {
+                factory.PublicObjectStorage.Put(publicKey, DateTimeOffset.UtcNow);
+            }
+        }
+
+        return AddAttachedEventPayloadAsync(
             factory,
             JsonSerializer.Serialize(new
             {
@@ -179,6 +191,7 @@ internal static class PaymentProofStorageHarness
                     .Select(proof => new { fileId = proof.FileId, publicStorageKey = proof.PublicStorageKey })
                     .ToArray(),
             }));
+    }
 
     /// <summary>El evento de adjunto con el payload tal cual, para ejercer mensajes mal formados.</summary>
     public static async Task<Guid> AddAttachedEventPayloadAsync(StorageApiFactory factory, string payloadJson)
@@ -515,11 +528,17 @@ internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
     /// reconciliación (D12); null si ninguna.</summary>
     public string? FailingDeleteKey { get; set; }
 
+    /// <summary>La clave cuya verificación de existencia falla, para ejercer un error transitorio de R2
+    /// en el movimiento (revisión final, I1); null si ninguna.</summary>
+    public string? FailingExistsKey { get; set; }
+
     public bool IsConfigured => true;
 
     public void Put(string key, DateTimeOffset lastModified) => _objects[key] = lastModified;
 
     public bool Exists(string key) => _objects.ContainsKey(key);
+
+    public void Remove(string key) => _objects.TryRemove(key, out _);
 
     public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken)
     {
@@ -539,6 +558,12 @@ internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
         DeletedKeys.Add(publicKey);
         return Task.CompletedTask;
     }
+
+    public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+        string.Equals(publicKey, FailingExistsKey, StringComparison.Ordinal)
+            ? Task.FromException<bool>(
+                new InvalidOperationException("Simulated failure checking the public bucket."))
+            : Task.FromResult(_objects.ContainsKey(publicKey));
 
     public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
 

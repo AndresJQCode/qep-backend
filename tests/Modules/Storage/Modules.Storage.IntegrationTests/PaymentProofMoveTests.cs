@@ -235,6 +235,60 @@ public sealed class PaymentProofMoveTests
         Assert.Equal(publicKey, (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).PublicStorageKey);
     }
 
+    // Revisión final (I1): el pedido y su evento se guardaron, pero el request recibió un error (la
+    // conexión se cortó esperando el COMMIT) y el rollback borró la copia pública. Borrar el temporal
+    // dejaría el comprobante sin ninguna copia: la entrada se salta, el temporal y el recurso quedan
+    // como estaban, las demás entradas se mueven y el mensaje se marca (reintentar no trae la copia).
+    [Fact]
+    public async Task AnEntryWhosePublicCopyIsMissingKeepsItsStagingObjectAndTheOthersStillMove()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var missing = await CreateAvailableAsync(client, factory, "PaymentProof", "sin-copia.pdf", "application/pdf", Pdf());
+        var valid = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var missingKey = NewPublicKey(".pdf");
+        var validKey = NewPublicKey(".pdf");
+        var messageId = await AddAttachedEventAsync(factory, (missing.FileId, missingKey), (valid.FileId, validKey));
+        factory.PublicObjectStorage.Remove(missingKey);
+
+        Assert.Equal(1, await RunMoveAsync(factory));
+
+        var missingRow = await ReadFileAsync(database.GetConnectionString(), missing.FileId);
+        Assert.Null(missingRow.PublicStorageKey);
+        Assert.Equal("Available", missingRow.Status);
+        Assert.True(factory.ObjectStorage.Exists(missing.StagingKey));
+        Assert.Equal(validKey, (await ReadFileAsync(database.GetConnectionString(), valid.FileId)).PublicStorageKey);
+        Assert.False(factory.ObjectStorage.Exists(valid.StagingKey));
+        Assert.True(await IsProcessedByMoveAsync(factory, messageId));
+    }
+
+    // Revisión final (I1): si R2 falla al verificar la copia, no se sabe si existe. Es transitorio: no se
+    // borra el temporal, el mensaje no se marca y el tick siguiente lo mueve.
+    [Fact]
+    public async Task AFailureCheckingThePublicCopyIsRetriedOnTheNextTick()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var publicKey = NewPublicKey(".pdf");
+        var messageId = await AddAttachedEventAsync(factory, (proof.FileId, publicKey));
+        factory.PublicObjectStorage.FailingExistsKey = publicKey;
+
+        Assert.Equal(0, await RunMoveAsync(factory));
+
+        Assert.Null((await ReadFileAsync(database.GetConnectionString(), proof.FileId)).PublicStorageKey);
+        Assert.True(factory.ObjectStorage.Exists(proof.StagingKey));
+        Assert.False(await IsProcessedByMoveAsync(factory, messageId));
+
+        factory.PublicObjectStorage.FailingExistsKey = null;
+        Assert.Equal(1, await RunMoveAsync(factory));
+
+        Assert.Equal(publicKey, (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).PublicStorageKey);
+        Assert.False(factory.ObjectStorage.Exists(proof.StagingKey));
+    }
+
     // Revisión de Task 7 (M2): un archivo de otro tenant no se toca, y el mensaje se marca igual.
     [Fact]
     public async Task AnEntryWhoseFileBelongsToAnotherTenantIsSkipped()

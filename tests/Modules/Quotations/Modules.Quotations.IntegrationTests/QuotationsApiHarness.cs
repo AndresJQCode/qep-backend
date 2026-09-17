@@ -889,6 +889,11 @@ internal static class QuotationsApiHarness
             return Task.CompletedTask;
         }
 
+        /// <summary>Si la copia sigue en el bucket: PaymentProofMoveProcessor lo pregunta antes de borrar
+        /// el temporal (revisión final, I1).</summary>
+        public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+            Task.FromResult(_copies.ContainsKey(publicKey));
+
         public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
 
         /// <summary>Las copias vigentes bajo el prefijo, en una sola página. La reconciliación de
