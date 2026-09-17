@@ -127,6 +127,64 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
     }
 
+    // El aprobador no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
+    // que retiene al usuario es advisor_id (ya cubierto arriba) o approved_by.
+    [Fact]
+    public async Task ApprovingAnOrderKeepsTheUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var advisor = await InviteAsync(ownerClient, tenantId, NewEmail());
+        var approver = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, advisor.Id);
+        await ActivateMembershipAsync(connectionString, approver.Id);
+        await SeedOrderAsync(
+            factory,
+            Guid.Parse(tenantId),
+            convertedByMembershipId: advisor.Id,
+            approvedByMembershipId: approver.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, approver.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, approver.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, approver.UserId));
+    }
+
+    // Misma razón que ApprovingAnOrderKeepsTheUser: el canceller es una tercera membresía, no el
+    // asesor ni el aprobador.
+    [Fact]
+    public async Task CancellingAnOrderKeepsTheUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var advisor = await InviteAsync(ownerClient, tenantId, NewEmail());
+        var canceller = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, advisor.Id);
+        await ActivateMembershipAsync(connectionString, canceller.Id);
+        await SeedOrderAsync(
+            factory,
+            Guid.Parse(tenantId),
+            convertedByMembershipId: advisor.Id,
+            cancelledByMembershipId: canceller.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, canceller.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, canceller.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, canceller.UserId));
+    }
+
     [Fact]
     public async Task OwningAFileKeepsTheUser()
     {
@@ -385,6 +443,62 @@ public sealed class OrphanUserCleanupTests
             customerVatSurplus: false,
             advisor,
             DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by o
+    // cancelled_by, no el resto del contrato de pedidos. La cotización subyacente existe sólo
+    // porque orders.quotation_id tiene FK — su contenido no se ejercita.
+    private static async Task SeedOrderAsync(
+        QepApiFactory factory,
+        Guid tenantId,
+        Guid convertedByMembershipId,
+        Guid? approvedByMembershipId = null,
+        Guid? cancelledByMembershipId = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var convertedBy = new MemberId(convertedByMembershipId);
+        var occurredAt = DateTimeOffset.UtcNow;
+        var quotation = Quotation.Create(
+            QuotationId.New(),
+            tenantId,
+            $"COT-{Guid.NewGuid():N}"[..20],
+            Guid.CreateVersion7(),
+            convertedBy,
+            validUntil: null,
+            paymentMethod: null,
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: null,
+            customerWithRetention: false,
+            customerVatSurplus: false,
+            convertedBy,
+            occurredAt);
+        dbContext.Quotations.Add(quotation);
+
+        var order = Order.Create(
+            OrderId.New(),
+            tenantId,
+            $"PED-{Guid.NewGuid():N}"[..20],
+            quotation.Id,
+            OrderPaymentStatus.PaymentPending,
+            notes: null,
+            convertedBy,
+            proofs: [],
+            occurredAt);
+
+        if (approvedByMembershipId is { } approvedBy)
+        {
+            order.Approve(new MemberId(approvedBy), occurredAt);
+        }
+
+        if (cancelledByMembershipId is { } cancelledBy)
+        {
+            order.Cancel(new MemberId(cancelledBy), "Motivo de prueba", occurredAt);
+        }
+
+        dbContext.Orders.Add(order);
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
