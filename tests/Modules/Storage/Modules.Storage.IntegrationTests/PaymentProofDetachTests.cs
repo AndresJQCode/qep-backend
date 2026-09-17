@@ -327,6 +327,118 @@ public sealed class PaymentProofDetachTests
         Assert.True(await IsProcessedByDetachAsync(factory, messageId));
     }
 
+    // Revisión final (I2): Quotations sólo emite la clave de un adjunto que ningún comprobante conserva.
+    // Si el archivo sigue retenido por otro adjunto, esa copia igual se borra cuando es distinta de la
+    // clave del archivo y nadie la referencia; el archivo y su propia copia se quedan.
+    [Fact]
+    public async Task TheDetachedCopyOfARetainedProofIsDeletedWhenNothingReferencesIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var (fileId, movedKey) = await MovedProofAsync(client, factory);
+        var detachedKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(detachedKey, DateTimeOffset.UtcNow);
+        factory.FileReferences.Reference(fileId);
+        var messageId = await AddDetachedEventAsync(factory, (fileId, detachedKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        var row = await ReadFileAsync(database.GetConnectionString(), fileId);
+        Assert.Equal("Available", row.Status);
+        Assert.Equal(movedKey, row.PublicStorageKey);
+        Assert.True(factory.PublicObjectStorage.Exists(movedKey));
+        Assert.Equal([detachedKey], factory.PublicObjectStorage.DeletedKeys);
+        Assert.True(await IsProcessedByDetachAsync(factory, messageId));
+        var audit = Assert.Single(
+            await AuditEventsAsync(factory), entry => entry.Action == "storage.public_object.purged");
+        Assert.Equal(detachedKey, audit.ResourceId);
+        Assert.Equal("payment_proof_detached", audit.Outcome);
+        Assert.DoesNotContain(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+    }
+
+    // Revisión final (I2): lo mismo con un comprobante que todavía está en staging/ —reemplazado por su
+    // propio archivo antes de moverse—: la copia vieja se borra y el temporal se queda.
+    [Fact]
+    public async Task TheDetachedCopyOfARetainedStagedProofIsDeletedAndItsStagingObjectKept()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        var detachedKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(detachedKey, DateTimeOffset.UtcNow);
+        factory.FileReferences.Reference(proof.FileId);
+        await AddDetachedEventAsync(factory, (proof.FileId, detachedKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), proof.FileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(proof.StagingKey));
+        Assert.False(factory.PublicObjectStorage.Exists(detachedKey));
+    }
+
+    // Revisión final (I2): purgar un archivo movido borra su clave y también la copia del adjunto, si es
+    // otra.
+    [Fact]
+    public async Task PurgingAMovedProofAlsoDeletesTheDetachedCopyWithAnotherKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var (fileId, movedKey) = await MovedProofAsync(client, factory);
+        var detachedKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(detachedKey, DateTimeOffset.UtcNow);
+        await AddDetachedEventAsync(factory, (fileId, detachedKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), fileId)).Status);
+        Assert.False(factory.PublicObjectStorage.Exists(movedKey));
+        Assert.False(factory.PublicObjectStorage.Exists(detachedKey));
+    }
+
+    // Revisión final (I2): un archivo ya purgado (por el barrido, o por otro retiro) no deja viva la copia
+    // que trae el evento.
+    [Fact]
+    public async Task TheDetachedCopyOfAnAlreadyPurgedProofIsDeleted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var proof = await CreateAvailableAsync(client, factory, "PaymentProof", "comprobante.pdf", "application/pdf", Pdf());
+        await AddDetachedEventAsync(factory, (proof.FileId, null));
+        Assert.Equal(1, await RunDetachAsync(factory));
+        var detachedKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(detachedKey, DateTimeOffset.UtcNow);
+        await AddDetachedEventAsync(factory, (proof.FileId, detachedKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.False(factory.PublicObjectStorage.Exists(detachedKey));
+    }
+
+    // Revisión final (I2): una copia que algo todavía referencia (otro pedido, otro archivo) no se borra.
+    [Fact]
+    public async Task ADetachedCopyStillReferencedIsKept()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var (fileId, _) = await MovedProofAsync(client, factory);
+        var detachedKey = NewPublicKey(".pdf");
+        factory.PublicObjectStorage.Put(detachedKey, DateTimeOffset.UtcNow);
+        factory.FileReferences.Reference(fileId);
+        factory.PublicReferences.Reference(detachedKey);
+        var messageId = await AddDetachedEventAsync(factory, (fileId, detachedKey));
+
+        Assert.Equal(1, await RunDetachAsync(factory));
+
+        Assert.True(factory.PublicObjectStorage.Exists(detachedKey));
+        Assert.Empty(factory.PublicObjectStorage.DeletedKeys);
+        Assert.True(await IsProcessedByDetachAsync(factory, messageId));
+    }
+
     // Un comprobante v2 ya movido, con su copia en el bucket público en memoria.
     private static async Task<(Guid FileId, string PublicKey)> MovedProofAsync(
         HttpClient client, StorageApiFactory factory)

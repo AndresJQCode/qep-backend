@@ -38,6 +38,7 @@ internal sealed partial class PaymentProofDetachProcessor(
     IObjectStorage objectStorage,
     IPublicObjectStorage publicObjectStorage,
     IEnumerable<IFileReferenceProbe> probes,
+    IEnumerable<IPublicObjectReferenceProbe> publicProbes,
     IStorageAuditPublisher auditPublisher,
     IClock clock,
     ILogger<PaymentProofDetachProcessor> logger) : IPaymentProofDetachProcessor
@@ -48,6 +49,14 @@ internal sealed partial class PaymentProofDetachProcessor(
     private const int BatchSize = 20;
 
     private readonly List<IFileReferenceProbe> _probes = probes.ToList();
+
+    private readonly List<IPublicObjectReferenceProbe> _publicProbes = publicProbes.ToList();
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Outbox message {MessageId} detaches public copy {PublicStorageKey} of payment proof file {FileId}, but no public object reference probe is registered; the copy is kept.")]
+    private static partial void LogExtraCopyKeptWithoutProbes(
+        ILogger logger, Guid messageId, Guid fileId, string publicStorageKey);
 
     [LoggerMessage(
         Level = LogLevel.Error,
@@ -176,19 +185,21 @@ internal sealed partial class PaymentProofDetachProcessor(
             return;
         }
 
-        // Ya purgado (por otro mensaje, o por este mismo en un intento anterior), borrado o en cuarentena:
-        // no hay nada que borrar, y reintentar no lo cambiaría.
+        // Ya purgado (por otro mensaje, por este mismo en un intento anterior o por el barrido), borrado o
+        // en cuarentena: el archivo no se toca, pero la copia de este adjunto sí puede seguir viva.
         if (resource.Status is not FileResourceStatus.Available)
         {
+            await DeleteExtraAttachmentCopyAsync(record, tenantId, proof, resource, now, cancellationToken);
             return;
         }
 
         var retainedBy = await FindRetainingSourceAsync(resource.Id.Value, cancellationToken);
         if (retainedBy is not null)
         {
-            // Otro comprobante todavía lo usa. Una copia que quede sin dueño la recoge la
-            // reconciliación de payment-proofs/ (D12).
+            // Otro comprobante todavía usa el archivo, así que el archivo se queda. La copia de este
+            // adjunto no: Quotations sólo emite la clave de un adjunto que ningún comprobante conserva.
             LogProofRetained(logger, resource.Id.Value, retainedBy);
+            await DeleteExtraAttachmentCopyAsync(record, tenantId, proof, resource, now, cancellationToken);
             return;
         }
 
@@ -207,8 +218,10 @@ internal sealed partial class PaymentProofDetachProcessor(
 
         if (resource.PublicStorageKey is { } movedKey)
         {
-            // Movido: la copia pública es su única copia (D9).
+            // Movido: la copia pública es su única copia (D9). Si el adjunto soltado tenía otra clave, esa
+            // copia también se borra.
             await publicObjectStorage.DeleteAsync(movedKey, cancellationToken);
+            await DeleteExtraAttachmentCopyAsync(record, tenantId, proof, resource, now, cancellationToken);
         }
         else
         {
@@ -252,6 +265,44 @@ internal sealed partial class PaymentProofDetachProcessor(
             copyKey,
             Reason,
             now);
+    }
+
+    // Revisión final (I2). Storage registra una sola clave pública por archivo, pero antes de que D16 se
+    // exigiera por referencia un mismo PaymentProof podía tener varias copias, una por adjunto. La clave que
+    // trae el evento es la de un adjunto que ningún comprobante conserva (Quotations lo garantiza en la
+    // misma transacción), así que, si es distinta de la del archivo, esa copia se borra aunque el archivo
+    // se quede —retenido, ya purgado o en otro estado—. Antes se consulta a las sondas de claves públicas,
+    // por si otra cosa la usa, y sin ninguna sonda no se borra: falla cerrado, igual que la reconciliación
+    // (D12), que después la recoge. La clave del propio archivo no se toca acá: es la de su purga.
+    private async Task DeleteExtraAttachmentCopyAsync(
+        StorageOutboxMessage record,
+        Guid tenantId,
+        DetachedProof proof,
+        FileResource resource,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(proof.PublicStorageKey)
+            || string.Equals(proof.PublicStorageKey, resource.PublicStorageKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (_publicProbes.Count == 0)
+        {
+            LogExtraCopyKeptWithoutProbes(logger, record.Id, proof.FileId, proof.PublicStorageKey);
+            return;
+        }
+
+        foreach (var probe in _publicProbes)
+        {
+            if (await probe.HasReferencesAsync(proof.PublicStorageKey, cancellationToken))
+            {
+                return;
+            }
+        }
+
+        await DeleteAttachmentCopyAsync(tenantId, proof.PublicStorageKey, now, cancellationToken);
     }
 
     private async Task MarkProcessedAsync(StorageOutboxMessage record, CancellationToken cancellationToken)
