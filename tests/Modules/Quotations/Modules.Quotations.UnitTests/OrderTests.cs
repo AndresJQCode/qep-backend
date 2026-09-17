@@ -763,4 +763,69 @@ public sealed class OrderTests
 
         Assert.Equal("order.order.not_pending", error.Code);
     }
+
+    // Spec 2026-09-17: notes reemplaza el campo entero, y el guardado necesita saber si cambió para
+    // responder «sin cambios» sin subir la versión.
+    [Fact]
+    public void UpdateNotesReplacesTheTrimmedNotesAndReportsTheChange()
+    {
+        var order = NewOrder(notes: "Entregar el lunes");
+        var later = Now.AddDays(1);
+
+        var changed = order.UpdateNotes("  Entregar el martes  ", later);
+
+        Assert.True(changed);
+        Assert.Equal("Entregar el martes", order.Notes);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    [Fact]
+    public void UpdateNotesWithTheSameNotesReportsNoChange()
+    {
+        var order = NewOrder(notes: "Entregar el lunes");
+
+        var changed = order.UpdateNotes(" Entregar el lunes ", Now.AddDays(1));
+
+        Assert.False(changed);
+        Assert.Equal(1, order.Version);
+        Assert.Equal(Now, order.UpdatedAt);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("   ")]
+    public void UpdateNotesClearsThemWithNullOrBlank(string? notes)
+    {
+        var order = NewOrder(notes: "Entregar el lunes");
+
+        var changed = order.UpdateNotes(notes, Now.AddDays(1));
+
+        Assert.True(changed);
+        Assert.Null(order.Notes);
+    }
+
+    [Fact]
+    public void UpdateNotesRejectsNotesLongerThanTheLimit()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.UpdateNotes(new string('a', Order.NotesMaxLength + 1), Now.AddDays(1)));
+
+        Assert.Equal("order.order.notes_too_long", error.Code);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void UpdateNotesRejectsAnOrderThatIsNotPending()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.UpdateNotes("Otra nota", Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
 }

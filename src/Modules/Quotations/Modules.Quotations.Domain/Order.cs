@@ -368,6 +368,26 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>
+    /// Reemplaza las notas enteras (spec 2026-09-17): <c>null</c> o blanco las borra, mismo criterio
+    /// que al crear el pedido. Devuelve si cambiaron: el guardado atómico responde «sin cambios» sin
+    /// subir la versión, y comparar acá evita repetir la normalización en el caso de uso.
+    /// </summary>
+    public bool UpdateNotes(string? notes, DateTimeOffset occurredAt)
+    {
+        EnsurePending("The notes can only be edited on a pending order.");
+        var normalized = NormalizeNotes(notes);
+        if (string.Equals(normalized, Notes, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        Notes = normalized;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
     // 'Payment pending'". Va antes de construir las líneas para no dejar un pedido a medio
     // armar si el chequeo falla.
