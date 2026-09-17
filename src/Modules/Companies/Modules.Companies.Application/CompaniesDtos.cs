@@ -53,20 +53,31 @@ public sealed record CompanyResponse(
 /// departamento, porque la grilla sí muestra una columna "Ciudad" y evitarla obligaría a otra
 /// consulta desde el detalle sólo para llenarla.
 ///
-/// De las cuentas viajan **solo los numeros**, y no la terna completa, por esa misma razon: la
-/// columna de la grilla pinta el numero —es lo unico que pintaba cuando era un campo plano— y
-/// mandar banco y moneda de hasta veinte cuentas por empresa multiplica el cuerpo por veinte para
-/// que el consumidor descarte dos tercios. El detalle completo lo trae <c>GET /{companyId}</c>,
-/// que es la pantalla donde esos datos si se leen.
+/// De las cuentas viajan **banco y numero**, sin la moneda, por esa misma razon: la columna de la
+/// grilla pinta el banco junto a cada numero para distinguir cuentas de bancos distintos, pero la
+/// moneda no se muestra, y mandarla en hasta veinte cuentas por empresa engorda el cuerpo para
+/// que el consumidor la descarte. El detalle completo lo trae <c>GET /{companyId}</c>, que es la
+/// pantalla donde la moneda si se lee.
+///
+/// <c>AccountNumbers</c> repite los numeros de <c>BankAccounts</c> a proposito: es el contrato
+/// anterior, y quitarlo en el mismo cambio obliga a desplegar frontend y backend a la vez. Se va
+/// cuando ningun consumidor desplegado lo lea.
 /// </summary>
 public sealed record CompanyListItemResponse(
     Guid Id,
     string Name,
     IReadOnlyList<string> AccountNumbers,
+    IReadOnlyList<CompanyListBankAccount> BankAccounts,
     string TaxId,
     string? Phone,
     string City,
     bool IsActive);
+
+/// <summary>
+/// Una cuenta en la fila del listado: el subconjunto de <see cref="CompanyBankAccountPayload"/>
+/// que la grilla pinta. Ver <see cref="CompanyListItemResponse"/>.
+/// </summary>
+public sealed record CompanyListBankAccount(string BankName, string AccountNumber);
 
 public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemResponse> Items);
 
