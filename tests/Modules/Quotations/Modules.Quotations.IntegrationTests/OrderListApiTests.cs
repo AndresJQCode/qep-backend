@@ -134,9 +134,9 @@ public sealed class OrderListApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var approved = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        await ConvertToOrderAsync(client, tenantId, approved.Id);
+        var approvedOrder = await ConvertToOrderAsync(client, tenantId, approved.Id);
         (await client.PostAsync(
-            $"{QuotationsUrl(tenantId)}/{approved.Id}/order/approve",
+            $"{OrdersUrl(tenantId)}/{approvedOrder.Id}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         var pending = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);

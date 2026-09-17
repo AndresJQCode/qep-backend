@@ -13,6 +13,14 @@ public interface IQuotationRepository
     Task<Quotation?> FindAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Igual que <see cref="FindAsync"/> —con líneas y partes— pero sin rastreo (spec 2026-09-17,
+    /// decisión 4): el cálculo previo de «Editar pedido» muta el agregado en memoria, y así nada de
+    /// eso puede persistirse aunque algo del mismo scope llame a <c>SaveChangesAsync</c>.
+    /// </summary>
+    Task<Quotation?> FindUntrackedAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
+
     /// <summary>Una página del listado y el total que la acompaña (US-8), con los filtros
     /// combinables de la propuesta. Cada filtro es opcional y sólo se aplica cuando llega
     /// distinto de null; los que llegan se combinan con AND.

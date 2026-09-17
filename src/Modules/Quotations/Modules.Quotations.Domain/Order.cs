@@ -303,6 +303,91 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>
+    /// Suma comprobantes nuevos sin tocar el estado de pago ni las notas (spec 2026-09-17, editar
+    /// pedido como borrador). Pieza de <see cref="AddPaymentProofs"/> para el guardado atómico: un
+    /// guardado que sólo cambia productos no trae comprobantes, y exigir «al menos uno»
+    /// (<c>order.order.payment_proof_required</c>) lo rechazaría. Sin comprobantes no cambia nada,
+    /// ni la versión. El estado de pago lo deriva el caso de uso con
+    /// <see cref="RecalculatePaymentStatus"/>, una sola vez (decisión 5).
+    /// </summary>
+    public void AttachPaymentProofs(
+        IReadOnlyCollection<OrderPaymentProofInput> proofs, MemberId uploadedBy, DateTimeOffset occurredAt)
+    {
+        EnsurePending("Payment proofs can only be added to a pending order.");
+        if (proofs.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var proof in proofs)
+        {
+            _paymentProofs.Add(OrderPaymentProof.Create(
+                OrderPaymentProofId.New(), Id, proof.FileId, proof.PublicStorageKey, proof.Amount, uploadedBy,
+                occurredAt));
+        }
+
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>
+    /// Corrige monto y, si viene, archivo de comprobantes ya cargados (spec 2026-09-17). Misma
+    /// corrección que hace <see cref="AddPaymentProofs"/> con <c>updatedProofs</c>, sin exigir
+    /// comprobantes nuevos ni pisar el estado de pago. Todos los ids se buscan antes de corregir el
+    /// primero: uno ajeno no deja la mitad corregida en memoria. Sin correcciones no cambia nada.
+    /// </summary>
+    public void CorrectPaymentProofs(
+        IReadOnlyCollection<OrderPaymentProofAmountUpdate> updates, DateTimeOffset occurredAt)
+    {
+        EnsurePending("Payment proofs can only be corrected on a pending order.");
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        var targets = updates
+            .Select(update => (
+                Update: update,
+                Proof: _paymentProofs.FirstOrDefault(candidate => candidate.Id == update.ProofId)
+                    ?? throw new QuotationsDomainException(
+                        "order.payment_proof.not_found",
+                        $"Payment proof '{update.ProofId}' was not found on this order.")))
+            .ToArray();
+
+        foreach (var (update, proof) in targets)
+        {
+            proof.UpdateAmount(update.Amount);
+            if (update.NewFileId is { } newFileId)
+            {
+                proof.UpdateFile(newFileId, update.NewPublicStorageKey);
+            }
+        }
+
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>
+    /// Reemplaza las notas enteras (spec 2026-09-17): <c>null</c> o blanco las borra, mismo criterio
+    /// que al crear el pedido. Devuelve si cambiaron: el guardado atómico responde «sin cambios» sin
+    /// subir la versión, y comparar acá evita repetir la normalización en el caso de uso.
+    /// </summary>
+    public bool UpdateNotes(string? notes, DateTimeOffset occurredAt)
+    {
+        EnsurePending("The notes can only be edited on a pending order.");
+        var normalized = NormalizeNotes(notes);
+        if (string.Equals(normalized, Notes, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        Notes = normalized;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
     // 'Payment pending'". Va antes de construir las líneas para no dejar un pedido a medio
     // armar si el chequeo falla.
@@ -321,6 +406,16 @@ public sealed class Order
             _paymentProofs.Add(OrderPaymentProof.Create(
                 OrderPaymentProofId.New(), Id, proof.FileId, proof.PublicStorageKey, proof.Amount, uploadedBy,
                 occurredAt));
+        }
+    }
+
+    // Las piezas nuevas (spec 2026-09-17) comparten el guard. Los métodos que ya existían conservan
+    // su chequeo en línea y su mensaje: la decisión 8 deja intactos los endpoints que los usan.
+    private void EnsurePending(string message)
+    {
+        if (Status != OrderStatus.Pending)
+        {
+            throw new QuotationsDomainException("order.order.not_pending", message);
         }
     }
 

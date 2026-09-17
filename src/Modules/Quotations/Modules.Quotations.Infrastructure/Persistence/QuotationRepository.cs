@@ -21,6 +21,18 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
                 quotation => quotation.TenantId == tenantId && quotation.Id == quotationId,
                 cancellationToken);
 
+    // Mismos Include que FindAsync —el cálculo previo pinta las líneas y recalcula con ellas—, sin
+    // tracking a propósito (spec 2026-09-17, decisión 4).
+    public Task<Quotation?> FindUntrackedAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        dbContext.Quotations
+            .AsNoTracking()
+            .Include(quotation => quotation.Items)
+            .Include(quotation => quotation.Parties)
+            .SingleOrDefaultAsync(
+                quotation => quotation.TenantId == tenantId && quotation.Id == quotationId,
+                cancellationToken);
+
     private const string LikeEscapeCharacter = "\\";
 
     // Mismo criterio que CustomerRepository.EscapeLikeWildcards/LikePattern: un numero de

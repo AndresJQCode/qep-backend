@@ -34,8 +34,13 @@ public sealed class OrderPaymentProofPublicationApiTests
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
 
-    private static string OrderProofsUrl(Guid tenantId, Guid quotationId) =>
-        $"{OrderUrl(tenantId, quotationId)}/proofs";
+    // El pedido se direcciona por su propio id: sumar, corregir o quitar comprobantes ya no
+    // cuelga de la cotización.
+    private static string OrderByIdUrl(Guid tenantId, Guid orderId) =>
+        $"/api/v1/tenants/{tenantId}/orders/{orderId}";
+
+    private static string OrderProofsUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/proofs";
 
     // P4: con la opción encendida, cada comprobante de la conversión tiene su copia y su clave queda
     // guardada.
@@ -93,7 +98,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(fileId, 10_000m)]),
             TestContext.Current.CancellationToken);
@@ -118,7 +123,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(fileId, 10_000m)]),
             TestContext.Current.CancellationToken);
@@ -143,7 +148,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [], UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m)]),
             TestContext.Current.CancellationToken);
@@ -195,13 +200,13 @@ public sealed class OrderPaymentProofPublicationApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);
-        await ConvertAsync(client, tenantId, quotation.Id, "PaymentPending");
+        var created = await ConvertAsync(client, tenantId, quotation.Id, "PaymentPending");
         var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var secondFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         factory.PublicObjectStorage.FailingCopyAttempt = 2;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [new OrderPaymentProofRequest(firstFileId, 10_000m), new OrderPaymentProofRequest(secondFileId, 10_000m)]),
@@ -231,12 +236,12 @@ public sealed class OrderPaymentProofPublicationApiTests
         var order = await ConvertAsync(client, tenantId, quotation.Id, "FullPaymentReceived", firstFileId);
         var firstKey = Assert.Single(await PublicKeysAsync(factory, order.Id));
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve", content: null, TestContext.Current.CancellationToken))
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve", content: null, TestContext.Current.CancellationToken))
             .EnsureSuccessStatusCode();
         var secondFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(secondFileId, 10_000m)]),
             TestContext.Current.CancellationToken);
@@ -320,7 +325,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var secondFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(secondFileId, 10_000m)]),
             TestContext.Current.CancellationToken);
@@ -352,7 +357,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var replacementFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -401,7 +406,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [], UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m)]),
             TestContext.Current.CancellationToken);
@@ -468,7 +473,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var stagingKey = await StorageKeyOfAsync(database.GetConnectionString(), fileId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(fileId, 10_000m)]),
             TestContext.Current.CancellationToken);
@@ -599,7 +604,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var firstProofId = order.PaymentProofs.Single(proof => proof.FileId == firstFileId).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -626,7 +631,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -695,7 +700,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [new OrderPaymentProofRequest(fileId, 10_000m)],
@@ -722,7 +727,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -755,7 +760,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var newFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -790,7 +795,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -825,7 +830,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
@@ -851,7 +856,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var message = Assert.Single(await OutboxMessagesAsync(factory, DetachedEventName));
@@ -884,7 +889,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [], UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m)]),
             TestContext.Current.CancellationToken);
@@ -904,10 +909,10 @@ public sealed class OrderPaymentProofPublicationApiTests
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);
         var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
-        await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{Guid.CreateVersion7()}",
+            $"{OrderProofsUrl(tenantId, order.Id)}/{Guid.CreateVersion7()}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -934,7 +939,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var newFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -965,7 +970,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Purged", await WaitForStatusAsync(database.GetConnectionString(), fileId, "Purged"));
@@ -991,7 +996,7 @@ public sealed class OrderPaymentProofPublicationApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}", TestContext.Current.CancellationToken);
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(await WaitForDeletedKeyAsync(factory, publicKey));

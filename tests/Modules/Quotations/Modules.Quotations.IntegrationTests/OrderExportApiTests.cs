@@ -352,7 +352,7 @@ public sealed class OrderExportApiTests
         using var _ = client;
         var order = await CreateOrderWithProofsAsync(client, factory, tenantId, proofCount: 1);
         var firstProofId = Assert.Single(order.PaymentProofs).Id;
-        var withSecond = await AddProofAsync(client, factory, tenantId, order.QuotationId);
+        var withSecond = await AddProofAsync(client, factory, tenantId, order.Id);
         var secondProofId = Assert.Single(withSecond.PaymentProofs, proof => proof.Id != firstProofId).Id;
         await ClearPublicStorageKeyAsync(factory, secondProofId);
         var firstKey = await PublicStorageKeyOfAsync(factory, firstProofId);
@@ -395,7 +395,7 @@ public sealed class OrderExportApiTests
         using var _ = client;
         using var __ = otherClient;
         var order = await CreateOrderWithProofsAsync(client, factory, tenantId, proofCount: 2);
-        var withThird = await AddProofAsync(client, factory, tenantId, order.QuotationId);
+        var withThird = await AddProofAsync(client, factory, tenantId, order.Id);
         var withoutProofs = await CreateOrderAsync(client, factory, tenantId);
         var otherOrder = await CreateOrderWithProofsAsync(otherClient, factory, otherTenantId, proofCount: 1);
 
@@ -446,11 +446,11 @@ public sealed class OrderExportApiTests
     /// <summary>Suma un comprobante a un pedido pendiente: su fecha de subida es posterior a la de
     /// los que ya tenía.</summary>
     private static async Task<OrderResponse> AddProofAsync(
-        HttpClient client, QepApiFactory factory, Guid tenantId, Guid quotationId)
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid orderId)
     {
         var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotationId}/order/proofs",
+            $"/api/v1/tenants/{tenantId}/orders/{orderId}/proofs",
             new AddOrderPaymentProofsRequest(
                 "PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 5_000m)]),
             TestContext.Current.CancellationToken);

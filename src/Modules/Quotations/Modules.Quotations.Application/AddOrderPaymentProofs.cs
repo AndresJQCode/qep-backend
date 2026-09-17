@@ -14,7 +14,7 @@ namespace Modules.Quotations.Application;
 /// </summary>
 public sealed record AddOrderPaymentProofsCommand(
     Guid TenantId,
-    Guid QuotationId,
+    Guid OrderId,
     string PaymentStatus,
     string? Notes,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
@@ -97,9 +97,10 @@ public sealed class AddOrderPaymentProofsHandler(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var order = await repository.FindByQuotationIdAsync(
-            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
-            ?? throw OrderNotFound.For(command.QuotationId);
+        // Por el id del pedido: los comprobantes son suyos, no de la cotización.
+        var order = await repository.FindByIdAsync(
+            command.TenantId, new OrderId(command.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
         foreach (var proof in command.PaymentProofs)
         {

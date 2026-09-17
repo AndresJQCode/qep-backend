@@ -12,17 +12,24 @@ namespace Modules.Quotations.IntegrationTests;
 /// enviado (a pedido, 2026-09).</summary>
 public sealed class OrderApiTests
 {
+    // Sólo convertir y leer el pedido de una cotización cuelgan de ella: el pedido es un
+    // sub-recurso suyo para esas dos cosas.
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
 
-    private static string OrderProofsUrl(Guid tenantId, Guid quotationId) =>
-        $"{OrderUrl(tenantId, quotationId)}/proofs";
+    // Todo lo que se le hace al pedido va por su propio id: quien llega desde el listado tiene
+    // el id del pedido, no el de su cotización.
+    private static string OrderByIdUrl(Guid tenantId, Guid orderId) =>
+        $"/api/v1/tenants/{tenantId}/orders/{orderId}";
 
-    private static string OrderItemsUrl(Guid tenantId, Guid quotationId) =>
-        $"{OrderUrl(tenantId, quotationId)}/items";
+    private static string OrderProofsUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/proofs";
 
-    private static string OrderCancelUrl(Guid tenantId, Guid quotationId) =>
-        $"{OrderUrl(tenantId, quotationId)}/cancel";
+    private static string OrderItemsUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/items";
+
+    private static string OrderCancelUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/cancel";
 
     // Spec 2026-09-16, decisión 5: anular exige su propio permiso; el resto de la siembra y de la
     // lectura sigue usando los de gestión.
@@ -129,12 +136,12 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
@@ -495,15 +502,14 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)],
@@ -548,7 +554,7 @@ public sealed class OrderApiTests
         var existingProofId = Assert.Single(created.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -578,14 +584,13 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "PaymentPending",
                 [],
@@ -608,21 +613,20 @@ public sealed class OrderApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var firstProofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
                 "FullPaymentReceived", null, [new OrderPaymentProofRequest(firstProofFileId, quotation.Total)]),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         var approve = await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken);
         approve.EnsureSuccessStatusCode();
 
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(proofFileId, 10_000m)]),
             TestContext.Current.CancellationToken);
@@ -643,15 +647,14 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var secondProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 50_000m);
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -691,16 +694,15 @@ public sealed class OrderApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
                 "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var secondProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 50_000m);
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -724,20 +726,19 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         var approve = await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken);
         approve.EnsureSuccessStatusCode();
 
         var secondProductId = await CreateProductWithScalesAsync(client, tenantId);
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -758,14 +759,13 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(productId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -784,18 +784,17 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
         var productId = await CreateProductWithScalesAsync(owner, tenantId);
         var quotation = await CreateSentQuotationAsync(owner, factory, tenantId, clientId, productId);
-        var convert = await owner.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await owner.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.OrderManage);
         using var __ = otherOwner;
         var secondProductId = await CreateProductWithScalesAsync(owner, tenantId);
 
         var response = await otherOwner.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -814,18 +813,18 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         (await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
@@ -861,7 +860,7 @@ public sealed class OrderApiTests
         var replacementFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -897,7 +896,7 @@ public sealed class OrderApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}",
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -918,13 +917,13 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{Guid.CreateVersion7()}",
+            $"{OrderProofsUrl(tenantId, created.Id)}/{Guid.CreateVersion7()}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -951,12 +950,12 @@ public sealed class OrderApiTests
         var order = await ReadOrderAsync(convert);
         var proofId = Assert.Single(order.PaymentProofs).Id;
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}",
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -983,7 +982,7 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken));
 
         var response = await client.PostAsJsonAsync(
-            OrderCancelUrl(tenantId, quotation.Id),
+            OrderCancelUrl(tenantId, converted.Id),
             new CancelOrderRequest("  El cliente desistió  "),
             TestContext.Current.CancellationToken);
 
@@ -1034,17 +1033,17 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         var approved = await ReadOrderAsync(await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken));
 
         var cancelled = await ReadOrderAsync(await client.PostAsJsonAsync(
-            OrderCancelUrl(tenantId, quotation.Id),
+            OrderCancelUrl(tenantId, created.Id),
             new CancelOrderRequest("Aprobado por error"),
             TestContext.Current.CancellationToken));
 
@@ -1066,13 +1065,13 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var response = await client.PostAsJsonAsync(
-            OrderCancelUrl(tenantId, quotation.Id),
+            OrderCancelUrl(tenantId, created.Id),
             new CancelOrderRequest("El cliente desistió"),
             TestContext.Current.CancellationToken);
 
@@ -1083,18 +1082,18 @@ public sealed class OrderApiTests
         Assert.Equal("Pending", order.Status);
     }
 
+    // Un id de pedido que no existe en este tenant: mismo 404 que GET /orders/{orderId}, porque
+    // la acción ya no pasa por la cotización.
     [Fact]
-    public async Task CancelForAQuotationWithoutAnOrderIsNotFound()
+    public async Task CancelAnUnknownOrderIsNotFound()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
         using var _ = client;
-        var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsJsonAsync(
-            OrderCancelUrl(tenantId, quotation.Id),
+            OrderCancelUrl(tenantId, Guid.CreateVersion7()),
             new CancelOrderRequest("El cliente desistió"),
             TestContext.Current.CancellationToken);
 
@@ -1115,11 +1114,11 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
-        var url = OrderCancelUrl(tenantId, quotation.Id);
+            TestContext.Current.CancellationToken));
+        var url = OrderCancelUrl(tenantId, created.Id);
 
         var withoutReason = await client.PostAsJsonAsync(
             url, new { }, TestContext.Current.CancellationToken);

@@ -971,7 +971,7 @@ opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Produc
   Excel. `PUT /files/{id}/publication` rechaza siempre un `PaymentProof`, con el mismo código: sólo
   llega al público al adjuntarse a un pedido.
 - **Reemplazar o quitar un comprobante borra su archivo** (spec 2026-09-16, D19): corregir el archivo
-  con `updatedProofs[].newFileId` o quitar el comprobante con `DELETE /order/proofs/{proofId}` escribe
+  con `updatedProofs[].newFileId` o quitar el comprobante con `DELETE /orders/{orderId}/proofs/{proofId}` escribe
   `quotations.order.payment-proofs-detached.v1` con el pedido, y segundos después Storage borra la
   copia pública de ese adjunto. Si es un `PaymentProof` que ningún otro comprobante usa, borra además
   el archivo —del bucket público si ya se movió, de `staging/` si no— y lo marca `Purged`, auditado
