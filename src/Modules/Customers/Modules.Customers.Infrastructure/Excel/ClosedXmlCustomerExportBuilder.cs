@@ -1,5 +1,7 @@
+using System.Globalization;
 using ClosedXML.Excel;
 using Modules.Customers.Application;
+using Modules.Tenancy.Application;
 
 namespace Modules.Customers.Infrastructure.Excel;
 
@@ -35,7 +37,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
 
     public CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
-        DateTimeOffset generatedAt,
+        TenantCalendar calendar,
         CancellationToken cancellationToken)
     {
         using var workbook = new XLWorkbook();
@@ -49,7 +51,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         for (var index = 0; index < customers.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            WriteRow(sheet, index + 2, customers[index]);
+            WriteRow(sheet, index + 2, customers[index], calendar);
         }
 
         sheet.SheetView.FreezeRows(1);
@@ -61,14 +63,16 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         using var stream = new MemoryStream();
         workbook.SaveAs(stream);
 
+        // En la hora del tenant (spec 2026-09-17, punto 8a): es la hora que la persona ve en su reloj.
+        var generatedAtLocal = calendar.ToLocal(calendar.UtcNow);
         return new CustomerExportFile(
             stream.ToArray(),
-            $"clientes-{generatedAt:yyyyMMdd-HHmmss}.xlsx");
+            $"clientes-{generatedAtLocal.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}.xlsx");
     }
 
     // El mismo orden que `Columns`. Los textos de las columnas compartidas son los que el
     // importador espera leer: el nombre de la clasificacion y del departamento/ciudad, no sus ids.
-    private static void WriteRow(IXLWorksheet sheet, int excelRow, CustomerDto customer)
+    private static void WriteRow(IXLWorksheet sheet, int excelRow, CustomerDto customer, TenantCalendar calendar)
     {
         sheet.Cell(excelRow, 1).Value = customer.Name;
         sheet.Cell(excelRow, 2).Value = customer.IdentificationType;
@@ -84,10 +88,13 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         sheet.Cell(excelRow, 10).Value = customer.WithRetention ? "Si" : "No";
         sheet.Cell(excelRow, 11).Value = customer.Cuc;
         sheet.Cell(excelRow, 12).Value = customer.IsActive ? "Si" : "No";
-        // Como texto ISO-8601 y no como fecha de Excel: una celda de fecha se muestra segun la
-        // configuracion regional de quien abre el archivo, y ahi 03/04 deja de ser una fecha sola.
-        sheet.Cell(excelRow, 13).Value = customer.CreatedAt.ToString("O");
-        sheet.Cell(excelRow, 14).Value = customer.UpdatedAt.ToString("O");
+        // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
+        // regional de quien abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del
+        // tenant, al minuto y sin offset (spec 2026-09-17, punto 8a).
+        sheet.Cell(excelRow, 13).Value =
+            calendar.ToLocal(customer.CreatedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        sheet.Cell(excelRow, 14).Value =
+            calendar.ToLocal(customer.UpdatedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
     }
 
     private static void ApplyMinimumWidth(IXLColumns columns)

@@ -38,7 +38,7 @@ public sealed class ExportCustomersHandler(
     ICustomersAuditPublisher auditPublisher,
     ICustomersUnitOfWork unitOfWork,
     IExecutionContext executionContext,
-    IClock clock)
+    ITenantClock tenantClock)
     : ICommandHandler<ExportCustomersCommand, ExportCustomersResult>
 {
     /// <summary>
@@ -71,9 +71,12 @@ public sealed class ExportCustomersHandler(
                 "There are no customers matching the export criteria.");
         }
 
-        var occurredAt = clock.UtcNow;
+        // El archivo se nombra y se llena en la hora del tenant (spec 2026-09-17, punto 8a); la
+        // auditoría y el evento siguen con el instante UTC.
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var occurredAt = calendar.UtcNow;
         var items = await ToDtosAsync(command.TenantId, customers, cancellationToken);
-        var file = exportBuilder.Build(items, occurredAt, cancellationToken);
+        var file = exportBuilder.Build(items, calendar, cancellationToken);
 
         // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
         // entrada de auditoria. No hay exportacion a medias ni correo con un enlace que no resuelve.
