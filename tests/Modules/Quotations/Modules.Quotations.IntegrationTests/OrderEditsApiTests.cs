@@ -364,6 +364,59 @@ public sealed class OrderEditsApiTests
         Assert.Equal(auditBefore, (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Count);
     }
 
+    // Final review del slice: el preview no tenía cobertura HTTP de proofs.update y
+    // proofs.removeIds juntos. Mismo escenario que
+    // SaveRemovesAndCorrectsProofsAndRecalculatesThePaymentStatus, pero por
+    // POST /order/preview — la proyección refleja el cambio y el GET posterior no ve nada
+    // persistido (ni el comprobante quitado vuelve, ni el corregido queda con el monto nuevo).
+    [Fact]
+    public async Task PreviewAppliesProofUpdatesAndRemovalsWithoutPersistingThem()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var keptFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var removedFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var converted = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null,
+                [new OrderPaymentProofRequest(keptFileId, 60_000m), new OrderPaymentProofRequest(removedFileId, 40_000m)]),
+            TestContext.Current.CancellationToken);
+        converted.EnsureSuccessStatusCode();
+        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        var kept = Assert.Single(order.PaymentProofs, proof => proof.FileId == keptFileId);
+        var removed = Assert.Single(order.PaymentProofs, proof => proof.FileId == removedFileId);
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/preview",
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)],
+                new OrderEditProofsRequest(null, [new OrderPaymentProofUpdateRequest(kept.Id, 50_000m)], [removed.Id]),
+                null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var previewed = await ReadDetailAsync(preview);
+        var remaining = Assert.Single(previewed.Order.PaymentProofs);
+        Assert.Equal(kept.Id, remaining.Id);
+        Assert.Equal(50_000m, remaining.Amount);
+        Assert.Equal("PartialPaymentReceived", previewed.Order.PaymentStatus);
+        Assert.Equal(order.Version, previewed.Order.Version);
+
+        var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal(2, fetched.Order.PaymentProofs.Count);
+        Assert.Contains(fetched.Order.PaymentProofs, proof => proof.Id == kept.Id && proof.Amount == 60_000m);
+        Assert.Contains(fetched.Order.PaymentProofs, proof => proof.Id == removed.Id && proof.Amount == 40_000m);
+        Assert.Equal("FullPaymentReceived", fetched.Order.PaymentStatus);
+        Assert.Equal(order.Version, fetched.Order.Version);
+    }
+
     // «Errores de dominio (…) se devuelven como 422 con el mismo código que devolvería el guardado.»
     [Fact]
     public async Task PreviewReportsTheSameDomainErrorAsSaving()
