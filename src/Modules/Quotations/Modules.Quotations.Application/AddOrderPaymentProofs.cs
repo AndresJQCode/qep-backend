@@ -37,6 +37,29 @@ public sealed class AddOrderPaymentProofsValidator
             .When(command => command.Notes is not null);
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
         RuleForEach(command => command.UpdatedProofs).SetValidator(new OrderPaymentProofUpdateRequestValidator());
+
+        // Revisión final (I2): un archivo, un adjunto (D16). El mismo archivo dos veces en un request
+        // —como comprobante nuevo, como reemplazo o como los dos— tendría dos copias públicas con claves
+        // distintas y Storage sólo registra una: la otra quedaría expuesta. Y corregir dos veces el mismo
+        // comprobante no tiene un resultado único.
+        RuleFor(command => command.PaymentProofs)
+            .Must((command, _) => !HasDuplicates(command.PaymentProofs
+                .Select(proof => proof.FileId)
+                .Concat(command.UpdatedProofs
+                    .Where(update => update.NewFileId is not null)
+                    .Select(update => update.NewFileId!.Value))))
+            .WithMessage("The same file cannot be attached more than once in a request.")
+            .When(command => command.PaymentProofs is not null && command.UpdatedProofs is not null);
+        RuleFor(command => command.UpdatedProofs)
+            .Must(updates => !HasDuplicates(updates.Select(update => update.ProofId)))
+            .WithMessage("The same payment proof cannot be updated more than once in a request.")
+            .When(command => command.UpdatedProofs is not null);
+    }
+
+    private static bool HasDuplicates(IEnumerable<Guid> ids)
+    {
+        var seen = new HashSet<Guid>();
+        return ids.Any(id => !seen.Add(id));
     }
 }
 
@@ -81,7 +104,7 @@ public sealed class AddOrderPaymentProofsHandler(
         foreach (var proof in command.PaymentProofs)
         {
             await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, command.TenantId, proof.FileId, cancellationToken);
+                fileLookup, repository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
         }
 
         foreach (var update in command.UpdatedProofs)
@@ -89,7 +112,12 @@ public sealed class AddOrderPaymentProofsHandler(
             if (update.NewFileId is { } newFileId)
             {
                 await OrderPaymentProofResolver.ResolveAsync(
-                    fileLookup, command.TenantId, newFileId, cancellationToken);
+                    fileLookup,
+                    repository,
+                    command.TenantId,
+                    newFileId,
+                    new OrderPaymentProofId(update.ProofId),
+                    cancellationToken);
             }
         }
 

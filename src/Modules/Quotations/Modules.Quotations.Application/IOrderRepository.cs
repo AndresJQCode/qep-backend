@@ -110,5 +110,13 @@ public interface IOrderRepository
         IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken);
 
+    /// <summary>Si algún comprobante de algún pedido usa el archivo, salvo <paramref name="exceptProofId"/>
+    /// (revisión final de la spec 2026-09-16, I2): un PaymentProof se adjunta una sola vez (D16), y el
+    /// comprobante que se reemplaza con su propio archivo no cuenta. Sin tenant, igual que
+    /// <c>OrderPaymentProofFileReferenceProbe</c>: el id del archivo es global, y el resolver ya comprobó
+    /// que el archivo es del tenant. Usa el índice <c>IX_order_payment_proofs_file</c> (D17).</summary>
+    Task<bool> IsPaymentProofFileInUseAsync(
+        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken);
+
     void Add(Order order);
 }

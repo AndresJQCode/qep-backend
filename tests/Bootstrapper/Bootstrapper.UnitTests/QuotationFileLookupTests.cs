@@ -25,6 +25,8 @@ public sealed class QuotationFileLookupTests
 
         Assert.NotNull(found);
         Assert.True(found.IsAvailable);
+        // Revisión final (I2): Quotations necesita saberlo para rechazar un comprobante ya adjunto.
+        Assert.True(found.IsPaymentProof);
     }
 
     [Fact]
@@ -58,6 +60,7 @@ public sealed class QuotationFileLookupTests
 
         Assert.NotNull(found);
         Assert.True(found.IsAvailable);
+        Assert.False(found.IsPaymentProof);
     }
 
     private static FileResource AvailablePaymentProof()

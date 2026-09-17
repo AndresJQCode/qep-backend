@@ -17,10 +17,14 @@ internal static class OrderPaymentProofResolver
 
     private const long MaxSizeBytes = 10 * 1024 * 1024;
 
+    /// <param name="exceptProofId">El comprobante que se reemplaza con este archivo, o null para uno nuevo:
+    /// reemplazar un comprobante con su propio archivo no lo cuenta como ya adjunto.</param>
     public static async Task ResolveAsync(
         IQuotationFileLookup lookup,
+        IOrderRepository orders,
         Guid tenantId,
         Guid fileId,
+        OrderPaymentProofId? exceptProofId,
         CancellationToken cancellationToken)
     {
         var file = await lookup.FindAsync(tenantId, fileId, cancellationToken);
@@ -34,13 +38,19 @@ internal static class OrderPaymentProofResolver
                 $"File '{fileId}' was not found in this tenant.");
         }
 
-        // Dos casos con el mismo código: la subida no terminó, o el comprobante ya se movió al
-        // bucket público con otro pedido (spec 2026-09-16, D16).
-        if (!file.IsAvailable)
+        // Tres casos con el mismo código: la subida no terminó, el comprobante ya se movió al bucket
+        // público con otro pedido (spec 2026-09-16, D16), o es un PaymentProof que otro comprobante ya
+        // usa aunque todavía no se haya movido (revisión final, I2). Esto último cierra D16 por
+        // referencia y no por movimiento: Storage registra una sola clave pública por archivo, así que un
+        // segundo adjunto dejaría una copia que ningún retiro llega a borrar. Un archivo User (D13) no
+        // tiene la regla: cada adjunto tiene su copia y su original sigue en el bucket privado.
+        if (!file.IsAvailable
+            || (file.IsPaymentProof
+                && await orders.IsPaymentProofFileInUseAsync(fileId, exceptProofId, cancellationToken)))
         {
             throw new QuotationsDomainException(
                 "order.payment_proof.file_not_available",
-                "The payment proof file is not available: it has not finished uploading or it was already attached to another order.");
+                "The payment proof file is not available: it has not finished uploading or it is already attached to an order.");
         }
 
         if (!AllowedMimeTypes.Contains(file.MimeType, StringComparer.OrdinalIgnoreCase))

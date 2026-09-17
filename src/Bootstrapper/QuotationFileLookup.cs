@@ -35,7 +35,8 @@ internal sealed class QuotationFileLookup(
                 resource.TenantId,
                 resource.MimeType,
                 resource.SizeBytes,
-                IsAvailableToAttach(resource));
+                IsAvailableToAttach(resource),
+                resource.OwnerType == FileOwnerType.PaymentProof);
     }
 
     // Spec 2026-09-16, D16: un PaymentProof con PublicStorageKey ya se movió al bucket público y su

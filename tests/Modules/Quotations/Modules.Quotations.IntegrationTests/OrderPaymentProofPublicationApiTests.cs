@@ -557,6 +557,187 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.Single(factory.PublicObjectStorage.Copies);
     }
 
+    // Revisión final (I2): un PaymentProof, un adjunto (D16), por referencia y no por movimiento. Con la
+    // opción apagada el comprobante nunca se mueve, y antes podía adjuntarse a cualquier cantidad de
+    // pedidos.
+    [Fact]
+    public async Task APaymentProofAlreadyAttachedButNotMovedCannotBeAttachedToAnotherOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var firstQuotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        await ConvertAsync(client, tenantId, firstQuotation.Id, "FullPaymentReceived", fileId);
+        var secondQuotation = await NewSentQuotationAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, secondQuotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null, [new OrderPaymentProofRequest(fileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.payment_proof.file_not_available", problem?.Code);
+    }
+
+    // Revisión final (I2): tampoco como reemplazo de otro comprobante del mismo pedido.
+    [Fact]
+    public async Task APaymentProofOfAnotherProofCannotBeUsedAsAReplacement()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var firstFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var secondFileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var order = await ConvertAsync(
+            client, tenantId, quotation.Id, "PartialPaymentReceived", firstFileId, secondFileId);
+        var firstProofId = order.PaymentProofs.Single(proof => proof.FileId == firstFileId).Id;
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(firstProofId, 20_000m, secondFileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.payment_proof.file_not_available", problem?.Code);
+    }
+
+    // Revisión final (I2): la excepción es el comprobante que se reemplaza con su propio archivo, que
+    // todavía no se movió.
+    [Fact]
+    public async Task APaymentProofCanBeReplacedWithItsOwnFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, fileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // Revisión final (I2): un archivo User (D13) sigue como en v1: se puede adjuntar a otro pedido.
+    [Fact]
+    public async Task AUserFileCanStillBeAttachedToAnotherOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var firstQuotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        await ConvertAsync(client, tenantId, firstQuotation.Id, "FullPaymentReceived", fileId);
+        var secondQuotation = await NewSentQuotationAsync(client, factory, tenantId);
+
+        var order = await ConvertAsync(client, tenantId, secondQuotation.Id, "FullPaymentReceived", fileId);
+
+        Assert.Equal(fileId, Assert.Single(order.PaymentProofs).FileId);
+    }
+
+    // Revisión final (I2): el mismo archivo dos veces en un request se rechaza antes de copiar nada.
+    [Fact]
+    public async Task ConvertingWithTheSameFileTwiceIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived",
+                null,
+                [new OrderPaymentProofRequest(fileId, 10_000m), new OrderPaymentProofRequest(fileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("validation.failed", problem?.Code);
+        Assert.Empty(factory.PublicObjectStorage.Copies);
+    }
+
+    // Revisión final (I2): tampoco como comprobante nuevo y como reemplazo a la vez.
+    [Fact]
+    public async Task AddingTheSameFileAsANewProofAndAsAReplacementIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var oldFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", oldFileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        var copiesBefore = factory.PublicObjectStorage.Copies.Count;
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [new OrderPaymentProofRequest(fileId, 10_000m)],
+                UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 20_000m, fileId)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("validation.failed", problem?.Code);
+        Assert.Equal(copiesBefore, factory.PublicObjectStorage.Copies.Count);
+    }
+
+    // Revisión final (I2): corregir el mismo comprobante dos veces en un request se rechaza.
+    [Fact]
+    public async Task UpdatingTheSameProofTwiceIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var fileId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var order = await ConvertAsync(client, tenantId, quotation.Id, "PartialPaymentReceived", fileId);
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+
+        var response = await client.PostAsJsonAsync(
+            OrderProofsUrl(tenantId, quotation.Id),
+            new AddOrderPaymentProofsRequest(
+                "FullPaymentReceived",
+                [],
+                UpdatedProofs:
+                [
+                    new OrderPaymentProofUpdateRequest(proofId, 15_000m),
+                    new OrderPaymentProofUpdateRequest(proofId, 20_000m),
+                ]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("validation.failed", problem?.Code);
+    }
+
     // D19 (spec 2026-09-16): reemplazar el archivo de un comprobante escribe, con el pedido, el archivo
     // viejo y la clave de su copia.
     [Fact]

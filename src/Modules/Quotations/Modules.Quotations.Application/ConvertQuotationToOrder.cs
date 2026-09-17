@@ -27,6 +27,13 @@ public sealed class ConvertQuotationToOrderValidator : AbstractValidator<Convert
             .MaximumLength(Order.NotesMaxLength)
             .When(command => command.Notes is not null);
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
+
+        // Revisión final (I2): un archivo, un adjunto (D16). Dos veces el mismo archivo tendría dos copias
+        // públicas con claves distintas, y Storage sólo registra una.
+        RuleFor(command => command.PaymentProofs)
+            .Must(proofs => proofs.Select(proof => proof.FileId).Distinct().Count() == proofs.Count)
+            .WithMessage("The same file cannot be attached more than once in a request.")
+            .When(command => command.PaymentProofs is not null);
     }
 }
 
@@ -76,7 +83,7 @@ public sealed class ConvertQuotationToOrderHandler(
         foreach (var proof in command.PaymentProofs)
         {
             await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, command.TenantId, proof.FileId, cancellationToken);
+                fileLookup, orderRepository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
         }
 
         var convertedBy = await QuotationAdvisorResolver.ResolveAsync(
