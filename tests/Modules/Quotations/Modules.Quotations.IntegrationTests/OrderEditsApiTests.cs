@@ -66,5 +66,52 @@ public sealed class OrderEditsApiTests
             Guid.CreateVersion7(), quotationId, TestContext.Current.CancellationToken));
     }
 
+    // Decisión 6: la versión viaja al frontend para mandarla en If-Match. Aprobar sube la versión
+    // exactamente una vez (Order.Approve), así que la segunda lectura es predecible.
+    [Fact]
+    public async Task TheOrderResponseCarriesTheVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, order, _) = await CreatePendingOrderAsync(client, factory, tenantId);
+        Assert.True(order.Version >= 1);
+
+        var approve = await client.PostAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/approve", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+        var body = await approve.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using (var json = JsonDocument.Parse(body))
+        {
+            Assert.Equal(order.Version + 1, json.RootElement.GetProperty("version").GetInt64());
+        }
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"/api/v1/tenants/{tenantId}/orders/{order.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal(order.Version + 1, detail.Order.Version);
+    }
+
+    /// <summary>Una cotización enviada con un producto de 100.000 COP sin impuesto, convertida con el
+    /// pago pendiente y sin comprobantes: el total es 100.000 y el estado de pago lo decide cada
+    /// prueba.</summary>
+    private static async Task<(QuotationResponse Quotation, OrderResponse Order, Guid ProductId)> CreatePendingOrderAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return (quotation, order, productId);
+    }
+
     private sealed record ProblemPayload(string Code);
 }

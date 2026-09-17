@@ -25,6 +25,10 @@ public sealed record OrderDto(
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    /// <summary>El token de concurrencia del pedido (spec 2026-09-17, decisión 6): el frontend lo
+    /// manda en <c>If-Match</c> al guardar la edición. Sube con cada cambio del pedido, no
+    /// necesariamente de a uno.</summary>
+    long Version,
     IReadOnlyCollection<OrderPaymentProofDto> PaymentProofs);
 
 /// <summary>Un comprobante de pago, tal como viaja en el request de conversión (US-14): el
@@ -100,6 +104,7 @@ public sealed record OrderResponse(
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    long Version,
     IReadOnlyCollection<OrderPaymentProofResponse> PaymentProofs);
 
 /// <summary>

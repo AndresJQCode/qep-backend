@@ -332,6 +332,7 @@ public static class OrderEndpoints
         order.RitualCollectionSyncId,
         order.CreatedAt,
         order.UpdatedAt,
+        order.Version,
         order.PaymentProofs
             .Select(proof => new OrderPaymentProofResponse(
                 proof.Id, proof.FileId, proof.Amount, proof.UploadedAt))
