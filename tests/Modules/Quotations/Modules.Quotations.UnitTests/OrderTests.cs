@@ -651,4 +651,116 @@ public sealed class OrderTests
         Assert.Equal("order.order.not_pending", approve.Code);
         Assert.Equal(OrderStatus.Cancelled, order.Status);
     }
+
+    // Spec 2026-09-17 (editar pedido como borrador): el guardado atómico suma comprobantes sin
+    // pisar el estado de pago —lo deriva el servidor una sola vez, decisión 5— ni las notas.
+    [Fact]
+    public void AttachPaymentProofsAddsTheProofsWithoutTouchingPaymentStatusOrNotes()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PartialPaymentReceived, notes: "Entregar el lunes");
+        var fileId = Guid.CreateVersion7();
+        var uploadedBy = new MemberId(Guid.CreateVersion7());
+        var later = Now.AddDays(1);
+
+        order.AttachPaymentProofs([new OrderPaymentProofInput(fileId, 30_000m, "payment-proofs/a.pdf")], uploadedBy, later);
+
+        Assert.Equal(2, order.PaymentProofs.Count);
+        var added = Assert.Single(order.PaymentProofs, proof => proof.FileId == fileId);
+        Assert.Equal(30_000m, added.Amount);
+        Assert.Equal(uploadedBy, added.UploadedBy);
+        Assert.Equal("payment-proofs/a.pdf", added.PublicStorageKey);
+        Assert.Equal(OrderPaymentStatus.PartialPaymentReceived, order.PaymentStatus);
+        Assert.Equal("Entregar el lunes", order.Notes);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    // A diferencia de AddPaymentProofs, un guardado que sólo toca productos no trae comprobantes:
+    // no es un error y no sube la versión.
+    [Fact]
+    public void AttachPaymentProofsWithNothingToAttachChangesNothing()
+    {
+        var order = NewOrder();
+
+        order.AttachPaymentProofs([], ConvertedBy, Now.AddDays(1));
+
+        Assert.Single(order.PaymentProofs);
+        Assert.Equal(Now, order.UpdatedAt);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void AttachPaymentProofsRejectsAnOrderThatIsNotPending()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachPaymentProofs([], ConvertedBy, Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
+
+    [Fact]
+    public void CorrectPaymentProofsUpdatesTheAmountAndReplacesTheFile()
+    {
+        var order = NewOrder();
+        var proof = Assert.Single(order.PaymentProofs);
+        var newFileId = Guid.CreateVersion7();
+        var later = Now.AddDays(1);
+
+        order.CorrectPaymentProofs(
+            [new OrderPaymentProofAmountUpdate(proof.Id, 80_000m, newFileId, "payment-proofs/b.pdf")],
+            later);
+
+        Assert.Equal(80_000m, proof.Amount);
+        Assert.Equal(newFileId, proof.FileId);
+        Assert.Equal("payment-proofs/b.pdf", proof.PublicStorageKey);
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    // Todos los ids se buscan antes de corregir el primero: uno ajeno no deja la mitad corregida.
+    [Fact]
+    public void CorrectPaymentProofsRejectsAProofThatIsNotOnThisOrderBeforeCorrectingAny()
+    {
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
+        var proof = Assert.Single(order.PaymentProofs);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectPaymentProofs(
+                [
+                    new OrderPaymentProofAmountUpdate(proof.Id, 1m),
+                    new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 2m),
+                ],
+                Now.AddDays(1)));
+
+        Assert.Equal("order.payment_proof.not_found", error.Code);
+        Assert.Equal(100_000m, proof.Amount);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void CorrectPaymentProofsWithNothingToCorrectChangesNothing()
+    {
+        var order = NewOrder();
+
+        order.CorrectPaymentProofs([], Now.AddDays(1));
+
+        Assert.Equal(1, order.Version);
+        Assert.Equal(Now, order.UpdatedAt);
+    }
+
+    [Fact]
+    public void CorrectPaymentProofsRejectsAnOrderThatIsNotPending()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectPaymentProofs([], Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
 }
