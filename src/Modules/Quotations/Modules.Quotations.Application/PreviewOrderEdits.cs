@@ -11,7 +11,7 @@ namespace Modules.Quotations.Application;
 /// </summary>
 public sealed record PreviewOrderEditsQuery(
     Guid TenantId,
-    Guid QuotationId,
+    Guid OrderId,
     IReadOnlyList<OrderItemAddition> Items,
     OrderEditProofs Proofs,
     string? Notes) : IQuery<OrderDetailDto>, IOrderEdits;
@@ -53,12 +53,13 @@ public sealed class PreviewOrderEditsHandler(
             executionContext, query.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
+        // Mismo orden que el guardado: primero el pedido por su id, después su cotización.
+        var order = await orderRepository.FindUntrackedByIdAsync(
+            query.TenantId, new OrderId(query.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(query.OrderId);
         var quotation = await quotationRepository.FindUntrackedAsync(
-            query.TenantId, new QuotationId(query.QuotationId), cancellationToken)
-            ?? throw QuotationNotFound.For(query.QuotationId);
-        var order = await orderRepository.FindUntrackedAsync(
-            query.TenantId, quotation.Id, cancellationToken)
-            ?? throw OrderNotFound.For(query.QuotationId);
+            query.TenantId, order.QuotationId, cancellationToken)
+            ?? throw OrderNotFound.ById(query.OrderId);
 
         if (order.Status != OrderStatus.Pending)
         {

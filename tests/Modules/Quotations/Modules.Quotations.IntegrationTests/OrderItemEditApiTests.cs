@@ -16,6 +16,24 @@ public sealed class OrderItemEditApiTests
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
 
+    // Las acciones del pedido cuelgan de su propio id; de la cotización sólo convertir y leer.
+    private static string OrderByIdUrl(Guid tenantId, Guid orderId) =>
+        $"/api/v1/tenants/{tenantId}/orders/{orderId}";
+
+    private static async Task<OrderResponse> ConvertToOrderAsync(
+        HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotationId),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
+    }
+
     [Fact]
     public async Task UpdateItemQuantityOnAPendingOrderRecalculatesTheQuotationTotal()
     {
@@ -27,10 +45,7 @@ public sealed class OrderItemEditApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var itemId = Assert.Single(quotation.Items).Id;
-        (await client.PostAsJsonAsync(
-            OrderUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        await ConvertToOrderAsync(client, tenantId, quotation.Id);
 
         var response = await client.PutAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
@@ -56,12 +71,9 @@ public sealed class OrderItemEditApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var itemId = Assert.Single(quotation.Items).Id;
-        (await client.PostAsJsonAsync(
-            OrderUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var order = await ConvertToOrderAsync(client, tenantId, quotation.Id);
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
@@ -88,13 +100,10 @@ public sealed class OrderItemEditApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var firstItemId = Assert.Single(quotation.Items).Id;
-        (await client.PostAsJsonAsync(
-            OrderUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var order = await ConvertToOrderAsync(client, tenantId, quotation.Id);
         var secondProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 50_000m);
         (await client.PostAsJsonAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/items",
+            $"{OrderByIdUrl(tenantId, order.Id)}/items",
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
@@ -122,10 +131,7 @@ public sealed class OrderItemEditApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var itemId = Assert.Single(quotation.Items).Id;
-        (await client.PostAsJsonAsync(
-            OrderUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        await ConvertToOrderAsync(client, tenantId, quotation.Id);
 
         var response = await client.DeleteAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
@@ -149,12 +155,9 @@ public sealed class OrderItemEditApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var itemId = Assert.Single(quotation.Items).Id;
-        (await client.PostAsJsonAsync(
-            OrderUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var order = await ConvertToOrderAsync(client, tenantId, quotation.Id);
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 

@@ -30,13 +30,13 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 cancellationToken);
 
     // Con comprobantes: el cálculo previo suma sus montos para derivar el estado de pago.
-    public Task<Order?> FindUntrackedAsync(
-        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+    public Task<Order?> FindUntrackedByIdAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
         dbContext.Orders
             .AsNoTracking()
             .Include(order => order.PaymentProofs)
             .SingleOrDefaultAsync(
-                order => order.TenantId == tenantId && order.QuotationId == quotationId,
+                order => order.TenantId == tenantId && order.Id == orderId,
                 cancellationToken);
 
     // AsNoTracking y sin comprobantes: esto alimenta una fila de listado, que solo pregunta si

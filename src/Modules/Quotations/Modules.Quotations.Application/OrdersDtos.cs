@@ -89,7 +89,7 @@ public sealed record CancelOrderRequest(string? Reason);
 public sealed record OrderEditItemRequest(Guid ProductId, decimal Quantity);
 
 /// <summary>Un comprobante nuevo del borrador. <paramref name="FileId"/> se omite en
-/// <c>POST /order/preview</c>: los archivos se suben recién al guardar.</summary>
+/// <c>POST /orders/{orderId}/preview</c>: los archivos se suben recién al guardar.</summary>
 public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount);
 
 /// <summary>Los comprobantes del borrador. Ausentes o null equivalen a vacíos.</summary>
@@ -100,8 +100,8 @@ public sealed record OrderEditProofsRequest(
 
 /// <summary>
 /// El estado deseado completo de «Editar pedido» (spec 2026-09-17, decisión 2): mismo cuerpo para
-/// <c>PUT /order</c> y <c>POST /order/preview</c>. <c>Items</c> es la lista completa;
-/// <c>Notes</c> reemplaza el campo entero y null lo limpia.
+/// <c>PUT /orders/{orderId}</c> y <c>POST /orders/{orderId}/preview</c>. <c>Items</c> es la lista
+/// completa; <c>Notes</c> reemplaza el campo entero y null lo limpia.
 /// </summary>
 public sealed record SaveOrderEditsRequest(
     IReadOnlyList<OrderEditItemRequest>? Items,

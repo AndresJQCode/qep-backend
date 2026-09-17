@@ -12,7 +12,7 @@ namespace Modules.Quotations.Application;
 /// </summary>
 public sealed record SaveOrderEditsCommand(
     Guid TenantId,
-    Guid QuotationId,
+    Guid OrderId,
     long ExpectedVersion,
     IReadOnlyList<OrderItemAddition> Items,
     OrderEditProofs Proofs,
@@ -29,7 +29,8 @@ public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEdits
 /// <summary>
 /// Pasos 1 a 9 del spec 2026-09-17: todo sobre los agregados rastreados y un único
 /// <c>SaveChangesAsync</c>, así que una falla en cualquier paso no deja nada a medio guardar.
-/// Los endpoints viejos (<c>/order/items</c>, <c>/order/proofs</c>, <c>/items/{id}</c>) no se tocan
+/// Los endpoints hermanos (<c>/orders/{orderId}/items</c>, <c>/orders/{orderId}/proofs</c>,
+/// <c>/quotations/{id}/items/{itemId}</c>) no se tocan
 /// (decisión 8).
 /// </summary>
 public sealed class SaveOrderEditsHandler(
@@ -57,12 +58,15 @@ public sealed class SaveOrderEditsHandler(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
+        // Se entra por el id del pedido —la pantalla viene del listado de pedidos— y recién desde
+        // él se llega a su cotización, igual que GetOrderByIdHandler. Que falte la cotización sería
+        // un pedido huérfano, imposible por la FK: se trata como el mismo "no encontrado".
+        var order = await orderRepository.FindByIdAsync(
+            command.TenantId, new OrderId(command.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
         var quotation = await quotationRepository.FindAsync(
-            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
-            ?? throw QuotationNotFound.For(command.QuotationId);
-        var order = await orderRepository.FindByQuotationIdAsync(
-            command.TenantId, quotation.Id, cancellationToken)
-            ?? throw OrderNotFound.For(command.QuotationId);
+            command.TenantId, order.QuotationId, cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
         if (order.Status != OrderStatus.Pending)
         {

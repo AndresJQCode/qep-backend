@@ -78,7 +78,7 @@ public sealed class OrdersReportApiTests
             client, factory, tenant.TenantId, customer.Id, productId);
         var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
         (await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenant.TenantId}/quotations/{quotation.Id}/order/cancel",
+            $"/api/v1/tenants/{tenant.TenantId}/orders/{order.Id}/cancel",
             new CancelOrderRequest("El cliente desistió"),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
