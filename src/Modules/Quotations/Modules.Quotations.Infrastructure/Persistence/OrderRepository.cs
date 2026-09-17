@@ -29,6 +29,16 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 order => order.TenantId == tenantId && order.QuotationId == quotationId,
                 cancellationToken);
 
+    // Con comprobantes: el cálculo previo suma sus montos para derivar el estado de pago.
+    public Task<Order?> FindUntrackedAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        dbContext.Orders
+            .AsNoTracking()
+            .Include(order => order.PaymentProofs)
+            .SingleOrDefaultAsync(
+                order => order.TenantId == tenantId && order.QuotationId == quotationId,
+                cancellationToken);
+
     // AsNoTracking y sin comprobantes: esto alimenta una fila de listado, que solo pregunta si
     // la cotizacion ya se convirtio y como quedo ese pedido. La relacion es 1:1, asi que indexar
     // por cotizacion no puede perder filas.
