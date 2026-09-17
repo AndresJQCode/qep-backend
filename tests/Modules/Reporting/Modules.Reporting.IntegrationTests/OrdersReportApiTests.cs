@@ -188,12 +188,6 @@ public sealed class OrdersReportApiTests
         Assert.Equal(0, other?.Total);
     }
 
-    /// <summary>
-    /// Las cuatro exportaciones a Excel se retiraron: su único consumidor, <c>qep-frontend</c>,
-    /// quitó la función (<c>99771b9</c>), y armaban el libro entero en memoria dentro de la
-    /// petición. El llamador tiene los cuatro permisos de Reporting y un rango válido de un año,
-    /// así que un 404 sólo puede venir de que la ruta ya no existe.
-    /// </summary>
     // Spec 2026-09-17, punto 4: "hasta el 31" es el 31 del tenant. El pedido convertido el 31 a las
     // 23:00 de Bogotá —ya 2027 en UTC— está en el reporte de diciembre y no en el de enero.
     [Fact]
@@ -222,6 +216,12 @@ public sealed class OrdersReportApiTests
         Assert.Empty(january.Items);
     }
 
+    /// <summary>
+    /// Las cuatro exportaciones a Excel se retiraron: su único consumidor, <c>qep-frontend</c>,
+    /// quitó la función (<c>99771b9</c>), y armaban el libro entero en memoria dentro de la
+    /// petición. El llamador tiene los cuatro permisos de Reporting y un rango válido de un año,
+    /// así que un 404 sólo puede venir de que la ruta ya no existe.
+    /// </summary>
     [Fact]
     public async Task ExportRoutesNoLongerExist()
     {

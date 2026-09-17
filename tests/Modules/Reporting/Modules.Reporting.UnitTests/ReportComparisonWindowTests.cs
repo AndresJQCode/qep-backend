@@ -7,7 +7,7 @@ namespace Modules.Reporting.UnitTests;
 ///
 /// El "vs. periodo anterior" de un KPI no significa nada si no se dice contra que: aca la regla
 /// es la ventana **de la misma longitud, inmediatamente anterior**, y las dos puntas son
-/// inclusivas igual que en el filtro (<c>ReportPeriod</c>). Un mes calendario anterior seria
+/// inclusivas igual que en el filtro (<c>OrdersReportFilter</c>, <c>From</c>/<c>To</c>). Un mes calendario anterior seria
 /// otra regla y daria otro numero — por eso esto se prueba solo y no dentro del handler.
 /// </summary>
 public sealed class ReportComparisonWindowTests
