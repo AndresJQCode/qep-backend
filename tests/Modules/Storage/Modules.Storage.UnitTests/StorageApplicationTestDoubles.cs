@@ -27,7 +27,8 @@ internal sealed class InMemoryFileResourceRepository(params FileResource[] resou
         int page,
         int pageSize,
         CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        // Todo lo sembrado, sin filtrar: los filtros son SQL y los cubre integración.
+        Task.FromResult<(IReadOnlyList<FileResource>, int)>((resources, resources.Length));
 }
 
 /// <summary>El bucket privado: sólo firma descargas, con la clave a la vista para que la prueba vea
