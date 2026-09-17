@@ -193,6 +193,8 @@ internal static class QuotationsApiHarness
                 identificationType = "NIT",
                 identificationNumber = identificationNumber
                     ?? $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
@@ -229,6 +231,8 @@ internal static class QuotationsApiHarness
                 name = "Verde Esencial S.A.S.",
                 identificationType = "NIT",
                 identificationNumber,
+                phone = "310 935 2187",
+                email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
