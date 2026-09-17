@@ -564,6 +564,9 @@ public static class QepServiceCollectionExtensions
                 QuotationsPermissions.QuotationManage,
                 OrdersPermissions.OrderRead,
                 OrdersPermissions.OrderManage,
+                // Sólo admin (spec 2026-09-16, decisión 5): anular deshace también un pedido ya
+                // aprobado. El rol vive en código, así que no hay migración de datos.
+                OrdersPermissions.OrderCancel,
                 // Los cuatro reportes. Admin es el unico rol que ve los de cambios de precio y
                 // padron de clientes: el primero expone el historial comercial completo del
                 // catalogo, y el segundo el padron entero con datos de identificacion.
@@ -790,6 +793,14 @@ public static class QepServiceCollectionExtensions
             "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
             "medium"));
+        // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
+        // persona ya aprobó.
+        services.AddSingleton(new PermissionDefinition(
+            OrdersPermissions.OrderCancel,
+            "Anular pedidos",
+            "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
+            "Quotations",
+            "high"));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.OrdersRead,
             "Reporte de pedidos",
@@ -1028,6 +1039,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 OrdersPermissions.OrderManage,
                 policy => AddPermissionRequirement(policy, OrdersPermissions.OrderManage))
+            .AddPolicy(
+                OrdersPermissions.OrderCancel,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderCancel))
             // La otra mitad del permiso, para los cuatro de Reporting. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 -- mismo gotcha que
             // TaxRateRead/TaxRateManage, ClassificationRead/ClassificationManage y los de

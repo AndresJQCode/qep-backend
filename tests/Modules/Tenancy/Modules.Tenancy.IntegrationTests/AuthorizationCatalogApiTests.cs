@@ -45,7 +45,8 @@ public sealed class AuthorizationCatalogApiTests
     /// <summary>
     /// Lo que la pantalla de roles muestra de los permisos de pedidos (spec 2026-09-14): códigos
     /// nuevos, textos en masculino y con tilde, y los mismos permisos efectivos en los tres roles
-    /// de fábrica que antes tenían los de pedidos.
+    /// de fábrica que antes tenían los de pedidos. Anular (spec 2026-09-16) es permiso propio y
+    /// sólo de admin.
     /// </summary>
     [Fact]
     public async Task TheCatalogNamesTheOrderPermissions()
@@ -61,6 +62,8 @@ public sealed class AuthorizationCatalogApiTests
         Assert.NotNull(catalog);
         CatalogPermissionPayload[] expected =
         [
+            new("quotations.order.cancel", "Anular pedidos",
+                "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.", "Quotations", "high"),
             new("quotations.order.manage", "Gestionar pedidos",
                 "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.", "Quotations", "medium"),
             new("quotations.order.read", "Leer pedidos",
@@ -75,8 +78,9 @@ public sealed class AuthorizationCatalogApiTests
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
         Assert.DoesNotContain(
             catalog.Permissions, permission => permission.Permission.Contains("sale", StringComparison.Ordinal));
+        // Spec 2026-09-16, decisión 5: anular es sólo de admin. Asesor y facturación quedan igual.
         Assert.Equal(
-            ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
+            ["quotations.order.cancel", "quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
             OrderPermissionsOf(catalog, "admin"));
         Assert.Equal(
             ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
