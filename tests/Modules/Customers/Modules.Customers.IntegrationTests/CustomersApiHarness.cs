@@ -156,8 +156,9 @@ internal static class CustomersApiHarness
 
     /// <summary>
     /// Una fila del Excel de importacion, para armar workbooks de prueba sin repetir las trece
-    /// columnas en cada test. Todos los campos son opcionales — un test que quiere una fila
-    /// invalida por una celda vacia simplemente no la pasa. <c>Cuc</c> vacio (el default) es una
+    /// columnas en cada test. Todos los parametros son opcionales — un test que quiere una fila
+    /// invalida por una celda vacia la pasa en null. Telefono y correo traen un valor por defecto
+    /// porque son obligatorios. <c>Cuc</c> vacio (el default) es una
     /// fila que crea; con un valor, una fila que actualiza el cliente con ese Cuc.
     /// </summary>
     public sealed record ExcelRowInput(
@@ -166,8 +167,8 @@ internal static class CustomersApiHarness
         string? BusinessName = null,
         string? IdentificationType = "NIT",
         string? IdentificationNumber = "900.123.456-1",
-        string? Phone = null,
-        string? Email = null,
+        string? Phone = "3001234567",
+        string? Email = "compras@verde.co",
         string? Address = "Calle 10 # 45-12",
         string? Department = null,
         string? City = null,
@@ -264,12 +265,16 @@ internal static class CustomersApiHarness
         string identificationNumber = "900.123.456-1",
         string address = "Calle 10 # 45-12",
         bool withRetention = false,
-        bool vatSurplus = false) =>
+        bool vatSurplus = false,
+        string phone = "310 935 2187",
+        string email = "compras@verde.co") =>
         new
         {
             name,
             identificationType,
             identificationNumber,
+            phone,
+            email,
             address,
             cityId,
             classificationId,

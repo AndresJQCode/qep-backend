@@ -274,6 +274,8 @@ public sealed class CustomerWriteApiTests
                 name = "Persona Natural",
                 identificationType = "CC",
                 identificationNumber = "900.123.456-1",
+                phone = "310 935 2187",
+                email = "persona@verde.co",
                 address = "Calle 10 # 45-12",
                 cityId = city.CityId,
                 classificationId = classification.Id,
@@ -316,6 +318,7 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("IdentificationType", fields);
         Assert.Contains("IdentificationNumber", fields);
         Assert.Contains("Email", fields);
+        Assert.Contains("Phone", fields);
         Assert.Contains("CityId", fields);
         Assert.Contains("ClassificationId", fields);
     }
@@ -341,6 +344,8 @@ public sealed class CustomerWriteApiTests
                 name = "Verde Esencial S.A.S.",
                 identificationType = "NIT",
                 identificationNumber = "900.123.456-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
                 address = "",
                 cityId = city.CityId,
                 classificationId = classification.Id,
@@ -352,12 +357,12 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("Address", await ValidationFieldsAsync(response));
     }
 
-    // Vacio es ausente para un campo opcional: el formulario manda "" cuando el usuario borra el
-    // input, y rechazarlo bloquearia el alta de un cliente que legitimamente no tiene correo.
-    // `address` ya no esta en esta bolsa: la libreta (028afe2) la volvio obligatoria, y su caso
-    // lo cubre CreateWithoutAnAddressMarksTheAddressField.
+    // Telefono y correo son obligatorios. El formulario manda "" cuando el usuario borra el
+    // input, y ese vacio tiene que volver como validation.failed con el mapa errors --el unico
+    // 422 que el formulario sabe leer para marcar el input--, no como el codigo pelado del
+    // dominio.
     [Fact]
-    public async Task CreateAcceptsBlankOptionalFieldsAndStoresThemAsNull()
+    public async Task CreateWithoutPhoneOrEmailMarksBothFields()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -381,13 +386,11 @@ public sealed class CustomerWriteApiTests
             },
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var customer = await response.Content.ReadFromJsonAsync<CustomerResponse>(
-            TestContext.Current.CancellationToken);
-        Assert.NotNull(customer);
-        Assert.Null(customer.Phone);
-        Assert.Null(customer.Email);
-        Assert.Equal("Calle 10 # 45-12", customer.Address);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("Phone", fields);
+        Assert.Contains("Email", fields);
+        Assert.Empty((await ListAsync(client, string.Empty)).Items);
     }
 
     [Fact]
@@ -442,10 +445,10 @@ public sealed class CustomerWriteApiTests
         Assert.DoesNotContain("errors", body, StringComparison.Ordinal);
     }
 
-    // El PUT reemplaza el recurso entero: un campo ausente se **limpia**. Una implementacion que
-    // ignore los null "para no pisar" deja campos imborrables y pasa todas las demas pruebas.
+    // El PUT reemplaza el recurso entero, pero telefono y correo son obligatorios: llegar vacios
+    // no los limpia, se rechaza con el mapa errors. Con valores, si los reemplaza.
     [Fact]
-    public async Task UpdateClearsTheOptionalFieldsThatArriveNull()
+    public async Task UpdateRejectsABlankPhoneOrEmailAndReplacesThemWhenGiven()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -472,19 +475,28 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(customer);
 
+        var rejected = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
+            NewCustomerBody(city.CityId, classification.Id, phone: "", email: ""),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        var fields = await ValidationFieldsAsync(rejected);
+        Assert.Contains("Phone", fields);
+        Assert.Contains("Email", fields);
+
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{customer.Id}",
-            NewCustomerBody(city.CityId, classification.Id),
+            NewCustomerBody(
+                city.CityId, classification.Id, phone: "604 444 5566", email: "Ventas@Verde.CO"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var updated = await response.Content.ReadFromJsonAsync<CustomerResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(updated);
-        Assert.Null(updated.Phone);
-        Assert.Null(updated.Email);
-        // `address` ya no se limpia: la libreta (028afe2) la volvio obligatoria, asi que el PUT
-        // la reemplaza por la que trae el cuerpo en vez de dejarla en null.
+        Assert.Equal("604 444 5566", updated.Phone);
+        Assert.Equal("ventas@verde.co", updated.Email);
         Assert.Equal("Calle 10 # 45-12", updated.Address);
         Assert.False(updated.WithRetention);
     }
@@ -541,6 +553,8 @@ public sealed class CustomerWriteApiTests
                 identificationType = "NIT",
                 identificationNumber = "900.123.456-1",
                 cuc = "CUC-999999",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 cityId = city.CityId,
                 classificationId = classification.Id,

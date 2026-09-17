@@ -60,7 +60,10 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         RuleFor(command => command.IdentificationNumber)
             .NotEmpty()
             .MaximumLength(CustomerIdentification.NumberMaxLength);
+        // Telefono y correo son obligatorios (CustomerContactInfo): se rechazan aca tambien para
+        // que el 422 lleve el mapa errors por campo y no solo el codigo de dominio.
         RuleFor(command => command.Phone)
+            .NotEmpty()
             .MaximumLength(CustomerContactInfo.PhoneMaxLength);
         // Obligatoria desde la libreta de direcciones (028afe2): el alta y el PUT construyen con
         // ella la direccion principal del cliente, y una direccion sin calle no es una direccion.
@@ -88,9 +91,12 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         RuleFor(command => command.CityId).NotEmpty();
         RuleFor(command => command.ClassificationId).NotEmpty();
 
-        // Vacio es ausente para un campo opcional: el formulario manda "" cuando el usuario borra
-        // el input, y sin el When() esa cadena vacia fallaria EmailAddress() y bloquearia el
-        // guardado de un cliente que legitimamente no tiene correo.
+        // Dos RuleFor y no uno encadenado: el When() gobierna toda la cadena que lo precede
+        // (ApplyConditionTo.AllValidators), asi que un NotEmpty() delante quedaria apagado
+        // justamente cuando el correo viene vacio. El When() del formato evita que un correo vacio
+        // reporte ademas "no es una direccion valida" encima de "es obligatorio".
+        RuleFor(command => command.Email)
+            .NotEmpty();
         RuleFor(command => command.Email)
             .MaximumLength(CustomerContactInfo.EmailMaxLength)
             .EmailAddress()

@@ -133,14 +133,36 @@ public sealed class ExcelCustomerRowRulesTests
             error.ErrorCode == "customers.import.row.email_invalid");
     }
 
-    // Vacio es ausente para un campo opcional: sin este caso, una fila que legitimamente no trae
-    // correo se rechazaria por EmailAddress().
-    [Fact]
-    public void AnEmptyEmailIsAccepted()
+    // El correo es obligatorio: la fila se rechaza con su codigo, no dejando que el dominio
+    // reviente a mitad del archivo. Y con el codigo de requerido, no el de formato.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AnEmptyEmailFailsWithTheRequiredCodeAndNotTheFormatCode(string? email)
     {
-        var result = validator.Validate(ValidRow(email: null));
+        var result = validator.Validate(ValidRow(email: email));
 
-        Assert.True(result.IsValid);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.email_required" &&
+            error.PropertyName == nameof(ExcelCustomerRow.Email));
+        Assert.DoesNotContain(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.email_invalid");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AnEmptyPhoneFailsWithTheRequiredCode(string? phone)
+    {
+        var result = validator.Validate(ValidRow(phone: phone));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.phone_required" &&
+            error.PropertyName == nameof(ExcelCustomerRow.Phone));
     }
 
     [Fact]

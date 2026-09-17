@@ -183,6 +183,8 @@ internal static class ReportingApiHarness
                 identificationType = "NIT",
                 identificationNumber =
                     $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
