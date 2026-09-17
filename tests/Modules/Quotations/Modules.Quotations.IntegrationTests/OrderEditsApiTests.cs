@@ -11,13 +11,18 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
 /// Spec 2026-09-17: editar un pedido como borrador. El guardado atómico
-/// (<c>PUT /quotations/{id}/order</c> con <c>If-Match</c>) y el cálculo previo
-/// (<c>POST /quotations/{id}/order/preview</c>), contra Postgres real.
+/// (<c>PUT /orders/{orderId}</c> con <c>If-Match</c>) y el cálculo previo
+/// (<c>POST /orders/{orderId}/preview</c>), contra Postgres real.
 /// </summary>
 public sealed class OrderEditsApiTests
 {
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
+
+    // La edición se direcciona por el id del pedido y no por el de su cotización: quien llega
+    // desde el listado tiene el pedido, no la cotización.
+    private static string OrderByIdUrl(Guid tenantId, Guid orderId) =>
+        $"/api/v1/tenants/{tenantId}/orders/{orderId}";
 
     // Decisión 4: el cálculo previo muta el agregado en memoria, así que la lectura no puede dejar
     // nada en el change tracker que un SaveChangesAsync del mismo scope llegue a persistir.
@@ -32,11 +37,14 @@ public sealed class OrderEditsApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
-        (await client.PostAsJsonAsync(
+        var converted = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
                 "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken);
+        converted.EnsureSuccessStatusCode();
+        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
 
         await using var scope = factory.Services.CreateAsyncScope();
         var quotations = scope.ServiceProvider.GetRequiredService<IQuotationRepository>();
@@ -44,11 +52,12 @@ public sealed class OrderEditsApiTests
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>();
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
         var quotationId = new QuotationId(quotation.Id);
+        var orderId = new OrderId(order.Id);
 
         var loadedQuotation = await quotations.FindUntrackedAsync(
             tenantId, quotationId, TestContext.Current.CancellationToken);
-        var loadedOrder = await orders.FindUntrackedAsync(
-            tenantId, quotationId, TestContext.Current.CancellationToken);
+        var loadedOrder = await orders.FindUntrackedByIdAsync(
+            tenantId, orderId, TestContext.Current.CancellationToken);
 
         Assert.NotNull(loadedQuotation);
         Assert.NotNull(loadedOrder);
@@ -62,8 +71,8 @@ public sealed class OrderEditsApiTests
         // El filtro de tenant es parte de la consulta, como en FindAsync.
         Assert.Null(await quotations.FindUntrackedAsync(
             Guid.CreateVersion7(), quotationId, TestContext.Current.CancellationToken));
-        Assert.Null(await orders.FindUntrackedAsync(
-            Guid.CreateVersion7(), quotationId, TestContext.Current.CancellationToken));
+        Assert.Null(await orders.FindUntrackedByIdAsync(
+            Guid.CreateVersion7(), orderId, TestContext.Current.CancellationToken));
     }
 
     // Decisión 6: la versión viaja al frontend para mandarla en If-Match. Aprobar sube la versión
@@ -89,7 +98,7 @@ public sealed class OrderEditsApiTests
         }
 
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
-            $"/api/v1/tenants/{tenantId}/orders/{order.Id}", TestContext.Current.CancellationToken);
+            OrderByIdUrl(tenantId, order.Id), TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         Assert.Equal(order.Version + 1, detail.Order.Version);
     }
@@ -108,7 +117,7 @@ public sealed class OrderEditsApiTests
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version,
+            client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(replacementId, 1m)],
                 new OrderEditProofsRequest([new OrderEditProofAddRequest(proofFileId, 20_000m)], null, null),
@@ -150,7 +159,7 @@ public sealed class OrderEditsApiTests
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version,
+            client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(productId, 1m)],
                 new OrderEditProofsRequest([new OrderEditProofAddRequest(proofFileId, quotation.Total)], null, null),
@@ -186,7 +195,7 @@ public sealed class OrderEditsApiTests
         var removed = Assert.Single(order.PaymentProofs, proof => proof.FileId == removedFileId);
 
         var response = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version,
+            client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(productId, 1m)],
                 new OrderEditProofsRequest(null, [new OrderPaymentProofUpdateRequest(kept.Id, 50_000m)], [removed.Id]),
@@ -213,13 +222,13 @@ public sealed class OrderEditsApiTests
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
 
         var unknownProof = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version,
+            client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(productId, 2m)],
                 new OrderEditProofsRequest(null, null, [Guid.CreateVersion7()]),
                 "No se guarda"));
         var unknownFile = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version,
+            client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(productId, 2m)],
                 new OrderEditProofsRequest([new OrderEditProofAddRequest(Guid.CreateVersion7(), 10_000m)], null, null),
@@ -247,11 +256,11 @@ public sealed class OrderEditsApiTests
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         var body = new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, "Primera");
-        (await PutEditsAsync(client, tenantId, quotation.Id, order.Version, body)).EnsureSuccessStatusCode();
+        (await PutEditsAsync(client, tenantId, order.Id, order.Version, body)).EnsureSuccessStatusCode();
 
         var stale = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version, body with { Notes = "Segunda" });
-        var missing = await PutEditsAsync(client, tenantId, quotation.Id, null, body with { Notes = "Tercera" });
+            client, tenantId, order.Id, order.Version, body with { Notes = "Segunda" });
+        var missing = await PutEditsAsync(client, tenantId, order.Id, null, body with { Notes = "Tercera" });
 
         Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
         Assert.Equal("concurrency.conflict", (await ReadProblemAsync(stale)).Code);
@@ -275,7 +284,7 @@ public sealed class OrderEditsApiTests
         Assert.NotNull(approved);
 
         var response = await PutEditsAsync(
-            client, tenantId, quotation.Id, approved.Version,
+            client, tenantId, approved.Id, approved.Version,
             new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 2m)], null, null));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -295,7 +304,7 @@ public sealed class OrderEditsApiTests
         var auditBefore = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Count;
 
         var response = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version,
+            client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, null));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -318,11 +327,34 @@ public sealed class OrderEditsApiTests
 
         // Items vacío: "At least one product is required." (OrderEditsValidator<T>).
         var response = await PutEditsAsync(
-            client, tenantId, quotation.Id, order.Version,
+            client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest([], null, null));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("validation.failed", (await ReadProblemAsync(response)).Code);
+    }
+
+    // La ruta entra por el id del pedido: uno que no existe responde igual que el GET por id, con el
+    // mismo código, tanto al guardar como al previsualizar.
+    [Fact]
+    public async Task AnUnknownOrderIdIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, _, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var unknownOrderId = Guid.CreateVersion7();
+        var body = new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, null);
+
+        var save = await PutEditsAsync(client, tenantId, unknownOrderId, 1, body);
+        var preview = await client.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, unknownOrderId)}/preview", body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, save.StatusCode);
+        Assert.Equal("order.order.not_found", (await ReadProblemAsync(save)).Code);
+        Assert.Equal(HttpStatusCode.NotFound, preview.StatusCode);
+        Assert.Equal("order.order.not_found", (await ReadProblemAsync(preview)).Code);
     }
 
     // Spec 2026-09-17, pruebas: el preview devuelve totales recalculados y un GET posterior muestra el
@@ -338,7 +370,7 @@ public sealed class OrderEditsApiTests
         var auditBefore = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Count;
 
         var response = await client.PostAsJsonAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/preview",
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(productId, 3m)],
                 new OrderEditProofsRequest([new OrderEditProofAddRequest(null, 300_000m)], null, null),
@@ -367,7 +399,7 @@ public sealed class OrderEditsApiTests
     // Final review del slice: el preview no tenía cobertura HTTP de proofs.update y
     // proofs.removeIds juntos. Mismo escenario que
     // SaveRemovesAndCorrectsProofsAndRecalculatesThePaymentStatus, pero por
-    // POST /order/preview — la proyección refleja el cambio y el GET posterior no ve nada
+    // POST /orders/{orderId}/preview — la proyección refleja el cambio y el GET posterior no ve nada
     // persistido (ni el comprobante quitado vuelve, ni el corregido queda con el monto nuevo).
     [Fact]
     public async Task PreviewAppliesProofUpdatesAndRemovalsWithoutPersistingThem()
@@ -394,7 +426,7 @@ public sealed class OrderEditsApiTests
         var removed = Assert.Single(order.PaymentProofs, proof => proof.FileId == removedFileId);
 
         var preview = await client.PostAsJsonAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/preview",
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(productId, 1m)],
                 new OrderEditProofsRequest(null, [new OrderPaymentProofUpdateRequest(kept.Id, 50_000m)], [removed.Id]),
@@ -432,8 +464,8 @@ public sealed class OrderEditsApiTests
             null);
 
         var preview = await client.PostAsJsonAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/preview", body, TestContext.Current.CancellationToken);
-        var save = await PutEditsAsync(client, tenantId, quotation.Id, order.Version, body);
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview", body, TestContext.Current.CancellationToken);
+        var save = await PutEditsAsync(client, tenantId, order.Id, order.Version, body);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, preview.StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, save.StatusCode);
@@ -448,13 +480,13 @@ public sealed class OrderEditsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        var (quotation, _, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         (await client.PostAsync(
             $"{OrderUrl(tenantId, quotation.Id)}/approve", null, TestContext.Current.CancellationToken))
             .EnsureSuccessStatusCode();
 
         var response = await client.PostAsJsonAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/preview",
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
             new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 2m)], null, null),
             TestContext.Current.CancellationToken);
 
@@ -482,9 +514,9 @@ public sealed class OrderEditsApiTests
     }
 
     private static async Task<HttpResponseMessage> PutEditsAsync(
-        HttpClient client, Guid tenantId, Guid quotationId, long? version, SaveOrderEditsRequest body)
+        HttpClient client, Guid tenantId, Guid orderId, long? version, SaveOrderEditsRequest body)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Put, OrderUrl(tenantId, quotationId))
+        using var request = new HttpRequestMessage(HttpMethod.Put, OrderByIdUrl(tenantId, orderId))
         {
             Content = JsonContent.Create(body),
         };
@@ -507,7 +539,7 @@ public sealed class OrderEditsApiTests
     private static async Task<OrderDetailResponse> GetDetailAsync(HttpClient client, Guid tenantId, Guid orderId)
     {
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
-            $"/api/v1/tenants/{tenantId}/orders/{orderId}", TestContext.Current.CancellationToken);
+            OrderByIdUrl(tenantId, orderId), TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         return detail;
     }

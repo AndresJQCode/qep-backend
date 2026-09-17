@@ -560,9 +560,9 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Order);
 
-    public Task<Order?> FindUntrackedAsync(
-        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Order);
+    public Task<Order?> FindUntrackedByIdAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Order.Id == orderId)?.Order);
 
     public Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>

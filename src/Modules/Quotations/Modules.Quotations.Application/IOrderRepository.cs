@@ -29,10 +29,10 @@ public interface IOrderRepository
     Task<Order?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 
-    /// <summary>Igual que <see cref="FindByQuotationIdAsync"/> —con comprobantes— pero sin rastreo:
-    /// lo usa el cálculo previo de «Editar pedido» (spec 2026-09-17, decisión 4).</summary>
-    Task<Order?> FindUntrackedAsync(
-        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
+    /// <summary>Igual que <see cref="FindByIdAsync"/> —con comprobantes— pero sin rastreo: lo usa el
+    /// cálculo previo de «Editar pedido» (spec 2026-09-17, decisión 4).</summary>
+    Task<Order?> FindUntrackedByIdAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Los pedidos de varias cotizaciones de una sola vez, indexados por id de cotizacion. Para el

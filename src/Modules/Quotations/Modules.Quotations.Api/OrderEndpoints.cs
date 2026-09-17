@@ -43,6 +43,32 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Guardar «Editar pedido» de una vez (spec 2026-09-17): el estado deseado completo, con
+        // If-Match de Order.Version. Mismo contrato de precondición que PATCH /roles: sin If-Match
+        // 428, versión vieja 412. Responde el detalle compuesto, igual que GetOrderByIdAsync.
+        //
+        // Por el id del pedido y no colgado de su cotización: lo que se edita es el pedido, y quien
+        // llega desde el listado tiene su id, no el de la cotización.
+        collection.MapPut("/{orderId:guid}", SaveOrderEditsAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<SaveOrderEditsRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Cálculo previo (spec 2026-09-17, decisión 3): mismo cuerpo que el PUT, sin archivos y sin
+        // persistir. POST y no GET porque lleva el borrador entero en el cuerpo.
+        collection.MapPost("/{orderId:guid}/preview", PreviewOrderEditsAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<SaveOrderEditsRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/order")
             .WithTags("Orders");
@@ -111,29 +137,6 @@ public static class OrderEndpoints
         group.MapPost("/items", AddOrderItemsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<AddOrderItemsRequest>("application/json")
-            .Produces<OrderDetailResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        // Guardar «Editar pedido» de una vez (spec 2026-09-17): el estado deseado completo, con
-        // If-Match de Order.Version. Mismo contrato de precondición que PATCH /roles: sin If-Match
-        // 428, versión vieja 412. Responde el detalle compuesto, igual que GetOrderByIdAsync.
-        group.MapPut("/", SaveOrderEditsAsync)
-            .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<SaveOrderEditsRequest>("application/json")
-            .Produces<OrderDetailResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
-            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        // Cálculo previo (spec 2026-09-17, decisión 3): mismo cuerpo que el PUT, sin archivos y sin
-        // persistir. POST y no GET porque lleva el borrador entero en el cuerpo.
-        group.MapPost("/preview", PreviewOrderEditsAsync)
-            .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<SaveOrderEditsRequest>("application/json")
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -313,7 +316,7 @@ public static class OrderEndpoints
 
     private static async Task<IResult> SaveOrderEditsAsync(
         Guid tenantId,
-        Guid quotationId,
+        Guid orderId,
         SaveOrderEditsRequest request,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
@@ -329,7 +332,7 @@ public static class OrderEndpoints
 
         var (items, proofs) = ToEdits(request);
         var detail = await dispatcher.SendAsync(
-            new SaveOrderEditsCommand(tenantId, quotationId, expectedVersion, items, proofs, request.Notes),
+            new SaveOrderEditsCommand(tenantId, orderId, expectedVersion, items, proofs, request.Notes),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
@@ -340,7 +343,7 @@ public static class OrderEndpoints
 
     private static async Task<IResult> PreviewOrderEditsAsync(
         Guid tenantId,
-        Guid quotationId,
+        Guid orderId,
         SaveOrderEditsRequest request,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
@@ -348,7 +351,7 @@ public static class OrderEndpoints
     {
         var (items, proofs) = ToEdits(request);
         var detail = await dispatcher.QueryAsync(
-            new PreviewOrderEditsQuery(tenantId, quotationId, items, proofs, request.Notes),
+            new PreviewOrderEditsQuery(tenantId, orderId, items, proofs, request.Notes),
             cancellationToken);
 
         return Results.Ok(new OrderDetailResponse(
