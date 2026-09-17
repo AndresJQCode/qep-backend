@@ -1,7 +1,24 @@
 using FluentValidation;
 using Modules.Reporting.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Reporting.Application;
+
+/// <summary>
+/// El rango de un reporte ya cortado en el día del tenant (spec 2026-09-17, decisión 1 y punto 4):
+/// <see cref="Start"/> es el 00:00 local del "desde" y <see cref="EndExclusive"/> el 00:00 local del
+/// día siguiente al "hasta", los dos como instantes. <see cref="TimeZone"/> viaja para la serie
+/// mensual (punto 5). Cierra la decisión de producto que el antiguo corte de días en UTC dejaba
+/// abierta: los orígenes comparan instantes y no deciden husos.
+/// </summary>
+public sealed record ReportPeriod(DateTimeOffset? Start, DateTimeOffset? EndExclusive, TimeZoneInfo TimeZone)
+{
+    public static ReportPeriod Of(TenantCalendar calendar, DateOnly? from, DateOnly? to) =>
+        new(
+            from is { } start ? calendar.StartOfDayUtc(start) : (DateTimeOffset?)null,
+            to is { } end ? calendar.EndOfDayExclusiveUtc(end) : (DateTimeOffset?)null,
+            calendar.TimeZone);
+}
 
 /// <summary>
 /// Los filtros del reporte de pedidos tal como llegan por query string. <c>PaymentStatus</c> es
@@ -25,8 +42,7 @@ public sealed record OrdersReportFilter(
 /// texto.</summary>
 public sealed record OrdersReportCriteria(
     Guid TenantId,
-    DateOnly? From,
-    DateOnly? To,
+    ReportPeriod Period,
     Guid? AdvisorId,
     Guid? ClientId,
     OrderPaymentStatusFilter? PaymentStatus);
@@ -43,8 +59,7 @@ public sealed record QuotationsReportFilter(
 /// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
 public sealed record QuotationsReportCriteria(
     Guid TenantId,
-    DateOnly? From,
-    DateOnly? To,
+    ReportPeriod Period,
     Guid? AdvisorId,
     Guid? ClientId,
     QuotationStatusFilter? Status);
@@ -61,8 +76,7 @@ public sealed record PriceChangeReportFilter(
 /// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
 public sealed record PriceChangeReportCriteria(
     Guid TenantId,
-    DateOnly? From,
-    DateOnly? To,
+    ReportPeriod Period,
     Guid? ProductId,
     Guid? ChangedBy,
     PriceChangeField? Field);
@@ -90,8 +104,7 @@ public sealed record CustomerReportFilter(
 /// para que los cuatro puertos reciban el mismo tipo de objeto.</summary>
 public sealed record CustomerReportCriteria(
     Guid TenantId,
-    DateOnly? From,
-    DateOnly? To,
+    ReportPeriod Period,
     bool? IsActive,
     Guid? ClassificationId,
     Guid? DepartmentId);
@@ -106,38 +119,34 @@ public sealed record CustomerReportCriteria(
 /// </summary>
 public static class ReportFilterMapping
 {
-    public static OrdersReportCriteria ToCriteria(this OrdersReportFilter filter) =>
+    public static OrdersReportCriteria ToCriteria(this OrdersReportFilter filter, TenantCalendar calendar) =>
         new(
             filter.TenantId,
-            filter.From,
-            filter.To,
+            ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.AdvisorId,
             filter.ClientId,
             ReportFilterParser.ParsePaymentStatus(filter.PaymentStatus));
 
-    public static QuotationsReportCriteria ToCriteria(this QuotationsReportFilter filter) =>
+    public static QuotationsReportCriteria ToCriteria(this QuotationsReportFilter filter, TenantCalendar calendar) =>
         new(
             filter.TenantId,
-            filter.From,
-            filter.To,
+            ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.AdvisorId,
             filter.ClientId,
             ReportFilterParser.ParseQuotationStatus(filter.Status));
 
-    public static PriceChangeReportCriteria ToCriteria(this PriceChangeReportFilter filter) =>
+    public static PriceChangeReportCriteria ToCriteria(this PriceChangeReportFilter filter, TenantCalendar calendar) =>
         new(
             filter.TenantId,
-            filter.From,
-            filter.To,
+            ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.ProductId,
             filter.ChangedBy,
             ReportFilterParser.ParsePriceChangeField(filter.Field));
 
-    public static CustomerReportCriteria ToCriteria(this CustomerReportFilter filter) =>
+    public static CustomerReportCriteria ToCriteria(this CustomerReportFilter filter, TenantCalendar calendar) =>
         new(
             filter.TenantId,
-            filter.From,
-            filter.To,
+            ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.IsActive,
             filter.ClassificationId,
             filter.DepartmentId);

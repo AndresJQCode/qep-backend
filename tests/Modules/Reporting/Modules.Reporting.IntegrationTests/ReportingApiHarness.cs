@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,11 @@ namespace Modules.Reporting.IntegrationTests;
 /// </summary>
 internal static class ReportingApiHarness
 {
+    /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
+    /// de la spec 2026-09-17. Todo lo que se siembra con este reloj cae en diciembre para el tenant y
+    /// en enero para UTC.</summary>
+    public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
+
     public static string ReportsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/reports";
 
     /// <summary>
@@ -434,7 +440,7 @@ internal static class ReportingApiHarness
     private sealed record UploadSessionResponseDto(
         Guid FileResourceId, string UploadUrl, string StorageKey);
 
-    public sealed class QepApiFactory(string connectionString)
+    public sealed class QepApiFactory(string connectionString, DateTimeOffset? utcNow = null)
         : WebApplicationFactory<Program>
     {
         public InMemoryObjectStorage ObjectStorage { get; } = new();
@@ -470,6 +476,14 @@ internal static class ReportingApiHarness
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
 
+                // Reloj fijo sólo para las pruebas que lo piden (spec 2026-09-17): el día y el mes del
+                // tenant se prueban en la frontera. Scoped, igual que SystemClock.
+                if (utcNow is { } fixedNow)
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddScoped<IClock>(_ => new FixedClock(fixedNow));
+                }
+
                 // Enviar genera el PDF y lo publica en el bucket público (desde edf3796). Sin
                 // estos dos dobles, el renderer real le hace POST a `qcode-pdf` con la API key de
                 // los user-secrets, y el storage real falla porque el bucket público no está
@@ -481,6 +495,12 @@ internal static class ReportingApiHarness
                 services.AddSingleton<IQuotationPdfStorage, StubPdfStorage>();
             });
         }
+    }
+
+    /// <summary>El reloj de <see cref="QepApiFactory"/> cuando la prueba pide <c>utcNow</c>.</summary>
+    public sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
     }
 
     /// <summary>Una cabecera de PDF y nada más: estas pruebas miden reportes, no el documento.

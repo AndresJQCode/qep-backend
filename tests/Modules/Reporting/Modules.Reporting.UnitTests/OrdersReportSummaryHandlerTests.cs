@@ -126,8 +126,10 @@ public sealed class OrdersReportSummaryHandlerTests
 
         Assert.Equal(2, source.SummarizedCriteria.Count);
         var preceding = source.SummarizedCriteria[1];
-        Assert.Equal(new DateOnly(2025, 12, 1), preceding.From);
-        Assert.Equal(new DateOnly(2025, 12, 31), preceding.To);
+        // La ventana anterior se corta en el día del tenant igual que la pedida (spec 2026-09-17,
+        // punto 4): 00:00 del 1 de diciembre y 00:00 del 1 de enero, en Bogotá.
+        Assert.Equal(new DateTimeOffset(2025, 12, 1, 5, 0, 0, TimeSpan.Zero), preceding.Period.Start);
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 5, 0, 0, TimeSpan.Zero), preceding.Period.EndExclusive);
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(20, summary.Previous.Count);
@@ -184,7 +186,8 @@ public sealed class OrdersReportSummaryHandlerTests
         new(
             source,
             new OrdersReportFilterValidator(),
-            new FakeExecutionContext(callerTenant, permissions));
+            new FakeExecutionContext(callerTenant, permissions),
+            new FixedTenantClock());
 
     private static OrdersReportFilter Filter(
         DateOnly? from = null,

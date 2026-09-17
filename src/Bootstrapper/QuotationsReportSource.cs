@@ -81,8 +81,8 @@ internal sealed class QuotationsReportSource(
             monthly, byStatus, byAdvisor, validity, expiring);
     }
 
-    /// <summary>La serie mensual por fecha de creacion, en UTC — mismo huso en el que
-    /// <see cref="ReportDateRange"/> corta el rango. Solo vuelven los meses con cotizaciones.</summary>
+    /// <summary>La serie mensual por fecha de creación, todavía en UTC: el punto 5 de la spec
+    /// 2026-09-17 la pasa al huso del tenant. Sólo vuelven los meses con cotizaciones.</summary>
     private static async Task<IReadOnlyList<ReportMonthlyPointDto>> SummarizeByMonthAsync(
         IQueryable<Quotation> rows,
         CancellationToken cancellationToken)
@@ -356,15 +356,14 @@ internal sealed class QuotationsReportSource(
             .AsNoTracking()
             .Where(quotation => quotation.TenantId == criteria.TenantId);
 
-        if (criteria.From is { } from)
+        // Instantes ya cortados en el día del tenant (spec 2026-09-17, punto 4): acá no se decide huso.
+        if (criteria.Period.Start is { } start)
         {
-            var start = ReportDateRange.InclusiveStart(from);
             query = query.Where(quotation => quotation.CreatedAt >= start);
         }
 
-        if (criteria.To is { } to)
+        if (criteria.Period.EndExclusive is { } end)
         {
-            var end = ReportDateRange.ExclusiveEnd(to);
             query = query.Where(quotation => quotation.CreatedAt < end);
         }
 

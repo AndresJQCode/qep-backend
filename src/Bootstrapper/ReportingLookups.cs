@@ -131,23 +131,3 @@ internal sealed class ReportingClientLookup(CustomersDbContext customers)
 
 /// <summary>Lo unico que los reportes de pedidos y cotizaciones necesitan de un cliente.</summary>
 internal sealed record ReportingClientRef(string Name, string Cuc);
-
-/// <summary>
-/// Traduce un rango de fechas calendarias al rango de instantes con el que se consulta.
-///
-/// El limite superior es **exclusivo al dia siguiente** y no <c>&lt;=</c> sobre el mismo dia: el
-/// contrato dice "inclusive (whole day)", y un <c>&lt;= to</c> contra una columna
-/// <c>timestamptz</c> deja afuera todo lo que paso despues de la medianoche del ultimo dia.
-///
-/// En UTC, que es como estan guardadas las columnas. Un tenant en America/Bogota vera el corte
-/// del dia en UTC y no en su huso; alinearlo al huso del tenant es una decision de producto que
-/// el contrato no toma, asi que no se inventa aca.
-/// </summary>
-internal static class ReportDateRange
-{
-    public static DateTimeOffset InclusiveStart(DateOnly date) =>
-        new(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-
-    public static DateTimeOffset ExclusiveEnd(DateOnly date) =>
-        new(date.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-}

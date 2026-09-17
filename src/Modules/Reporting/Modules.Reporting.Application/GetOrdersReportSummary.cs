@@ -17,7 +17,8 @@ public sealed record GetOrdersReportSummaryQuery(OrdersReportFilter Filter)
 public sealed class GetOrdersReportSummaryHandler(
     IOrdersReportSource source,
     IValidator<OrdersReportFilter> validator,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantClock tenantClock)
     : IQueryHandler<GetOrdersReportSummaryQuery, OrdersReportSummaryDto>
 {
     public async Task<OrdersReportSummaryDto> HandleAsync(
@@ -29,7 +30,9 @@ public sealed class GetOrdersReportSummaryHandler(
             executionContext, query.Filter.TenantId, ReportingPermissions.OrdersRead);
         await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
 
-        var criteria = query.Filter.ToCriteria();
+        // El rango y la ventana anterior se cortan con el mismo calendario (spec 2026-09-17, punto 4).
+        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
+        var criteria = query.Filter.ToCriteria(calendar);
         var current = await source.SummarizeAsync(
             criteria, ReportSummaryRules.RankSize, cancellationToken);
 
@@ -41,7 +44,7 @@ public sealed class GetOrdersReportSummaryHandler(
             current.Monthly,
             current.ByAdvisor,
             current.ByClient,
-            await SummarizePrecedingAsync(criteria, cancellationToken));
+            await SummarizePrecedingAsync(query.Filter, criteria, calendar, cancellationToken));
     }
 
     /// <summary>
@@ -54,16 +57,20 @@ public sealed class GetOrdersReportSummaryHandler(
     /// mano campo por campo.
     /// </summary>
     private async Task<ReportComparisonDto?> SummarizePrecedingAsync(
+        OrdersReportFilter filter,
         OrdersReportCriteria criteria,
+        TenantCalendar calendar,
         CancellationToken cancellationToken)
     {
-        if (ReportComparisonWindow.Preceding(criteria.From, criteria.To) is not { } window)
+        // La ventana se calcula sobre las fechas del filtro y se corta en el día del tenant, igual
+        // que la pedida.
+        if (ReportComparisonWindow.Preceding(filter.From, filter.To) is not { } window)
         {
             return null;
         }
 
         var preceding = await source.SummarizeAsync(
-            criteria with { From = window.From, To = window.To },
+            criteria with { Period = ReportPeriod.Of(calendar, window.From, window.To) },
             ReportSummaryRules.RankSize,
             cancellationToken);
 

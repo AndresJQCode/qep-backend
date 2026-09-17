@@ -89,9 +89,8 @@ internal sealed class PriceChangeReportSource(
     }
 
     /// <summary>
-    /// La serie mensual por fecha del cambio, en **UTC** — el mismo huso en el que
-    /// <c>ReportDateRange</c> corta el rango. Agrupar en el huso de la sesion de PostgreSQL
-    /// pondria un cambio del 1 de enero en diciembre para un tenant en America/Bogota.
+    /// La serie mensual por fecha del cambio, todavía en UTC: el punto 5 de la spec 2026-09-17 la
+    /// pasa al huso del tenant.
     ///
     /// Es un conteo y no un monto: ver <c>PriceChangeReportSummaryDto</c>.
     /// </summary>
@@ -245,15 +244,13 @@ internal sealed class PriceChangeReportSource(
             .AsNoTracking()
             .Where(change => change.TenantId == criteria.TenantId);
 
-        if (criteria.From is { } from)
+        if (criteria.Period.Start is { } start)
         {
-            var start = ReportDateRange.InclusiveStart(from);
             changes = changes.Where(change => change.ChangedAt >= start);
         }
 
-        if (criteria.To is { } to)
+        if (criteria.Period.EndExclusive is { } end)
         {
-            var end = ReportDateRange.ExclusiveEnd(to);
             changes = changes.Where(change => change.ChangedAt < end);
         }
 

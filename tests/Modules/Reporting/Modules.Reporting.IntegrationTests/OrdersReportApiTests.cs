@@ -194,6 +194,34 @@ public sealed class OrdersReportApiTests
     /// petición. El llamador tiene los cuatro permisos de Reporting y un rango válido de un año,
     /// así que un 404 sólo puede venir de que la ruta ya no existe.
     /// </summary>
+    // Spec 2026-09-17, punto 4: "hasta el 31" es el 31 del tenant. El pedido convertido el 31 a las
+    // 23:00 de Bogotá —ya 2027 en UTC— está en el reporte de diciembre y no en el de enero.
+    [Fact]
+    public async Task TheDateRangeIsCutAtTheTenantsLocalMidnight()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+
+        var december = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders?from=2026-12-01&to=2026-12-31",
+            TestContext.Current.CancellationToken);
+        var january = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders?from=2027-01-01&to=2027-01-31",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(december);
+        Assert.Equal(order.Id, Assert.Single(december.Items).OrderId);
+        Assert.NotNull(january);
+        Assert.Empty(january.Items);
+    }
+
     [Fact]
     public async Task ExportRoutesNoLongerExist()
     {

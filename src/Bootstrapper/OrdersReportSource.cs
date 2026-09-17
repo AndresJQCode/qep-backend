@@ -94,10 +94,9 @@ internal sealed class OrdersReportSource(
             return new OrdersReportAggregate(0, 0m, 0m, 0m, [], [], []);
         }
 
-        // La serie mensual va en **UTC**, el mismo huso en el que ReportDateRange corta el rango.
-        // Agrupar en el huso de la sesion de PostgreSQL pondria un pedido del 1 de enero en
-        // diciembre para un tenant en America/Bogota, y ademas haria que el resultado dependiera
-        // de una configuracion de conexion en vez del dato.
+        // La serie mensual todavía va en UTC: el punto 5 de la spec 2026-09-17 la pasa al huso del
+        // tenant. Agrupar en el huso de la sesión de PostgreSQL haría que el resultado dependiera
+        // de una configuración de conexión en vez del dato.
         //
         // Solo vuelven los meses con pedidos: rellenar los huecos con cero depende del rango que
         // el eje dibuje, asi que es del frontend.
@@ -225,15 +224,14 @@ internal sealed class OrdersReportSource(
             .AsNoTracking()
             .Where(order => order.TenantId == criteria.TenantId);
 
-        if (criteria.From is { } from)
+        // Instantes ya cortados en el día del tenant (spec 2026-09-17, punto 4): acá no se decide huso.
+        if (criteria.Period.Start is { } start)
         {
-            var start = ReportDateRange.InclusiveStart(from);
             orders = orders.Where(order => order.ConvertedAt >= start);
         }
 
-        if (criteria.To is { } to)
+        if (criteria.Period.EndExclusive is { } end)
         {
-            var end = ReportDateRange.ExclusiveEnd(to);
             orders = orders.Where(order => order.ConvertedAt < end);
         }
 

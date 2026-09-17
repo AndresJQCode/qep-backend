@@ -16,7 +16,8 @@ public sealed record ListPriceChangeReportQuery(
 public sealed class ListPriceChangeReportHandler(
     IPriceChangeReportSource source,
     IValidator<PriceChangeReportFilter> validator,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantClock tenantClock)
     : IQueryHandler<ListPriceChangeReportQuery, ReportPage<PriceChangeReportItemDto>>
 {
     public async Task<ReportPage<PriceChangeReportItemDto>> HandleAsync(
@@ -30,8 +31,10 @@ public sealed class ListPriceChangeReportHandler(
         var page = ReportPaging.NormalizePage(query.Page);
         var pageSize = ReportPaging.NormalizePageSize(query.PageSize);
 
+        // El rango se corta en el día del tenant (spec 2026-09-17, punto 4).
+        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
         var (rows, total) = await source.ListAsync(
-            query.Filter.ToCriteria(), page, pageSize, cancellationToken);
+            query.Filter.ToCriteria(calendar), page, pageSize, cancellationToken);
 
         return new ReportPage<PriceChangeReportItemDto>(rows.ToDtos(), total, page, pageSize);
     }

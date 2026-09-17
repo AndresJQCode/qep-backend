@@ -72,9 +72,8 @@ internal sealed class CustomerReportSource(
     }
 
     /// <summary>
-    /// Las altas por mes, en **UTC** — el mismo huso en el que <c>ReportDateRange</c> corta el
-    /// rango. Agrupar en el huso de la sesion de PostgreSQL pondria un alta del 1 de enero en
-    /// diciembre para un tenant en America/Bogota.
+    /// Las altas por mes, todavía en UTC: el punto 5 de la spec 2026-09-17 las pasa al huso del
+    /// tenant.
     ///
     /// Solo vienen los meses con altas: rellenar los huecos con cero depende del rango que el eje
     /// dibuje, asi que es del frontend.
@@ -267,15 +266,13 @@ internal sealed class CustomerReportSource(
             .Where(customer => customer.TenantId == criteria.TenantId);
 
         // El rango corta por fecha de alta, la unica fecha que tiene un cliente.
-        if (criteria.From is { } from)
+        if (criteria.Period.Start is { } start)
         {
-            var start = ReportDateRange.InclusiveStart(from);
             query = query.Where(customer => customer.CreatedAt >= start);
         }
 
-        if (criteria.To is { } to)
+        if (criteria.Period.EndExclusive is { } end)
         {
-            var end = ReportDateRange.ExclusiveEnd(to);
             query = query.Where(customer => customer.CreatedAt < end);
         }
 
