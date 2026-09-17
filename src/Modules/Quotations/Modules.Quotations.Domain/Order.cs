@@ -18,6 +18,9 @@ public sealed class Order
     public const int OrderNumberMaxLength = 20;
     public const int NotesMaxLength = 500;
 
+    /// <summary>Mismo límite que <see cref="NotesMaxLength"/> (spec 2026-09-16, decisión 4).</summary>
+    public const int CancellationReasonMaxLength = 500;
+
     private readonly List<OrderPaymentProof> _paymentProofs = [];
 
     private Order()
@@ -82,6 +85,16 @@ public sealed class Order
 
     public MemberId? ApprovedBy { get; private set; }
 
+    /// <summary>Cuándo se anuló, quién y por qué (spec 2026-09-16). Null mientras el pedido no se
+    /// anula. Van aparte de <see cref="ApprovedAt"/>/<see cref="ApprovedBy"/>, que se conservan:
+    /// un pedido aprobado por error y después anulado tiene que seguir diciendo quién lo
+    /// aprobó.</summary>
+    public DateTimeOffset? CancelledAt { get; private set; }
+
+    public MemberId? CancelledBy { get; private set; }
+
+    public string? CancellationReason { get; private set; }
+
     /// <summary>Vacío hasta que se sincronice — placeholder para la integración futura con
     /// Ritual Collection (modelo-datos-cotizaciones.md §2.4). Esta fase no la implementa.</summary>
     public string? RitualCollectionSyncId { get; private set; }
@@ -122,6 +135,34 @@ public sealed class Order
         Status = OrderStatus.Approved;
         ApprovedBy = approvedBy;
         ApprovedAt = occurredAt;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>
+    /// Anula el pedido (spec 2026-09-16). Desde <see cref="OrderStatus.Pending"/> y también desde
+    /// <see cref="OrderStatus.Approved"/> (decisión 1): sólo desde Pending dejaría sin salida un
+    /// pedido aprobado por error. No borra nada (decisión 2) y no toca la cotización, que sigue
+    /// <c>Converted</c> (decisión 3).
+    ///
+    /// Anular dos veces se rechaza antes de mirar el motivo: reescribiría quién, cuándo y por qué
+    /// se anuló. Todo se valida antes de cambiar un solo campo.
+    /// </summary>
+    public void Cancel(MemberId cancelledBy, string? reason, DateTimeOffset occurredAt)
+    {
+        if (Status == OrderStatus.Cancelled)
+        {
+            throw new QuotationsDomainException(
+                "order.order.already_cancelled",
+                "The order is already cancelled.");
+        }
+
+        var normalizedReason = NormalizeCancellationReason(reason);
+
+        Status = OrderStatus.Cancelled;
+        CancelledBy = cancelledBy;
+        CancelledAt = occurredAt;
+        CancellationReason = normalizedReason;
         UpdatedAt = occurredAt;
         Version++;
     }
@@ -312,6 +353,24 @@ public sealed class Order
             ? throw new QuotationsDomainException(
                 "order.order.notes_too_long",
                 $"The order notes cannot exceed {NotesMaxLength} characters.")
+            : trimmed;
+    }
+
+    // Decisión 4: obligatorio, a diferencia de las notas. El límite se mide recortado.
+    private static string NormalizeCancellationReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new QuotationsDomainException(
+                "order.order.cancellation_reason_required",
+                "A reason is required to cancel an order.");
+        }
+
+        var trimmed = reason.Trim();
+        return trimmed.Length > CancellationReasonMaxLength
+            ? throw new QuotationsDomainException(
+                "order.order.cancellation_reason_too_long",
+                $"The cancellation reason cannot exceed {CancellationReasonMaxLength} characters.")
             : trimmed;
     }
 }

@@ -367,6 +367,17 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new MemberId(value.Value) : null);
+        // Spec 2026-09-16: quién, cuándo y por qué se anuló. Nullables, porque un pedido vivo no
+        // tiene nada que guardar acá; misma conversión nullable que approved_by.
+        order.Property(value => value.CancelledAt).HasColumnName("cancelled_at");
+        order.Property(value => value.CancelledBy)
+            .HasColumnName("cancelled_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        order.Property(value => value.CancellationReason)
+            .HasColumnName("cancellation_reason")
+            .HasMaxLength(Order.CancellationReasonMaxLength);
         order.Property(value => value.RitualCollectionSyncId)
             .HasColumnName("ritual_collection_sync_id")
             .HasMaxLength(100);

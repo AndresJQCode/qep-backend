@@ -524,4 +524,131 @@ public sealed class OrderTests
 
         Assert.Equal("payment-proofs/d.pdf", Assert.Single(order.PaymentProofs).PublicStorageKey);
     }
+
+    // Spec 2026-09-16 (anular un pedido), decisiones 1 y 2: se anula desde Pending, y queda
+    // quién, cuándo y por qué.
+    [Fact]
+    public void CancelFromPendingRecordsWhoWhenAndWhy()
+    {
+        var order = NewOrder();
+        Assert.Null(order.CancelledAt);
+        Assert.Null(order.CancelledBy);
+        Assert.Null(order.CancellationReason);
+        var cancelledBy = new MemberId(Guid.CreateVersion7());
+        var later = Now.AddDays(1);
+
+        order.Cancel(cancelledBy, "El cliente desistió", later);
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+        Assert.Equal(later, order.CancelledAt);
+        Assert.Equal(cancelledBy, order.CancelledBy);
+        Assert.Equal("El cliente desistió", order.CancellationReason);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    // Decisiones 1 y 2: un pedido aprobado por error también se anula, y anularlo no reescribe
+    // quién lo revisó ni cuándo.
+    [Fact]
+    public void CancelFromApprovedKeepsTheApproval()
+    {
+        var order = NewOrder();
+        var approvedBy = new MemberId(Guid.CreateVersion7());
+        order.Approve(approvedBy, Now);
+
+        order.Cancel(ConvertedBy, "Aprobado por error", Now.AddDays(1));
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+        Assert.Equal(approvedBy, order.ApprovedBy);
+        Assert.Equal(Now, order.ApprovedAt);
+        Assert.Equal(3, order.Version);
+    }
+
+    // Anular dos veces reescribiría quién, cuándo y por qué se anuló.
+    [Fact]
+    public void CancelTwiceIsRejectedAndKeepsTheFirstCancellation()
+    {
+        var order = NewOrder();
+        order.Cancel(ConvertedBy, "Primera vez", Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Cancel(new MemberId(Guid.CreateVersion7()), "Segunda vez", Now.AddDays(1)));
+
+        Assert.Equal("order.order.already_cancelled", error.Code);
+        Assert.Equal("Primera vez", order.CancellationReason);
+        Assert.Equal(Now, order.CancelledAt);
+        Assert.Equal(ConvertedBy, order.CancelledBy);
+    }
+
+    // Decisión 4: el motivo es obligatorio. Ya anulado gana already_cancelled (hallazgo 6).
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CancelRequiresAReason(string? reason)
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Cancel(ConvertedBy, reason, Now));
+
+        Assert.Equal("order.order.cancellation_reason_required", error.Code);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Null(order.CancelledAt);
+    }
+
+    [Fact]
+    public void CancelRejectsAReasonLongerThanTheLimit()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Cancel(ConvertedBy, new string('a', Order.CancellationReasonMaxLength + 1), Now));
+
+        Assert.Equal("order.order.cancellation_reason_too_long", error.Code);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+    }
+
+    // El límite se mide sobre el motivo recortado, mismo criterio que las notas.
+    [Fact]
+    public void CancelTrimsTheReasonBeforeMeasuringIt()
+    {
+        var order = NewOrder();
+        var reason = new string('a', Order.CancellationReasonMaxLength);
+
+        order.Cancel(ConvertedBy, $"  {reason}  ", Now);
+
+        Assert.Equal(reason, order.CancellationReason);
+    }
+
+    // Los guards existentes ya cubren un anulado: no es Pending, así que nada de lo que sólo se
+    // permite en Pending pasa (spec, «Dominio»).
+    [Fact]
+    public void ACancelledOrderRejectsEveryPendingOnlyChange()
+    {
+        var order = NewOrder();
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        order.Cancel(ConvertedBy, "El cliente desistió", Now);
+        var later = Now.AddDays(1);
+
+        var addProofs = Assert.Throws<QuotationsDomainException>(() =>
+            order.AddPaymentProofs(
+                [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)],
+                OrderPaymentStatus.FullPaymentReceived,
+                null,
+                ConvertedBy,
+                later));
+        var recalculate = Assert.Throws<QuotationsDomainException>(() =>
+            order.RecalculatePaymentStatus(200_000m, later));
+        var removeProof = Assert.Throws<QuotationsDomainException>(() =>
+            order.RemovePaymentProof(proofId, later));
+        var approve = Assert.Throws<QuotationsDomainException>(() =>
+            order.Approve(ConvertedBy, later));
+
+        Assert.Equal("order.order.not_pending", addProofs.Code);
+        Assert.Equal("order.order.not_pending", recalculate.Code);
+        Assert.Equal("order.order.not_pending", removeProof.Code);
+        Assert.Equal("order.order.not_pending", approve.Code);
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+    }
 }
