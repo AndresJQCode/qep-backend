@@ -4,12 +4,11 @@ namespace BuildingBlocks.Infrastructure;
 
 public sealed class SystemClock : IClock
 {
-    // Truncado a microsegundos (hallazgo 2026-09-16, slice CANCEL-01 backend): .NET mide en
-    // ticks de 100ns, pero `timestamptz` de Postgres sólo guarda microsegundos -- Npgsql trunca
-    // ese último dígito al persistir. Sin este truncado, un valor devuelto en memoria (por
-    // ejemplo, la respuesta de un POST) nunca es exactamente igual al mismo valor releído de la
-    // base (por ejemplo, un GET posterior), y una comparación exacta como
-    // `Assert.Equal(order.CancelledAt, fetched.CancelledAt)` falla de forma intermitente.
+    // Invariante: todo valor de IClock tiene que sobrevivir sin cambios un viaje de ida y vuelta
+    // por `timestamptz` de Postgres. .NET mide en ticks de 100ns, pero `timestamptz` sólo guarda
+    // microsegundos -- Npgsql trunca ese último dígito al persistir. Sin este truncado acá, un
+    // valor devuelto en memoria nunca es exactamente igual al mismo valor releído de la base, y
+    // una comparación exacta entre ambos falla de forma intermitente.
     public DateTimeOffset UtcNow
     {
         get

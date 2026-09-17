@@ -68,7 +68,7 @@ internal sealed class OrdersReportSource(
         // Se filtra antes del join para que llegue a la base como WHERE. El listado (BuildQuery) no
         // lo filtra: ahí el anulado se ve con su estado.
         var joined = from order in FilterOrders(criteria)
-                         .Where(order => order.Status != OrderStatus.Cancelled)
+                         .Where(candidate => candidate.Status != OrderStatus.Cancelled)
                      join quotation in FilterQuotations(criteria)
                          on order.QuotationId equals quotation.Id
                      select new { order, quotation };

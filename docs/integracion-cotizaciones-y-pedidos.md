@@ -161,7 +161,7 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
 | `order.order.not_pending` | 422 | El pedido ya está `Approved` o `Cancelled`: no admite comprobantes (`/order/proofs`), productos (`/order/items`) ni otra aprobación |
 | `order.order.already_cancelled` | 422 | `POST /order/cancel` sobre un pedido ya `Cancelled` |
-| `order.order.cancellation_reason_required` | 422 | `POST /order/cancel` con `reason` ausente, vacío o en blanco. Código de dominio, sin `errors` |
+| `order.order.cancellation_reason_required` | 422 | `POST /order/cancel` con el campo `reason` ausente, `null`, vacío o en blanco. Código de dominio, sin `errors`. Un request sin body no llega hasta acá: el binding lo rechaza con `400` |
 | `order.order.cancellation_reason_too_long` | 422 | `POST /order/cancel` con `reason` de más de 500 caracteres ya recortado. Código de dominio, sin `errors` |
 | `order.order.payment_proof_required` | 422 | `POST /order` sin comprobantes y el pago no es `PaymentPending`; en `POST /order/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
 | `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
