@@ -51,6 +51,8 @@ nada de cambiar cantidad ni quitar—, sin importar el `status` de la cotizació
 | `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | Crea el pedido en `Pending` y deja la cotización en `Converted`, en una sola operación |
 | `POST` | `/quotations/{id}/order/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas a la cotización y recalcula `paymentStatus` contra el total nuevo |
 | `POST` | `/quotations/{id}/order/cancel` | `CancelOrderRequest` | 200 `OrderResponse` en `Cancelled`. Desde `Pending` o `Approved`; exige `quotations.order.cancel` (sólo admin). Conserva `approvedAt`/`approvedBy` |
+| `PUT` | `/quotations/{id}/order` | `SaveOrderEditsRequest` + header `If-Match: "<order.version>"` | 200 `OrderDetailResponse` + `ETag`. Guarda de una vez productos (lista completa), comprobantes (`add`/`update`/`removeIds`) y notas; `paymentStatus` lo deriva el servidor. Sin cambios reales responde 200 con la misma `version`. Sin `If-Match` → 428; versión vieja → 412 |
+| `POST` | `/quotations/{id}/order/preview` | `SaveOrderEditsRequest` (sin `fileId` en `add`) | 200 `OrderDetailResponse` recalculado **sin persistir**. `order.version` es la guardada; los comprobantes nuevos vuelven con `id`/`fileId` sintéticos que no se deben usar |
 
 ## Formas de los DTOs
 
@@ -160,6 +162,8 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
 | `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
 | `order.order.not_pending` | 422 | El pedido ya está `Approved` o `Cancelled`: no admite comprobantes (`/order/proofs`), productos (`/order/items`) ni otra aprobación |
+| `concurrency.conflict` | 412 | `PUT /order` con un `If-Match` que ya no es la `version` del pedido: otra persona lo cambió. Recargar |
+| `precondition.if_match_required` | 428 | `PUT /order` sin `If-Match` o con un valor que no es un número positivo |
 | `order.order.already_cancelled` | 422 | `POST /order/cancel` sobre un pedido ya `Cancelled` |
 | `order.order.cancellation_reason_required` | 422 | `POST /order/cancel` con el campo `reason` ausente, `null`, vacío o en blanco. Código de dominio, sin `errors`. Un request sin body no llega hasta acá: el binding lo rechaza con `400` |
 | `order.order.cancellation_reason_too_long` | 422 | `POST /order/cancel` con `reason` de más de 500 caracteres ya recortado. Código de dominio, sin `errors` |
