@@ -91,7 +91,7 @@ public sealed class TenantCalendar
 
 | # | Cambio |
 | --- | --- |
-| 1 | `QuotationExpirationProcessor`: primero consulta amplia `Sent` con `ValidUntil < hoyUTC + 2` (ningún huso adelanta más de un día a UTC). Después agrupa por tenant, resuelve el calendario y filtra `ValidUntil < calendar.Today` en memoria. |
+| 1 | `QuotationExpirationProcessor`: primero consulta amplia `Sent` con `ValidUntil < hoyUTC + 2` (ningún huso adelanta más de un día a UTC). Después agrupa por tenant, resuelve el calendario y filtra `ValidUntil < calendar.Today` en memoria. **Si el huso de un tenant no se resuelve, se salta ese tenant y se registra un log de error**; el resto del barrido sigue (decisión del owner, 2026-09-17). En los handlers de un request el fallo se mantiene. |
 | 2a/2b | El año del consecutivo es `calendar.Today.Year`. `IQuotationNumberGenerator` / `IOrderNumberGenerator` no cambian de firma. |
 | 2c | `DefaultValidUntil` pasa a ser `calendar.Today.AddDays(DefaultValidityDays)`. |
 | 3 | El handler convierte los `DateOnly` from/to con `StartOfDayUtc` / `EndOfDayExclusiveUtc` y **el repositorio recibe instantes**. Infrastructure no decide husos. Aplica a listado, conteo y export de cotizaciones y pedidos. |
