@@ -30,8 +30,9 @@ public static class ExportJobFilters
 
 public static class ExportFileNames
 {
-    /// <summary>D8: <c>{prefijo}-yyyy-MM-dd-HHmm.xlsx</c> con la hora UTC en que se generó —la misma
-    /// zona que el vencimiento que dice el correo—.</summary>
-    public static string For(string prefix, DateTimeOffset generatedAt) =>
-        $"{prefix}-{generatedAt.UtcDateTime.ToString("yyyy-MM-dd-HHmm", CultureInfo.InvariantCulture)}.xlsx";
+    /// <summary>D8: <c>{prefijo}-yyyy-MM-dd-HHmm.xlsx</c> con la hora del tenant en que se generó
+    /// (spec 2026-09-17, punto 8a), la misma en la que el correo dice cuándo vence el enlace. Recibe
+    /// el instante ya pasado a la hora local y escribe su reloj tal cual.</summary>
+    public static string For(string prefix, DateTimeOffset generatedAtLocal) =>
+        $"{prefix}-{generatedAtLocal.ToString("yyyy-MM-dd-HHmm", CultureInfo.InvariantCulture)}.xlsx";
 }

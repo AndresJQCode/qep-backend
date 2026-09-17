@@ -221,7 +221,8 @@ public sealed class QuotationExportApiTests
         Assert.DoesNotContain(sheet.Rows, row => row[0] == otherClient.QuotationNumber);
         Assert.DoesNotContain(sheet.Rows, row => row[0] == outOfRange.QuotationNumber);
         var first = sheet.Rows[1];
-        Assert.Equal(items[0].CreatedAt, DateTimeOffset.Parse(first[1], CultureInfo.InvariantCulture));
+        // La fecha sale en la hora del tenant, al minuto y sin offset (spec 2026-09-17, punto 8a).
+        Assert.Equal(LocalMinuteInBogota(items[0].CreatedAt), first[1]);
         Assert.Equal("Verde Esencial S.A.S.", first[2]);
         Assert.Equal(items[0].AdvisorName ?? string.Empty, first[3]);
         Assert.Equal("Borrador", first[4]);

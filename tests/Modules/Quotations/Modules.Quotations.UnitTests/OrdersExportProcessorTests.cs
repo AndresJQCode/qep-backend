@@ -1,4 +1,3 @@
-using System.Globalization;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -42,7 +41,8 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Ferretería El Tornillo", row[1].Text);
         // El nombre, igual que la tabla (spec 2026-09-11, D1, nota del 2026-09-15).
         Assert.Equal("Asesora Uno", row[2].Text);
-        Assert.Equal(Now.ToString("O", CultureInfo.InvariantCulture), row[3].Text);
+        // Now es 15:30 UTC: 10:30 en Bogotá, sin offset (spec 2026-09-17, punto 8a).
+        Assert.Equal("2026-09-12 10:30", row[3].Text);
         // Sin forma de pago, la columna cae a la etiqueta del estado del pago, igual que la tabla
         // (spec 2026-09-13, A7).
         Assert.Equal("Pago pendiente", row[4].Text);
@@ -249,7 +249,7 @@ public sealed class OrdersExportProcessorTests
         var result = await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", null)), storage: storage)
             .ProcessAsync(job, TestContext.Current.CancellationToken);
 
-        Assert.Equal("pedidos-2026-09-12-1530.xlsx", result.FileName);
+        Assert.Equal("pedidos-2026-09-12-1030.xlsx", result.FileName);
         Assert.Equal(job.Id, storage.Upload!.JobId);
     }
 
@@ -265,6 +265,24 @@ public sealed class OrdersExportProcessorTests
             new RecordedOrderExportSearch(
                 ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, FromUtc, BeforeUtc, "PED"),
             repository.LastExportSearch);
+    }
+
+    // Spec 2026-09-17, punto 8a: convertido y exportado el 31 de diciembre a las 23:00 en Bogotá, la
+    // celda y el nombre del archivo no dicen 2027.
+    [Fact]
+    public async Task WritesTheDateAndTheFileNameInTheTenantsLocalTime()
+    {
+        var newYearsEveInBogota = new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
+        var writer = new RecordingExportWorkbookWriter();
+
+        var result = await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", null, at: newYearsEveInBogota)),
+                writer,
+                tenantClock: new FixedTenantClock(newYearsEveInBogota))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("2026-12-31 23:00", Assert.Single(writer.Rows)[3].Text);
+        Assert.Equal("pedidos-2026-12-31-2300.xlsx", result.FileName);
     }
 
     [Fact]
@@ -298,18 +316,21 @@ public sealed class OrdersExportProcessorTests
     // Un comprobante por clave, en ese orden; null es un comprobante privado. Pago pendiente siempre:
     // el dominio lo admite con comprobantes o sin ellos, y así la columna Pago no cambia.
     private static OrderWithQuotation NewRow(
-        string orderNumber, string? paymentMethod, IReadOnlyList<string?>? publicKeys = null)
+        string orderNumber,
+        string? paymentMethod,
+        IReadOnlyList<string?>? publicKeys = null,
+        DateTimeOffset? at = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod, notes: null, QuotationParties.Empty, billingAccount: null,
-            customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
+            customerWithRetention: false, customerVatSurplus: false, AdvisorId, at ?? Now);
         var proofs = (publicKeys ?? [])
             .Select(publicKey => new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m, publicKey))
             .ToArray();
         var order = Order.Create(
             OrderId.New(), TenantId, orderNumber, quotation.Id, OrderPaymentStatus.PaymentPending,
-            notes: null, AdvisorId, proofs, Now);
+            notes: null, AdvisorId, proofs, at ?? Now);
         return new OrderWithQuotation(order, quotation);
     }
 
@@ -318,7 +339,8 @@ public sealed class OrdersExportProcessorTests
         RecordingExportWorkbookWriter? writer = null,
         RecordingExportFileStorage? storage = null,
         StubQuotationAdvisorLookup? advisors = null,
-        RecordingPaymentProofPublisher? publisher = null) =>
+        RecordingPaymentProofPublisher? publisher = null,
+        FixedTenantClock? tenantClock = null) =>
         new(repository,
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
@@ -327,5 +349,5 @@ public sealed class OrdersExportProcessorTests
             publisher ?? new RecordingPaymentProofPublisher(),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
-            new FixedTenantClock(Now));
+            tenantClock ?? new FixedTenantClock(Now));
 }

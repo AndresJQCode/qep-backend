@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
@@ -50,6 +51,13 @@ internal static class QuotationsApiHarness
     public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
 
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
+
+    /// <summary>Cómo escribe un Excel un instante para un tenant de Bogotá (spec 2026-09-17, punto
+    /// 8a): la hora local al minuto y sin offset. Los tenants de este harness nacen en
+    /// America/Bogota.</summary>
+    public static string LocalMinuteInBogota(DateTimeOffset instant) =>
+        TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"))
+            .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {

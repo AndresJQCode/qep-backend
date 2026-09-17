@@ -71,7 +71,7 @@ public sealed class QuotationsExportProcessor(
             {
                 var rows = await QuotationListing.ToListItemsAsync(
                     customerLookup, advisorLookup, job.TenantId, batch, ct);
-                return rows.Select(ToCells);
+                return rows.Select(row => ToCells(row, calendar));
             },
             quotation => new QuotationExportCursor(quotation.CreatedAt, quotation.QuotationNumber),
             cancellationToken);
@@ -83,7 +83,7 @@ public sealed class QuotationsExportProcessor(
                 "Empty: no quotations matched the export filters when the export ran.");
         }
 
-        var fileName = ExportFileNames.For(FilePrefix, generatedAt);
+        var fileName = ExportFileNames.For(FilePrefix, calendar.ToLocal(generatedAt));
         var upload = await storage.UploadAsync(
             job.TenantId, job.Id, fileName, workbook.Complete(), cancellationToken);
         return new ExportJobResult(fileName, rowCount, upload.DownloadUrl, upload.ExpiresAt);
@@ -103,12 +103,13 @@ public sealed class QuotationsExportProcessor(
         }
     }
 
-    private static ExportCell[] ToCells(QuotationListItemDto row) =>
+    private static ExportCell[] ToCells(QuotationListItemDto row, TenantCalendar calendar) =>
     [
         ExportCell.OfText(row.QuotationNumber),
-        // Texto ISO y no celda de fecha: una fecha se muestra según la configuración regional de
-        // quien abre el archivo, y ahí 03/04 deja de ser una fecha sola.
-        ExportCell.OfText(row.CreatedAt.ToString("O", CultureInfo.InvariantCulture)),
+        // Texto y no celda de fecha: una fecha se muestra según la configuración regional de quien
+        // abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del tenant, al minuto y
+        // sin offset (spec 2026-09-17, punto 8a): quien lee la planilla no convierte husos.
+        ExportCell.OfText(calendar.ToLocal(row.CreatedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)),
         ExportCell.OfText(row.ClientName),
         ExportCell.OfText(row.AdvisorName),
         // La etiqueta de la tabla (spec 2026-09-13, A7). El DTO trae el nombre del enum, que es
