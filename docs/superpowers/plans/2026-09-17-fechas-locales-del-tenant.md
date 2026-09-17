@@ -19,7 +19,7 @@
 - `ITenantClock` se registra scoped y resuelve el huso una vez por tenant por scope; los procesos que recorren varios tenants piden un calendario por tenant, nunca uno por fila.
 - `IQuotationNumberGenerator` e `IOrderNumberGenerator` no cambian de firma (2a/2b).
 - Ninguna regla de `tests/ArchitectureTests/` cambia, y ningún módulo gana referencias nuevas.
-- Todo se hace en el worktree `C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant`, rama `feature/fechas-locales-del-tenant`, creada desde `develop`. Cada bloque de comandos empieza con `Set-Location` a ese worktree: el checkout principal tiene cambios sin commitear que no son de este trabajo.
+- Todo se hace en el worktree `C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant`, rama `feature/fechas-locales-del-tenant`, creada desde `develop`. Cada bloque de comandos empieza con `Set-Location` a ese worktree: el checkout principal tiene cambios sin commitear que no son de este trabajo.
 - Los comandos van en Windows PowerShell 5.1: sin `&&`, con `A; if ($?) { B }`, y `$env:VAR = "…"` en línea aparte.
 - `Api.exe` corriendo bloquea `build` y `test`: antes de cada corrida, `Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force`.
 - Las pruebas de integración necesitan Docker corriendo (Testcontainers); se corren en primer plano, nunca en background.
@@ -91,7 +91,7 @@ La rama no se publica ni se mergea desde este plan.
 
 **Interfaces:**
 - Consumes: nada.
-- Produces: el worktree `qep-backend-worktrees\fechas-locales-del-tenant` en `feature/fechas-locales-del-tenant`, y `$env:TEMP\qep-fechas-baseline-failed.txt` con las pruebas que ya fallan, por nombre. Es la referencia de Task 14.
+- Produces: el worktree `qep-backend-worktrees\fechas-tenant` en `feature/fechas-locales-del-tenant`, y `$env:TEMP\qep-fechas-baseline-failed.txt` con las pruebas que ya fallan, por nombre. Es la referencia de Task 14.
 
 - [ ] **Step 1: Crear el worktree desde `develop`**
 
@@ -100,8 +100,8 @@ Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qe
 git fetch origin
 git branch --show-current
 git log -1 --oneline develop
-git worktree add -b feature/fechas-locales-del-tenant ..\qep-backend-worktrees\fechas-locales-del-tenant develop
-Copy-Item docs\superpowers\plans\2026-09-17-fechas-locales-del-tenant.md ..\qep-backend-worktrees\fechas-locales-del-tenant\docs\superpowers\plans\
+git worktree add -b feature/fechas-locales-del-tenant ..\qep-backend-worktrees\fechas-tenant develop
+Copy-Item docs\superpowers\plans\2026-09-17-fechas-locales-del-tenant.md ..\qep-backend-worktrees\fechas-tenant\docs\superpowers\plans\
 ```
 
 Esperado: `Preparing worktree (new branch 'feature/fechas-locales-del-tenant')`. Si `develop` local está detrás de `origin/develop`, **para y pregunta** antes de crear la rama.
@@ -109,7 +109,7 @@ Esperado: `Preparing worktree (new branch 'feature/fechas-locales-del-tenant')`.
 - [ ] **Step 2: Comprobar herramientas y que el spec está en la base**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 git branch --show-current
 git status --short
 Test-Path docs\superpowers\specs\2026-09-17-fechas-locales-del-tenant-design.md
@@ -122,7 +122,7 @@ Esperado: rama `feature/fechas-locales-del-tenant`; `git status` sólo con `?? d
 - [ ] **Step 3: Restore y build**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet restore Backend.slnx --locked-mode
 dotnet build Backend.slnx --no-restore
@@ -135,7 +135,7 @@ Esperado: `Compilación correcta.` (o `Build succeeded.`) con `0 Advertencia(s)`
 Tarda decenas de minutos; corre en primer plano.
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 $baseline = Join-Path $env:TEMP "qep-fechas-baseline"
 Remove-Item -Recurse -Force $baseline -ErrorAction SilentlyContinue
 dotnet test Backend.slnx --no-build --logger trx --results-directory $baseline
@@ -153,7 +153,7 @@ Esperado: la lista de las que ya fallan, posiblemente vacía. Pégala en el hand
 - [ ] **Step 5: Commitear el plan**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add docs/superpowers/plans/2026-09-17-fechas-locales-del-tenant.md; git commit -m "docs(tenancy): plan de fechas en el huso del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -315,7 +315,7 @@ public sealed class TenantCalendarTests
 - [ ] **Step 2: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Tenancy/Modules.Tenancy.UnitTests/Modules.Tenancy.UnitTests.csproj --filter "FullyQualifiedName~TenantCalendarTests"
 ```
@@ -390,7 +390,7 @@ public sealed class TenantCalendar
 - [ ] **Step 4: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Tenancy/Modules.Tenancy.UnitTests/Modules.Tenancy.UnitTests.csproj --filter "FullyQualifiedName~TenantCalendarTests"
 ```
@@ -400,7 +400,7 @@ Esperado: `Correctas: 9` (o `Passed: 9`), `Con errores: 0`. Si fallan sólo las 
 - [ ] **Step 5: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Tenancy/Modules.Tenancy.Application/TenantCalendar.cs tests/Modules/Tenancy/Modules.Tenancy.UnitTests/TenantCalendarTests.cs
 ```
 
@@ -409,7 +409,7 @@ Esperado: ningún diagnóstico que no sea `ENDOFLINE` o `CHARSET`.
 - [ ] **Step 6: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Tenancy/Modules.Tenancy.Application/TenantCalendar.cs tests/Modules/Tenancy/Modules.Tenancy.UnitTests/TenantCalendarTests.cs; git commit -m "feat(tenancy): calendario del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -546,7 +546,7 @@ public sealed class TenantClockTests
 - [ ] **Step 2: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/Modules.Tenancy.IntegrationTests.csproj --filter "FullyQualifiedName~TenantClockTests"
 ```
@@ -633,7 +633,7 @@ por:
 - [ ] **Step 6: Correr y ver el GREEN, más las pruebas de arquitectura**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/Modules.Tenancy.IntegrationTests.csproj --filter "FullyQualifiedName~TenantClockTests"
 dotnet test tests/ArchitectureTests/ArchitectureTests/ArchitectureTests.csproj
@@ -644,14 +644,14 @@ Esperado: `TenantClockTests` con 2 correctas y 0 errores; `ArchitectureTests` en
 - [ ] **Step 7: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Tenancy/Modules.Tenancy.Application/ITenantClock.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/TenantClock.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/TenancyInfrastructureExtensions.cs tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantClockTests.cs
 ```
 
 - [ ] **Step 8: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Tenancy/Modules.Tenancy.Application/ITenantClock.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/TenantClock.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/TenancyInfrastructureExtensions.cs tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantClockTests.cs; git commit -m "feat(tenancy): reloj del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -894,7 +894,7 @@ por:
 - [ ] **Step 3: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj --filter "FullyQualifiedName~QuotationApiTests.CreateReturnsADraftWithAGeneratedNumberAndTheResolvedAdvisor|FullyQualifiedName~OrderApiTests.ConvertCreatesTheOrderAndLeavesTheQuotationConverted|FullyQualifiedName~OrderListApiTests.ListReturnsTheOrderWithItsClientAdvisorAndTotalsResolved"
 ```
@@ -1020,7 +1020,7 @@ Los dos archivos siguen usando `BuildingBlocks.Application` (`ICommand`, `IComma
 - [ ] **Step 6: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj --filter "FullyQualifiedName~QuotationApiTests|FullyQualifiedName~OrderApiTests|FullyQualifiedName~OrderListApiTests"
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj
@@ -1032,14 +1032,14 @@ Esperado: todo en verde. Las demás pruebas de esos tres archivos siguen con el 
 - [ ] **Step 7: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Quotations/Modules.Quotations.Application/CreateQuotation.cs src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderListApiTests.cs
 ```
 
 - [ ] **Step 8: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Application/CreateQuotation.cs src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderListApiTests.cs; git commit -m "fix(quotations): consecutivo y vigencia por defecto en el día del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -1197,7 +1197,7 @@ por:
 - [ ] **Step 3: Correrla y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj --filter "FullyQualifiedName~QuotationExpirationApiTests.SweepCutsTheDayInEachTenantsTimeZone|FullyQualifiedName~QuotationExpirationApiTests.SweepSkipsATenantWhoseTimeZoneCannotBeResolvedAndExpiresTheRest"
 ```
@@ -1317,7 +1317,7 @@ Verifica que `ResourceNotFoundException` sea la excepción que lanza `TenantCloc
 - [ ] **Step 5: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj --filter "FullyQualifiedName~QuotationExpirationApiTests|FullyQualifiedName~QuotationSendVoidApiTests"
 ```
@@ -1327,14 +1327,14 @@ Esperado: todo en verde, las cuatro pruebas viejas del barrido incluidas.
 - [ ] **Step 6: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Quotations/Modules.Quotations.Infrastructure/Expiration/QuotationExpirationProcessor.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExpirationApiTests.cs
 ```
 
 - [ ] **Step 7: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Infrastructure/Expiration/QuotationExpirationProcessor.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExpirationApiTests.cs; git commit -m "fix(quotations): vencer cotizaciones con el hoy de cada tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -1865,7 +1865,7 @@ por:
 - [ ] **Step 4: Correr y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj --filter "FullyQualifiedName~ExportQuotationsHandlerTests|FullyQualifiedName~ExportOrdersHandlerTests|FullyQualifiedName~QuotationsExportProcessorTests|FullyQualifiedName~OrdersExportProcessorTests|FullyQualifiedName~ListQuotationsHandlerTests|FullyQualifiedName~ListOrdersHandlerTests"
 ```
@@ -2459,7 +2459,7 @@ Si el build dice que `BuildingBlocks.Application` sí hacía falta en algún pro
 - [ ] **Step 10: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build Backend.slnx --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj
@@ -2471,14 +2471,14 @@ Esperado: build con 0 errores y 0 advertencias; las unitarias en verde; las de i
 - [ ] **Step 11: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Quotations/Modules.Quotations.Application/TenantDayRange.cs src/Modules/Quotations/Modules.Quotations.Application/IQuotationRepository.cs src/Modules/Quotations/Modules.Quotations.Application/IOrderRepository.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationRepository.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderRepository.cs src/Modules/Quotations/Modules.Quotations.Application/ListQuotations.cs src/Modules/Quotations/Modules.Quotations.Application/ListOrders.cs src/Modules/Quotations/Modules.Quotations.Application/ExportQuotations.cs src/Modules/Quotations/Modules.Quotations.Application/ExportOrders.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationsExportProcessor.cs src/Modules/Quotations/Modules.Quotations.Application/OrdersExportProcessor.cs tests/Modules/Quotations/Modules.Quotations.UnitTests tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationListApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderListApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderExportApiTests.cs
 ```
 
 - [ ] **Step 12: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Application/TenantDayRange.cs src/Modules/Quotations/Modules.Quotations.Application/IQuotationRepository.cs src/Modules/Quotations/Modules.Quotations.Application/IOrderRepository.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationRepository.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/OrderRepository.cs src/Modules/Quotations/Modules.Quotations.Application/ListQuotations.cs src/Modules/Quotations/Modules.Quotations.Application/ListOrders.cs src/Modules/Quotations/Modules.Quotations.Application/ExportQuotations.cs src/Modules/Quotations/Modules.Quotations.Application/ExportOrders.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationsExportProcessor.cs src/Modules/Quotations/Modules.Quotations.Application/OrdersExportProcessor.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsTestDoubles.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/ListQuotationsHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/ListOrdersHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportQuotationsHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportOrdersHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsExportProcessorTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/OrdersExportProcessorTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationListApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderListApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderExportApiTests.cs; git commit -m "fix(quotations): filtrar listados y exports por el día del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -2799,7 +2799,7 @@ por:
 - [ ] **Step 4: Correr y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Reporting/Modules.Reporting.UnitTests/Modules.Reporting.UnitTests.csproj
 dotnet test tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj --filter "FullyQualifiedName~OrdersReportApiTests.TheDateRangeIsCutAtTheTenantsLocalMidnight"
@@ -3738,7 +3738,7 @@ En `tests/Modules/Reporting/Modules.Reporting.UnitTests/ReportComparisonWindowTe
 - [ ] **Step 9: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-ChildItem -Recurse -Filter *.cs -Path src\Bootstrapper, src\Modules\Reporting, tests\Modules\Reporting | Select-String -Pattern "ReportDateRange"
 dotnet build Backend.slnx --no-restore
@@ -3752,14 +3752,14 @@ Esperado: `Select-String` sin salida; build con 0 errores y 0 advertencias; las 
 - [ ] **Step 10: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Reporting/Modules.Reporting.Application src/Bootstrapper/ReportingLookups.cs src/Bootstrapper/OrdersReportSource.cs src/Bootstrapper/QuotationsReportSource.cs src/Bootstrapper/CustomerReportSource.cs src/Bootstrapper/PriceChangeReportSource.cs tests/Modules/Reporting
 ```
 
 - [ ] **Step 11: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Reporting/Modules.Reporting.Application/ReportingFilters.cs src/Modules/Reporting/Modules.Reporting.Application/ListOrdersReport.cs src/Modules/Reporting/Modules.Reporting.Application/ListQuotationsReport.cs src/Modules/Reporting/Modules.Reporting.Application/ListPriceChangeReport.cs src/Modules/Reporting/Modules.Reporting.Application/ListCustomerReport.cs src/Modules/Reporting/Modules.Reporting.Application/GetOrdersReportSummary.cs src/Modules/Reporting/Modules.Reporting.Application/QuotationsReportSummary.cs src/Modules/Reporting/Modules.Reporting.Application/PriceChangeReportSummary.cs src/Modules/Reporting/Modules.Reporting.Application/CustomerReportSummary.cs src/Bootstrapper/ReportingLookups.cs src/Bootstrapper/OrdersReportSource.cs src/Bootstrapper/QuotationsReportSource.cs src/Bootstrapper/CustomerReportSource.cs src/Bootstrapper/PriceChangeReportSource.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/ReportingTestDoubles.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/OrdersReportHandlerTests.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/OrdersReportSummaryHandlerTests.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/QuotationsReportSummaryHandlerTests.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/PriceChangeReportSummaryHandlerTests.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/CustomerReportSummaryHandlerTests.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/ReportComparisonWindowTests.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/ReportingApiHarness.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/OrdersReportApiTests.cs; git commit -m "fix(reporting): cortar los rangos de los reportes en el día del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -3864,7 +3864,7 @@ public sealed class MonthlyGroupingTranslationSpikeTests
 ```
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj --filter "FullyQualifiedName~MonthlyGroupingTranslationSpikeTests"
 ```
@@ -3882,7 +3882,7 @@ Regla de decisión, en este orden:
 Anota en el handoff qué rama elegiste y por qué. Después borra el spike:
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Remove-Item tests\Modules\Reporting\Modules.Reporting.IntegrationTests\MonthlyGroupingTranslationSpikeTests.cs
 git status --short
 ```
@@ -4065,7 +4065,7 @@ por:
 - [ ] **Step 4: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj --filter "FullyQualifiedName~TheMonthlySeriesGroupsByTheTenantsLocalMonth|FullyQualifiedName~CustomerReportSummaryApiTests.SummaryCountsTheCustomersAndHowManyAreActive"
 ```
@@ -4575,7 +4575,7 @@ por:
 - [ ] **Step 7: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build Backend.slnx --no-restore
 dotnet test tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj
@@ -4586,7 +4586,7 @@ Esperado: build con 0 errores y 0 advertencias; la suite de integración de Repo
 - [ ] **Step 8: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Bootstrapper/OrdersReportSource.cs src/Bootstrapper/QuotationsReportSource.cs src/Bootstrapper/CustomerReportSource.cs src/Bootstrapper/PriceChangeReportSource.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests
 ```
 
@@ -4595,7 +4595,7 @@ dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Bootst
 El mensaje dice qué rama eligió el spike. Si fue SQL con A, deja `-m "Agrupa en SQL con AT TIME ZONE sobre la columna (spike, variante A)."`; con B, `-m "Agrupa en SQL con AT TIME ZONE sobre UtcDateTime (spike, variante B)."`; en memoria, `-m "Agrupa en memoria: Npgsql no tradujo el cambio de huso en el GROUP BY (spike)."`.
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Test-Path tests\Modules\Reporting\Modules.Reporting.IntegrationTests\MonthlyGroupingTranslationSpikeTests.cs
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Bootstrapper/OrdersReportSource.cs src/Bootstrapper/QuotationsReportSource.cs src/Bootstrapper/CustomerReportSource.cs src/Bootstrapper/PriceChangeReportSource.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/OrdersReportSummaryApiTests.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/QuotationsReportSummaryApiTests.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/PriceChangeReportSummaryApiTests.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/CustomerReportSummaryApiTests.cs; git commit -m "fix(reporting): series mensuales en el mes del tenant" -m "Agrupa en SQL con AT TIME ZONE sobre la columna (spike, variante A)."
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
@@ -4725,7 +4725,7 @@ public sealed class QuotationsReportSummaryApiTests
 - [ ] **Step 2: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Reporting/Modules.Reporting.UnitTests/Modules.Reporting.UnitTests.csproj --filter "FullyQualifiedName~SummarizingResolvesTodayInTheTenantsTimeZone"
 dotnet test tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj --filter "FullyQualifiedName~AQuotationDueOnTheTenantsTodayIsNotExpired"
@@ -4757,7 +4757,7 @@ por:
 - [ ] **Step 4: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Reporting/Modules.Reporting.UnitTests/Modules.Reporting.UnitTests.csproj
 dotnet test tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj --filter "FullyQualifiedName~QuotationsReportSummaryApiTests"
@@ -4768,14 +4768,14 @@ Esperado: todo en verde.
 - [ ] **Step 5: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Reporting/Modules.Reporting.Application/QuotationsReportSummary.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/QuotationsReportSummaryHandlerTests.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/QuotationsReportSummaryApiTests.cs
 ```
 
 - [ ] **Step 6: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Reporting/Modules.Reporting.Application/QuotationsReportSummary.cs tests/Modules/Reporting/Modules.Reporting.UnitTests/QuotationsReportSummaryHandlerTests.cs tests/Modules/Reporting/Modules.Reporting.IntegrationTests/QuotationsReportSummaryApiTests.cs; git commit -m "fix(reporting): vencidas y por vencer con el hoy del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -4941,7 +4941,7 @@ por:
 - [ ] **Step 2: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj --filter "FullyQualifiedName~QuotationPdfDocumentMapperTests|FullyQualifiedName~QuotationTemplateTests|FullyQualifiedName~QCodePdfRendererTests|FullyQualifiedName~SendQuotationHandlerTests|FullyQualifiedName~ExportQuotationPdfHandlerTests"
 ```
@@ -5120,7 +5120,7 @@ por:
 - [ ] **Step 6: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build Backend.slnx --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj
@@ -5132,14 +5132,14 @@ Esperado: todo en verde, `EveryFieldTheTemplateReadsExistsInThePayload` incluida
 - [ ] **Step 7: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Quotations/Modules.Quotations.Application/QuotationPdfDocument.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationPdfDocumentMapper.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationPdfProvider.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QCodePdfRendererTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationTemplateTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationPdfDocumentMapperTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/SendQuotationHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportQuotationPdfHandlerTests.cs
 ```
 
 - [ ] **Step 8: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Application/QuotationPdfDocument.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationPdfDocumentMapper.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationPdfProvider.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Pdf/quotation.typ tests/Modules/Quotations/Modules.Quotations.UnitTests/QCodePdfRendererTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationTemplateTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationPdfDocumentMapperTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/SendQuotationHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/ExportQuotationPdfHandlerTests.cs; git commit -m "fix(quotations): fecha de emisión del PDF en el día del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -5462,7 +5462,7 @@ por:
 - [ ] **Step 2: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj --filter "FullyQualifiedName~QuotationsExportProcessorTests|FullyQualifiedName~OrdersExportProcessorTests"
 ```
@@ -5597,7 +5597,7 @@ por:
 - [ ] **Step 5: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build Backend.slnx --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests/Modules.Quotations.UnitTests.csproj
@@ -5609,14 +5609,14 @@ Esperado: todo en verde. Las regex `^cotizaciones-\d{4}-\d{2}-\d{2}-\d{4}\.xlsx$
 - [ ] **Step 6: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Quotations/Modules.Quotations.Application/ExportJobSupport.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationsExportProcessor.cs src/Modules/Quotations/Modules.Quotations.Application/OrdersExportProcessor.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsExportProcessorTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/OrdersExportProcessorTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderExportApiTests.cs
 ```
 
 - [ ] **Step 7: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Quotations/Modules.Quotations.Application/ExportJobSupport.cs src/Modules/Quotations/Modules.Quotations.Application/QuotationsExportProcessor.cs src/Modules/Quotations/Modules.Quotations.Application/OrdersExportProcessor.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsExportProcessorTests.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/OrdersExportProcessorTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderExportApiTests.cs; git commit -m "fix(quotations): fechas y nombres de los excel en la hora del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -5916,7 +5916,7 @@ por:
 - [ ] **Step 3: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Customers/Modules.Customers.IntegrationTests/Modules.Customers.IntegrationTests.csproj --filter "FullyQualifiedName~CustomerExportApiTests.ExportWritesDatesAndTheFileNameInTheTenantsLocalTime"
 dotnet test tests/Modules/Catalog/Modules.Catalog.IntegrationTests/Modules.Catalog.IntegrationTests.csproj --filter "FullyQualifiedName~ProductExportApiTests.ExportNamesTheFileWithTheTenantsLocalTime"
@@ -6173,7 +6173,7 @@ por:
 - [ ] **Step 6: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build Backend.slnx --no-restore
 dotnet test tests/Modules/Customers/Modules.Customers.IntegrationTests/Modules.Customers.IntegrationTests.csproj --filter "FullyQualifiedName~CustomerExportApiTests"
@@ -6187,14 +6187,14 @@ Esperado: build con 0 errores y 0 advertencias (si `BuildingBlocks.Application` 
 - [ ] **Step 7: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Customers/Modules.Customers.Application/ICustomerExportBuilder.cs src/Modules/Customers/Modules.Customers.Infrastructure/Excel/ClosedXmlCustomerExportBuilder.cs src/Modules/Customers/Modules.Customers.Application/ExportCustomers.cs src/Modules/Catalog/Modules.Catalog.Application/ExportProducts.cs tests/Modules/Customers/Modules.Customers.IntegrationTests/CustomerExportApiTests.cs tests/Modules/Catalog/Modules.Catalog.IntegrationTests/ProductExportApiTests.cs
 ```
 
 - [ ] **Step 8: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Customers/Modules.Customers.Application/ICustomerExportBuilder.cs src/Modules/Customers/Modules.Customers.Infrastructure/Excel/ClosedXmlCustomerExportBuilder.cs src/Modules/Customers/Modules.Customers.Application/ExportCustomers.cs src/Modules/Catalog/Modules.Catalog.Application/ExportProducts.cs tests/Modules/Customers/Modules.Customers.IntegrationTests/CustomerExportApiTests.cs tests/Modules/Catalog/Modules.Catalog.IntegrationTests/ProductExportApiTests.cs; git commit -m "fix(customers): fechas y nombres de los excel de clientes y productos en la hora del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -6340,7 +6340,7 @@ public sealed class ProductExportEmailTemplateTests
 - [ ] **Step 2: Correrlas y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj --filter "FullyQualifiedName~ExportEmailTemplateTests"
 ```
@@ -6546,7 +6546,7 @@ por:
 - [ ] **Step 5: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build Backend.slnx --no-restore
 dotnet test tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj
@@ -6558,14 +6558,14 @@ Esperado: todo en verde. `DeliveryWorkersCharacterizationTests` y `QuotationsExp
 - [ ] **Step 6: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Modules/Notifications/Modules.Notifications.Application/CustomerExportEmailTemplate.cs src/Modules/Notifications/Modules.Notifications.Application/ProductExportEmailTemplate.cs src/Modules/Notifications/Modules.Notifications.Application/QuotationsExportReadyEmailTemplate.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/OutboxDeliveryWorker.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/CustomerExportDeliveryWorker.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/ProductExportDeliveryWorker.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/QuotationsExportReadyDeliveryWorker.cs tests/Modules/Notifications/Modules.Notifications.UnitTests
 ```
 
 - [ ] **Step 7: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Modules/Notifications/Modules.Notifications.Application/CustomerExportEmailTemplate.cs src/Modules/Notifications/Modules.Notifications.Application/ProductExportEmailTemplate.cs src/Modules/Notifications/Modules.Notifications.Application/QuotationsExportReadyEmailTemplate.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/OutboxDeliveryWorker.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/CustomerExportDeliveryWorker.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/ProductExportDeliveryWorker.cs src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/QuotationsExportReadyDeliveryWorker.cs tests/Modules/Notifications/Modules.Notifications.UnitTests/CustomerExportEmailTemplateTests.cs tests/Modules/Notifications/Modules.Notifications.UnitTests/QuotationsExportEmailTemplateTests.cs tests/Modules/Notifications/Modules.Notifications.UnitTests/ProductExportEmailTemplateTests.cs; git commit -m "fix(notifications): vencimiento de los enlaces de exportación en la hora del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -6688,7 +6688,7 @@ por:
 - [ ] **Step 2: Correrla y ver el RED**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj --filter "FullyQualifiedName~ExportLoadSeedTests.TheSeedExpiresWithTheTenantsLocalToday"
 ```
@@ -6746,7 +6746,7 @@ Si el build dice `CS0246: The type or namespace name 'IClock' could not be found
 - [ ] **Step 4: Correr y ver el GREEN**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build Backend.slnx --no-restore
 dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests/Modules.Quotations.IntegrationTests.csproj --filter "FullyQualifiedName~ExportLoadSeedTests"
@@ -6757,14 +6757,14 @@ Esperado: todas las de `ExportLoadSeedTests` en verde.
 - [ ] **Step 5: Formato**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet format Backend.slnx --verify-no-changes --no-restore --include src/Bootstrapper/Seeding/ExportLoadSeeder.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportLoadSeedTests.cs
 ```
 
 - [ ] **Step 6: Commit**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 if ((git branch --show-current) -ne "feature/fechas-locales-del-tenant") { throw "ABORT: rama equivocada" }; git add src/Bootstrapper/Seeding/ExportLoadSeeder.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/ExportLoadSeedTests.cs; git commit -m "fix(bootstrapper): la carga sintética vence con el hoy del tenant"
 git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 ```
@@ -6783,7 +6783,7 @@ git log -1 --format=%B | Select-String -SimpleMatch "Co-Authored-By"
 - [ ] **Step 1: Barrido de cortes en UTC que quedaron**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-ChildItem -Recurse -Filter *.cs -Path src | Select-String -Pattern "ReportDateRange|DateOnly\.FromDateTime\(.*UtcDateTime\)|UtcDateTime\.Year|UtcDateTime\.Month|'UTC'"
 Get-ChildItem -Recurse -Filter *.cs -Path tests | Select-String -Pattern "DateTime\.UtcNow\.Year|DateTime\.UtcNow\.Month"
 ```
@@ -6793,7 +6793,7 @@ Esperado: en `src` sólo la línea de `QuotationExpirationProcessor.cs` que calc
 - [ ] **Step 2: Los comandos de README § Verificación**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 Get-Process -Name Api -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet restore --locked-mode
 dotnet format --verify-no-changes --no-restore
@@ -6803,7 +6803,7 @@ dotnet build --no-restore
 Esperado: restore sin `NU1004` (ningún `packages.lock.json` cambió); `dotnet format` sin diagnósticos salvo `ENDOFLINE`/`CHARSET` en archivos que esta rama no tocó; build con `0 Advertencia(s)` y `0 Errores`.
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 git status --short
 git diff --stat (git merge-base develop HEAD) HEAD -- "**/packages.lock.json" Directory.Packages.props
 ```
@@ -6813,7 +6813,7 @@ Esperado: `git status` vacío y el `diff --stat` sin archivos.
 - [ ] **Step 3: La suite completa, comparada por nombre con el baseline**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 $final = Join-Path $env:TEMP "qep-fechas-final"
 Remove-Item -Recurse -Force $final -ErrorAction SilentlyContinue
 dotnet test --no-build --logger trx --results-directory $final
@@ -6832,7 +6832,7 @@ Esperado: `Compare-Object` sin salida: ninguna prueba falla ahora que no fallara
 - [ ] **Step 4: Arquitectura**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 dotnet test tests/ArchitectureTests/ArchitectureTests/ArchitectureTests.csproj --no-build
 git diff (git merge-base develop HEAD) HEAD --stat -- tests/ArchitectureTests
 ```
@@ -6842,7 +6842,7 @@ Esperado: en verde, y el `diff` de `tests/ArchitectureTests` vacío: ninguna reg
 - [ ] **Step 5: Historial**
 
 ```powershell
-Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-locales-del-tenant
+Set-Location C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\fechas-tenant
 git log --format="%h %s" (git merge-base develop HEAD)..HEAD
 git log --format=%B (git merge-base develop HEAD)..HEAD | Select-String -SimpleMatch "Co-Authored-By"
 ```
