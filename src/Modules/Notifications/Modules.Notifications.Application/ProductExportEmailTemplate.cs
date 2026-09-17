@@ -20,11 +20,14 @@ public static class ProductExportEmailTemplate
         string downloadUrl,
         string fileName,
         int productCount,
-        DateTimeOffset expiresAt)
+        DateTimeOffset expiresAt,
+        TimeZoneInfo timeZone)
     {
         const string subject = "Tu exportación de productos está lista";
 
-        var expiry = expiresAt.ToString("dd/MM/yyyy HH:mm 'UTC'", CultureInfo.InvariantCulture);
+        // En la hora del tenant del export y sin etiqueta de huso (spec 2026-09-17, punto 8b).
+        var expiry = TimeZoneInfo.ConvertTime(expiresAt, timeZone)
+            .ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture);
         var products = productCount == 1 ? "1 producto" : $"{productCount} productos";
 
         // El cuerpo HTML lleva la URL **escapada**; el de texto plano, cruda. No es simetria

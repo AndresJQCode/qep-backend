@@ -18,11 +18,14 @@ public static class QuotationsExportReadyEmailTemplate
         string downloadUrl,
         string fileName,
         int rowCount,
-        DateTimeOffset expiresAt)
+        DateTimeOffset expiresAt,
+        TimeZoneInfo timeZone)
     {
         var names = QuotationsExportKindText.Of(kind);
         var subject = $"Tu exportación de {names.Plural} está lista";
-        var expiry = expiresAt.ToString("dd/MM/yyyy HH:mm 'UTC'", CultureInfo.InvariantCulture);
+        // En la hora del tenant del export y sin etiqueta de huso (spec 2026-09-17, punto 8b).
+        var expiry = TimeZoneInfo.ConvertTime(expiresAt, timeZone)
+            .ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture);
         var rows = rowCount == 1
             ? $"1 {names.Singular}"
             : $"{rowCount.ToString(CultureInfo.InvariantCulture)} {names.Plural}";
