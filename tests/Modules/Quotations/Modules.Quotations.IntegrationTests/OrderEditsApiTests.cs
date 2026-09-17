@@ -325,6 +325,90 @@ public sealed class OrderEditsApiTests
         Assert.Equal("validation.failed", (await ReadProblemAsync(response)).Code);
     }
 
+    // Spec 2026-09-17, pruebas: el preview devuelve totales recalculados y un GET posterior muestra el
+    // pedido sin cambios. Los montos de los comprobantes nuevos entran en el estado de pago (desvío 3).
+    [Fact]
+    public async Task PreviewReturnsTheRecalculatedDocumentWithoutPersistingIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var auditBefore = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Count;
+
+        var response = await client.PostAsJsonAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/preview",
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 3m)],
+                new OrderEditProofsRequest([new OrderEditProofAddRequest(null, 300_000m)], null, null),
+                "Borrador"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var preview = await ReadDetailAsync(response);
+        Assert.Equal(3m, Assert.Single(preview.Quotation.Items).Quantity);
+        Assert.Equal(300_000m, preview.Quotation.Total);
+        Assert.Equal("FullPaymentReceived", preview.Order.PaymentStatus);
+        Assert.Equal("Borrador", preview.Order.Notes);
+        Assert.Single(preview.Order.PaymentProofs);
+        Assert.Equal(order.Version, preview.Order.Version);
+
+        var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal(1m, Assert.Single(fetched.Quotation.Items).Quantity);
+        Assert.Equal(quotation.Total, fetched.Quotation.Total);
+        Assert.Equal("PaymentPending", fetched.Order.PaymentStatus);
+        Assert.Null(fetched.Order.Notes);
+        Assert.Empty(fetched.Order.PaymentProofs);
+        Assert.Equal(order.Version, fetched.Order.Version);
+        Assert.Equal(auditBefore, (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Count);
+    }
+
+    // «Errores de dominio (…) se devuelven como 422 con el mismo código que devolvería el guardado.»
+    [Fact]
+    public async Task PreviewReportsTheSameDomainErrorAsSaving()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var body = new SaveOrderEditsRequest(
+            [new OrderEditItemRequest(productId, 1m), new OrderEditItemRequest(Guid.CreateVersion7(), 1m)],
+            null,
+            null);
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/preview", body, TestContext.Current.CancellationToken);
+        var save = await PutEditsAsync(client, tenantId, quotation.Id, order.Version, body);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, preview.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, save.StatusCode);
+        Assert.Equal("quotation.item.product_not_found", (await ReadProblemAsync(preview)).Code);
+        Assert.Equal("quotation.item.product_not_found", (await ReadProblemAsync(save)).Code);
+    }
+
+    [Fact]
+    public async Task PreviewOnAnApprovedOrderIsNotPending()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, _, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        (await client.PostAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/approve", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+
+        var response = await client.PostAsJsonAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/preview",
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 2m)], null, null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
+    }
+
     /// <summary>Una cotización enviada con un producto de 100.000 COP sin impuesto, convertida con el
     /// pago pendiente y sin comprobantes: el total es 100.000 y el estado de pago lo decide cada
     /// prueba.</summary>

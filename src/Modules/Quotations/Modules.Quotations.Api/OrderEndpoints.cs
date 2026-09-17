@@ -129,6 +129,16 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Cálculo previo (spec 2026-09-17, decisión 3): mismo cuerpo que el PUT, sin archivos y sin
+        // persistir. POST y no GET porque lleva el borrador entero en el cuerpo.
+        group.MapPost("/preview", PreviewOrderEditsAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<SaveOrderEditsRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -323,6 +333,24 @@ public static class OrderEndpoints
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
+        return Results.Ok(new OrderDetailResponse(
+            ToResponse(detail.Order),
+            await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
+    }
+
+    private static async Task<IResult> PreviewOrderEditsAsync(
+        Guid tenantId,
+        Guid quotationId,
+        SaveOrderEditsRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var (items, proofs) = ToEdits(request);
+        var detail = await dispatcher.QueryAsync(
+            new PreviewOrderEditsQuery(tenantId, quotationId, items, proofs, request.Notes),
+            cancellationToken);
+
         return Results.Ok(new OrderDetailResponse(
             ToResponse(detail.Order),
             await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
