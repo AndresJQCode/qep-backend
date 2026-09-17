@@ -21,6 +21,14 @@ public sealed class OrderApiTests
     private static string OrderItemsUrl(Guid tenantId, Guid quotationId) =>
         $"{OrderUrl(tenantId, quotationId)}/items";
 
+    private static string OrderCancelUrl(Guid tenantId, Guid quotationId) =>
+        $"{OrderUrl(tenantId, quotationId)}/cancel";
+
+    // Spec 2026-09-16, decisión 5: anular exige su propio permiso; el resto de la siembra y de la
+    // lectura sigue usando los de gestión.
+    private static readonly string[] CancellerPermissions =
+        [.. ManagerPermissions, OrdersPermissions.OrderCancel];
+
     // Bug real, 2026-09-12: el editor de cotizaciones dejo de pedir la forma de pago hace
     // rato (ver `UpdateQuotationRequest` en el frontend), asi que toda cotizacion nueva la
     // tiene en null -- pero `EnsureConvertibleToOrder` seguia exigiendola, y con eso "Convertir
@@ -953,6 +961,194 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("order.order.not_pending", body, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-09-16: anular desde Pending deja quién, cuándo y por qué, lo persiste, no toca la
+    // cotización (decisión 3) y lo audita. Los nombres de los campos se leen del JSON crudo: son el
+    // contrato que consume el frontend.
+    [Fact]
+    public async Task CancelAPendingOrderReturnsItCancelledWithWhoWhenAndWhy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var converted = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+
+        var response = await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, quotation.Id),
+            new CancelOrderRequest("  El cliente desistió  "),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using (var json = JsonDocument.Parse(body))
+        {
+            var root = json.RootElement;
+            Assert.Equal("Cancelled", root.GetProperty("status").GetString());
+            Assert.Equal(JsonValueKind.String, root.GetProperty("cancelledAt").ValueKind);
+            Assert.Equal(JsonValueKind.String, root.GetProperty("cancelledBy").ValueKind);
+            Assert.Equal("El cliente desistió", root.GetProperty("cancellationReason").GetString());
+            Assert.Equal(JsonValueKind.Null, root.GetProperty("approvedAt").ValueKind);
+        }
+
+        var order = JsonSerializer.Deserialize<OrderResponse>(body, JsonSerializerOptions.Web);
+        Assert.NotNull(order);
+        Assert.Equal(converted.Id, order.Id);
+        Assert.NotNull(order.CancelledBy);
+
+        var fetched = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.Equal("Cancelled", fetched.Status);
+        Assert.Equal(order.CancelledAt, fetched.CancelledAt);
+        Assert.Equal(order.CancelledBy, fetched.CancelledBy);
+        Assert.Equal("El cliente desistió", fetched.CancellationReason);
+
+        var fetchedQuotation = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(fetchedQuotation);
+        Assert.Equal("Converted", fetchedQuotation.Status);
+
+        var auditMessages = await OutboxMessagesAsync(factory, "platform.audit.recorded.v1");
+        var cancelled = Assert.Single(
+            auditMessages, message => ActionOf(message) == "quotation.order.cancelled");
+        Assert.Equal(order.Id.ToString(), EntityIdOf(cancelled));
+    }
+
+    // Decisiones 1 y 2: un aprobado también se anula, y conserva quién lo aprobó y cuándo.
+    [Fact]
+    public async Task CancelAnApprovedOrderKeepsTheApproval()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var approved = await ReadOrderAsync(await client.PostAsync(
+            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            null,
+            TestContext.Current.CancellationToken));
+
+        var cancelled = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, quotation.Id),
+            new CancelOrderRequest("Aprobado por error"),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("Cancelled", cancelled.Status);
+        Assert.NotNull(cancelled.ApprovedAt);
+        Assert.Equal(approved.ApprovedAt, cancelled.ApprovedAt);
+        Assert.Equal(approved.ApprovedBy, cancelled.ApprovedBy);
+        Assert.Equal("Aprobado por error", cancelled.CancellationReason);
+    }
+
+    // Decisión 5: gestionar pedidos no alcanza para anularlos.
+    [Fact]
+    public async Task CancelWithOnlyTheManagePermissionIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var response = await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, quotation.Id),
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var order = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.Equal("Pending", order.Status);
+    }
+
+    [Fact]
+    public async Task CancelForAQuotationWithoutAnOrderIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, quotation.Id),
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("order.order.not_found", body, StringComparison.Ordinal);
+    }
+
+    // Los tres 422 son códigos de dominio, no validation.failed (hallazgo 3): el frontend los
+    // mapea por `code`. Un solo pedido para los cuatro requests: los rechazados no lo modifican.
+    [Fact]
+    public async Task CancelRejectsAMissingOrTooLongReasonAndASecondCancellation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var url = OrderCancelUrl(tenantId, quotation.Id);
+
+        var withoutReason = await client.PostAsJsonAsync(
+            url, new { }, TestContext.Current.CancellationToken);
+        var blankReason = await client.PostAsJsonAsync(
+            url, new CancelOrderRequest("   "), TestContext.Current.CancellationToken);
+        var tooLong = await client.PostAsJsonAsync(
+            url, new CancelOrderRequest(new string('a', 501)), TestContext.Current.CancellationToken);
+        (await client.PostAsJsonAsync(
+            url, new CancelOrderRequest("Primera vez"), TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        var twice = await client.PostAsJsonAsync(
+            url, new CancelOrderRequest("Segunda vez"), TestContext.Current.CancellationToken);
+
+        await AssertDomainRejectionAsync(withoutReason, "order.order.cancellation_reason_required");
+        await AssertDomainRejectionAsync(blankReason, "order.order.cancellation_reason_required");
+        await AssertDomainRejectionAsync(tooLong, "order.order.cancellation_reason_too_long");
+        await AssertDomainRejectionAsync(twice, "order.order.already_cancelled");
+        var order = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.Equal("Primera vez", order.CancellationReason);
+    }
+
+    private static async Task AssertDomainRejectionAsync(HttpResponseMessage response, string code)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var json = JsonDocument.Parse(body);
+        Assert.Equal(code, json.RootElement.GetProperty("code").GetString());
+        Assert.False(json.RootElement.TryGetProperty("errors", out _));
     }
 
     private static async Task<OrderResponse> ReadOrderAsync(HttpResponseMessage response)

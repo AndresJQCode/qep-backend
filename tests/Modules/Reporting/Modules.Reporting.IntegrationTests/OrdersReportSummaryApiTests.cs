@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Modules.Quotations.Application;
 using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 
 namespace Modules.Reporting.IntegrationTests;
@@ -64,6 +65,50 @@ public sealed class OrdersReportSummaryApiTests
 
         // Sin rango de fechas no hay periodo anterior contra el cual comparar.
         Assert.Null(summary.Previous);
+    }
+
+    /// <summary>
+    /// Spec 2026-09-16, decisión 6: un pedido anulado no es una venta. Dos pedidos del mismo
+    /// cliente y asesor, uno anulado: el resumen cuenta uno solo en el total, la serie y los dos
+    /// rankings. Filtrar en la consulta y no en memoria es lo que esta prueba cubre contra
+    /// PostgreSQL.
+    /// </summary>
+    [Fact]
+    public async Task SummaryLeavesOutACancelledOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var kept = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, kept);
+        var cancelled = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, cancelled);
+        (await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenant.TenantId}/quotations/{cancelled.Id}/order/cancel",
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var response = await client.GetAsync(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var summary = await response.Content.ReadFromJsonAsync<OrdersReportSummary>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal(kept.Subtotal, summary.Subtotal);
+        Assert.Equal(kept.TaxAmount, summary.TaxAmount);
+        Assert.Equal(kept.Total, summary.Total);
+        Assert.Equal(1, Assert.Single(summary.Monthly).Count);
+        Assert.Equal(1, Assert.Single(summary.ByAdvisor).Count);
+        Assert.Equal(1, Assert.Single(summary.ByClient).Count);
     }
 
     /// <summary>

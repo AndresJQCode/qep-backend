@@ -25,6 +25,7 @@ Quotation.status: Draft → Sent → Converted
                               ↘ Expired (job automático, sólo desde Sent)
 
 Order.status:        Pending → Approved
+                     Pending | Approved → Cancelled (con motivo; la cotización sigue Converted)
 Order.paymentStatus: FullPaymentReceived | PartialPaymentReceived | PaymentPending
 ```
 
@@ -49,6 +50,7 @@ nada de cambiar cantidad ni quitar—, sin importar el `status` de la cotizació
 | `GET` | `/quotations/{id}/order` | — | 404 si no se convirtió todavía |
 | `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | Crea el pedido en `Pending` y deja la cotización en `Converted`, en una sola operación |
 | `POST` | `/quotations/{id}/order/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas a la cotización y recalcula `paymentStatus` contra el total nuevo |
+| `POST` | `/quotations/{id}/order/cancel` | `CancelOrderRequest` | 200 `OrderResponse` en `Cancelled`. Desde `Pending` o `Approved`; exige `quotations.order.cancel` (sólo admin). Conserva `approvedAt`/`approvedBy` |
 
 ## Formas de los DTOs
 
@@ -91,10 +93,15 @@ type QuotationResponse = {
   items: { id, productId, quantity, unitPrice, discountPercentage, discountAmount, subtotal, position }[];
 };
 
+type CancelOrderRequest = { reason: string }; // obligatorio, se recorta, máx. 500
+
 type OrderResponse = {
-  id: string; orderNumber: string; quotationId: string; status: "Pending" | "Approved";
+  id: string; orderNumber: string; quotationId: string; status: "Pending" | "Approved" | "Cancelled";
   paymentStatus: string; notes: string | null;
-  convertedAt: string; convertedBy: string; ritualCollectionSyncId: string | null;
+  convertedAt: string; convertedBy: string;
+  approvedAt: string | null; approvedBy: string | null;
+  cancelledAt: string | null; cancelledBy: string | null; cancellationReason: string | null;
+  ritualCollectionSyncId: string | null;
   createdAt: string; updatedAt: string;
   paymentProofs: { id, fileId, amount, uploadedAt }[];
 };
@@ -104,7 +111,7 @@ type AddOrderItemsRequest = { toAdd: { productId: string; quantity: number }[] }
 type OrderDetailResponse = { order: OrderResponse; quotation: QuotationResponse };
 ```
 
-`advisorId`/`createdBy`/`updatedBy`/`convertedBy` son ids de **membership** (Tenancy), no el
+`advisorId`/`createdBy`/`updatedBy`/`convertedBy`/`approvedBy`/`cancelledBy` son ids de **membership** (Tenancy), no el
 `subject`/usuario — son valores distintos a propósito.
 
 ## Comprobantes de pago: se suben con el flujo de Storage
@@ -152,7 +159,10 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
 | `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
-| `order.order.not_pending` | 422 | El pedido ya está `Approved`: no admite comprobantes (`/order/proofs`), productos (`/order/items`) ni otra aprobación |
+| `order.order.not_pending` | 422 | El pedido ya está `Approved` o `Cancelled`: no admite comprobantes (`/order/proofs`), productos (`/order/items`) ni otra aprobación |
+| `order.order.already_cancelled` | 422 | `POST /order/cancel` sobre un pedido ya `Cancelled` |
+| `order.order.cancellation_reason_required` | 422 | `POST /order/cancel` con el campo `reason` ausente, `null`, vacío o en blanco. Código de dominio, sin `errors`. Un request sin body no llega hasta acá: el binding lo rechaza con `400` |
+| `order.order.cancellation_reason_too_long` | 422 | `POST /order/cancel` con `reason` de más de 500 caracteres ya recortado. Código de dominio, sin `errors` |
 | `order.order.payment_proof_required` | 422 | `POST /order` sin comprobantes y el pago no es `PaymentPending`; en `POST /order/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
 | `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
 | `order.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |

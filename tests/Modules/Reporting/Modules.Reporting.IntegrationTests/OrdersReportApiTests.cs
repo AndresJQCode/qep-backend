@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using Modules.Quotations.Application;
 using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 
 namespace Modules.Reporting.IntegrationTests;
@@ -56,6 +57,39 @@ public sealed class OrdersReportApiTests
         Assert.Equal(quotation.Subtotal, item.Subtotal);
         Assert.Equal(quotation.TaxAmount, item.TaxAmount);
         Assert.Equal(quotation.Total, item.Total);
+    }
+
+    /// <summary>
+    /// Spec 2026-09-16, decisión 6: el listado sí muestra un pedido anulado, con su estado. Es la
+    /// otra mitad de <c>OrdersReportSummaryApiTests.SummaryLeavesOutACancelledOrder</c>: el filtro
+    /// del resumen no puede colarse en la consulta del listado.
+    /// </summary>
+    [Fact]
+    public async Task ListStillReturnsACancelledOrderWithItsStatus()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        (await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenant.TenantId}/quotations/{quotation.Id}/order/cancel",
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var page = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(page);
+        Assert.Equal(1, page.Total);
+        var item = Assert.Single(page.Items);
+        Assert.Equal(order.Id, item.OrderId);
+        Assert.Equal("Cancelled", item.Status);
     }
 
     [Fact]
