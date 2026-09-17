@@ -35,15 +35,21 @@ public sealed class OrdersExportProcessor(
     /// haya comprobante, y una celda vacía no puede significar las dos cosas.</summary>
     public const string PrivateProofText = "Sin enlace";
 
+    /// <summary>Cuántos comprobantes tienen columna propia (E1). Eran tres en el spec 2026-09-15;
+    /// el owner lo subió a cinco el 2026-09-17, que es lo que paga un pedido en la práctica. Los que
+    /// pasen de ahí siguen contándose en «Comprobantes», que por eso existe.</summary>
+    public const int ProofColumns = 5;
+
     /// <summary>
     /// Las de la tabla de pedidos en su orden (order-table.tsx: Pedido, Cliente, Asesora, Fecha, Pago,
     /// Estado, Total), con la moneda aparte del total y "Asesor" como en el Excel de cotizaciones.
     /// "Pago" replica el respaldo de la tabla: la forma de pago o, mientras llegue vacía, la etiqueta del
     /// estado del pago. Los estados van con la etiqueta de la pantalla (spec 2026-09-13, A7).
     ///
-    /// Después de Total, las cuatro de los comprobantes (spec 2026-09-15, E1): la cantidad y los tres
-    /// primeros. Van al final para que las ocho de la tabla no se muevan, y salen siempre, aunque la
-    /// opción de publicar esté apagada (E7): la forma del archivo no depende del ambiente.
+    /// Después de Total, las de los comprobantes (spec 2026-09-15, E1): la cantidad y los
+    /// <see cref="ProofColumns"/> primeros. Van al final para que las ocho de la tabla no se muevan, y
+    /// salen siempre, aunque la opción de publicar esté apagada (E7): la forma del archivo no depende
+    /// del ambiente.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
@@ -56,9 +62,7 @@ public sealed class OrdersExportProcessor(
         new("Moneda", 10),
         new("Total", 16),
         new("Comprobantes", 14),
-        new("Comprobante 1", 16),
-        new("Comprobante 2", 16),
-        new("Comprobante 3", 16),
+        .. Enumerable.Range(1, ProofColumns).Select(number => new ExportColumn($"Comprobante {number}", 16)),
     ];
 
     public ExportJobKind Kind => ExportJobKind.Orders;
@@ -153,9 +157,7 @@ public sealed class OrdersExportProcessor(
         ExportCell.OfNumber(row.Total),
         // La cantidad cuenta todos, también los que no tienen columna (E1).
         ExportCell.OfNumber(proofs.Count),
-        ProofCell(proofs, 0),
-        ProofCell(proofs, 1),
-        ProofCell(proofs, 2),
+        .. Enumerable.Range(0, ProofColumns).Select(index => ProofCell(proofs, index)),
     ];
 
     // E2: el enlace «Ver» si tiene copia pública y la opción está encendida, «Sin enlace» si no, y

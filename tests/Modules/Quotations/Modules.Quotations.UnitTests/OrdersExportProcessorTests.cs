@@ -6,7 +6,8 @@ namespace Modules.Quotations.UnitTests;
 /// <summary>
 /// El procesador de pedidos: las columnas de la tabla de pedidos en su orden (hallazgo 2 del plan),
 /// lectura por lotes con el filtro del listado, y los mismos fallos definitivos que cotizaciones.
-/// Desde el spec 2026-09-15, también las cuatro columnas de los comprobantes de pago.
+/// Desde el spec 2026-09-15, también las columnas de los comprobantes de pago: la cantidad y los
+/// seis primeros (enmienda del 2026-09-17: eran tres).
 /// </summary>
 public sealed class OrdersExportProcessorTests
 {
@@ -30,11 +31,12 @@ public sealed class OrdersExportProcessorTests
         await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Pedidos", writer.SheetName);
-        // Las ocho de la tabla en su orden y, después de Total, las cuatro de los comprobantes
-        // (spec 2026-09-15, E1).
+        // Las ocho de la tabla en su orden y, después de Total, las seis de los comprobantes
+        // (spec 2026-09-15, E1, enmendado el 2026-09-17).
         Assert.Equal(
             ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total",
-                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
+                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3", "Comprobante 4",
+                "Comprobante 5"],
             writer.Columns.Select(column => column.Header));
         var row = Assert.Single(writer.Rows);
         Assert.Equal("PED-2026-0001", row[0].Text);
@@ -76,7 +78,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Transferencia", Assert.Single(writer.Rows)[4].Text);
     }
 
-    // E2: sin comprobantes, la cantidad es cero y las tres celdas quedan vacías.
+    // E2: sin comprobantes, la cantidad es cero y las cinco celdas quedan vacías.
     [Fact]
     public async Task AnOrderWithoutProofsCountsZeroAndLeavesTheProofCellsEmpty()
     {
@@ -87,7 +89,9 @@ public sealed class OrdersExportProcessorTests
 
         var row = Assert.Single(writer.Rows);
         Assert.Equal(0m, row[8].Number);
-        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(9).Select(cell => cell.Text));
+        Assert.Equal(
+            [string.Empty, string.Empty, string.Empty, string.Empty, string.Empty],
+            row.Skip(9).Select(cell => cell.Text));
         Assert.All(row.Skip(9), cell => Assert.Null(cell.Url));
     }
 
@@ -105,50 +109,47 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(1m, row[8].Number);
         Assert.Equal(UrlOf("payment-proofs/a.pdf"), row[9].Url);
         Assert.Equal("Ver", row[9].Text);
-        Assert.Equal(string.Empty, row[10].Text);
-        Assert.Equal(string.Empty, row[11].Text);
+        Assert.All(row.Skip(10), cell => Assert.Equal(string.Empty, cell.Text));
     }
 
-    // E1: tres comprobantes llenan las tres columnas, en el orden en que llegan del repositorio.
+    // E1: cinco comprobantes llenan las cinco columnas, en el orden en que llegan del repositorio.
     [Fact]
-    public async Task ThreeProofsFillTheThreeColumnsInOrder()
+    public async Task FiveProofsFillTheFiveColumnsInOrder()
     {
         var writer = new RecordingExportWorkbookWriter();
+        string[] keys =
+        [
+            "payment-proofs/a.pdf", "payment-proofs/b.pdf", "payment-proofs/c.pdf", "payment-proofs/d.pdf",
+            "payment-proofs/e.pdf",
+        ];
 
-        await NewProcessor(
-                new StubOrderListRepository(NewRow(
-                    "PED-2026-0001", null, ["payment-proofs/a.pdf", "payment-proofs/b.pdf", "payment-proofs/c.pdf"])),
-                writer)
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", null, keys)), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         var row = Assert.Single(writer.Rows);
-        Assert.Equal(3m, row[8].Number);
-        Assert.Equal(
-            [UrlOf("payment-proofs/a.pdf"), UrlOf("payment-proofs/b.pdf"), UrlOf("payment-proofs/c.pdf")],
-            row.Skip(9).Select(cell => cell.Url));
+        Assert.Equal(5m, row[8].Number);
+        Assert.Equal(keys.Select(UrlOf), row.Skip(9).Select(cell => cell.Url));
         Assert.All(row.Skip(9), cell => Assert.Equal("Ver", cell.Text));
     }
 
-    // E1: el cuarto comprobante no tiene columna, pero la cantidad lo cuenta.
+    // E1: el sexto comprobante no tiene columna, pero la cantidad lo cuenta.
     [Fact]
-    public async Task AFourthProofOnlyShowsInTheCount()
+    public async Task ASixthProofOnlyShowsInTheCount()
     {
         var writer = new RecordingExportWorkbookWriter();
+        string[] keys =
+        [
+            "payment-proofs/a.pdf", "payment-proofs/b.pdf", "payment-proofs/c.pdf", "payment-proofs/d.pdf",
+            "payment-proofs/e.pdf", "payment-proofs/f.pdf",
+        ];
 
-        await NewProcessor(
-                new StubOrderListRepository(NewRow(
-                    "PED-2026-0001",
-                    null,
-                    ["payment-proofs/a.pdf", "payment-proofs/b.pdf", "payment-proofs/c.pdf", "payment-proofs/d.pdf"])),
-                writer)
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", null, keys)), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         var row = Assert.Single(writer.Rows);
-        Assert.Equal(12, row.Count);
-        Assert.Equal(4m, row[8].Number);
-        Assert.Equal(
-            [UrlOf("payment-proofs/a.pdf"), UrlOf("payment-proofs/b.pdf"), UrlOf("payment-proofs/c.pdf")],
-            row.Skip(9).Select(cell => cell.Url));
+        Assert.Equal(14, row.Count);
+        Assert.Equal(6m, row[8].Number);
+        Assert.Equal(keys.Take(5).Select(UrlOf), row.Skip(9).Select(cell => cell.Url));
     }
 
     // E2: un comprobante privado —de antes de la opción, o adjuntado con ella apagada (P8)— dice
@@ -167,10 +168,10 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Sin enlace", row[9].Text);
         Assert.Null(row[9].Url);
         Assert.Equal(UrlOf("payment-proofs/b.pdf"), row[10].Url);
-        Assert.Equal(string.Empty, row[11].Text);
+        Assert.All(row.Skip(11), cell => Assert.Equal(string.Empty, cell.Text));
     }
 
-    // P1 y E7: con la opción apagada no hay URL aunque el comprobante tenga copia, y las cuatro
+    // P1 y E7: con la opción apagada no hay URL aunque el comprobante tenga copia, y las seis
     // columnas salen igual.
     [Fact]
     public async Task WithTheOptionOffEveryProofSaysSinEnlace()
@@ -183,7 +184,7 @@ public sealed class OrdersExportProcessorTests
                 publisher: new RecordingPaymentProofPublisher(enabled: false))
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(12, writer.Columns.Count);
+        Assert.Equal(14, writer.Columns.Count);
         var row = Assert.Single(writer.Rows);
         Assert.Equal("Sin enlace", row[9].Text);
         Assert.Null(row[9].Url);
