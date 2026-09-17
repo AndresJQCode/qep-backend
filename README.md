@@ -951,7 +951,7 @@ deshabilitado existe únicamente para desarrollo local y pruebas.
 Con `Quotations:PaymentProofs:PublicLinks=true`, cada comprobante de pago **nuevo** —al convertir
 una cotización en pedido o al sumarle comprobantes— se copia del bucket privado al **bucket
 público** con la clave aleatoria `payment-proofs/{guid}.{pdf|jpg|png|webp}`, y el Excel de pedidos lo
-enlaza en las columnas «Comprobante 1» a «Comprobante 3», con la cantidad total en «Comprobantes».
+enlaza en las columnas «Comprobante 1» a «Comprobante 5», con la cantidad total en «Comprobantes».
 La base guarda la clave, no la URL: la URL se arma al exportar con `Storage:R2:PublicBaseUrl`, así
 que cambiar el dominio no rompe los enlaces. Los comprobantes de antes, y los que se adjunten con la
 opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Producción la enciende en

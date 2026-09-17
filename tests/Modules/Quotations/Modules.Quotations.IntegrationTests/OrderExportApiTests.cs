@@ -163,7 +163,8 @@ public sealed class OrderExportApiTests
         Assert.Equal("Pedidos", sheet.Name);
         Assert.Equal(
             ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total",
-                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
+                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3", "Comprobante 4",
+                "Comprobante 5"],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[0]));
         var first = sheet.Rows[1];
@@ -177,11 +178,13 @@ public sealed class OrderExportApiTests
         Assert.Equal(items[0].Currency, first[6]);
         Assert.True(sheet.NumericCells[1][7]);
         Assert.Equal(items[0].Total, decimal.Parse(first[7], CultureInfo.InvariantCulture));
-        // Sin comprobantes (spec 2026-09-15, E2): la cantidad en cero y las tres celdas vacías, que
+        // Sin comprobantes (spec 2026-09-15, E2): la cantidad en cero y las cinco celdas vacías, que
         // igual salen (E7).
         Assert.True(sheet.NumericCells[1][8]);
         Assert.Equal("0", first[8]);
-        Assert.Equal([string.Empty, string.Empty, string.Empty], first.Skip(9));
+        Assert.Equal(
+            [string.Empty, string.Empty, string.Empty, string.Empty, string.Empty],
+            first.Skip(9));
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -337,7 +340,7 @@ public sealed class OrderExportApiTests
     }
 
     // Spec 2026-09-15, de punta a punta con la opción encendida: el comprobante que se subió primero
-    // es el enlace «Ver» a su copia pública, uno privado dice «Sin enlace» y el tercero queda vacío.
+    // es el enlace «Ver» a su copia pública, uno privado dice «Sin enlace» y el resto queda vacío.
     // El privado se simula borrando su clave en la base: es lo que tienen los comprobantes de antes
     // de la opción (P8).
     [Fact]
@@ -363,7 +366,8 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
+            ["Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3", "Comprobante 4",
+                "Comprobante 5"],
             sheet.Rows[0].Skip(8));
         var row = sheet.Rows[1];
         Assert.Equal(order.OrderNumber, row[0]);
@@ -375,7 +379,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("Ver", row[9]);
         Assert.Null(sheet.Formulas[1][10]);
         Assert.Equal("Sin enlace", row[10]);
-        Assert.Equal(string.Empty, row[11]);
+        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(11));
     }
 
     // E6 contra Postgres: una sola lectura por lote, por pedido y en el orden de las columnas —fecha de
