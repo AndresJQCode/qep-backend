@@ -65,6 +65,16 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Anular (spec 2026-09-16): desde Pending o Approved, con motivo obligatorio. Política
+        // propia y no OrderManage — ver CancelOrderHandler.
+        group.MapPost("/cancel", CancelOrderAsync)
+            .RequireAuthorization(OrdersPermissions.OrderCancel)
+            .Accepts<CancelOrderRequest>("application/json")
+            .Produces<OrderResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/", ConvertQuotationToOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<ConvertQuotationToOrderRequest>("application/json")
@@ -291,6 +301,20 @@ public static class OrderEndpoints
         return Results.Ok(ToResponse(order));
     }
 
+    private static async Task<IResult> CancelOrderAsync(
+        Guid tenantId,
+        Guid quotationId,
+        CancelOrderRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var order = await dispatcher.SendAsync(
+            new CancelOrderCommand(tenantId, quotationId, request.Reason),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(order));
+    }
+
     private static OrderResponse ToResponse(OrderDto order) => new(
         order.Id,
         order.OrderNumber,
@@ -302,6 +326,9 @@ public static class OrderEndpoints
         order.ConvertedBy,
         order.ApprovedAt,
         order.ApprovedBy,
+        order.CancelledAt,
+        order.CancelledBy,
+        order.CancellationReason,
         order.RitualCollectionSyncId,
         order.CreatedAt,
         order.UpdatedAt,

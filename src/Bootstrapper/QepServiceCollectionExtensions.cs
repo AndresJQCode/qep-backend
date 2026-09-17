@@ -354,6 +354,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ApproveOrderCommand, OrderDto>,
             ApproveOrderHandler>();
         services.AddScoped<
+            ICommandHandler<CancelOrderCommand, OrderDto>,
+            CancelOrderHandler>();
+        services.AddScoped<
             ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>,
             ConvertQuotationToOrderHandler>();
         services.AddScoped<

@@ -17,6 +17,11 @@ public sealed record OrderDto(
     /// </summary>
     DateTimeOffset? ApprovedAt,
     Guid? ApprovedBy,
+    /// <summary>Cuándo se anuló, quién (id de membership) y por qué (spec 2026-09-16). Null
+    /// mientras el pedido no se anula.</summary>
+    DateTimeOffset? CancelledAt,
+    Guid? CancelledBy,
+    string? CancellationReason,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
@@ -71,6 +76,11 @@ public sealed record OrderItemAdditionRequest(Guid ProductId, decimal Quantity);
 /// </summary>
 public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
 
+/// <summary>Anular un pedido (spec 2026-09-16). El motivo viaja nullable a propósito: ausente,
+/// vacío o largo lo rechaza el dominio con su propio código (order.order.cancellation_reason_*),
+/// que es lo que el frontend mapea — no hay validador que lo convierta en validation.failed.</summary>
+public sealed record CancelOrderRequest(string? Reason);
+
 public sealed record OrderPaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 
 public sealed record OrderResponse(
@@ -84,6 +94,9 @@ public sealed record OrderResponse(
     Guid ConvertedBy,
     DateTimeOffset? ApprovedAt,
     Guid? ApprovedBy,
+    DateTimeOffset? CancelledAt,
+    Guid? CancelledBy,
+    string? CancellationReason,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
