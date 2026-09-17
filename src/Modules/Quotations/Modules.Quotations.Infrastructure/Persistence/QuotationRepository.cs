@@ -42,15 +42,15 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var query = FilteredQuery(
-            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
 
         var total = await query.CountAsync(cancellationToken);
         var items = await query
@@ -75,15 +75,15 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         QuotationExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
         var query = FilteredQuery(
-            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
 
         if (after is not null)
         {
@@ -109,12 +109,12 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         CancellationToken cancellationToken) =>
         FilteredQuery(
-                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber)
+                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber)
             .AnyAsync(cancellationToken);
 
     // Los filtros del listado y de su Excel salen de aca y de ningun otro lado: si cada camino
@@ -130,8 +130,8 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber)
     {
         var query = dbContext.Quotations
@@ -169,17 +169,14 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
 
         if (createdFrom is { } from)
         {
-            var fromUtc = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-            query = query.Where(quotation => quotation.CreatedAt >= fromUtc);
+            query = query.Where(quotation => quotation.CreatedAt >= from);
         }
 
-        if (createdTo is { } to)
+        if (createdBefore is { } before)
         {
-            // Limite superior exclusivo al dia siguiente: "hasta el 30" incluye todo el 30,
-            // no solo el instante 00:00:00 de esa fecha.
-            var toUtcExclusive = new DateTimeOffset(
-                to.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-            query = query.Where(quotation => quotation.CreatedAt < toUtcExclusive);
+            // Exclusivo: quien llama ya lo corrió al 00:00 local del día siguiente al "hasta" (spec
+            // 2026-09-17, punto 3), así "hasta el 30" incluye todo el 30 del tenant.
+            query = query.Where(quotation => quotation.CreatedAt < before);
         }
 
         return query;

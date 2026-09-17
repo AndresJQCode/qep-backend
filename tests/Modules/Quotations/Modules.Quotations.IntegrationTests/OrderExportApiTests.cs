@@ -223,7 +223,9 @@ public sealed class OrderExportApiTests
     private static async Task<IReadOnlyList<OrderWithQuotation>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
+        // propósito, lo que se prueba es el keyset.
+        var now = DateTimeOffset.UtcNow;
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IOrderRepository>().ListForExportAsync(
             tenantId,
@@ -232,8 +234,8 @@ public sealed class OrderExportApiTests
             advisorId: null,
             OrderStatus.Pending,
             paymentStatus: null,
-            today.AddDays(-7),
-            today.AddDays(1),
+            now.AddDays(-7),
+            now.AddDays(2),
             orderNumber: null,
             after,
             limit,

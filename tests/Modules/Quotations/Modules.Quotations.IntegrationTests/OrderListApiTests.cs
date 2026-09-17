@@ -233,6 +233,35 @@ public sealed class OrderListApiTests
 
     /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el
     /// que la conversion no los exige. Estas pruebas miran el listado, no el asistente.</summary>
+    // Spec 2026-09-17, punto 3: el pedido convertido el 31 a las 23:00 de Bogotá —ya 2027 en UTC—
+    // entra en el día 31 del tenant y no en el 1 de enero.
+    [Fact]
+    public async Task ListFiltersTheConversionRangeByTheTenantsLocalDay()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ConvertToOrderAsync(client, tenantId, quotation.Id);
+
+        var lastDay = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-12-31&convertedTo=2026-12-31",
+            TestContext.Current.CancellationToken);
+        var nextDay = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2027-01-01&convertedTo=2027-01-01",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastDay);
+        Assert.Equal(quotation.Id, Assert.Single(lastDay.Items).QuotationId);
+        Assert.Equal(1, lastDay.Total);
+        Assert.NotNull(nextDay);
+        Assert.Empty(nextDay.Items);
+        Assert.Equal(0, nextDay.Total);
+    }
+
     private static async Task<OrderResponse> ConvertToOrderAsync(
         HttpClient client, Guid tenantId, Guid quotationId)
     {

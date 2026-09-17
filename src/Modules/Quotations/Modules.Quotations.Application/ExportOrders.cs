@@ -62,7 +62,7 @@ public sealed class ExportOrdersHandler(
     IQuotationsUnitOfWork unitOfWork,
     IValidator<ExportOrdersCommand> validator,
     IExecutionContext executionContext,
-    IClock clock)
+    ITenantClock tenantClock)
     : ICommandHandler<ExportOrdersCommand, ExportJobAccepted>
 {
     public async Task<ExportJobAccepted> HandleAsync(
@@ -82,6 +82,9 @@ public sealed class ExportOrdersHandler(
             customerLookup, command.TenantId, command.ClientCuc, cancellationToken);
 
         // 3: al menos un pedido.
+        // El rango se corta en el día del tenant (spec 2026-09-17, punto 3).
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var converted = TenantDayRange.Of(calendar, command.ConvertedFrom, command.ConvertedTo);
         var anyRow = await repository.AnyForExportAsync(
             command.TenantId,
             command.ClientId,
@@ -89,8 +92,8 @@ public sealed class ExportOrdersHandler(
             advisorId,
             status,
             paymentStatus,
-            command.ConvertedFrom,
-            command.ConvertedTo,
+            converted.From,
+            converted.Before,
             command.OrderNumber,
             cancellationToken);
         if (!anyRow)
@@ -125,7 +128,7 @@ public sealed class ExportOrdersHandler(
                 command.ConvertedTo!.Value,
                 command.ClientCuc,
                 command.OrderNumber)),
-            clock.UtcNow);
+            calendar.UtcNow);
         queue.Add(job);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 

@@ -18,6 +18,10 @@ public sealed class OrdersExportProcessorTests
     private static readonly DateOnly From = new(2026, 9, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
+    // El rango guardado en el job, cortado en el día de Bogotá al procesar (spec 2026-09-17, punto 3).
+    private static readonly DateTimeOffset FromUtc = new(2026, 9, 1, 5, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task WritesTheOrdersListColumnsInTheirOrder()
     {
@@ -259,7 +263,7 @@ public sealed class OrdersExportProcessorTests
 
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, From, To, "PED"),
+                ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, FromUtc, BeforeUtc, "PED"),
             repository.LastExportSearch);
     }
 
@@ -323,5 +327,5 @@ public sealed class OrdersExportProcessorTests
             publisher ?? new RecordingPaymentProofPublisher(),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
-            new FixedClock(Now));
+            new FixedTenantClock(Now));
 }

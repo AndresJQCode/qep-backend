@@ -71,7 +71,8 @@ public sealed class ListOrdersHandler(
     IOrderRepository repository,
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantClock tenantClock)
     : IQueryHandler<ListOrdersQuery, OrderPage>
 {
     public async Task<OrderPage> HandleAsync(
@@ -91,6 +92,10 @@ public sealed class ListOrdersHandler(
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, query.TenantId, query.ClientCuc, cancellationToken);
 
+        // El rango se corta en el día del tenant (spec 2026-09-17, punto 3).
+        var converted = await TenantDayRange.ResolveAsync(
+            tenantClock, query.TenantId, query.ConvertedFrom, query.ConvertedTo, cancellationToken);
+
         var (rows, total) = await repository.SearchAsync(
             query.TenantId,
             query.ClientId,
@@ -98,8 +103,8 @@ public sealed class ListOrdersHandler(
             advisorId,
             status,
             paymentStatus,
-            query.ConvertedFrom,
-            query.ConvertedTo,
+            converted.From,
+            converted.Before,
             query.OrderNumber,
             page,
             pageSize,

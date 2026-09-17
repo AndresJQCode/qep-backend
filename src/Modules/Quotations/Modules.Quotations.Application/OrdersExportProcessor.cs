@@ -1,6 +1,6 @@
 using System.Globalization;
-using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -21,7 +21,7 @@ public sealed class OrdersExportProcessor(
     IPaymentProofPublisher paymentProofPublisher,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
-    IClock clock)
+    ITenantClock tenantClock)
     : IExportJobProcessor
 {
     public const string SheetName = "Pedidos";
@@ -70,7 +70,10 @@ public sealed class OrdersExportProcessor(
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
-        var generatedAt = clock.UtcNow;
+        // Un calendario por job (spec 2026-09-17): corta el rango guardado en el día del tenant.
+        var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
+        var converted = TenantDayRange.Of(calendar, filters.ConvertedFrom, filters.ConvertedTo);
+        var generatedAt = calendar.UtcNow;
 
         using var workbook = writer.Create(SheetName, Columns);
         var rowCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
@@ -82,8 +85,8 @@ public sealed class OrdersExportProcessor(
                 advisorId,
                 status,
                 paymentStatus,
-                filters.ConvertedFrom,
-                filters.ConvertedTo,
+                converted.From,
+                converted.Before,
                 filters.OrderNumber,
                 after,
                 limit,

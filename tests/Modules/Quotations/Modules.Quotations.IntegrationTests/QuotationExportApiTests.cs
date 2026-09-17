@@ -286,7 +286,9 @@ public sealed class QuotationExportApiTests
     private static async Task<IReadOnlyList<Quotation>> ReadDraftBatchAsync(
         QepApiFactory factory, Guid tenantId, QuotationExportCursor? after, int limit)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
+        // propósito, lo que se prueba es el keyset.
+        var now = DateTimeOffset.UtcNow;
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IQuotationRepository>().ListForExportAsync(
             tenantId,
@@ -294,8 +296,8 @@ public sealed class QuotationExportApiTests
             clientIds: null,
             advisorId: null,
             QuotationStatus.Draft,
-            today.AddDays(-7),
-            today.AddDays(1),
+            now.AddDays(-7),
+            now.AddDays(2),
             quotationNumber: null,
             after,
             limit,

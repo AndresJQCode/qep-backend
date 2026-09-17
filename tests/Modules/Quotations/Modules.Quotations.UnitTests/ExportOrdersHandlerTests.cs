@@ -19,6 +19,10 @@ public sealed class ExportOrdersHandlerTests
     private static readonly DateOnly From = new(2026, 9, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
+    // El mismo rango cortado en el día de Bogotá (spec 2026-09-17, punto 3).
+    private static readonly DateTimeOffset FromUtc = new(2026, 9, 1, 5, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task ExportForAnotherTenantIsForbiddenAndReadsNothing()
     {
@@ -161,7 +165,7 @@ public sealed class ExportOrdersHandlerTests
             JsonSerializer.Deserialize<OrdersExportFilters>(job.Filters));
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Pending, OrderPaymentStatus.PaymentPending, From, To, "PED-2026"),
+                ClientId, null, AdvisorId, OrderStatus.Pending, OrderPaymentStatus.PaymentPending, FromUtc, BeforeUtc, "PED-2026"),
             repository.LastExportSearch);
         Assert.Equal(1, unitOfWork.Saves);
     }
@@ -205,5 +209,5 @@ public sealed class ExportOrdersHandlerTests
             unitOfWork ?? new CountingQuotationsUnitOfWork(),
             new ExportOrdersValidator(),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
-            new FixedClock(Now));
+            new FixedTenantClock(Now));
 }

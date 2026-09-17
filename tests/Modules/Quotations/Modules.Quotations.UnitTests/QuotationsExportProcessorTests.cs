@@ -18,6 +18,10 @@ public sealed class QuotationsExportProcessorTests
     private static readonly DateOnly From = new(2026, 1, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
+    // El rango guardado en el job, cortado en el día de Bogotá al procesar (spec 2026-09-17, punto 3).
+    private static readonly DateTimeOffset FromUtc = new(2026, 1, 1, 5, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task WritesTheListColumnsInTheirOrder()
     {
@@ -124,7 +128,7 @@ public sealed class QuotationsExportProcessorTests
         await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new RecordedExportSearch(ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, From, To, "0001"),
+            new RecordedExportSearch(ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, FromUtc, BeforeUtc, "0001"),
             repository.LastExportSearch);
     }
 
@@ -220,5 +224,5 @@ public sealed class QuotationsExportProcessorTests
             advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
-            new FixedClock(Now));
+            new FixedTenantClock(Now));
 }

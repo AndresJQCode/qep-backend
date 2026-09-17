@@ -4,6 +4,10 @@ namespace Modules.Quotations.Application;
 
 // Todo metodo recibe tenantId primero: el filtro de tenant es parte de la consulta, nunca un
 // argumento opcional que el llamador se pueda olvidar. Mismo criterio que ICustomerRepository.
+//
+// Las fechas de los filtros llegan como instantes: `createdFrom` inclusivo y `createdBefore`
+// exclusivo, ya cortados en el día del tenant por quien llama (spec 2026-09-17, punto 3). El
+// repositorio no decide husos.
 public interface IQuotationRepository
 {
     Task<Quotation?> FindAsync(
@@ -25,8 +29,8 @@ public interface IQuotationRepository
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         int page,
         int pageSize,
@@ -48,8 +52,8 @@ public interface IQuotationRepository
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         QuotationExportCursor? after,
         int limit,
@@ -64,8 +68,8 @@ public interface IQuotationRepository
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         CancellationToken cancellationToken);
 
