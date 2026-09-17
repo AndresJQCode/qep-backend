@@ -641,7 +641,11 @@ public static class QepServiceCollectionExtensions
                 // ver el estado del pago y los comprobantes, no aprobar conversiones ni editar
                 // cotizaciones -- eso sigue siendo trabajo de la asesora.
                 QuotationsPermissions.QuotationRead,
-                OrdersPermissions.OrderRead
+                OrdersPermissions.OrderRead,
+                // Ver los comprobantes desde el detalle del pedido: el pedido sólo guarda el fileId,
+                // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
+                // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
+                StoragePermissions.FileRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
