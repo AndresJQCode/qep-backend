@@ -1,6 +1,6 @@
 using System.Globalization;
-using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -21,7 +21,7 @@ public sealed class OrdersExportProcessor(
     IPaymentProofPublisher paymentProofPublisher,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
-    IClock clock)
+    ITenantClock tenantClock)
     : IExportJobProcessor
 {
     public const string SheetName = "Pedidos";
@@ -74,7 +74,10 @@ public sealed class OrdersExportProcessor(
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
-        var generatedAt = clock.UtcNow;
+        // Un calendario por job (spec 2026-09-17): corta el rango guardado en el día del tenant.
+        var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
+        var converted = TenantDayRange.Of(calendar, filters.ConvertedFrom, filters.ConvertedTo);
+        var generatedAt = calendar.UtcNow;
 
         using var workbook = writer.Create(SheetName, Columns);
         var rowCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
@@ -86,8 +89,8 @@ public sealed class OrdersExportProcessor(
                 advisorId,
                 status,
                 paymentStatus,
-                filters.ConvertedFrom,
-                filters.ConvertedTo,
+                converted.From,
+                converted.Before,
                 filters.OrderNumber,
                 after,
                 limit,
@@ -99,7 +102,7 @@ public sealed class OrdersExportProcessor(
                 // E6: los comprobantes del lote en una sola ida, igual que los nombres y los correos.
                 var proofs = await repository.ListPaymentProofsForExportAsync(
                     job.TenantId, batch.Select(row => row.Order.Id).ToArray(), ct);
-                return rows.Select(row => ToCells(row, ProofsOf(proofs, row.Id)));
+                return rows.Select(row => ToCells(row, ProofsOf(proofs, row.Id), calendar));
             },
             row => new OrderExportCursor(row.Order.ConvertedAt, row.Order.OrderNumber),
             cancellationToken);
@@ -110,7 +113,7 @@ public sealed class OrdersExportProcessor(
                 "Empty: no orders matched the export filters when the export ran.");
         }
 
-        var fileName = ExportFileNames.For(FilePrefix, generatedAt);
+        var fileName = ExportFileNames.For(FilePrefix, calendar.ToLocal(generatedAt));
         var upload = await storage.UploadAsync(
             job.TenantId, job.Id, fileName, workbook.Complete(), cancellationToken);
         return new ExportJobResult(fileName, rowCount, upload.DownloadUrl, upload.ExpiresAt);
@@ -134,16 +137,17 @@ public sealed class OrdersExportProcessor(
         IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>> proofs, Guid orderId) =>
         proofs.TryGetValue(new OrderId(orderId), out var found) ? found : [];
 
-    private ExportCell[] ToCells(OrderListItemDto row, IReadOnlyList<OrderExportPaymentProof> proofs) =>
+    private ExportCell[] ToCells(
+        OrderListItemDto row, IReadOnlyList<OrderExportPaymentProof> proofs, TenantCalendar calendar) =>
     [
         ExportCell.OfText(row.OrderNumber),
         ExportCell.OfText(row.ClientName),
         // El nombre con respaldo al correo, igual que la tabla (spec 2026-09-11, D1, nota del
         // 2026-09-15). El encabezado sigue siendo "Asesor", como en el Excel de cotizaciones.
         ExportCell.OfText(row.AdvisorName),
-        // Texto ISO y no celda de fecha: una fecha se muestra según la configuración regional de
-        // quien abre el archivo, mismo criterio que cotizaciones.
-        ExportCell.OfText(row.ConvertedAt.ToString("O", CultureInfo.InvariantCulture)),
+        // Texto y no celda de fecha, mismo criterio que cotizaciones, en la hora del tenant, al minuto
+        // y sin offset (spec 2026-09-17, punto 8a).
+        ExportCell.OfText(calendar.ToLocal(row.ConvertedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)),
         // El DTO trae los nombres de los enums, que son contrato de la API (OrderMapping.cs);
         // acá se vuelven al enum sólo para etiquetarlos.
         ExportCell.OfText(row.PaymentMethod

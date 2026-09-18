@@ -65,11 +65,13 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    // Reloj en la frontera de fin de año de Bogotá: el pedido numera con el año del tenant (spec
+    // 2026-09-17, punto 2b).
     [Fact]
     public async Task ConvertCreatesTheOrderAndLeavesTheQuotationConverted()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -92,8 +94,7 @@ public sealed class OrderApiTests
         Assert.Equal("Pending", order.Status);
         Assert.Equal("FullPaymentReceived", order.PaymentStatus);
         Assert.Equal(quotation.Id, order.QuotationId);
-        Assert.StartsWith(
-            $"PED-{DateTime.UtcNow.Year}-", order.OrderNumber, StringComparison.Ordinal);
+        Assert.StartsWith("PED-2026-", order.OrderNumber, StringComparison.Ordinal);
         Assert.Null(order.RitualCollectionSyncId);
         var proof = Assert.Single(order.PaymentProofs);
         Assert.Equal(proofFileId, proof.FileId);

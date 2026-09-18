@@ -190,7 +190,8 @@ public sealed class ListOrdersHandlerTests
             repository,
             customers,
             advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
-            new StubExecutionContext(SubjectId, TenantId));
+            new StubExecutionContext(SubjectId, TenantId),
+            new FixedTenantClock(Now));
 
     private static OrderWithQuotation NewRow(string orderNumber, Guid clientId)
     {

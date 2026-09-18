@@ -227,4 +227,32 @@ public sealed class QuotationListApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    // Spec 2026-09-17, punto 3: "hasta el 31" es el 31 del tenant. Creada el 31 a las 23:00 en
+    // Bogotá —ya 2027 en UTC—, entra en el día 31 y no en el 1 de enero, y el total del listado (el
+    // conteo) dice lo mismo que las filas.
+    [Fact]
+    public async Task ListFiltersTheDateRangeByTheTenantsLocalDay()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var lastDay = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(tenantId)}?createdFrom=2026-12-31&createdTo=2026-12-31",
+            TestContext.Current.CancellationToken);
+        var nextDay = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(tenantId)}?createdFrom=2027-01-01&createdTo=2027-01-01",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastDay);
+        Assert.Equal(quotation.Id, Assert.Single(lastDay.Items).Id);
+        Assert.Equal(1, lastDay.Total);
+        Assert.NotNull(nextDay);
+        Assert.Empty(nextDay.Items);
+        Assert.Equal(0, nextDay.Total);
+    }
 }

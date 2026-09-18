@@ -80,7 +80,7 @@ public sealed class OrderExportApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await CreateOrderAsync(client, factory, tenantId);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var quotationsExport =
             $"{QuotationsUrl(tenantId)}/export?createdFrom={Iso(today.AddDays(-7))}&createdTo={Iso(today.AddDays(1))}";
         for (var accepted = 0; accepted < 3; accepted++)
@@ -170,7 +170,8 @@ public sealed class OrderExportApiTests
         var first = sheet.Rows[1];
         Assert.Equal(items[0].ClientName, first[1]);
         Assert.Equal(items[0].AdvisorName ?? string.Empty, first[2]);
-        Assert.Equal(items[0].ConvertedAt, DateTimeOffset.Parse(first[3], CultureInfo.InvariantCulture));
+        // La fecha sale en la hora del tenant, al minuto y sin offset (spec 2026-09-17, punto 8a).
+        Assert.Equal(LocalMinuteInBogota(items[0].ConvertedAt), first[3]);
         // La API sigue mandando el enum (A8); el archivo, la etiqueta de la tabla (A7).
         Assert.Equal("Pending", items[0].Status);
         Assert.Equal(items[0].PaymentMethod ?? "Pago pendiente", first[4]);
@@ -226,7 +227,9 @@ public sealed class OrderExportApiTests
     private static async Task<IReadOnlyList<OrderWithQuotation>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
+        // propósito, lo que se prueba es el keyset.
+        var now = DateTimeOffset.UtcNow;
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IOrderRepository>().ListForExportAsync(
             tenantId,
@@ -235,8 +238,8 @@ public sealed class OrderExportApiTests
             advisorId: null,
             OrderStatus.Pending,
             paymentStatus: null,
-            today.AddDays(-7),
-            today.AddDays(1),
+            now.AddDays(-7),
+            now.AddDays(2),
             orderNumber: null,
             after,
             limit,
@@ -315,7 +318,7 @@ public sealed class OrderExportApiTests
 
     private static string CurrentRange()
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         return $"convertedFrom={Iso(today.AddDays(-7))}&convertedTo={Iso(today.AddDays(1))}";
     }
 

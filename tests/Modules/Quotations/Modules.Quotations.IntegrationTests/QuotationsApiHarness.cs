@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -44,7 +46,31 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 internal static class QuotationsApiHarness
 {
+    /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
+    /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
+    public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
+
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
+
+    /// <summary>El huso con el que nacen los tenants de este harness (ver
+    /// <see cref="RegisterTenantAsync"/>).</summary>
+    public static readonly TimeZoneInfo BogotaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
+    /// <summary>Cómo escribe un Excel un instante para un tenant de Bogotá (spec 2026-09-17, punto
+    /// 8a): la hora local al minuto y sin offset. Los tenants de este harness nacen en
+    /// America/Bogota.</summary>
+    public static string LocalMinuteInBogota(DateTimeOffset instant) =>
+        TimeZoneInfo.ConvertTime(instant, BogotaTimeZone)
+            .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// El "hoy" del tenant, que desde la spec 2026-09-17 es quien decide qué venció y qué entra en
+    /// un rango. Derivarlo de <c>DateTime.UtcNow</c> no es lo mismo: Bogotá es UTC-5, así que entre
+    /// las 19:00 locales y la medianoche la fecha UTC ya es la de mañana, y ahí el "ayer" de UTC es
+    /// el hoy del tenant. Una prueba que arma su vigencia así pasa de día y falla de noche.
+    /// </summary>
+    public static DateOnly TodayInBogota() =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BogotaTimeZone).DateTime);
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
@@ -101,8 +127,14 @@ internal static class QuotationsApiHarness
     /// <summary>Registra un tenant nuevo (signup publico) para conseguir una Membership de dueño
     /// ya en estado Active, y devuelve un cliente autenticado como ese dueño con los permisos
     /// pedidos.</summary>
-    public static async Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantAsync(
-        QepApiFactory factory, params string[] permissions)
+    public static Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantAsync(
+        QepApiFactory factory, params string[] permissions) =>
+        RegisterTenantInTimeZoneAsync(factory, "America/Bogota", permissions);
+
+    /// <summary>Lo mismo que <see cref="RegisterTenantAsync"/> con otro huso: el barrido de
+    /// vencimiento corta el día por tenant (spec 2026-09-17, punto 1).</summary>
+    public static async Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantInTimeZoneAsync(
+        QepApiFactory factory, string timeZone, params string[] permissions)
     {
         var email = $"owner-{Guid.CreateVersion7():N}@example.com";
         using var bootstrap = CreateClient(
@@ -117,7 +149,7 @@ internal static class QuotationsApiHarness
                 displayName = "Quotations Test Org",
                 slug = $"org-{Guid.NewGuid():N}"[..12],
                 defaultCulture = "es-CO",
-                timeZone = "America/Bogota",
+                timeZone,
                 dateFormat = "yyyy-MM-dd",
             },
             TestContext.Current.CancellationToken);
@@ -500,7 +532,7 @@ internal static class QuotationsApiHarness
             QuotationsUrl(tenantId),
             new CreateQuotationRequest(
                 clientId,
-                validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30),
+                validUntil ?? TodayInBogota().AddDays(30),
                 paymentMethod,
                 null,
                 null,
@@ -672,7 +704,10 @@ internal static class QuotationsApiHarness
     private sealed record UploadSessionResponseDto(Guid FileResourceId, string UploadUrl, string StorageKey);
 
     public sealed class QepApiFactory(
-        string connectionString, bool runExportWorker = false, bool publicPaymentProofLinks = false)
+        string connectionString,
+        bool runExportWorker = false,
+        bool publicPaymentProofLinks = false,
+        DateTimeOffset? utcNow = null)
         : WebApplicationFactory<Program>
     {
         // Copia del flag para ConfigureWebHost. Si ese método leyera el parámetro, que además
@@ -742,6 +777,15 @@ internal static class QuotationsApiHarness
             {
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
+
+                // Reloj fijo sólo para las pruebas que lo piden (spec 2026-09-17): cortar un instante
+                // en días se prueba en la frontera, y el reloj real la cruza cuando quiere. Scoped,
+                // igual que SystemClock en QepServiceCollectionExtensions.
+                if (utcNow is { } fixedNow)
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddScoped<IClock>(_ => new FixedClock(fixedNow));
+                }
 
                 // El publicador real de comprobantes copia al bucket público de R2 por este puerto
                 // (spec 2026-09-15); acá las copias quedan en memoria, donde la prueba las ve. El
@@ -911,5 +955,11 @@ internal static class QuotationsApiHarness
                     .Select(key => new PublicStoredObject(key, DateTimeOffset.UtcNow))
                     .ToArray(),
                 ContinuationToken: null));
+    }
+
+    /// <summary>El reloj de <see cref="QepApiFactory"/> cuando la prueba pide <c>utcNow</c>.</summary>
+    public sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
     }
 }

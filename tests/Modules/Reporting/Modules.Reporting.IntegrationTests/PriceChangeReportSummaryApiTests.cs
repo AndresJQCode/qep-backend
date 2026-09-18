@@ -18,6 +18,28 @@ public sealed class PriceChangeReportSummaryApiTests
     private static readonly string[] EveryField =
         ["PriceBaseUsd", "PriceBaseCop", "ScaleDiscount"];
 
+    // Spec 2026-09-17, punto 5: el cambio de precio del 31 de diciembre a las 23:00 de Bogotá —ya
+    // enero en UTC— cuenta en la serie de diciembre del tenant.
+    [Fact]
+    public async Task TheMonthlySeriesGroupsByTheTenantsLocalMonth()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var productId = await CreateProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        await ChangeProductBaseCopAsync(client, tenant.TenantId, productId, 120_000m);
+
+        var summary = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?from=2026-12-01&to=2026-12-31",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.ChangeCount);
+        var month = Assert.Single(summary.Monthly);
+        Assert.Equal((2026, 12, 1), (month.Year, month.Month, month.Count));
+    }
+
     [Fact]
     public async Task SummaryCountsTheChangesTheirDirectionAndTheProductsTouched()
     {

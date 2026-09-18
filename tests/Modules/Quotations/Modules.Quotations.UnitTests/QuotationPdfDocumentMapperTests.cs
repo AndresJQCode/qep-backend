@@ -1,4 +1,5 @@
 using Modules.Quotations.Application;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -16,10 +17,28 @@ namespace Modules.Quotations.UnitTests;
 /// </summary>
 public sealed class QuotationPdfDocumentMapperTests
 {
+    // El calendario del tenant en Bogotá. El instante no importa para el mapeo: sólo el huso.
+    private static readonly TenantCalendar Calendar = new(
+        new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
+        TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
+
+    private static QuotationPdfDocument Map(QuotationResponse quotation) =>
+        QuotationPdfDocumentMapper.From(quotation, Calendar);
+
+    // Spec 2026-09-17, punto 7: creada el 31 de diciembre a las 23:00 en Bogotá —1 de enero en UTC—,
+    // el documento dice que se emitió el 31 de diciembre de 2026. La fecha viaja sin hora.
+    [Fact]
+    public void TheIssueDateIsTheTenantsLocalDate()
+    {
+        var document = Map(Response() with { CreatedAt = new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero) });
+
+        Assert.Equal(new DateOnly(2026, 12, 31), document.IssuedOn);
+    }
+
     [Fact]
     public void MapsTheHeaderAndTheTotals()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         Assert.Equal("QUO-2026-0042", document.QuotationNumber);
         Assert.Equal(new DateOnly(2026, 9, 30), document.ValidUntil);
@@ -37,7 +56,7 @@ public sealed class QuotationPdfDocumentMapperTests
     {
         var response = Response() with { RetentionAmount = 32271.43m, NetTotal = 1503848.57m };
 
-        var document = QuotationPdfDocumentMapper.From(response);
+        var document = Map(response);
 
         Assert.Equal(32271.43m, document.RetentionAmount);
         Assert.Equal(1503848.57m, document.NetTotal);
@@ -50,7 +69,7 @@ public sealed class QuotationPdfDocumentMapperTests
     {
         var response = Response() with { CustomerVatSurplus = true, TaxAmount = 0m };
 
-        var document = QuotationPdfDocumentMapper.From(response);
+        var document = Map(response);
 
         Assert.True(document.CustomerVatSurplus);
     }
@@ -58,7 +77,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void MapsEachLineWithItsResolvedProductName()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         Assert.Equal(2, document.Items.Count);
         Assert.Equal("BRONCEADOR RITUAL DEL SOL", document.Items[0].ProductName);
@@ -76,7 +95,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void TheDiscountedUnitPriceTimesTheQuantityIsExactlyTheLineTotal()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         foreach (var line in document.Items)
         {
@@ -87,7 +106,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void TheLineTotalIsTheGrossMinusItsDiscountWithTheTaxStillInside()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         // 12 x 35.900 = 430.800, menos 15% = 366.180. Con el IVA adentro, que es como se cobra.
         Assert.Equal(30515m, document.Items[0].DiscountedUnitPrice);
@@ -101,7 +120,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void TheDocumentDiscountIsTheBuyerMargin()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         Assert.Equal(271080m, document.DiscountAmount);
     }
@@ -109,7 +128,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void JoinsPhoneAndEmailInASingleContactLine()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         Assert.Equal("3001234567 · compras@ejemplo.co", document.CustomerContact);
     }
@@ -120,7 +139,7 @@ public sealed class QuotationPdfDocumentMapperTests
     {
         var client = Client() with { Email = null };
 
-        var document = QuotationPdfDocumentMapper.From(Response() with { Client = client });
+        var document = Map(Response() with { Client = client });
 
         Assert.Equal("3001234567", document.CustomerContact);
     }
@@ -128,7 +147,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void JoinsAddressAndCityInASingleLocationLine()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         Assert.Equal("Calle 100 #15-20, Bogotá", document.CustomerLocation);
     }
@@ -138,7 +157,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void TheAdvisorLabelPrefersTheName()
     {
-        var document = QuotationPdfDocumentMapper.From(Response() with { AdvisorName = "Ana Pérez" });
+        var document = Map(Response() with { AdvisorName = "Ana Pérez" });
 
         Assert.Equal("Ana Pérez", document.AdvisorLabel);
     }
@@ -148,7 +167,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void TheAdvisorLabelFallsBackToTheEmail()
     {
-        var document = QuotationPdfDocumentMapper.From(Response() with { AdvisorName = null });
+        var document = Map(Response() with { AdvisorName = null });
 
         Assert.Equal("ana@qep.co", document.AdvisorLabel);
     }
@@ -157,7 +176,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void TheAdvisorLabelIsEmptyWithoutNameOrEmail()
     {
-        var document = QuotationPdfDocumentMapper.From(
+        var document = Map(
             Response() with { AdvisorName = null, AdvisorEmail = null });
 
         Assert.Equal(string.Empty, document.AdvisorLabel);
@@ -168,7 +187,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void SurvivesAQuotationWhoseCustomerNoLongerExists()
     {
-        var document = QuotationPdfDocumentMapper.From(Response() with { Client = null });
+        var document = Map(Response() with { Client = null });
 
         Assert.Equal(string.Empty, document.CustomerName);
         Assert.Equal(string.Empty, document.CustomerContact);
@@ -178,7 +197,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void PartiesWithoutTheirOwnDataFallBackToTheCustomer()
     {
-        var document = QuotationPdfDocumentMapper.From(Response());
+        var document = Map(Response());
 
         Assert.True(document.Billing.SameAsCustomer);
         Assert.True(document.Shipping.SameAsCustomer);
@@ -191,7 +210,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void AStorePickupQuotationDoesNotFallBackToTheCustomerAddress()
     {
-        var document = QuotationPdfDocumentMapper.From(Response() with { IsStorePickup = true });
+        var document = Map(Response() with { IsStorePickup = true });
 
         Assert.True(document.IsStorePickup);
         Assert.False(document.Shipping.SameAsCustomer);
@@ -205,7 +224,7 @@ public sealed class QuotationPdfDocumentMapperTests
     [Fact]
     public void AFinalConsumerQuotationBillsToTheFixedNameAndTaxId()
     {
-        var document = QuotationPdfDocumentMapper.From(Response() with { BillsToFinalConsumer = true });
+        var document = Map(Response() with { BillsToFinalConsumer = true });
 
         Assert.False(document.Billing.SameAsCustomer);
         Assert.Equal("Consumidor final", document.Billing.Name);
@@ -224,7 +243,7 @@ public sealed class QuotationPdfDocumentMapperTests
             Guid.CreateVersion7(), "Billing", "Sede administrativa", null, null, "Carrera 7",
             null, null);
 
-        var document = QuotationPdfDocumentMapper.From(Response() with { Parties = [party] });
+        var document = Map(Response() with { Parties = [party] });
 
         Assert.Equal("Sede administrativa", document.Billing.Name);
         Assert.Equal(string.Empty, document.Billing.TaxId);

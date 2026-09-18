@@ -76,8 +76,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         int page,
         int pageSize,
@@ -86,7 +86,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         // El join va acá adentro y no en el composition root --como sí lo hace el reporte de
         // pedidos-- porque las dos tablas son de este módulo y viven en el mismo DbContext.
         var (orders, quotations) = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, orderNumber);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
         var joined =
             from order in orders
             join quotation in quotations on order.QuotationId equals quotation.Id
@@ -114,13 +114,13 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         CancellationToken cancellationToken)
     {
         var (orders, quotations) = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, orderNumber);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
         return (from order in orders
                 join quotation in quotations on order.QuotationId equals quotation.Id
                 select order.Id)
@@ -141,15 +141,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
         var (orders, quotations) = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, orderNumber);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
 
         if (after is not null)
         {
@@ -183,8 +183,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber)
     {
         var orders = dbContext.Orders
@@ -210,17 +210,14 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
 
         if (convertedFrom is { } from)
         {
-            var fromUtc = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-            orders = orders.Where(order => order.ConvertedAt >= fromUtc);
+            orders = orders.Where(order => order.ConvertedAt >= from);
         }
 
-        if (convertedTo is { } to)
+        if (convertedBefore is { } before)
         {
-            // Limite superior exclusivo al dia siguiente, igual que el listado de cotizaciones:
-            // "hasta el 30" incluye todo el 30, no solo su instante 00:00:00.
-            var toUtcExclusive = new DateTimeOffset(
-                to.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-            orders = orders.Where(order => order.ConvertedAt < toUtcExclusive);
+            // Exclusivo, igual que el listado de cotizaciones: quien llama ya lo corrió al 00:00
+            // local del día siguiente al "hasta" (spec 2026-09-17, punto 3).
+            orders = orders.Where(order => order.ConvertedAt < before);
         }
 
         // Cliente y asesora viven en la cotizacion: sus filtros se aplican de ese lado.

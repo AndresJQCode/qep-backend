@@ -102,6 +102,19 @@ public sealed partial class QuotationTemplateTests
         Assert.Contains("Recoger en tienda", source, StringComparison.Ordinal);
     }
 
+    // Spec 2026-09-17, punto 7: la fecha de emisión llega ya en el día del tenant y sin hora, y la
+    // plantilla la imprime tal cual. Cortar un ISO en la "T" es lo que hacía decir "1 de enero de
+    // 2027" a un documento emitido el 31 de diciembre en Bogotá.
+    [Fact]
+    public async Task TheTemplatePrintsTheIssueDateFromItsLocalDate()
+    {
+        var (source, data) = await CapturedRequestAsync(Minimal() with { IssuedOn = new DateOnly(2026, 12, 31) });
+
+        Assert.Equal("2026-12-31", data.GetProperty("issuedOn").GetString());
+        Assert.Contains("fecha(data.issuedOn)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("split(\"T\")", source, StringComparison.Ordinal);
+    }
+
     // Consumidor final no tiene contacto ni direccion: lo que lo identifica en la factura es el
     // NIT generico, y la plantilla lo imprime desde su propio campo.
     [Fact]
@@ -317,7 +330,7 @@ public sealed partial class QuotationTemplateTests
 
     private static QuotationPdfDocument Complete() => new(
         QuotationNumber: "QUO-2026-0042",
-        CreatedAt: new DateTimeOffset(2026, 9, 10, 9, 0, 0, TimeSpan.Zero),
+        IssuedOn: new DateOnly(2026, 9, 10),
         ValidUntil: new DateOnly(2026, 9, 30),
         CustomerName: "Comercializadora del Norte S.A.S.",
         CustomerCuc: "CUC-0042",
@@ -350,7 +363,7 @@ public sealed partial class QuotationTemplateTests
 
     private static QuotationPdfDocument Minimal() => new(
         QuotationNumber: "QUO-2026-0002",
-        CreatedAt: new DateTimeOffset(2026, 9, 10, 9, 0, 0, TimeSpan.Zero),
+        IssuedOn: new DateOnly(2026, 9, 10),
         ValidUntil: null,
         CustomerName: string.Empty,
         CustomerCuc: string.Empty,

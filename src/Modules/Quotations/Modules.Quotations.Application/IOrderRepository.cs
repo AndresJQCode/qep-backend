@@ -24,6 +24,11 @@ public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderN
 public sealed record OrderExportPaymentProof(
     OrderPaymentProofId Id, string? PublicStorageKey, DateTimeOffset UploadedAt);
 
+/// <summary>
+/// Las fechas de los filtros llegan como instantes: <c>convertedFrom</c> inclusivo y
+/// <c>convertedBefore</c> exclusivo, ya cortados en el día del tenant por quien llama (spec
+/// 2026-09-17, punto 3). El repositorio no decide husos.
+/// </summary>
 public interface IOrderRepository
 {
     Task<Order?> FindByQuotationIdAsync(
@@ -67,8 +72,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         int page,
         int pageSize,
@@ -83,8 +88,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         CancellationToken cancellationToken);
 
@@ -99,8 +104,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         OrderExportCursor? after,
         int limit,

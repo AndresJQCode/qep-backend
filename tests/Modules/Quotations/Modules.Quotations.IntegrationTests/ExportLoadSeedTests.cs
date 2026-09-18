@@ -19,6 +19,37 @@ public sealed class ExportLoadSeedTests
 {
     private const string OwnerEmail = "carga@qcode.co";
 
+    // TenancySeeder siembra el tenant de la carga en America/Bogota: su hoy es el que decide qué vence
+    // (spec 2026-09-17, punto 8c).
+    private static readonly TimeZoneInfo LoadTenantTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
+    // Spec 2026-09-17, punto 8c: la carga marca Expired con el hoy del tenant, el mismo del barrido de
+    // vencimiento. Con el reloj en el 31 de diciembre a las 23:00 de Bogotá, lo que vence el 31 sigue
+    // enviado. Entre las 200 hay al menos una que vence ese día (hallazgo 10 del plan: la n = 53).
+    [Fact]
+    public async Task TheSeedExpiresWithTheTenantsLocalToday()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var connectionString = database.GetConnectionString();
+        var lastDay = new DateOnly(2026, 12, 31);
+
+        await factory.Services.SeedExportLoadAsync(OwnerEmail, 200, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(0L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM quotations.quotations WHERE tenant_id = @tenant AND valid_until = @lastDay",
+            ("lastDay", lastDay)));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM quotations.quotations WHERE tenant_id = @tenant AND valid_until = @lastDay AND status <> 'Sent'",
+            ("lastDay", lastDay)));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM quotations.quotations WHERE tenant_id = @tenant AND valid_until < @lastDay AND status <> 'Expired'",
+            ("lastDay", lastDay)));
+    }
+
     // Prendida sin email, la carga le daría admin a nadie sobre un tenant al que nadie puede entrar.
     // Mismo criterio que Seed:Enabled (SeedStartupTests).
     [Fact]
@@ -66,11 +97,12 @@ public sealed class ExportLoadSeedTests
         var connectionString = database.GetConnectionString();
         // El host corre las migraciones al arrancar, y la factoría no arranca hasta que alguien le pide
         // Services: sin esto, platform.outbox_messages todavía no existe. El "hoy" sale del mismo IClock
-        // con que decide el seeder y se lee antes de sembrar, no del now() de la base, que en una corrida
-        // que cruce la medianoche UTC ya sería otro día.
+        // con que decide el seeder, en el huso del tenant de la carga (spec 2026-09-17, punto 8c), y se
+        // lee antes de sembrar, no del now() de la base, que en una corrida que cruce la medianoche ya
+        // sería otro día.
         await using var clockScope = factory.Services.CreateAsyncScope();
-        var today = DateOnly.FromDateTime(
-            clockScope.ServiceProvider.GetRequiredService<IClock>().UtcNow.UtcDateTime);
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(
+            clockScope.ServiceProvider.GetRequiredService<IClock>().UtcNow, LoadTenantTimeZone).DateTime);
         var outboxBefore = await ScalarAsync<long>(connectionString, "SELECT count(*) FROM platform.outbox_messages");
 
         var result = await factory.Services.SeedExportLoadAsync(
@@ -181,8 +213,9 @@ public sealed class ExportLoadSeedTests
             Assert.Equal("PaymentPending", item.PaymentStatus);
         });
 
-        // Los procesadores de verdad sobre un año entero, igual que un pedido desde la pantalla.
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // Los procesadores de verdad sobre un año entero, igual que un pedido desde la pantalla, con el
+        // hoy del tenant (spec 2026-09-17).
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, LoadTenantTimeZone).DateTime);
         var quotationsJob = await EnqueueExportJobAsync(
             factory, ExportLoadSeeder.TenantId, ownerUserId, ExportJobKind.Quotations,
             ExportJobFilters.Serialize(new QuotationsExportFilters(null, null, null, today.AddYears(-1), today, null, null)));
@@ -210,7 +243,8 @@ public sealed class ExportLoadSeedTests
             connectionString, "SELECT id FROM identity.users WHERE email = @email", ("email", OwnerEmail));
         using var client = CreateClient(
             factory, ownerUserId.ToString(), ExportLoadSeeder.TenantId.ToString(), ManagerPermissions);
-        var year = DateTime.UtcNow.Year;
+        // El año del consecutivo es el del tenant desde la spec 2026-09-17 (punto 2a).
+        var year = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, LoadTenantTimeZone).Year;
         var quotationsThisYear = await ScalarAsync<long>(
             connectionString,
             "SELECT count(*) FROM quotations.quotations WHERE tenant_id = @tenant AND quotation_number LIKE @prefix",

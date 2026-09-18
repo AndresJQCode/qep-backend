@@ -11,6 +11,8 @@ public sealed class QuotationsExportEmailTemplateTests
 {
     private static readonly DateTimeOffset ExpiresAt = new(2026, 9, 13, 15, 30, 0, TimeSpan.Zero);
 
+    private static readonly TimeZoneInfo Bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
     private const string SignedUrl =
         "https://r2.example/exports/tenants/a/jobs/b.xlsx?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
         "&X-Amz-Date=20260912T153000Z&X-Amz-Expires=86400&X-Amz-Signature=deadbeef";
@@ -19,7 +21,7 @@ public sealed class QuotationsExportEmailTemplateTests
     public void ReadyNamesTheKindAndPutsTheLinkAndTheExpiryInBothBodies()
     {
         var message = QuotationsExportReadyEmailTemplate.Render(
-            "ana@qcode.co", "Orders", SignedUrl, "pedidos-2026-09-12-1530.xlsx", 42, ExpiresAt);
+            "ana@qcode.co", "Orders", SignedUrl, "pedidos-2026-09-12-1530.xlsx", 42, ExpiresAt, Bogota);
 
         Assert.Equal("ana@qcode.co", message.ToAddress);
         Assert.Equal("Tu exportación de pedidos está lista", message.Subject);
@@ -27,7 +29,9 @@ public sealed class QuotationsExportEmailTemplateTests
         {
             Assert.Contains("pedidos-2026-09-12-1530.xlsx", body, StringComparison.Ordinal);
             Assert.Contains("42 pedidos", body, StringComparison.Ordinal);
-            Assert.Contains("13/09/2026 15:30 UTC", body, StringComparison.Ordinal);
+            // 15:30 UTC son las 10:30 en Bogotá, sin etiqueta de huso (spec 2026-09-17, punto 8b).
+            Assert.Contains("13/09/2026 10:30", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("UTC", body, StringComparison.Ordinal);
         }
 
         Assert.Contains(SignedUrl, message.TextBody, StringComparison.Ordinal);
@@ -49,7 +53,7 @@ public sealed class QuotationsExportEmailTemplateTests
     public void ReadyEscapesTheLinkInsideTheHtmlHref()
     {
         var message = QuotationsExportReadyEmailTemplate.Render(
-            "ana@qcode.co", "Quotations", SignedUrl, "cotizaciones.xlsx", 3, ExpiresAt);
+            "ana@qcode.co", "Quotations", SignedUrl, "cotizaciones.xlsx", 3, ExpiresAt, Bogota);
 
         Assert.Contains("&amp;X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
         Assert.DoesNotContain("&X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
@@ -59,7 +63,7 @@ public sealed class QuotationsExportEmailTemplateTests
     public void ReadyUsesTheSingularForOneRow()
     {
         var message = QuotationsExportReadyEmailTemplate.Render(
-            "ana@qcode.co", "Quotations", "https://r2.example/x", "cotizaciones.xlsx", 1, ExpiresAt);
+            "ana@qcode.co", "Quotations", "https://r2.example/x", "cotizaciones.xlsx", 1, ExpiresAt, Bogota);
 
         Assert.Equal("Tu exportación de cotizaciones está lista", message.Subject);
         Assert.Contains("(1 cotización)", message.TextBody, StringComparison.Ordinal);

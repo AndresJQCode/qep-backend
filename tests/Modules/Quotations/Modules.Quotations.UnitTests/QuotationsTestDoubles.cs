@@ -169,8 +169,8 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         int page,
         int pageSize,
@@ -183,8 +183,8 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         QuotationExportCursor? after,
         int limit,
@@ -197,8 +197,8 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         CancellationToken cancellationToken) =>
         Task.FromResult(true);
@@ -293,14 +293,28 @@ internal sealed class FixedClock(DateTimeOffset now) : IClock
     public DateTimeOffset UtcNow { get; } = now;
 }
 
-/// <summary>Los filtros con que se preguntó por filas o se leyó para exportar.</summary>
+/// <summary>El calendario de un tenant en un huso fijo, Bogotá por defecto (spec 2026-09-17). Anota
+/// por qué tenant se preguntó: un proceso que recorre tenants pide uno por tenant.</summary>
+internal sealed class FixedTenantClock(DateTimeOffset utcNow, string timeZoneId = "America/Bogota") : ITenantClock
+{
+    public List<Guid> RequestedTenantIds { get; } = [];
+
+    public Task<TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        RequestedTenantIds.Add(tenantId);
+        return Task.FromResult(new TenantCalendar(utcNow, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId)));
+    }
+}
+
+/// <summary>Los filtros con que se preguntó por filas o se leyó para exportar, ya como instantes:
+/// desde inclusivo y antes-de exclusivo (spec 2026-09-17, punto 3).</summary>
 internal sealed record RecordedExportSearch(
     Guid? ClientId,
     IReadOnlyCollection<Guid>? ClientIds,
     MemberId? AdvisorId,
     QuotationStatus? Status,
-    DateOnly? CreatedFrom,
-    DateOnly? CreatedTo,
+    DateTimeOffset? CreatedFrom,
+    DateTimeOffset? CreatedBefore,
     string? QuotationNumber);
 
 /// <summary>Varias cotizaciones para el listado — <see cref="StubQuotationRepository"/> devuelve
@@ -323,8 +337,8 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         int page,
         int pageSize,
@@ -353,8 +367,8 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         QuotationExportCursor? after,
         int limit,
@@ -363,7 +377,7 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedExportSearch(
-            clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+            clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
         IReadOnlyList<Quotation> rows = (clientIds is null
                 ? quotations
                 : quotations.Where(quotation => clientIds.Contains(quotation.ClientId)))
@@ -389,14 +403,14 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         IReadOnlyCollection<Guid>? clientIds,
         MemberId? advisorId,
         QuotationStatus? status,
-        DateOnly? createdFrom,
-        DateOnly? createdTo,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdBefore,
         string? quotationNumber,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
         LastExportSearch = new RecordedExportSearch(
-            clientId, clientIds, advisorId, status, createdFrom, createdTo, quotationNumber);
+            clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
         return Task.FromResult(clientIds is null
             ? quotations.Length > 0
             : quotations.Any(quotation => clientIds.Contains(quotation.ClientId)));
@@ -537,8 +551,8 @@ internal sealed record RecordedOrderExportSearch(
     MemberId? AdvisorId,
     OrderStatus? Status,
     OrderPaymentStatus? PaymentStatus,
-    DateOnly? ConvertedFrom,
-    DateOnly? ConvertedTo,
+    DateTimeOffset? ConvertedFrom,
+    DateTimeOffset? ConvertedBefore,
     string? OrderNumber);
 
 /// <summary>Devuelve las filas sembradas y anota con que filtro se la llamo — lo que las pruebas
@@ -584,8 +598,8 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         int page,
         int pageSize,
@@ -604,14 +618,14 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, orderNumber);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
         return Task.FromResult(Matching(clientIds).Any());
     }
 
@@ -622,8 +636,8 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         OrderExportCursor? after,
         int limit,
@@ -632,7 +646,7 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedTo, orderNumber);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
         // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
         // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
         // keyset real contra Postgres lo prueba

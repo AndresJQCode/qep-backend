@@ -58,7 +58,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IOrderNumberGenerator numberGenerator,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock,
+    ITenantClock tenantClock,
     IValidator<ConvertQuotationToOrderCommand> validator)
     : ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>
 {
@@ -89,9 +89,12 @@ public sealed class ConvertQuotationToOrderHandler(
         var convertedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
-        var now = clock.UtcNow;
-        var sequence = await numberGenerator.NextAsync(command.TenantId, now.Year, cancellationToken);
-        var orderNumber = OrderNumberFormatter.Format(now.Year, sequence);
+        // El año del pedido es el del día del tenant (spec 2026-09-17, punto 2b).
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var now = calendar.UtcNow;
+        var year = calendar.Today.Year;
+        var sequence = await numberGenerator.NextAsync(command.TenantId, year, cancellationToken);
+        var orderNumber = OrderNumberFormatter.Format(year, sequence);
         var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
         // Las copias públicas de los comprobantes (spec 2026-09-15, P4 y P7) van antes del dominio,

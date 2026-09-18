@@ -12,7 +12,9 @@ namespace Modules.Quotations.Application;
 /// </summary>
 public sealed record QuotationPdfDocument(
     string QuotationNumber,
-    DateTimeOffset CreatedAt,
+    /// <summary>La fecha de emisión en el día del tenant, sin hora (spec 2026-09-17, punto 7). La
+    /// calcula el mapeo: la plantilla la imprime tal cual y no decide husos.</summary>
+    DateOnly IssuedOn,
     DateOnly? ValidUntil,
     string CustomerName,
     string CustomerCuc,

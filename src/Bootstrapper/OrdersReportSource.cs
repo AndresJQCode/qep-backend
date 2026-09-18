@@ -94,18 +94,20 @@ internal sealed class OrdersReportSource(
             return new OrdersReportAggregate(0, 0m, 0m, 0m, [], [], []);
         }
 
-        // La serie mensual va en **UTC**, el mismo huso en el que ReportDateRange corta el rango.
-        // Agrupar en el huso de la sesion de PostgreSQL pondria un pedido del 1 de enero en
-        // diciembre para un tenant en America/Bogota, y ademas haria que el resultado dependiera
-        // de una configuracion de conexion en vez del dato.
+        // La serie mensual va en el mes del tenant (spec 2026-09-17, punto 5): el pedido de las 20:00
+        // del último día en Bogotá es de ese mes, aunque en UTC ya sea el siguiente. Se agrupa en SQL
+        // con `AT TIME ZONE` y el ID IANA del tenant —lo que Npgsql traduce desde
+        // TimeZoneInfo.ConvertTimeBySystemTimeZoneId sobre UtcDateTime (spike de la Task 7)—, nunca
+        // en el huso de la sesión de PostgreSQL, que haría depender el resultado de la conexión.
         //
         // Solo vuelven los meses con pedidos: rellenar los huecos con cero depende del rango que
         // el eje dibuje, asi que es del frontend.
+        var timeZoneId = criteria.Period.TimeZone.Id;
         var monthRows = await joined
             .GroupBy(row => new
             {
-                row.order.ConvertedAt.UtcDateTime.Year,
-                row.order.ConvertedAt.UtcDateTime.Month,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Year,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Month,
             })
             .Select(group => new
             {
@@ -225,15 +227,14 @@ internal sealed class OrdersReportSource(
             .AsNoTracking()
             .Where(order => order.TenantId == criteria.TenantId);
 
-        if (criteria.From is { } from)
+        // Instantes ya cortados en el día del tenant (spec 2026-09-17, punto 4): acá no se decide huso.
+        if (criteria.Period.Start is { } start)
         {
-            var start = ReportDateRange.InclusiveStart(from);
             orders = orders.Where(order => order.ConvertedAt >= start);
         }
 
-        if (criteria.To is { } to)
+        if (criteria.Period.EndExclusive is { } end)
         {
-            var end = ReportDateRange.ExclusiveEnd(to);
             orders = orders.Where(order => order.ConvertedAt < end);
         }
 

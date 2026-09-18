@@ -1,4 +1,3 @@
-using System.Globalization;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -18,6 +17,10 @@ public sealed class QuotationsExportProcessorTests
     private static readonly DateOnly From = new(2026, 1, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
+    // El rango guardado en el job, cortado en el día de Bogotá al procesar (spec 2026-09-17, punto 3).
+    private static readonly DateTimeOffset FromUtc = new(2026, 1, 1, 5, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task WritesTheListColumnsInTheirOrder()
     {
@@ -32,7 +35,8 @@ public sealed class QuotationsExportProcessorTests
             writer.Columns.Select(column => column.Header));
         var row = Assert.Single(writer.Rows);
         Assert.Equal("QUO-2026-0001", row[0].Text);
-        Assert.Equal(Now.ToString("O", CultureInfo.InvariantCulture), row[1].Text);
+        // Now es 15:30 UTC: 10:30 en Bogotá, sin offset (spec 2026-09-17, punto 8a).
+        Assert.Equal("2026-09-12 10:30", row[1].Text);
         Assert.Equal("Ferretería El Tornillo", row[2].Text);
         // El nombre, igual que la tabla (spec 2026-09-11, D1, nota del 2026-09-14).
         Assert.Equal("Asesora Uno", row[3].Text);
@@ -104,11 +108,11 @@ public sealed class QuotationsExportProcessorTests
         var result = await processor.ProcessAsync(job, TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new RecordedUpload(TenantId, job.Id, "cotizaciones-2026-09-12-1530.xlsx", RecordingExportWorkbookWriter.CompletedPath),
+            new RecordedUpload(TenantId, job.Id, "cotizaciones-2026-09-12-1030.xlsx", RecordingExportWorkbookWriter.CompletedPath),
             storage.Upload);
         Assert.Equal(
             new ExportJobResult(
-                "cotizaciones-2026-09-12-1530.xlsx",
+                "cotizaciones-2026-09-12-1030.xlsx",
                 1,
                 $"https://r2.test/exports/tenants/{TenantId:N}/jobs/{job.Id:N}.xlsx",
                 StubExportJobProcessor.LinkExpiresAt),
@@ -124,8 +128,26 @@ public sealed class QuotationsExportProcessorTests
         await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new RecordedExportSearch(ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, From, To, "0001"),
+            new RecordedExportSearch(ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, FromUtc, BeforeUtc, "0001"),
             repository.LastExportSearch);
+    }
+
+    // Spec 2026-09-17, punto 8a: la celda y el nombre del archivo van en la hora del tenant. Creada y
+    // exportada el 31 de diciembre a las 23:00 en Bogotá, nada en el archivo dice 2027.
+    [Fact]
+    public async Task WritesTheDateAndTheFileNameInTheTenantsLocalTime()
+    {
+        var newYearsEveInBogota = new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
+        var writer = new RecordingExportWorkbookWriter();
+        var processor = NewProcessor(
+            new StubQuotationListRepository(NewQuotation("QUO-2026-0001", newYearsEveInBogota)),
+            writer,
+            tenantClock: new FixedTenantClock(newYearsEveInBogota));
+
+        var result = await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("2026-12-31 23:00", Assert.Single(writer.Rows)[1].Text);
+        Assert.Equal("cotizaciones-2026-12-31-2300.xlsx", result.FileName);
     }
 
     // Había filas al pedir y ya no al procesar: reintentar da lo mismo.
@@ -191,7 +213,7 @@ public sealed class QuotationsExportProcessorTests
             ExportJobFilters.Serialize(filters ?? new QuotationsExportFilters(null, null, null, From, To, null, null)),
             Now);
 
-    private static Quotation NewQuotation(string number) =>
+    private static Quotation NewQuotation(string number, DateTimeOffset? createdAt = null) =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -206,13 +228,14 @@ public sealed class QuotationsExportProcessorTests
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
-            Now);
+            createdAt ?? Now);
 
     private static QuotationsExportProcessor NewProcessor(
         StubQuotationListRepository repository,
         RecordingExportWorkbookWriter? writer = null,
         RecordingExportFileStorage? storage = null,
-        StubQuotationAdvisorLookup? advisors = null) =>
+        StubQuotationAdvisorLookup? advisors = null,
+        FixedTenantClock? tenantClock = null) =>
         new(repository,
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
@@ -220,5 +243,5 @@ public sealed class QuotationsExportProcessorTests
             advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
-            new FixedClock(Now));
+            tenantClock ?? new FixedTenantClock(Now));
 }

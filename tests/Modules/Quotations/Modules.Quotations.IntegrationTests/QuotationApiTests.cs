@@ -7,11 +7,14 @@ namespace Modules.Quotations.IntegrationTests;
 
 public sealed class QuotationApiTests
 {
+    // Con el reloj en el 31 de diciembre a las 23:00 de Bogotá (2027 en UTC): el consecutivo es del
+    // año del tenant y la vigencia por defecto cuenta quince días desde su hoy (spec 2026-09-17,
+    // puntos 2a y 2c). Con el año de UTC la prueba además fallaba sola cada fin de año.
     [Fact]
     public async Task CreateReturnsADraftWithAGeneratedNumberAndTheResolvedAdvisor()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -26,8 +29,8 @@ public sealed class QuotationApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(quotation);
         Assert.Equal("Draft", quotation.Status);
-        Assert.StartsWith(
-            $"QUO-{DateTime.UtcNow.Year}-", quotation.QuotationNumber, StringComparison.Ordinal);
+        Assert.StartsWith("QUO-2026-", quotation.QuotationNumber, StringComparison.Ordinal);
+        Assert.Equal(new DateOnly(2027, 1, 15), quotation.ValidUntil);
         Assert.Equal(clientId, quotation.ClientId);
         // CreatedBy/AdvisorId son el MembershipId que IMembershipDirectory resolvio para el
         // dueño registrado -- no el subject id crudo del header (distinto por diseño, §1.4).
@@ -307,7 +310,7 @@ public sealed class QuotationApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var created = await CreateQuotationAsync(client, tenantId, clientId);
 
-        var validUntil = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
+        var validUntil = TodayInBogota().AddDays(30);
         var response = await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{created.Id}",
             new UpdateQuotationRequest(
