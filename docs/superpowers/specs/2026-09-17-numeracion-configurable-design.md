@@ -112,6 +112,11 @@ SELECT * FROM quotations.order_number_counters WHERE tenant_id = :tenant_id;
 `year = 0` es la fila del formato sin año. El `GREATEST` es la regla "solo avanza" en una línea:
 correr el mismo SQL dos veces no retrocede el consecutivo.
 
+**`next_value` es el número que se va a emitir, no el último emitido.** El generador hace
+`UPDATE … SET next_value = next_value + 1 … RETURNING next_value - 1`
+(`OrderNumberGenerator.cs:20-28`), o sea devuelve el valor que la fila tenía. Si el cliente venía
+en `PW234234`, `:siguiente_numero` es **234235**.
+
 ### Errores
 
 - **Formato inválido en la base:** los `CHECK` lo impiden al escribir. Si aun así llega algo
@@ -132,7 +137,7 @@ runbook incluye el paso 2: se fija el siguiente número de la fila nueva.
 
 - **`DocumentNumberFormatter`, unitarias:** default `PED-2026-0001`; `PW234235` (sin año ni relleno);
   `PW-2026-000007` (con año y 6 dígitos); y un caso que excede los 20 caracteres.
-- **Integración:** un tenant con formato PW y el contador en 234234 convierte una cotización y
+- **Integración:** un tenant con formato PW y `next_value = 234235` convierte una cotización y
   obtiene `PW234235`; la siguiente, `PW234236`.
 - **Integración:** dos tenants con formatos distintos no se pisan.
 - **Integración:** un tenant **sin fila** sigue emitiendo `PED-2026-…` y `QUO-2026-…` — la prueba de
