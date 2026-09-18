@@ -47,6 +47,9 @@ public static class QuotationsInfrastructureExtensions
         // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
         services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();
         services.AddScoped<IQuotationNumberGenerator, QuotationNumberGenerator>();
+        // Spec 2026-09-17: el formato del número es un dato por tenant. Scoped porque lee por el
+        // DbContext del request, igual que los generadores de consecutivo.
+        services.AddScoped<IDocumentNumberingFormatLookup, DocumentNumberingFormatLookup>();
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).

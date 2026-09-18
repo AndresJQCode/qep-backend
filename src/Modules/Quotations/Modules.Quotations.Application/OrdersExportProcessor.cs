@@ -1,6 +1,6 @@
 using System.Globalization;
-using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -21,7 +21,7 @@ public sealed class OrdersExportProcessor(
     IPaymentProofPublisher paymentProofPublisher,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
-    IClock clock)
+    ITenantClock tenantClock)
     : IExportJobProcessor
 {
     public const string SheetName = "Pedidos";
@@ -35,15 +35,21 @@ public sealed class OrdersExportProcessor(
     /// haya comprobante, y una celda vacía no puede significar las dos cosas.</summary>
     public const string PrivateProofText = "Sin enlace";
 
+    /// <summary>Cuántos comprobantes tienen columna propia (E1). Eran tres en el spec 2026-09-15;
+    /// el owner lo subió a cinco el 2026-09-17, que es lo que paga un pedido en la práctica. Los que
+    /// pasen de ahí siguen contándose en «Comprobantes», que por eso existe.</summary>
+    public const int ProofColumns = 5;
+
     /// <summary>
     /// Las de la tabla de pedidos en su orden (order-table.tsx: Pedido, Cliente, Asesora, Fecha, Pago,
     /// Estado, Total), con la moneda aparte del total y "Asesor" como en el Excel de cotizaciones.
     /// "Pago" replica el respaldo de la tabla: la forma de pago o, mientras llegue vacía, la etiqueta del
     /// estado del pago. Los estados van con la etiqueta de la pantalla (spec 2026-09-13, A7).
     ///
-    /// Después de Total, las cuatro de los comprobantes (spec 2026-09-15, E1): la cantidad y los tres
-    /// primeros. Van al final para que las ocho de la tabla no se muevan, y salen siempre, aunque la
-    /// opción de publicar esté apagada (E7): la forma del archivo no depende del ambiente.
+    /// Después de Total, las de los comprobantes (spec 2026-09-15, E1): la cantidad y los
+    /// <see cref="ProofColumns"/> primeros. Van al final para que las ocho de la tabla no se muevan, y
+    /// salen siempre, aunque la opción de publicar esté apagada (E7): la forma del archivo no depende
+    /// del ambiente.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
@@ -56,9 +62,7 @@ public sealed class OrdersExportProcessor(
         new("Moneda", 10),
         new("Total", 16),
         new("Comprobantes", 14),
-        new("Comprobante 1", 16),
-        new("Comprobante 2", 16),
-        new("Comprobante 3", 16),
+        .. Enumerable.Range(1, ProofColumns).Select(number => new ExportColumn($"Comprobante {number}", 16)),
     ];
 
     public ExportJobKind Kind => ExportJobKind.Orders;
@@ -70,7 +74,10 @@ public sealed class OrdersExportProcessor(
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
-        var generatedAt = clock.UtcNow;
+        // Un calendario por job (spec 2026-09-17): corta el rango guardado en el día del tenant.
+        var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
+        var converted = TenantDayRange.Of(calendar, filters.ConvertedFrom, filters.ConvertedTo);
+        var generatedAt = calendar.UtcNow;
 
         using var workbook = writer.Create(SheetName, Columns);
         var rowCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
@@ -82,8 +89,8 @@ public sealed class OrdersExportProcessor(
                 advisorId,
                 status,
                 paymentStatus,
-                filters.ConvertedFrom,
-                filters.ConvertedTo,
+                converted.From,
+                converted.Before,
                 filters.OrderNumber,
                 after,
                 limit,
@@ -95,7 +102,7 @@ public sealed class OrdersExportProcessor(
                 // E6: los comprobantes del lote en una sola ida, igual que los nombres y los correos.
                 var proofs = await repository.ListPaymentProofsForExportAsync(
                     job.TenantId, batch.Select(row => row.Order.Id).ToArray(), ct);
-                return rows.Select(row => ToCells(row, ProofsOf(proofs, row.Id)));
+                return rows.Select(row => ToCells(row, ProofsOf(proofs, row.Id), calendar));
             },
             row => new OrderExportCursor(row.Order.ConvertedAt, row.Order.OrderNumber),
             cancellationToken);
@@ -106,7 +113,7 @@ public sealed class OrdersExportProcessor(
                 "Empty: no orders matched the export filters when the export ran.");
         }
 
-        var fileName = ExportFileNames.For(FilePrefix, generatedAt);
+        var fileName = ExportFileNames.For(FilePrefix, calendar.ToLocal(generatedAt));
         var upload = await storage.UploadAsync(
             job.TenantId, job.Id, fileName, workbook.Complete(), cancellationToken);
         return new ExportJobResult(fileName, rowCount, upload.DownloadUrl, upload.ExpiresAt);
@@ -130,16 +137,17 @@ public sealed class OrdersExportProcessor(
         IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>> proofs, Guid orderId) =>
         proofs.TryGetValue(new OrderId(orderId), out var found) ? found : [];
 
-    private ExportCell[] ToCells(OrderListItemDto row, IReadOnlyList<OrderExportPaymentProof> proofs) =>
+    private ExportCell[] ToCells(
+        OrderListItemDto row, IReadOnlyList<OrderExportPaymentProof> proofs, TenantCalendar calendar) =>
     [
         ExportCell.OfText(row.OrderNumber),
         ExportCell.OfText(row.ClientName),
         // El nombre con respaldo al correo, igual que la tabla (spec 2026-09-11, D1, nota del
         // 2026-09-15). El encabezado sigue siendo "Asesor", como en el Excel de cotizaciones.
         ExportCell.OfText(row.AdvisorName),
-        // Texto ISO y no celda de fecha: una fecha se muestra según la configuración regional de
-        // quien abre el archivo, mismo criterio que cotizaciones.
-        ExportCell.OfText(row.ConvertedAt.ToString("O", CultureInfo.InvariantCulture)),
+        // Texto y no celda de fecha, mismo criterio que cotizaciones, en la hora del tenant, al minuto
+        // y sin offset (spec 2026-09-17, punto 8a).
+        ExportCell.OfText(calendar.ToLocal(row.ConvertedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)),
         // El DTO trae los nombres de los enums, que son contrato de la API (OrderMapping.cs);
         // acá se vuelven al enum sólo para etiquetarlos.
         ExportCell.OfText(row.PaymentMethod
@@ -149,9 +157,7 @@ public sealed class OrdersExportProcessor(
         ExportCell.OfNumber(row.Total),
         // La cantidad cuenta todos, también los que no tienen columna (E1).
         ExportCell.OfNumber(proofs.Count),
-        ProofCell(proofs, 0),
-        ProofCell(proofs, 1),
-        ProofCell(proofs, 2),
+        .. Enumerable.Range(0, ProofColumns).Select(index => ProofCell(proofs, index)),
     ];
 
     // E2: el enlace «Ver» si tiene copia pública y la opción está encendida, «Sin enlace» si no, y

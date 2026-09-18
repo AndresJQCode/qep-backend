@@ -48,7 +48,7 @@ la tiene.
 | P6 | `FileResource.Publish` no se toca. | Su regla («sólo imágenes») protege el endpoint de publicación de Storage. Relajarla dejaría a cualquiera con `FilePublish` publicar cualquier PDF desde la API. |
 | P7 | Si una copia falla, falla el request y no se guarda nada. Si falla el `SaveChanges` después de copiar, se borran las copias hechas (best-effort). | Un pedido guardado sin su copia pública saldría en el Excel sin enlace y nadie se enteraría. El borrado sigue el rollback de `PublishFileHandler` (`SetFilePublication.cs:52-59`). |
 | P8 | Sin backfill: los comprobantes anteriores, y los que se adjunten con la opción apagada, quedan privados. | El owner pidió publicar al adjuntar. Un backfill es un slice aparte. |
-| E1 | La hoja «Pedidos» suma cuatro columnas al final, después de Total: «Comprobantes» (cantidad, número), «Comprobante 1», «Comprobante 2», «Comprobante 3». | Las ocho actuales copian el orden de `order-table.tsx` y no se mueven. La cantidad hace visible el cuarto comprobante, que no tiene columna. |
+| E1 | La hoja «Pedidos» suma seis columnas al final, después de Total: «Comprobantes» (cantidad, número) y «Comprobante 1» a «Comprobante 5». **Enmendado el 2026-09-17: eran tres columnas de comprobante.** | Las ocho actuales copian el orden de `order-table.tsx` y no se mueven. Cinco cubre lo que un cliente paga en la práctica; la cantidad hace visible el que se pase de ahí y no tiene columna. El tope vive en `OrdersExportProcessor.ProofColumns`. |
 | E2 | Cada celda de comprobante trae el enlace «Ver» si tiene copia pública, «Sin enlace» si es privado, y queda vacía si el pedido no tiene ese comprobante. | Una celda vacía no puede significar dos cosas. |
 | E3 | El enlace es la fórmula `HYPERLINK("url","Ver")`, con el valor ya calculado y estilo de enlace (azul, subrayado). | El writer escribe en streaming y el zip admite una sola entrada abierta a la vez. Un hipervínculo de relación (`<hyperlinks>` más `sheet1.xml.rels`) obliga a guardar en memoria todos los enlaces hasta el final. |
 | E4 | Si la URL o el texto pasan de 255 caracteres, la celda lleva la URL como texto plano. El tope se mide sobre la cadena tal como entra en la fórmula, con las comillas ya duplicadas. | Es el tope de Excel para una cadena dentro de una fórmula; medido ya escapado, toda fórmula que se escribe es válida. Una URL pública mide unos 100 caracteres; sólo lo rompe un `PublicBaseUrl` mal configurado, y así la URL se ve en vez de perderse. |
@@ -160,8 +160,7 @@ del dominio.
 | --- | --- | --- |
 | `Comprobantes` | 14 | Cantidad total de comprobantes del pedido, como número. |
 | `Comprobante 1` | 16 | Enlace «Ver», «Sin enlace» o vacía (E2). |
-| `Comprobante 2` | 16 | Ídem. |
-| `Comprobante 3` | 16 | Ídem. |
+| `Comprobante 2` a `Comprobante 5` | 16 | Ídem. |
 
 Los encabezados van sin tildes, como el resto (`ExportColumn`).
 

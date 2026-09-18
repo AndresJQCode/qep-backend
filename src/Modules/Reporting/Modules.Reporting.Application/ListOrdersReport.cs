@@ -18,7 +18,8 @@ public sealed record ListOrdersReportQuery(OrdersReportFilter Filter, int Page, 
 public sealed class ListOrdersReportHandler(
     IOrdersReportSource source,
     IValidator<OrdersReportFilter> validator,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantClock tenantClock)
     : IQueryHandler<ListOrdersReportQuery, ReportPage<OrdersReportItemDto>>
 {
     public async Task<ReportPage<OrdersReportItemDto>> HandleAsync(
@@ -33,8 +34,10 @@ public sealed class ListOrdersReportHandler(
         var page = ReportPaging.NormalizePage(query.Page);
         var pageSize = ReportPaging.NormalizePageSize(query.PageSize);
 
+        // El rango se corta en el día del tenant (spec 2026-09-17, punto 4).
+        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
         var (items, total) = await source.ListAsync(
-            query.Filter.ToCriteria(), page, pageSize, cancellationToken);
+            query.Filter.ToCriteria(calendar), page, pageSize, cancellationToken);
 
         return new ReportPage<OrdersReportItemDto>(items, total, page, pageSize);
     }

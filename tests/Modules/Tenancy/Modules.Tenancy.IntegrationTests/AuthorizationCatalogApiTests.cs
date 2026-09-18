@@ -86,12 +86,23 @@ public sealed class AuthorizationCatalogApiTests
             ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
             OrderPermissionsOf(catalog, "advisor"));
         Assert.Equal(["quotations.order.read"], OrderPermissionsOf(catalog, "billing"));
+        // Facturación abre los comprobantes de pago desde el detalle del pedido, y ese enlace sale
+        // de POST /files/{id}/download-url, que exige storage.file.read. Sólo lectura: subir,
+        // borrar y publicar archivos siguen fuera del rol.
+        Assert.Equal(["storage.file.read"], PermissionsOf(catalog, "billing", "storage."));
     }
 
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
     [
         .. catalog.Roles.Single(item => item.Role == role).Permissions
             .Where(permission => permission.Contains("order", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal),
+    ];
+
+    private static string[] PermissionsOf(CatalogPayload catalog, string role, string prefix) =>
+    [
+        .. catalog.Roles.Single(item => item.Role == role).Permissions
+            .Where(permission => permission.StartsWith(prefix, StringComparison.Ordinal))
             .Order(StringComparer.Ordinal),
     ];
 

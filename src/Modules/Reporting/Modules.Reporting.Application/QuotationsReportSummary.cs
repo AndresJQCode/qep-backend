@@ -121,7 +121,7 @@ public sealed class GetQuotationsReportSummaryHandler(
     IQuotationsReportSource source,
     IValidator<QuotationsReportFilter> validator,
     IExecutionContext executionContext,
-    IClock clock)
+    ITenantClock tenantClock)
     : IQueryHandler<GetQuotationsReportSummaryQuery, QuotationsReportSummaryDto>
 {
     public async Task<QuotationsReportSummaryDto> HandleAsync(
@@ -133,13 +133,14 @@ public sealed class GetQuotationsReportSummaryHandler(
             executionContext, query.Filter.TenantId, ReportingPermissions.QuotationRead);
         await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
 
-        var criteria = query.Filter.ToCriteria();
-        // "Hoy" en UTC, el mismo huso en el que se corta el rango de fechas: mezclar dos husos
-        // dentro del mismo reporte pondría el borde de un tramo un día corrido del borde del
-        // filtro.
+        // El rango y la ventana anterior se cortan con el mismo calendario (spec 2026-09-17, punto 4).
+        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
+        var criteria = query.Filter.ToCriteria(calendar);
+        // "Hoy" es el día del tenant, el mismo en el que se corta el rango (spec 2026-09-17, punto 6):
+        // "vencidas", "por vencer" y DaysLeft no pueden adelantarse un día desde las 19:00 en Bogotá.
         var options = new QuotationsSummaryOptions(
             ReportSummaryRules.RankSize,
-            DateOnly.FromDateTime(clock.UtcNow.UtcDateTime),
+            calendar.Today,
             ReportSummaryRules.ExpiringWithinDays,
             ReportSummaryRules.ExpiringSize);
 
@@ -155,7 +156,7 @@ public sealed class GetQuotationsReportSummaryHandler(
             current.ByAdvisor,
             current.Validity,
             current.Expiring,
-            await SummarizePrecedingAsync(criteria, options, cancellationToken));
+            await SummarizePrecedingAsync(query.Filter, criteria, calendar, options, cancellationToken));
     }
 
     /// <summary>
@@ -168,17 +169,19 @@ public sealed class GetQuotationsReportSummaryHandler(
     /// con el primero.
     /// </summary>
     private async Task<ReportComparisonDto?> SummarizePrecedingAsync(
+        QuotationsReportFilter filter,
         QuotationsReportCriteria criteria,
+        TenantCalendar calendar,
         QuotationsSummaryOptions options,
         CancellationToken cancellationToken)
     {
-        if (ReportComparisonWindow.Preceding(criteria.From, criteria.To) is not { } window)
+        if (ReportComparisonWindow.Preceding(filter.From, filter.To) is not { } window)
         {
             return null;
         }
 
         var preceding = await source.SummarizeAsync(
-            criteria with { From = window.From, To = window.To },
+            criteria with { Period = ReportPeriod.Of(calendar, window.From, window.To) },
             // Sin cola de vencimientos ni ranking en la ventana anterior: de ella sólo se lee el
             // conteo y el monto, y pedirlos serían cuatro consultas que nadie mira.
             options with { RankSize = 0, ExpiringSize = 0 },

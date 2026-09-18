@@ -32,7 +32,7 @@ public sealed class QuotationExpirationApiTests
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
             new SendQuotationRequest(pdfFileId),
             TestContext.Current.CancellationToken);
-        var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+        var yesterday = TodayInBogota().AddDays(-1);
         await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}",
             new UpdateQuotationRequest(yesterday, null, null, null, null),
@@ -61,7 +61,7 @@ public sealed class QuotationExpirationApiTests
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
             new SendQuotationRequest(pdfFileId),
             TestContext.Current.CancellationToken);
-        var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
+        var tomorrow = TodayInBogota().AddDays(1);
         await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}",
             new UpdateQuotationRequest(tomorrow, null, null, null, null),
@@ -86,7 +86,7 @@ public sealed class QuotationExpirationApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
-        var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+        var yesterday = TodayInBogota().AddDays(-1);
         await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}",
             new UpdateQuotationRequest(yesterday, null, null, null, null),
@@ -121,7 +121,7 @@ public sealed class QuotationExpirationApiTests
         await SetValidUntilAsync(
             factory,
             new QuotationId(quotation.Id),
-            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)));
+            TodayInBogota().AddDays(-1));
 
         await RunExpirationSweepAsync(factory);
 
@@ -129,6 +129,85 @@ public sealed class QuotationExpirationApiTests
             $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
         Assert.NotNull(fetched);
         Assert.Equal("Converted", fetched.Status);
+    }
+
+    // Spec 2026-09-17, punto 1: el 31 de diciembre a las 23:00 en Bogotá ya es 2027 en UTC, y una
+    // cotización que vence ese día sigue vigente. Un tenant en UTC+14 ya vive el 1 de enero y la suya
+    // sí vence: el corte es por tenant, dentro del mismo barrido.
+    [Fact]
+    public async Task SweepCutsTheDayInEachTenantsTimeZone()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var dueTodayInBogota = await SentQuotationValidUntilAsync(
+            factory, "America/Bogota", new DateOnly(2026, 12, 31));
+        var dueYesterdayInKiritimati = await SentQuotationValidUntilAsync(
+            factory, "Pacific/Kiritimati", new DateOnly(2026, 12, 31));
+        var dueYesterdayInBogota = await SentQuotationValidUntilAsync(
+            factory, "America/Bogota", new DateOnly(2026, 12, 30));
+
+        var expiredCount = await RunExpirationSweepAsync(factory);
+
+        Assert.Equal(2, expiredCount);
+        Assert.Equal(QuotationStatus.Sent, await StatusOfAsync(factory, dueTodayInBogota));
+        Assert.Equal(QuotationStatus.Expired, await StatusOfAsync(factory, dueYesterdayInKiritimati));
+        Assert.Equal(QuotationStatus.Expired, await StatusOfAsync(factory, dueYesterdayInBogota));
+    }
+
+    // Decisión del owner (2026-09-17): un tenant cuyo huso no se puede resolver se salta y se
+    // registra, sin caer en UTC y sin frenar el barrido de los demás.
+    [Fact]
+    public async Task SweepSkipsATenantWhoseTimeZoneCannotBeResolvedAndExpiresTheRest()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var orphan = await SentQuotationValidUntilAsync(
+            factory, "America/Bogota", new DateOnly(2026, 12, 1));
+        var dueYesterdayInBogota = await SentQuotationValidUntilAsync(
+            factory, "America/Bogota", new DateOnly(2026, 12, 30));
+        await MoveToUnknownTenantAsync(factory, orphan);
+
+        var expiredCount = await RunExpirationSweepAsync(factory);
+
+        Assert.Equal(1, expiredCount);
+        Assert.Equal(QuotationStatus.Sent, await StatusOfAsync(factory, orphan));
+        Assert.Equal(QuotationStatus.Expired, await StatusOfAsync(factory, dueYesterdayInBogota));
+    }
+
+    // Sin fila en tenancy.tenants: el mismo estado que deja un tenant borrado a mano.
+    private static async Task MoveToUnknownTenantAsync(QepApiFactory factory, QuotationId quotationId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var unknownTenantId = Guid.CreateVersion7();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"UPDATE quotations.quotations SET tenant_id = {unknownTenantId} WHERE id = {quotationId.Value}",
+            TestContext.Current.CancellationToken);
+    }
+
+    // Enviada por la API y con la vigencia corrida en la base: el paso del tiempo es lo que se simula.
+    private static async Task<QuotationId> SentQuotationValidUntilAsync(
+        QepApiFactory factory, string timeZone, DateOnly validUntil)
+    {
+        var (tenantId, _, client) = await RegisterTenantInTimeZoneAsync(factory, timeZone, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var quotationId = new QuotationId(quotation.Id);
+        await SetValidUntilAsync(factory, quotationId, validUntil);
+        return quotationId;
+    }
+
+    private static async Task<QuotationStatus> StatusOfAsync(QepApiFactory factory, QuotationId quotationId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return await dbContext.Quotations
+            .AsNoTracking()
+            .Where(quotation => quotation.Id == quotationId)
+            .Select(quotation => quotation.Status)
+            .SingleAsync(TestContext.Current.CancellationToken);
     }
 
     private static async Task<int> RunExpirationSweepAsync(QepApiFactory factory)

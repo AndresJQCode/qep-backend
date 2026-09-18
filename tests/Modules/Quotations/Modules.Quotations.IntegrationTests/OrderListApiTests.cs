@@ -21,7 +21,8 @@ public sealed class OrderListApiTests
     public async Task ListReturnsTheOrderWithItsClientAdvisorAndTotalsResolved()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Reloj fijo: el número del pedido lleva el año del tenant (spec 2026-09-17, punto 2b).
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -35,7 +36,7 @@ public sealed class OrderListApiTests
         Assert.NotNull(page);
         Assert.Equal(1, page.Total);
         var row = Assert.Single(page.Items);
-        Assert.StartsWith($"PED-{DateTime.UtcNow.Year}-", row.OrderNumber, StringComparison.Ordinal);
+        Assert.StartsWith("PED-2026-", row.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(quotation.Id, row.QuotationId);
         Assert.Equal(quotation.QuotationNumber, row.QuotationNumber);
         Assert.Equal(clientId, row.ClientId);
@@ -133,9 +134,9 @@ public sealed class OrderListApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var approved = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        await ConvertToOrderAsync(client, tenantId, approved.Id);
+        var approvedOrder = await ConvertToOrderAsync(client, tenantId, approved.Id);
         (await client.PostAsync(
-            $"{QuotationsUrl(tenantId)}/{approved.Id}/order/approve",
+            $"{OrdersUrl(tenantId)}/{approvedOrder.Id}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         var pending = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
@@ -228,6 +229,35 @@ public sealed class OrderListApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // Spec 2026-09-17, punto 3: el pedido convertido el 31 a las 23:00 de Bogotá —ya 2027 en UTC—
+    // entra en el día 31 del tenant y no en el 1 de enero.
+    [Fact]
+    public async Task ListFiltersTheConversionRangeByTheTenantsLocalDay()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ConvertToOrderAsync(client, tenantId, quotation.Id);
+
+        var lastDay = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-12-31&convertedTo=2026-12-31",
+            TestContext.Current.CancellationToken);
+        var nextDay = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2027-01-01&convertedTo=2027-01-01",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastDay);
+        Assert.Equal(quotation.Id, Assert.Single(lastDay.Items).QuotationId);
+        Assert.Equal(1, lastDay.Total);
+        Assert.NotNull(nextDay);
+        Assert.Empty(nextDay.Items);
+        Assert.Equal(0, nextDay.Total);
     }
 
     /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el

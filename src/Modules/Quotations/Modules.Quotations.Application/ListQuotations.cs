@@ -95,7 +95,8 @@ public sealed class ListQuotationsHandler(
     IOrderRepository orderRepository,
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantClock tenantClock)
     : IQueryHandler<ListQuotationsQuery, QuotationPage>
 {
     public async Task<QuotationPage> HandleAsync(
@@ -112,14 +113,19 @@ public sealed class ListQuotationsHandler(
         var clientIds = await QuotationListing.ResolveClientIdsByNitAsync(
             customerLookup, query.TenantId, query.ClientNit, cancellationToken);
 
+        // El rango se corta en el día del tenant (spec 2026-09-17, punto 3): el total del listado es
+        // el mismo conteo, así que también cambia.
+        var created = await TenantDayRange.ResolveAsync(
+            tenantClock, query.TenantId, query.CreatedFrom, query.CreatedTo, cancellationToken);
+
         var (quotations, total) = await repository.SearchAsync(
             query.TenantId,
             query.ClientId,
             clientIds,
             advisorId,
             status,
-            query.CreatedFrom,
-            query.CreatedTo,
+            created.From,
+            created.Before,
             query.QuotationNumber,
             page,
             pageSize,

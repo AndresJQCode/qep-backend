@@ -21,6 +21,7 @@ internal static class OrderMapping
         order.RitualCollectionSyncId,
         order.CreatedAt,
         order.UpdatedAt,
+        order.Version,
         order.PaymentProofs.Select(ToDto).ToArray());
 
     /// <summary>La fila del listado, con el nombre del cliente y el de la asesora (o su correo) ya

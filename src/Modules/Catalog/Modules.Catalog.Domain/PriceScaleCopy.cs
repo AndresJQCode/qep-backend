@@ -8,8 +8,13 @@ namespace Modules.Catalog.Domain;
 /// el precio del destino *antes* de aplicarlo, que es justo lo que el detector de histórico
 /// necesita para comparar contra lo que había.
 ///
-/// Lo que se copia es la **forma** del tramo —rango, descuento, restricción, múltiplo o empaque,
-/// agrupación—, nunca el precio final. Ese se recalcula contra el precio base **del destino**,
+/// Lo que se copia es el **tramo** —rango y descuento—, nunca el precio final. Tampoco la
+/// restricción ni lo que cuelga de ella (múltiplo, empaque, agrupación): cómo se vende cada
+/// producto no es algo que se herede de otro, así que la escala llega incompleta y alguien la
+/// tiene que terminar de configurar en el destino antes de poder cotizarlo. Decisión del product
+/// owner, 2026-09-17.
+///
+/// El precio final se recalcula contra el precio base **del destino**,
 /// y es la corrección que motivó este tipo: <see cref="PriceScale.Create"/> valida el final
 /// contra el precio base del producto dueño, así que arrastrar el final del origen hacía fallar
 /// la copia con <c>catalog.product.price_scale.final_mismatch_usd</c> en todo destino cuyo
@@ -51,10 +56,10 @@ public static class PriceScaleCopy
         scale.FromUnit,
         scale.ToUnit,
         scale.Discount,
-        scale.Restriction,
-        scale.Multiple,
-        scale.PackagingUnit,
+        Restriction: null,
+        Multiple: null,
+        PackagingUnit: null,
         PriceScale.FinalFor(target.PriceBaseUsd, scale.Discount),
         PriceScale.FinalFor(target.PriceBaseCop, scale.Discount),
-        scale.AllowGrouping);
+        AllowGrouping: false);
 }

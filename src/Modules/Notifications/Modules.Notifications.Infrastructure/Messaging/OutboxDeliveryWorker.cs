@@ -100,6 +100,7 @@ internal abstract partial class OutboxDeliveryWorker(
             services.GetRequiredService<IEmailChannel>(),
             services.GetRequiredService<IUserDirectory>(),
             services.GetRequiredService<ITenantDirectory>(),
+            services.GetRequiredService<ITenantClock>(),
             services.GetRequiredService<IClock>());
 
         // Candidatos: sin fila en el inbox, o con una reclamada y sin terminar cuyo lease venció.
@@ -231,4 +232,8 @@ internal abstract partial class OutboxDeliveryWorker(
 /// <summary>Lo que un worker concreto necesita para armar y mandar su correo, resuelto en el scope del
 /// tick.</summary>
 internal sealed record DeliveryContext(
-    IEmailChannel Channel, IUserDirectory UserDirectory, ITenantDirectory TenantDirectory, IClock Clock);
+    IEmailChannel Channel,
+    IUserDirectory UserDirectory,
+    ITenantDirectory TenantDirectory,
+    ITenantClock TenantClock,
+    IClock Clock);

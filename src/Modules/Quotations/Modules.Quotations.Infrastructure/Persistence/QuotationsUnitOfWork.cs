@@ -21,6 +21,14 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // OrderApiTests.ConvertingAQuotationThatAlreadyHasAnOrderIsAlreadyConverted.
     private const string OrderQuotationIndex = "IX_orders_quotation";
 
+    // El número lo asigna IOrderNumberGenerator con un contador atómico por tenant, pero desde el
+    // spec 2026-09-17 el formato es dato que se escribe a mano por SQL: un prefijo mal configurado
+    // (por ejemplo uno que ya trae el año) puede armar el mismo texto que un pedido ya emitido y sí
+    // alcanza este índice en la práctica. Sin traducir, saldría 500 con el nombre de la constraint
+    // adentro. La prueba es
+    // OrderApiTests.AMisconfiguredPrefixThatCollidesWithAnAlreadyIssuedOrderNumberIsRejected.
+    private const string OrderNumberIndex = "IX_orders_tenant_number";
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
@@ -63,6 +71,18 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new QuotationsDomainException(
                 "quotation.quotation.already_converted",
                 "This quotation was already converted to an order.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      OrderNumberIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new QuotationsDomainException(
+                "order.order.number_taken",
+                "Another order in this tenant already uses that number.");
         }
     }
 }

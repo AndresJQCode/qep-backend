@@ -99,6 +99,10 @@ internal static class QuotationProductPricingResolver
                 $"The product does not have a price in {currency.ToCode()}.");
         }
 
+        // Antes que el descuento, y también desde ResolveManyAsync: cambiar la moneda es volver a
+        // fijar el precio de cada línea, y ese precio depende de la restricción que falta.
+        QuotationScaleRestrictionRule.EnsureScalesComplete(product.Scales);
+
         var scale = QuotationDiscountResolver.Resolve(product.Scales, quantity);
 
         // PackagingUnit conserva su 422, y sólo sobre la línea que el comando toca: es el

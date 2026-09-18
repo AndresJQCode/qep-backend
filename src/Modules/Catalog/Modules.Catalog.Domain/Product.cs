@@ -184,14 +184,25 @@ public sealed class Product
     /// Las escalas entrantes se validan contra el precio base **de este** producto, que es la
     /// razón por la que la copia recalcula el precio final antes de llegar acá. Ver
     /// <see cref="PriceScaleCopy"/>.
+    ///
+    /// Y quedan **incompletas**: sin restricción, múltiplo, empaque ni agrupación
+    /// (<see cref="PriceScale.CreateIncomplete"/>). Es el único camino que las produce, y por eso
+    /// el nombre dice "copiadas": el formulario pasa por <see cref="Update"/>, que sigue exigiendo
+    /// la restricción.
     /// </summary>
-    public void ApplyPriceScales(
+    public void ApplyCopiedPriceScales(
         IReadOnlyCollection<PriceScaleInput> scales,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
 
-        ReplaceScales(scales);
+        _priceScales.Clear();
+        foreach (var scale in scales)
+        {
+            _priceScales.Add(
+                PriceScale.CreateIncomplete(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
+        }
+
         Version++;
         UpdatedAt = occurredAt;
     }

@@ -253,4 +253,20 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Equal("quotation.item.quantity_not_multiple", lineB.Restriction!.Code);
         Assert.Equal(16m, lineB.Restriction.EvaluatedQuantity);
     }
+
+    // Recalcular nunca lanza, ni siquiera ante una escala incompleta: la línea ya estaba en la
+    // cotización. Pero tampoco se lleva un descuento que nadie terminó de configurar.
+    [Fact]
+    public void AnIncompleteScaleNeverAppliesItsDiscount()
+    {
+        var item = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(item, ProductA, 6m)],
+            Catalog((ProductA, new QuotationPriceScaleRef(5, 48, 5m, null, null, null))));
+
+        var line = For(result, item);
+        Assert.Equal(0m, line.DiscountPercentage);
+        Assert.False(line.Restriction!.IsSatisfied);
+    }
 }

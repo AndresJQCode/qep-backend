@@ -32,7 +32,7 @@ internal static class ProductMapping
         scale.FromUnit,
         scale.ToUnit,
         scale.Discount,
-        scale.Restriction.ToWireValue(),
+        scale.Restriction?.ToWireValue(),
         scale.Multiple,
         scale.PackagingUnit,
         scale.FinalUsd,

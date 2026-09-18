@@ -95,4 +95,17 @@ public sealed class QuotationScaleRestrictionRuleTests
         QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(packagingUnit), 7m);
         Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(packagingUnit), 7m).IsSatisfied);
     }
+
+    // Una escala copiada de otro producto llega sin restricción. No hay contra qué evaluarla, y
+    // darla por cumplida —lo que hacía el `_ =>` de Evaluate— regalaba su descuento.
+    [Fact]
+    public void AnIncompleteScaleIsNeverSatisfied()
+    {
+        var incomplete = new QuotationPriceScaleRef(5, 48, 5m, null, null, null);
+
+        var result = QuotationScaleRestrictionRule.Evaluate(incomplete, 6m);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal("quotation.item.product_price_scales_incomplete", result.Code);
+    }
 }

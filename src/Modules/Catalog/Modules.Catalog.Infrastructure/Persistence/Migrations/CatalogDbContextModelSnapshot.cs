@@ -64,7 +64,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnName("product_id");
 
                     b.Property<string>("Restriction")
-                        .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)")
                         .HasColumnName("restriction");

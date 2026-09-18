@@ -41,7 +41,7 @@ public sealed class PriceScaleCopyTests
         var target = ProductWith(new ProductPricing { BaseUsd = 50m }, "VS-002");
 
         var pricing = PriceScaleCopy.ToPricingFor(source, target);
-        target.ApplyPriceScales(pricing.Scales, Now.AddMinutes(5));
+        target.ApplyCopiedPriceScales(pricing.Scales, Now.AddMinutes(5));
 
         var copied = Assert.Single(target.PriceScales);
         Assert.Equal(45m, copied.FinalUsd);
@@ -61,7 +61,7 @@ public sealed class PriceScaleCopyTests
             new ProductPricing { BaseUsd = 50m, BaseCop = 200000m }, "VS-002");
 
         var pricing = PriceScaleCopy.ToPricingFor(source, target);
-        target.ApplyPriceScales(pricing.Scales, Now.AddMinutes(5));
+        target.ApplyCopiedPriceScales(pricing.Scales, Now.AddMinutes(5));
 
         Assert.Equal(50m, target.PriceBaseUsd);
         Assert.Equal(200000m, target.PriceBaseCop);
@@ -83,15 +83,19 @@ public sealed class PriceScaleCopyTests
         var target = ProductWith(new ProductPricing { BaseUsd = 50m }, "VS-002");
 
         var pricing = PriceScaleCopy.ToPricingFor(source, target);
-        target.ApplyPriceScales(pricing.Scales, Now.AddMinutes(5));
+        target.ApplyCopiedPriceScales(pricing.Scales, Now.AddMinutes(5));
 
         var copied = Assert.Single(target.PriceScales);
         Assert.Equal(45m, copied.FinalUsd);
         Assert.Null(copied.FinalCop);
     }
 
+    // Se copia el rango y el descuento, nada más. La restricción y su valor —múltiplo o
+    // empaque— y la agrupación dependen del producto, no del tramo: arrastrarlos dejaba a un
+    // producto vendiéndose de a 12 porque otro se empaca así. La escala queda incompleta hasta
+    // que alguien abra el destino y la termine de configurar.
     [Fact]
-    public void CopiesTheShapeOfEveryScale()
+    public void CopiesOnlyTheRangeAndTheDiscount()
     {
         var source = ProductWith(new ProductPricing
         {
@@ -106,7 +110,7 @@ public sealed class PriceScaleCopyTests
         });
         var target = ProductWith(new ProductPricing { BaseUsd = 100m }, "VS-002");
 
-        target.ApplyPriceScales(
+        target.ApplyCopiedPriceScales(
             PriceScaleCopy.ToPricingFor(source, target).Scales, Now.AddMinutes(5));
 
         // Ordenadas por rango, no en el orden en que venían.
@@ -115,17 +119,62 @@ public sealed class PriceScaleCopyTests
 
         Assert.Equal(1, scales[0].FromUnit);
         Assert.Equal(9, scales[0].ToUnit);
-        Assert.Equal(PriceScaleRestriction.PackagingUnit, scales[0].Restriction);
-        Assert.Equal(12, scales[0].PackagingUnit);
-        Assert.Null(scales[0].Multiple);
-        Assert.False(scales[0].AllowGrouping);
+        Assert.Equal(10m, scales[0].Discount);
+        Assert.Equal(90m, scales[0].FinalUsd);
 
         Assert.Equal(10, scales[1].FromUnit);
         Assert.Equal(20, scales[1].ToUnit);
-        Assert.Equal(PriceScaleRestriction.Multiple, scales[1].Restriction);
-        Assert.Equal(5, scales[1].Multiple);
-        Assert.Null(scales[1].PackagingUnit);
-        Assert.True(scales[1].AllowGrouping);
+        Assert.Equal(20m, scales[1].Discount);
+        Assert.Equal(80m, scales[1].FinalUsd);
+
+        Assert.All(scales, scale =>
+        {
+            Assert.Null(scale.Restriction);
+            Assert.Null(scale.Multiple);
+            Assert.Null(scale.PackagingUnit);
+            Assert.False(scale.AllowGrouping);
+        });
+    }
+
+    // La copia es el único camino que produce escalas incompletas, y no se abre para lo que
+    // venga completo: una entrada con restricción que llega acá es un error de programación.
+    [Fact]
+    public void RejectsACopiedScaleThatCarriesARestriction()
+    {
+        var target = ProductWith(new ProductPricing { BaseUsd = 100m }, "VS-002");
+
+        Assert.Throws<ArgumentException>(() =>
+            target.ApplyCopiedPriceScales([MultipleScale()], Now.AddMinutes(5)));
+    }
+
+    // Recopiar sobre un destino que ya tiene escalas incompletas: el histórico de precios compara
+    // descuentos por rango y no puede depender de que la restricción exista.
+    [Fact]
+    public void DetectsDiscountChangesOnATargetWithIncompleteScales()
+    {
+        var firstSource = ProductWith(new ProductPricing
+        {
+            BaseUsd = 100m,
+            Scales = [MultipleScale(discount: 10m, finalUsd: 90m)]
+        });
+        var secondSource = ProductWith(new ProductPricing
+        {
+            BaseUsd = 100m,
+            Scales = [MultipleScale(discount: 20m, finalUsd: 80m)]
+        }, "VS-003");
+        var target = ProductWith(new ProductPricing { BaseUsd = 100m }, "VS-002");
+        target.ApplyCopiedPriceScales(
+            PriceScaleCopy.ToPricingFor(firstSource, target).Scales, Now.AddMinutes(5));
+
+        var pricing = PriceScaleCopy.ToPricingFor(secondSource, target);
+        var changes = ProductPriceChangeDetector.Detect(
+            target, pricing, Guid.CreateVersion7(), Now.AddMinutes(10));
+        target.ApplyCopiedPriceScales(pricing.Scales, Now.AddMinutes(10));
+
+        var change = Assert.Single(changes);
+        Assert.Equal(10m, change.PreviousValue);
+        Assert.Equal(20m, change.NewValue);
+        Assert.Null(Assert.Single(target.PriceScales).Restriction);
     }
 
     // Reemplazo, no suma: es lo que la pantalla avisa antes de copiar.
@@ -141,7 +190,7 @@ public sealed class PriceScaleCopyTests
             new ProductPricing { BaseUsd = 100m, Scales = [MultipleScale(fromUnit: 1, toUnit: 9)] },
             "VS-002");
 
-        target.ApplyPriceScales(
+        target.ApplyCopiedPriceScales(
             PriceScaleCopy.ToPricingFor(source, target).Scales, Now.AddMinutes(5));
 
         var copied = Assert.Single(target.PriceScales);
@@ -160,7 +209,7 @@ public sealed class PriceScaleCopyTests
         var target = ProductWith(new ProductPricing { BaseUsd = 100m }, "VS-002");
         var sourceScaleId = source.PriceScales.Single().Id;
 
-        target.ApplyPriceScales(
+        target.ApplyCopiedPriceScales(
             PriceScaleCopy.ToPricingFor(source, target).Scales, Now.AddMinutes(5));
 
         var copied = Assert.Single(target.PriceScales);
@@ -181,7 +230,7 @@ public sealed class PriceScaleCopyTests
         var version = target.Version;
         var modifiedAt = Now.AddMinutes(5);
 
-        target.ApplyPriceScales(
+        target.ApplyCopiedPriceScales(
             PriceScaleCopy.ToPricingFor(source, target).Scales, modifiedAt);
 
         Assert.Equal(version + 1, target.Version);
@@ -201,7 +250,7 @@ public sealed class PriceScaleCopyTests
         target.Deactivate(Now.AddMinutes(1));
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            target.ApplyPriceScales(
+            target.ApplyCopiedPriceScales(
                 PriceScaleCopy.ToPricingFor(source, target).Scales, Now.AddMinutes(5)));
 
         Assert.Equal("catalog.product.inactive", error.Code);
@@ -219,7 +268,7 @@ public sealed class PriceScaleCopyTests
         });
         var target = ProductWith(new ProductPricing { BaseUsd = 99.99m }, "VS-002");
 
-        target.ApplyPriceScales(
+        target.ApplyCopiedPriceScales(
             PriceScaleCopy.ToPricingFor(source, target).Scales, Now.AddMinutes(5));
 
         var copied = Assert.Single(target.PriceScales);

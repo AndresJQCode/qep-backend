@@ -22,6 +22,11 @@ public sealed class ExportQuotationsHandlerTests
     private static readonly DateOnly From = new(2026, 1, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
+    // El mismo rango cortado en el día de Bogotá (spec 2026-09-17, punto 3): 00:00 del 1 de enero y
+    // 00:00 del día siguiente al "hasta".
+    private static readonly DateTimeOffset FromUtc = new(2026, 1, 1, 5, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task ExportForAnotherTenantIsForbiddenAndEnqueuesNothing()
     {
@@ -220,7 +225,7 @@ public sealed class ExportQuotationsHandlerTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new RecordedExportSearch(ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, From, To, "0001"),
+            new RecordedExportSearch(ClientId, ClientIds: null, AdvisorId, QuotationStatus.Sent, FromUtc, BeforeUtc, "0001"),
             repository.LastExportSearch);
     }
 
@@ -282,5 +287,5 @@ public sealed class ExportQuotationsHandlerTests
             unitOfWork ?? new CountingQuotationsUnitOfWork(),
             new ExportQuotationsValidator(),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
-            new FixedClock(Now));
+            new FixedTenantClock(Now));
 }

@@ -12,7 +12,7 @@ namespace Modules.Quotations.Application;
 /// usar se borra: lo hace Storage, al consumir el evento que se escribe con el pedido.
 /// </summary>
 public sealed record RemoveOrderPaymentProofCommand(
-    Guid TenantId, Guid QuotationId, Guid ProofId) : ICommand<OrderDto>;
+    Guid TenantId, Guid OrderId, Guid ProofId) : ICommand<OrderDto>;
 
 public sealed class RemoveOrderPaymentProofHandler(
     IOrderRepository orderRepository,
@@ -31,13 +31,16 @@ public sealed class RemoveOrderPaymentProofHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
 
-        var order = await orderRepository.FindByQuotationIdAsync(
-            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
-            ?? throw OrderNotFound.For(command.QuotationId);
+        // Primero el pedido por su id y recién desde él su cotización, igual que
+        // SaveOrderEditsHandler: hace falta el total para recalcular el estado de pago. Que falte
+        // la cotización sería un pedido huérfano, imposible por la FK: mismo "no encontrado".
+        var order = await orderRepository.FindByIdAsync(
+            command.TenantId, new OrderId(command.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
         var quotation = await quotationRepository.FindAsync(
-            command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
-            ?? throw QuotationNotFound.For(command.QuotationId);
+            command.TenantId, order.QuotationId, cancellationToken)
+            ?? throw OrderNotFound.ById(command.OrderId);
 
         var now = clock.UtcNow;
         var proofId = new OrderPaymentProofId(command.ProofId);

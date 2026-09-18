@@ -7,6 +7,8 @@ public sealed class CustomerExportEmailTemplateTests
     private static readonly DateTimeOffset ExpiresAt =
         new(2026, 9, 1, 14, 30, 0, TimeSpan.Zero);
 
+    private static readonly TimeZoneInfo Bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
     // Una URL prefirmada real: media docena de parametros separados por `&`, que es justo lo que
     // rompe si el cuerpo HTML no los escapa.
     private const string SignedUrl =
@@ -24,7 +26,7 @@ public sealed class CustomerExportEmailTemplateTests
             SignedUrl,
             "clientes-20260901-113000.xlsx",
             customerCount: 42,
-            ExpiresAt);
+            ExpiresAt, Bogota);
 
         Assert.Equal("compras@verde.co", message.ToAddress);
         Assert.NotEmpty(message.Subject);
@@ -33,7 +35,10 @@ public sealed class CustomerExportEmailTemplateTests
         {
             Assert.Contains("clientes-20260901-113000.xlsx", body, StringComparison.Ordinal);
             Assert.Contains("42 clientes", body, StringComparison.Ordinal);
-            Assert.Contains("01/09/2026 14:30 UTC", body, StringComparison.Ordinal);
+            // 14:30 UTC son las 09:30 en Bogotá: la hora del tenant, sin etiqueta de huso (spec
+            // 2026-09-17, punto 8b).
+            Assert.Contains("01/09/2026 09:30", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("UTC", body, StringComparison.Ordinal);
         }
 
         // En texto plano la URL va cruda: escaparla ahi la romperia.
@@ -49,7 +54,7 @@ public sealed class CustomerExportEmailTemplateTests
     public void RenderEscapesTheLinkInsideTheHtmlHref()
     {
         var message = CustomerExportEmailTemplate.Render(
-            "compras@verde.co", SignedUrl, "clientes.xlsx", 1, ExpiresAt);
+            "compras@verde.co", SignedUrl, "clientes.xlsx", 1, ExpiresAt, Bogota);
 
         Assert.Contains("&amp;X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
         Assert.DoesNotContain("&X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
@@ -60,9 +65,21 @@ public sealed class CustomerExportEmailTemplateTests
     public void RenderUsesTheSingularForOneCustomer()
     {
         var message = CustomerExportEmailTemplate.Render(
-            "compras@verde.co", "https://r2.example/x", "clientes.xlsx", 1, ExpiresAt);
+            "compras@verde.co", "https://r2.example/x", "clientes.xlsx", 1, ExpiresAt, Bogota);
 
         Assert.Contains("(1 cliente)", message.TextBody, StringComparison.Ordinal);
         Assert.DoesNotContain("1 clientes", message.TextBody, StringComparison.Ordinal);
+    }
+
+    // El enlace que vence el 1 de enero a las 04:00 UTC vence, para el tenant, el 31 de diciembre a
+    // las 23:00.
+    [Fact]
+    public void RenderShowsTheExpiryOnTheTenantsDay()
+    {
+        var message = CustomerExportEmailTemplate.Render(
+            "compras@verde.co", "https://r2.example/x", "clientes.xlsx", 1,
+            new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), Bogota);
+
+        Assert.Contains("31/12/2026 23:00", message.TextBody, StringComparison.Ordinal);
     }
 }

@@ -72,7 +72,7 @@ public sealed class ExportQuotationsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IValidator<ExportQuotationsCommand> validator,
     IExecutionContext executionContext,
-    IClock clock)
+    ITenantClock tenantClock)
     : ICommandHandler<ExportQuotationsCommand, ExportJobAccepted>
 {
     public async Task<ExportJobAccepted> HandleAsync(
@@ -92,14 +92,18 @@ public sealed class ExportQuotationsHandler(
 
         // 3: al menos una fila. Un EXISTS es barato, y enterarse de que no había nada después de
         // esperar un correo es peor.
+        // El rango se corta en el día del tenant (spec 2026-09-17, punto 3). El job guarda las fechas
+        // tal como llegaron: el procesador las vuelve a cortar con el calendario de ese momento.
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var created = TenantDayRange.Of(calendar, command.CreatedFrom, command.CreatedTo);
         var anyRow = await repository.AnyForExportAsync(
             command.TenantId,
             command.ClientId,
             clientIds,
             advisorId,
             status,
-            command.CreatedFrom,
-            command.CreatedTo,
+            created.From,
+            created.Before,
             command.QuotationNumber,
             cancellationToken);
         if (!anyRow)
@@ -133,7 +137,7 @@ public sealed class ExportQuotationsHandler(
                 command.CreatedTo!.Value,
                 command.ClientNit,
                 command.QuotationNumber)),
-            clock.UtcNow);
+            calendar.UtcNow);
         queue.Add(job);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 

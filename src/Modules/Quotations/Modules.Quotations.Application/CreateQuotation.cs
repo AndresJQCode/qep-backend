@@ -32,9 +32,10 @@ public sealed class CreateQuotationHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationNumberGenerator numberGenerator,
+    IDocumentNumberingFormatLookup numberingFormats,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock,
+    ITenantClock tenantClock,
     IValidator<CreateQuotationCommand> validator)
     : ICommandHandler<CreateQuotationCommand, QuotationDto>
 {
@@ -60,9 +61,18 @@ public sealed class CreateQuotationHandler(
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
-        var now = clock.UtcNow;
-        var sequence = await numberGenerator.NextAsync(command.TenantId, now.Year, cancellationToken);
-        var quotationNumber = QuotationNumberFormatter.Format(now.Year, sequence);
+        // El año del consecutivo es el del día del tenant, no el de UTC (spec 2026-09-17, punto 2a):
+        // en Bogotá, el 31 de diciembre desde las 19:00 UTC ya es el año siguiente.
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var now = calendar.UtcNow;
+        var year = calendar.Today.Year;
+        // El formato es un dato del tenant (spec 2026-09-17 de numeración). Sin año, el consecutivo
+        // sale de la fila `year = 0`, que no se reinicia; con año, de la fila del año.
+        var format = await numberingFormats.GetAsync(
+            command.TenantId, DocumentNumberType.Quotation, cancellationToken);
+        var counterYear = format.IncludeYear ? year : 0;
+        var sequence = await numberGenerator.NextAsync(command.TenantId, counterYear, cancellationToken);
+        var quotationNumber = DocumentNumberFormatter.Format(format, year, sequence);
 
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -70,10 +80,10 @@ public sealed class CreateQuotationHandler(
             quotationNumber,
             command.ClientId,
             advisorId,
-            // Sin vigencia en el request, quince dias desde hoy. Se resuelve **al crear** y
-            // queda guardado: calcularlo al leer haria que la misma cotizacion mostrara una
-            // fecha distinta cada dia.
-            command.ValidUntil ?? DefaultValidUntil(now),
+            // Sin vigencia en el request, quince días desde el hoy del tenant (spec 2026-09-17,
+            // punto 2c). Se resuelve **al crear** y queda guardado: calcularlo al leer haría que la
+            // misma cotización mostrara una fecha distinta cada día.
+            command.ValidUntil ?? calendar.Today.AddDays(DefaultValidityDays),
             command.PaymentMethod,
             command.Notes,
             command.Parties.ToDomain(),
@@ -104,7 +114,4 @@ public sealed class CreateQuotationHandler(
     }
 
     public const int DefaultValidityDays = 15;
-
-    private static DateOnly DefaultValidUntil(DateTimeOffset now) =>
-        DateOnly.FromDateTime(now.UtcDateTime).AddDays(DefaultValidityDays);
 }

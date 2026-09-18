@@ -88,9 +88,9 @@ public sealed class OrdersReportSummaryApiTests
         await ConvertToOrderAsync(client, factory, tenant.TenantId, kept);
         var cancelled = await CreateSentQuotationAsync(
             client, factory, tenant.TenantId, customer.Id, productId);
-        await ConvertToOrderAsync(client, factory, tenant.TenantId, cancelled);
+        var cancelledOrder = await ConvertToOrderAsync(client, factory, tenant.TenantId, cancelled);
         (await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenant.TenantId}/quotations/{cancelled.Id}/order/cancel",
+            $"/api/v1/tenants/{tenant.TenantId}/orders/{cancelledOrder.Id}/cancel",
             new CancelOrderRequest("El cliente desistió"),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
@@ -109,6 +109,32 @@ public sealed class OrdersReportSummaryApiTests
         Assert.Equal(1, Assert.Single(summary.Monthly).Count);
         Assert.Equal(1, Assert.Single(summary.ByAdvisor).Count);
         Assert.Equal(1, Assert.Single(summary.ByClient).Count);
+    }
+
+    // Spec 2026-09-17, punto 5: el pedido convertido el 31 de diciembre a las 23:00 de Bogotá —ya
+    // enero en UTC— cuenta en la serie de diciembre del tenant.
+    [Fact]
+    public async Task TheMonthlySeriesGroupsByTheTenantsLocalMonth()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?from=2026-12-01&to=2026-12-31",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        var month = Assert.Single(summary.Monthly);
+        Assert.Equal((2026, 12), (month.Year, month.Month));
+        Assert.Equal(quotation.Total, month.Total);
     }
 
     /// <summary>
@@ -157,7 +183,7 @@ public sealed class OrdersReportSummaryApiTests
             client, factory, tenant.TenantId, customer.Id, productId);
         await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var from = today.AddDays(-29);
 
         var response = await client.GetAsync(

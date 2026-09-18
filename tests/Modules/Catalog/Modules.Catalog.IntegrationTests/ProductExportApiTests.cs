@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using BuildingBlocks.Application;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Application;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -43,6 +46,7 @@ public sealed class ProductExportApiTests
         var storage = new CapturingExportStorage();
         using var factory = new QepApiFactory(database.GetConnectionString(), storage);
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await SeedTenantAsync(factory);
 
         // A: 1-9 y 10-19. B: 1-9 (compartida con A) y 20-99. C: sin escalas.
         // Los descuentos sobre BaseCop = 50.000 dan 45.000 / 42.500 / 30.000 / 25.000.
@@ -108,6 +112,29 @@ public sealed class ProductExportApiTests
         Assert.Contains("catalog.product-export-ready.v1", events);
     }
 
+    // Spec 2026-09-17, punto 8a: el nombre del archivo lleva la hora del tenant. Con el reloj en el 31
+    // de diciembre a las 23:00 de Bogotá no dice 2027.
+    [Fact]
+    public async Task ExportNamesTheFileWithTheTenantsLocalTime()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(), storage, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await SeedTenantAsync(factory);
+        await CreateProductAsync(client, "AAA-1", "Vela de soja", []);
+
+        var response = await client.PostAsync(
+            ExportUrl(), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ExportResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal("productos-2026-12-31-2300.xlsx", body.FileName);
+    }
+
     [Fact]
     public async Task ExportWithoutReadPermissionIsForbidden()
     {
@@ -154,6 +181,24 @@ public sealed class ProductExportApiTests
         multiple = 1,
         finalCop = BaseCop * (1m - discount / 100m),
     };
+
+    // Este archivo usa un tenant que no pasa por el registro. ExportProductsHandler nombra el archivo
+    // con la hora del tenant (spec 2026-09-17, punto 8a), y sin su fila en tenancy.tenants
+    // TenantClock responde tenancy.tenant.not_found.
+    private static async Task SeedTenantAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        tenancy.Tenants.Add(Modules.Tenancy.Domain.Tenant.Create(
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
+            "catalog-export-tests",
+            "Catalog Export Tests",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            DateTimeOffset.UtcNow));
+        await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
 
     private static async Task CreateProductAsync(
         HttpClient client, string code, string name, object[] scales)
@@ -234,8 +279,13 @@ public sealed class ProductExportApiTests
         }
     }
 
+    private sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
+    }
+
     private sealed class QepApiFactory(
-        string connectionString, IProductExportStorage exportStorage)
+        string connectionString, IProductExportStorage exportStorage, DateTimeOffset? utcNow = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -253,7 +303,15 @@ public sealed class ProductExportApiTests
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.ConfigureServices(services =>
-                services.AddScoped(_ => exportStorage));
+            {
+                services.AddScoped(_ => exportStorage);
+                // Reloj fijo sólo para las pruebas que lo piden (spec 2026-09-17).
+                if (utcNow is { } fixedNow)
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddScoped<IClock>(_ => new FixedClock(fixedNow));
+                }
+            });
         }
     }
 }

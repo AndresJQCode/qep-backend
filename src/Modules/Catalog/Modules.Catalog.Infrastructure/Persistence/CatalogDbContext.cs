@@ -154,7 +154,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         scale.Property(value => value.ToUnit).HasColumnName("to_unit");
         scale.Property(value => value.Discount).HasColumnName("discount").HasPrecision(5, 2);
         // Como texto y no como el entero por defecto de EF: una fila legible a simple vista en
-        // sql vale más que los cuatro bytes que ahorra un smallint acá.
+        // sql vale más que los cuatro bytes que ahorra un smallint acá. Nullable desde
+        // MakePriceScaleRestrictionNullable: la copia de escalas deja tramos sin restricción.
         scale.Property(value => value.Restriction)
             .HasColumnName("restriction")
             .HasConversion<string>()

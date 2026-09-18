@@ -32,12 +32,15 @@ internal sealed class QuotationsExportReadyDeliveryWorker(
             return notification;
         }
 
+        // El vencimiento se muestra en la hora del tenant del export (spec 2026-09-17, punto 8b).
+        var calendar = await context.TenantClock.GetAsync(export.TenantId, stoppingToken);
         string recipient = email;
         await SendAsync(
             context,
             notification,
             () => QuotationsExportReadyEmailTemplate.Render(
-                recipient, export.Kind, export.DownloadUrl, export.FileName, export.RowCount, export.ExpiresAt),
+                recipient, export.Kind, export.DownloadUrl, export.FileName, export.RowCount, export.ExpiresAt,
+                calendar.TimeZone),
             stoppingToken);
         return notification;
     }
