@@ -464,9 +464,10 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
    Repite el `INSERT` con `'quotation'` si también quieres cambiar las cotizaciones: son dos filas
    independientes, y configurar pedidos no toca cotizaciones.
 
-2. **El consecutivo, si el cliente viene de otro sistema.** `:siguiente_numero` es **el próximo
-   número que quieres que salga**, no el último que emitió el sistema viejo. `year = 0` es la fila
-   del formato **sin** año; con año va el año (`2026`).
+2. **El consecutivo, si el cliente viene de otro sistema.** Va en el mismo `numeracion.sql` del
+   paso 1, después del `INSERT` del formato, reutilizando su `\set tenant_id`. `:siguiente_numero`
+   es **el próximo número que quieres que salga**, no el último que emitió el sistema viejo.
+   `year = 0` es la fila del formato **sin** año; con año va el año (`2026`).
 
    ```sql
    INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
