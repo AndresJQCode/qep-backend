@@ -196,7 +196,7 @@ public sealed class QuotationsReportSummaryApiTests
         var productId = await CreateProductAsync(client, tenant.TenantId);
         await CreateSentQuotationAsync(client, factory, tenant.TenantId, customer.Id, productId);
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var from = today.AddDays(-29);
 
         var response = await client.GetAsync(

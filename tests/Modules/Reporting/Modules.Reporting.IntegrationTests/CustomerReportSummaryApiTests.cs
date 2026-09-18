@@ -157,7 +157,7 @@ public sealed class CustomerReportSummaryApiTests
         using var client = tenant.Client;
         await CreateActiveCustomerAsync(client, tenant.TenantId);
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var current = await client.GetFromJsonAsync<CustomerReportSummary>(
             $"{ReportsUrl(tenant.TenantId)}/customers/summary"
                 + $"?from={today.AddDays(-30):yyyy-MM-dd}&to={today:yyyy-MM-dd}",

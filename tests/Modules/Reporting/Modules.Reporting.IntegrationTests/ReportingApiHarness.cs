@@ -35,6 +35,20 @@ internal static class ReportingApiHarness
     /// en enero para UTC.</summary>
     public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
 
+    /// <summary>El huso con el que nacen los tenants de este harness (ver
+    /// <see cref="RegisterTenantAsync"/>).</summary>
+    public static readonly TimeZoneInfo BogotaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
+    /// <summary>
+    /// El "hoy" del tenant, que desde la spec 2026-09-17 es quien decide qué entra en un rango y en
+    /// qué mes cae una fila. Derivarlo de <c>DateTime.UtcNow</c> no es lo mismo: Bogotá es UTC-5,
+    /// así que entre las 19:00 locales y la medianoche la fecha UTC ya es la de mañana, y un rango
+    /// que termina en "hoy" de UTC se sale del día del tenant. Las pruebas que fijan el reloj con
+    /// <see cref="NewYearsEveInBogota"/> no necesitan esto: ya son deterministas.
+    /// </summary>
+    public static DateOnly TodayInBogota() =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BogotaTimeZone).DateTime);
+
     public static string ReportsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/reports";
 
     /// <summary>
@@ -295,7 +309,7 @@ internal static class ReportingApiHarness
             $"/api/v1/tenants/{tenantId}/quotations",
             new CreateQuotationRequest(
                 clientId,
-                validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(45),
+                validUntil ?? TodayInBogota().AddDays(45),
                 null,
                 null,
                 null,

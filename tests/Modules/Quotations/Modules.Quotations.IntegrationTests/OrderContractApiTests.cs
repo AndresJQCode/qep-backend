@@ -188,7 +188,7 @@ public sealed class OrderContractApiTests
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
 
         var response = await client.PostAsync(
             $"/api/v1/tenants/{tenantId}/orders/export?convertedFrom={today.AddDays(-1):yyyy-MM-dd}&convertedTo={today:yyyy-MM-dd}&orderNumber=NO-EXISTE",

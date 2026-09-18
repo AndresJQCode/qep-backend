@@ -378,7 +378,7 @@ public sealed class QuotationExportApiTests
 
     private static string CurrentRange()
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         return $"createdFrom={Iso(today.AddDays(-7))}&createdTo={Iso(today.AddDays(1))}";
     }
 

@@ -80,7 +80,7 @@ public sealed class OrderExportApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await CreateOrderAsync(client, factory, tenantId);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var quotationsExport =
             $"{QuotationsUrl(tenantId)}/export?createdFrom={Iso(today.AddDays(-7))}&createdTo={Iso(today.AddDays(1))}";
         for (var accepted = 0; accepted < 3; accepted++)
@@ -318,7 +318,7 @@ public sealed class OrderExportApiTests
 
     private static string CurrentRange()
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         return $"convertedFrom={Iso(today.AddDays(-7))}&convertedTo={Iso(today.AddDays(1))}";
     }
 
