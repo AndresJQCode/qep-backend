@@ -254,10 +254,11 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.Equal(firstKey, Assert.Single(await PublicKeysAsync(factory, order.Id)));
     }
 
-    // P7 en la conversión: una segunda conversión de la misma cotización la corta el dominio
-    // (status_not_convertible) después de copiar su comprobante, y esa copia se borra.
+    // Una segunda conversión de la misma cotización la corta el dominio (status_not_convertible)
+    // antes de copiar su comprobante: la precondición se revisa antes de tomar el número de pedido,
+    // para no gastarlo, y con eso también antes de ir a R2. No hay copia que borrar.
     [Fact]
-    public async Task ASecondConversionDeletesTheCopyItMade()
+    public async Task ASecondConversionIsRejectedBeforeCopyingItsProof()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
@@ -278,8 +279,35 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
         Assert.Equal("quotation.quotation.status_not_convertible", problem?.Code);
-        Assert.NotEqual(firstKey, Assert.Single(factory.PublicObjectStorage.DeletedKeys));
+        Assert.Empty(factory.PublicObjectStorage.DeletedKeys);
         Assert.Equal(firstKey, Assert.Single(factory.PublicObjectStorage.Copies).Key);
+    }
+
+    // P7 en la conversión: la falla llega al guardar, después de copiar y con el número ya tomado
+    // (IX_orders_quotation choca con un pedido legado). La copia se borra y la transacción deshace
+    // el incremento del contador.
+    [Fact]
+    public async Task AConversionThatFailsWhenSavingDeletesTheCopyItMade()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        await OrderApiTests.InsertLegacyOrderAsync(database.GetConnectionString(), tenantId, quotation.Id);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null, [new OrderPaymentProofRequest(fileId, 10_000m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("quotation.quotation.already_converted", problem?.Code);
+        Assert.Matches(PublicKeyPattern, Assert.Single(factory.PublicObjectStorage.DeletedKeys));
+        Assert.Empty(factory.PublicObjectStorage.Copies);
     }
 
     // D9 (spec 2026-09-16): convertir con copias públicas deja, con el pedido, un evento con cada

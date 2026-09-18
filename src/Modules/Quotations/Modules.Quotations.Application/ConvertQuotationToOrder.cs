@@ -100,9 +100,12 @@ public sealed class ConvertQuotationToOrderHandler(
         var format = await numberingFormats.GetAsync(
             command.TenantId, DocumentNumberType.Order, cancellationToken);
         var counterYear = format.IncludeYear ? year : 0;
-        var sequence = await numberGenerator.NextAsync(command.TenantId, counterYear, cancellationToken);
-        var orderNumber = DocumentNumberFormatter.Format(format, year, sequence);
         var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
+
+        // Los números de pedido no tienen huecos. Las precondiciones del dominio se revisan antes
+        // de pedir el número: una cotización ya convertida, anulada o incompleta sale 422 sin tocar
+        // el contador. ConvertToOrder las vuelve a revisar más abajo, pero para entonces ya pasaron.
+        quotation.EnsureConvertibleToOrder();
 
         // Las copias públicas de los comprobantes (spec 2026-09-15, P4 y P7) van antes del dominio,
         // porque OrderPaymentProof recibe la clave al crearse. Desde la primera copia, cualquier
@@ -112,8 +115,20 @@ public sealed class ConvertQuotationToOrderHandler(
         Order order;
         try
         {
+            // Antes de abrir la transacción, no adentro: es I/O contra R2, y desde que se toma el
+            // número el lock de la fila del contador frena todas las conversiones del tenant hasta
+            // el commit. Mientras menos se haga con el lock tomado, menos esperan los demás.
             var proofs = await copies.PublishAsync(
                 command.TenantId, command.PaymentProofs, cancellationToken);
+
+            // El contador se incrementa con SQL crudo, que sin transacción explícita se confirma
+            // solo y en el acto: un 409 por el token de concurrencia, el 422 de IX_orders_quotation
+            // o cualquier otra falla al guardar dejaba el número gastado y un hueco en la serie.
+            // Con la transacción, el incremento y el pedido se confirman juntos; si algo falla,
+            // disponerla sin commit deshace los dos y el número vuelve a estar disponible.
+            await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+            var sequence = await numberGenerator.NextAsync(command.TenantId, counterYear, cancellationToken);
+            var orderNumber = DocumentNumberFormatter.Format(format, year, sequence);
 
             // Pasar la cotización a Converted y crear el pedido en la misma unidad de trabajo
             // (modelo-datos-cotizaciones.md §3): si guardar falla, no queda ninguna de las dos cosas.
@@ -156,9 +171,13 @@ public sealed class ConvertQuotationToOrderHandler(
             }
 
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
         catch
         {
+            // Cuando se llega aquí la transacción ya se dispuso (el await using cierra dentro del
+            // try), así que el rollback soltó el lock del contador antes de ir a borrar las copias
+            // a R2.
             await copies.RollbackAsync();
             throw;
         }
