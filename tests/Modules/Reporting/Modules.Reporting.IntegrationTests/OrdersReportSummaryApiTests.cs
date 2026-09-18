@@ -183,7 +183,7 @@ public sealed class OrdersReportSummaryApiTests
             client, factory, tenant.TenantId, customer.Id, productId);
         await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var from = today.AddDays(-29);
 
         var response = await client.GetAsync(

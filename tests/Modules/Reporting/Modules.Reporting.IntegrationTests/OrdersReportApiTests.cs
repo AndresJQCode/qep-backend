@@ -229,7 +229,7 @@ public sealed class OrdersReportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
         using var client = tenant.Client;
-        var to = DateOnly.FromDateTime(DateTime.UtcNow);
+        var to = TodayInBogota();
         var range =
             $"from={to.AddYears(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}"
             + $"&to={to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";

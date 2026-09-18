@@ -310,7 +310,7 @@ public sealed class QuotationApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var created = await CreateQuotationAsync(client, tenantId, clientId);
 
-        var validUntil = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
+        var validUntil = TodayInBogota().AddDays(30);
         var response = await client.PatchAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{created.Id}",
             new UpdateQuotationRequest(

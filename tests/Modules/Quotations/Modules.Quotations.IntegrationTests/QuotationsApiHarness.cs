@@ -52,12 +52,25 @@ internal static class QuotationsApiHarness
 
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
 
+    /// <summary>El huso con el que nacen los tenants de este harness (ver
+    /// <see cref="RegisterTenantAsync"/>).</summary>
+    public static readonly TimeZoneInfo BogotaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
     /// <summary>Cómo escribe un Excel un instante para un tenant de Bogotá (spec 2026-09-17, punto
     /// 8a): la hora local al minuto y sin offset. Los tenants de este harness nacen en
     /// America/Bogota.</summary>
     public static string LocalMinuteInBogota(DateTimeOffset instant) =>
-        TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"))
+        TimeZoneInfo.ConvertTime(instant, BogotaTimeZone)
             .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// El "hoy" del tenant, que desde la spec 2026-09-17 es quien decide qué venció y qué entra en
+    /// un rango. Derivarlo de <c>DateTime.UtcNow</c> no es lo mismo: Bogotá es UTC-5, así que entre
+    /// las 19:00 locales y la medianoche la fecha UTC ya es la de mañana, y ahí el "ayer" de UTC es
+    /// el hoy del tenant. Una prueba que arma su vigencia así pasa de día y falla de noche.
+    /// </summary>
+    public static DateOnly TodayInBogota() =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BogotaTimeZone).DateTime);
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
@@ -519,7 +532,7 @@ internal static class QuotationsApiHarness
             QuotationsUrl(tenantId),
             new CreateQuotationRequest(
                 clientId,
-                validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30),
+                validUntil ?? TodayInBogota().AddDays(30),
                 paymentMethod,
                 null,
                 null,
