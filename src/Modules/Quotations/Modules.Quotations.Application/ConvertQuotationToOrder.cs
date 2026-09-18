@@ -56,6 +56,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
     IOrderNumberGenerator numberGenerator,
+    IDocumentNumberingFormatLookup numberingFormats,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
@@ -93,8 +94,14 @@ public sealed class ConvertQuotationToOrderHandler(
         var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
         var now = calendar.UtcNow;
         var year = calendar.Today.Year;
-        var sequence = await numberGenerator.NextAsync(command.TenantId, year, cancellationToken);
-        var orderNumber = OrderNumberFormatter.Format(year, sequence);
+        // El formato es un dato del tenant (spec 2026-09-17 de numeración). Un formato sin año usa
+        // la fila `year = 0` del contador, que no se reinicia; con año, la fila del año, como
+        // siempre. El contador no depende del prefijo: cambiar `PED-` por `PW` no reinicia la serie.
+        var format = await numberingFormats.GetAsync(
+            command.TenantId, DocumentNumberType.Order, cancellationToken);
+        var counterYear = format.IncludeYear ? year : 0;
+        var sequence = await numberGenerator.NextAsync(command.TenantId, counterYear, cancellationToken);
+        var orderNumber = DocumentNumberFormatter.Format(format, year, sequence);
         var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
         // Las copias públicas de los comprobantes (spec 2026-09-15, P4 y P7) van antes del dominio,

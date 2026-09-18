@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
@@ -118,6 +120,69 @@ public sealed class OrderApiTests
         Assert.NotNull(sent);
         Assert.Equal(quotation.Id, Assert.Single(converted.Items).Id);
         Assert.Equal(0, sent.Total);
+    }
+
+    /// <summary>
+    /// El caso que motivó el spec 2026-09-17 de numeración: un tenant que viene de otro sistema
+    /// sigue su propio consecutivo, con su prefijo y sin año. El contador es la fila `year = 0`, la
+    /// que no se reinicia. Reloj fijo en la frontera de fin de año de Bogotá para que el año no
+    /// dependa del calendario de la máquina — y para dejar a la vista que acá el año no se usa.
+    /// </summary>
+    [Fact]
+    public async Task ConvertUsesThePrefixAndCounterConfiguredForTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "order", "PW", includeYear: false, "", 1);
+        // El siguiente número que queremos que salga, no el último que emitió el sistema viejo.
+        await SetOrderCounterAsync(factory, tenantId, year: 0, nextValue: 234_235L);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+
+        var first = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        var second = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+
+        Assert.Equal("PW234235", first);
+        Assert.Equal("PW234236", second);
+    }
+
+    internal static async Task<string> ConvertOneAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid clientId, Guid productId)
+    {
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived",
+                "Pago verificado",
+                [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order.OrderNumber;
+    }
+
+    /// <summary>El paso 2 del runbook del README, palabra por palabra: el UPSERT con GREATEST que
+    /// fija el siguiente número sin poder retroceder.</summary>
+    internal static async Task SetOrderCounterAsync(
+        QepApiFactory factory, Guid tenantId, int year, long nextValue)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
+            VALUES ({tenantId}, {year}, {nextValue})
+            ON CONFLICT (tenant_id, year) DO UPDATE
+            SET next_value = GREATEST(quotations.order_number_counters.next_value, EXCLUDED.next_value)
+            """,
+            TestContext.Current.CancellationToken);
     }
 
     // US-10/US-11: convertida y con el pedido ya aprobado, la cotizacion queda de solo lectura
