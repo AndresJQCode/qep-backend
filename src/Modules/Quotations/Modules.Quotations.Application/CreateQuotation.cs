@@ -32,6 +32,7 @@ public sealed class CreateQuotationHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationNumberGenerator numberGenerator,
+    IDocumentNumberingFormatLookup numberingFormats,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
@@ -65,8 +66,13 @@ public sealed class CreateQuotationHandler(
         var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
         var now = calendar.UtcNow;
         var year = calendar.Today.Year;
-        var sequence = await numberGenerator.NextAsync(command.TenantId, year, cancellationToken);
-        var quotationNumber = QuotationNumberFormatter.Format(year, sequence);
+        // El formato es un dato del tenant (spec 2026-09-17 de numeración). Sin año, el consecutivo
+        // sale de la fila `year = 0`, que no se reinicia; con año, de la fila del año.
+        var format = await numberingFormats.GetAsync(
+            command.TenantId, DocumentNumberType.Quotation, cancellationToken);
+        var counterYear = format.IncludeYear ? year : 0;
+        var sequence = await numberGenerator.NextAsync(command.TenantId, counterYear, cancellationToken);
+        var quotationNumber = DocumentNumberFormatter.Format(format, year, sequence);
 
         var quotation = Quotation.Create(
             QuotationId.New(),

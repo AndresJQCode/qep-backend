@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
@@ -120,6 +122,69 @@ public sealed class OrderApiTests
         Assert.Equal(0, sent.Total);
     }
 
+    /// <summary>
+    /// El caso que motivó el spec 2026-09-17 de numeración: un tenant que viene de otro sistema
+    /// sigue su propio consecutivo, con su prefijo y sin año. El contador es la fila `year = 0`, la
+    /// que no se reinicia. Reloj fijo en la frontera de fin de año de Bogotá para que el año no
+    /// dependa del calendario de la máquina — y para dejar a la vista que acá el año no se usa.
+    /// </summary>
+    [Fact]
+    public async Task ConvertUsesThePrefixAndCounterConfiguredForTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "order", "PW", includeYear: false, "", 1);
+        // El siguiente número que queremos que salga, no el último que emitió el sistema viejo.
+        await SetOrderCounterAsync(factory, tenantId, year: 0, nextValue: 234_235L);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+
+        var first = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        var second = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+
+        Assert.Equal("PW234235", first);
+        Assert.Equal("PW234236", second);
+    }
+
+    internal static async Task<string> ConvertOneAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid clientId, Guid productId)
+    {
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived",
+                "Pago verificado",
+                [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order.OrderNumber;
+    }
+
+    /// <summary>El paso 2 del runbook del README, palabra por palabra: el UPSERT con GREATEST que
+    /// fija el siguiente número sin poder retroceder.</summary>
+    internal static async Task SetOrderCounterAsync(
+        QepApiFactory factory, Guid tenantId, int year, long nextValue)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
+            VALUES ({tenantId}, {year}, {nextValue})
+            ON CONFLICT (tenant_id, year) DO UPDATE
+            SET next_value = GREATEST(quotations.order_number_counters.next_value, EXCLUDED.next_value)
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
     // US-10/US-11: convertida y con el pedido ya aprobado, la cotizacion queda de solo lectura
     // del todo. Mientras se quedaba en Sent despues de convertirse, todo esto seguia permitido:
     // se podia editar, anular o reenviar una cotizacion cuyo pedido ya existia. Se aprueba el
@@ -230,6 +295,46 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("quotation.quotation.already_converted", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// El formato de numeración es dato de un tenant desde el spec 2026-09-17: un prefijo mal
+    /// escrito a mano puede alcanzar el mismo texto que un pedido ya emitido. Mismo patrón que
+    /// <see cref="ConvertingAQuotationThatAlreadyHasAnOrderIsAlreadyConverted"/> con la otra
+    /// constraint -- acá la que protege el número, no la que protege la conversión -- para que la
+    /// colisión salga 422 <c>order.order.number_taken</c> y no 500 con el nombre del índice adentro.
+    /// </summary>
+    [Fact]
+    public async Task AMisconfiguredPrefixThatCollidesWithAnAlreadyIssuedOrderNumberIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+
+        // Con el formato por defecto (sin fila) el primer pedido sale "PED-2026-0001".
+        var firstNumber = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        Assert.Equal("PED-2026-0001", firstNumber);
+
+        // Un prefijo que ya trae el año, sin año propio en el formato, arma el mismo texto que el
+        // pedido anterior -- IX_orders_tenant_number, no IX_orders_quotation.
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "order", "PED-2026-", includeYear: false, "", 4);
+        await SetOrderCounterAsync(factory, tenantId, year: 0, nextValue: 1L);
+
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", "Pago verificado", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body2 = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("order.order.number_taken", body2, StringComparison.Ordinal);
     }
 
     /// <summary>Un pedido "legado" para una cotización que siguió en Sent. Número fuera de la

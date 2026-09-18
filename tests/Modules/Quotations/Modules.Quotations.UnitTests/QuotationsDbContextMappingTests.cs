@@ -199,6 +199,40 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// La tabla de formatos de numeración (spec 2026-09-17). La PK es (tenant, tipo de documento) y
+    /// los tres rangos del spec van como CHECK: es configuración que se escribe a mano con SQL, y el
+    /// CHECK es la única red que no depende de quién corra ese SQL. Los nombres van a mano, así que
+    /// un typo no lo ve el compilador: lo vería la próxima migración, creando otra columna.
+    /// </summary>
+    [Fact]
+    public void DocumentNumberingFormatsMapToTheirTableColumnsAndCheckConstraints()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var format = model.FindEntityType(typeof(DocumentNumberingFormat));
+
+        Assert.NotNull(format);
+        Assert.Equal("document_numbering_formats", format.GetTableName());
+        Assert.Equal("quotations", format.GetSchema());
+        Assert.Equal(
+            ["document_type", "include_year", "min_digits", "prefix", "tenant_id", "year_separator"],
+            format.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
+        Assert.Equal("PK_document_numbering_formats", format.FindPrimaryKey()!.GetName());
+        Assert.Equal(
+            ["TenantId", "DocumentType"],
+            format.FindPrimaryKey()!.Properties.Select(property => property.Name));
+        Assert.Equal(10, format.FindProperty(nameof(DocumentNumberingFormat.Prefix))!.GetMaxLength());
+        Assert.Equal(1, format.FindProperty(nameof(DocumentNumberingFormat.YearSeparator))!.GetMaxLength());
+        Assert.Equal(
+            ["CK_document_numbering_formats_document_type",
+             "CK_document_numbering_formats_min_digits",
+             "CK_document_numbering_formats_prefix",
+             "CK_document_numbering_formats_year_separator"],
+            format.GetCheckConstraints().Select(constraint => constraint.Name).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
     /// generada y después escrita a mano tiene que dejar el snapshot al día (Tasks 2 y 5). No abre
