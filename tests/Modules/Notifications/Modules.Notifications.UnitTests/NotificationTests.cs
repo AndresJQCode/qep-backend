@@ -45,7 +45,8 @@ public sealed class NotificationTests
     {
         var message = InvitationEmailTemplate.Render(
             "person@example.com",
-            "http://localhost:3002/invitations/abc-123");
+            "http://localhost:3002/invitations/abc-123",
+            "Origen Botánico");
 
         Assert.Equal("person@example.com", message.ToAddress);
         Assert.False(string.IsNullOrWhiteSpace(message.Subject));
@@ -61,12 +62,13 @@ public sealed class NotificationTests
 
     /// <summary>
     /// Las plantillas publicadas son inmutables y la referencia es la que audita qué se le
-    /// mandó a quién: cambiar el contenido (el link ahora lleva el token de invitación, no
-    /// la pantalla de login) exige subir la versión, no reusar la v1.
+    /// mandó a quién: cambiar el contenido exige subir la versión, no reusar la anterior. La v2
+    /// cambió el link de la pantalla de login por el deep-link con el token; la v3 nombra al
+    /// tenant en el asunto y en el cuerpo.
     /// </summary>
     [Fact]
-    public void InvitationTemplateRefIsVersionTwo()
+    public void InvitationTemplateRefIsVersionThree()
     {
-        Assert.Equal("identity.invitation.v2", InvitationEmailTemplate.TemplateRef);
+        Assert.Equal("identity.invitation.v3", InvitationEmailTemplate.TemplateRef);
     }
 }

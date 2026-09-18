@@ -221,7 +221,8 @@ public sealed class QuotationExportApiTests
         Assert.DoesNotContain(sheet.Rows, row => row[0] == otherClient.QuotationNumber);
         Assert.DoesNotContain(sheet.Rows, row => row[0] == outOfRange.QuotationNumber);
         var first = sheet.Rows[1];
-        Assert.Equal(items[0].CreatedAt, DateTimeOffset.Parse(first[1], CultureInfo.InvariantCulture));
+        // La fecha sale en la hora del tenant, al minuto y sin offset (spec 2026-09-17, punto 8a).
+        Assert.Equal(LocalMinuteInBogota(items[0].CreatedAt), first[1]);
         Assert.Equal("Verde Esencial S.A.S.", first[2]);
         Assert.Equal(items[0].AdvisorName ?? string.Empty, first[3]);
         Assert.Equal("Borrador", first[4]);
@@ -286,7 +287,9 @@ public sealed class QuotationExportApiTests
     private static async Task<IReadOnlyList<Quotation>> ReadDraftBatchAsync(
         QepApiFactory factory, Guid tenantId, QuotationExportCursor? after, int limit)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
+        // propósito, lo que se prueba es el keyset.
+        var now = DateTimeOffset.UtcNow;
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IQuotationRepository>().ListForExportAsync(
             tenantId,
@@ -294,8 +297,8 @@ public sealed class QuotationExportApiTests
             clientIds: null,
             advisorId: null,
             QuotationStatus.Draft,
-            today.AddDays(-7),
-            today.AddDays(1),
+            now.AddDays(-7),
+            now.AddDays(2),
             quotationNumber: null,
             after,
             limit,
@@ -375,7 +378,7 @@ public sealed class QuotationExportApiTests
 
     private static string CurrentRange()
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         return $"createdFrom={Iso(today.AddDays(-7))}&createdTo={Iso(today.AddDays(1))}";
     }
 

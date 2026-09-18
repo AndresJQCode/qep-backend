@@ -129,7 +129,7 @@ public sealed class CopyPriceScalesHandler(
             repository.AddPriceChanges(ProductPriceChangeDetector.Detect(
                 target, pricing, executionContext.SubjectId, now));
 
-            target.ApplyPriceScales(pricing.Scales, now);
+            target.ApplyCopiedPriceScales(pricing.Scales, now);
 
             // Una entrada por destino y no una por lote: la auditoría se lee por recurso, y un
             // solo evento con N ids adentro no aparece cuando alguien busca qué le pasó a un

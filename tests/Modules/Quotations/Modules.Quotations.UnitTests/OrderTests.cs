@@ -524,4 +524,308 @@ public sealed class OrderTests
 
         Assert.Equal("payment-proofs/d.pdf", Assert.Single(order.PaymentProofs).PublicStorageKey);
     }
+
+    // Spec 2026-09-16 (anular un pedido), decisiones 1 y 2: se anula desde Pending, y queda
+    // quién, cuándo y por qué.
+    [Fact]
+    public void CancelFromPendingRecordsWhoWhenAndWhy()
+    {
+        var order = NewOrder();
+        Assert.Null(order.CancelledAt);
+        Assert.Null(order.CancelledBy);
+        Assert.Null(order.CancellationReason);
+        var cancelledBy = new MemberId(Guid.CreateVersion7());
+        var later = Now.AddDays(1);
+
+        order.Cancel(cancelledBy, "El cliente desistió", later);
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+        Assert.Equal(later, order.CancelledAt);
+        Assert.Equal(cancelledBy, order.CancelledBy);
+        Assert.Equal("El cliente desistió", order.CancellationReason);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    // Decisiones 1 y 2: un pedido aprobado por error también se anula, y anularlo no reescribe
+    // quién lo revisó ni cuándo.
+    [Fact]
+    public void CancelFromApprovedKeepsTheApproval()
+    {
+        var order = NewOrder();
+        var approvedBy = new MemberId(Guid.CreateVersion7());
+        order.Approve(approvedBy, Now);
+
+        order.Cancel(ConvertedBy, "Aprobado por error", Now.AddDays(1));
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+        Assert.Equal(approvedBy, order.ApprovedBy);
+        Assert.Equal(Now, order.ApprovedAt);
+        Assert.Equal(3, order.Version);
+    }
+
+    // Anular dos veces reescribiría quién, cuándo y por qué se anuló.
+    [Fact]
+    public void CancelTwiceIsRejectedAndKeepsTheFirstCancellation()
+    {
+        var order = NewOrder();
+        order.Cancel(ConvertedBy, "Primera vez", Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Cancel(new MemberId(Guid.CreateVersion7()), "Segunda vez", Now.AddDays(1)));
+
+        Assert.Equal("order.order.already_cancelled", error.Code);
+        Assert.Equal("Primera vez", order.CancellationReason);
+        Assert.Equal(Now, order.CancelledAt);
+        Assert.Equal(ConvertedBy, order.CancelledBy);
+    }
+
+    // Decisión 4: el motivo es obligatorio. Ya anulado gana already_cancelled (hallazgo 6).
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CancelRequiresAReason(string? reason)
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Cancel(ConvertedBy, reason, Now));
+
+        Assert.Equal("order.order.cancellation_reason_required", error.Code);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Null(order.CancelledAt);
+    }
+
+    [Fact]
+    public void CancelRejectsAReasonLongerThanTheLimit()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Cancel(ConvertedBy, new string('a', Order.CancellationReasonMaxLength + 1), Now));
+
+        Assert.Equal("order.order.cancellation_reason_too_long", error.Code);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+    }
+
+    // El límite se mide sobre el motivo recortado, mismo criterio que las notas.
+    [Fact]
+    public void CancelTrimsTheReasonBeforeMeasuringIt()
+    {
+        var order = NewOrder();
+        var reason = new string('a', Order.CancellationReasonMaxLength);
+
+        order.Cancel(ConvertedBy, $"  {reason}  ", Now);
+
+        Assert.Equal(reason, order.CancellationReason);
+    }
+
+    // Los guards existentes ya cubren un anulado: no es Pending, así que nada de lo que sólo se
+    // permite en Pending pasa (spec, «Dominio»).
+    [Fact]
+    public void ACancelledOrderRejectsEveryPendingOnlyChange()
+    {
+        var order = NewOrder();
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        order.Cancel(ConvertedBy, "El cliente desistió", Now);
+        var later = Now.AddDays(1);
+
+        var addProofs = Assert.Throws<QuotationsDomainException>(() =>
+            order.AddPaymentProofs(
+                [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)],
+                OrderPaymentStatus.FullPaymentReceived,
+                null,
+                ConvertedBy,
+                later));
+        var recalculate = Assert.Throws<QuotationsDomainException>(() =>
+            order.RecalculatePaymentStatus(200_000m, later));
+        var removeProof = Assert.Throws<QuotationsDomainException>(() =>
+            order.RemovePaymentProof(proofId, later));
+        var approve = Assert.Throws<QuotationsDomainException>(() =>
+            order.Approve(ConvertedBy, later));
+
+        Assert.Equal("order.order.not_pending", addProofs.Code);
+        Assert.Equal("order.order.not_pending", recalculate.Code);
+        Assert.Equal("order.order.not_pending", removeProof.Code);
+        Assert.Equal("order.order.not_pending", approve.Code);
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+    }
+
+    // Spec 2026-09-17 (editar pedido como borrador): el guardado atómico suma comprobantes sin
+    // pisar el estado de pago —lo deriva el servidor una sola vez, decisión 5— ni las notas.
+    [Fact]
+    public void AttachPaymentProofsAddsTheProofsWithoutTouchingPaymentStatusOrNotes()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PartialPaymentReceived, notes: "Entregar el lunes");
+        var fileId = Guid.CreateVersion7();
+        var uploadedBy = new MemberId(Guid.CreateVersion7());
+        var later = Now.AddDays(1);
+
+        order.AttachPaymentProofs([new OrderPaymentProofInput(fileId, 30_000m, "payment-proofs/a.pdf")], uploadedBy, later);
+
+        Assert.Equal(2, order.PaymentProofs.Count);
+        var added = Assert.Single(order.PaymentProofs, proof => proof.FileId == fileId);
+        Assert.Equal(30_000m, added.Amount);
+        Assert.Equal(uploadedBy, added.UploadedBy);
+        Assert.Equal("payment-proofs/a.pdf", added.PublicStorageKey);
+        Assert.Equal(OrderPaymentStatus.PartialPaymentReceived, order.PaymentStatus);
+        Assert.Equal("Entregar el lunes", order.Notes);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    // A diferencia de AddPaymentProofs, un guardado que sólo toca productos no trae comprobantes:
+    // no es un error y no sube la versión.
+    [Fact]
+    public void AttachPaymentProofsWithNothingToAttachChangesNothing()
+    {
+        var order = NewOrder();
+
+        order.AttachPaymentProofs([], ConvertedBy, Now.AddDays(1));
+
+        Assert.Single(order.PaymentProofs);
+        Assert.Equal(Now, order.UpdatedAt);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void AttachPaymentProofsRejectsAnOrderThatIsNotPending()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachPaymentProofs([], ConvertedBy, Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
+
+    [Fact]
+    public void CorrectPaymentProofsUpdatesTheAmountAndReplacesTheFile()
+    {
+        var order = NewOrder();
+        var proof = Assert.Single(order.PaymentProofs);
+        var newFileId = Guid.CreateVersion7();
+        var later = Now.AddDays(1);
+
+        order.CorrectPaymentProofs(
+            [new OrderPaymentProofAmountUpdate(proof.Id, 80_000m, newFileId, "payment-proofs/b.pdf")],
+            later);
+
+        Assert.Equal(80_000m, proof.Amount);
+        Assert.Equal(newFileId, proof.FileId);
+        Assert.Equal("payment-proofs/b.pdf", proof.PublicStorageKey);
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    // Todos los ids se buscan antes de corregir el primero: uno ajeno no deja la mitad corregida.
+    [Fact]
+    public void CorrectPaymentProofsRejectsAProofThatIsNotOnThisOrderBeforeCorrectingAny()
+    {
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
+        var proof = Assert.Single(order.PaymentProofs);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectPaymentProofs(
+                [
+                    new OrderPaymentProofAmountUpdate(proof.Id, 1m),
+                    new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 2m),
+                ],
+                Now.AddDays(1)));
+
+        Assert.Equal("order.payment_proof.not_found", error.Code);
+        Assert.Equal(100_000m, proof.Amount);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void CorrectPaymentProofsWithNothingToCorrectChangesNothing()
+    {
+        var order = NewOrder();
+
+        order.CorrectPaymentProofs([], Now.AddDays(1));
+
+        Assert.Equal(1, order.Version);
+        Assert.Equal(Now, order.UpdatedAt);
+    }
+
+    [Fact]
+    public void CorrectPaymentProofsRejectsAnOrderThatIsNotPending()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectPaymentProofs([], Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
+
+    // Spec 2026-09-17: notes reemplaza el campo entero, y el guardado necesita saber si cambió para
+    // responder «sin cambios» sin subir la versión.
+    [Fact]
+    public void UpdateNotesReplacesTheTrimmedNotesAndReportsTheChange()
+    {
+        var order = NewOrder(notes: "Entregar el lunes");
+        var later = Now.AddDays(1);
+
+        var changed = order.UpdateNotes("  Entregar el martes  ", later);
+
+        Assert.True(changed);
+        Assert.Equal("Entregar el martes", order.Notes);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(2, order.Version);
+    }
+
+    [Fact]
+    public void UpdateNotesWithTheSameNotesReportsNoChange()
+    {
+        var order = NewOrder(notes: "Entregar el lunes");
+
+        var changed = order.UpdateNotes(" Entregar el lunes ", Now.AddDays(1));
+
+        Assert.False(changed);
+        Assert.Equal(1, order.Version);
+        Assert.Equal(Now, order.UpdatedAt);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("   ")]
+    public void UpdateNotesClearsThemWithNullOrBlank(string? notes)
+    {
+        var order = NewOrder(notes: "Entregar el lunes");
+
+        var changed = order.UpdateNotes(notes, Now.AddDays(1));
+
+        Assert.True(changed);
+        Assert.Null(order.Notes);
+    }
+
+    [Fact]
+    public void UpdateNotesRejectsNotesLongerThanTheLimit()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.UpdateNotes(new string('a', Order.NotesMaxLength + 1), Now.AddDays(1)));
+
+        Assert.Equal("order.order.notes_too_long", error.Code);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void UpdateNotesRejectsAnOrderThatIsNotPending()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.UpdateNotes("Otra nota", Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
 }

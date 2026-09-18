@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using BuildingBlocks.Application;
 using ClosedXML.Excel;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Customers.Application;
 using Npgsql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
@@ -72,6 +74,36 @@ public sealed class CustomerExportApiTests
         Assert.Contains("customers.export-ready.v1", events);
     }
 
+    // Spec 2026-09-17, punto 8a: con el reloj en el 31 de diciembre a las 23:00 de Bogotá (el tenant
+    // de desarrollo que siembra TenancyDatabaseInitializer), el nombre del archivo y las fechas de
+    // alta y de actualización salen en la hora del tenant, sin offset.
+    [Fact]
+    public async Task ExportWritesDatesAndTheFileNameInTheTenantsLocalTime()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = FactoryAt(database, storage, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero));
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.123.456-1");
+
+        var response = await client.PostAsync(
+            ExportUrl(), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ExportResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal("clientes-20261231-230000.xlsx", body.FileName);
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        var sheet = workbook.Worksheets.First();
+        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 13).GetString());
+        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 14).GetString());
+    }
+
     [Fact]
     public async Task ExportWithoutReadPermissionIsForbidden()
     {
@@ -109,6 +141,19 @@ public sealed class CustomerExportApiTests
             database.GetConnectionString(),
             services => services.AddScoped<ICustomerExportStorage>(_ => storage));
 
+    private static QepApiFactory FactoryAt(
+        Testcontainers.PostgreSql.PostgreSqlContainer database,
+        CapturingExportStorage storage,
+        DateTimeOffset utcNow) =>
+        new(
+            database.GetConnectionString(),
+            services =>
+            {
+                services.AddScoped<ICustomerExportStorage>(_ => storage);
+                services.RemoveAll<IClock>();
+                services.AddScoped<IClock>(_ => new FixedClock(utcNow));
+            });
+
     private static async Task<List<string>> OutboxEventNamesAsync(string connectionString)
     {
         await using var connection = new NpgsqlConnection(connectionString);
@@ -128,6 +173,11 @@ public sealed class CustomerExportApiTests
     }
 
     private sealed record ExportResponse(string FileName, int CustomerCount, DateTimeOffset ExpiresAt);
+
+    private sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
+    }
 
     // Doble a mano, como el resto del repositorio: no hay libreria de mocking.
     private sealed class CapturingExportStorage : ICustomerExportStorage

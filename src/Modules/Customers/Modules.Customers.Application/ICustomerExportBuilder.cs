@@ -1,3 +1,5 @@
+using Modules.Tenancy.Application;
+
 namespace Modules.Customers.Application;
 
 /// <summary>
@@ -7,9 +9,12 @@ namespace Modules.Customers.Application;
 /// </summary>
 public interface ICustomerExportBuilder
 {
+    /// <summary>El <paramref name="calendar"/> es el del tenant: el nombre del archivo y las fechas
+    /// van en su hora (spec 2026-09-17, punto 8a), y <c>calendar.UtcNow</c> es el instante en que se
+    /// generó.</summary>
     CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
-        DateTimeOffset generatedAt,
+        TenantCalendar calendar,
         CancellationToken cancellationToken);
 }
 

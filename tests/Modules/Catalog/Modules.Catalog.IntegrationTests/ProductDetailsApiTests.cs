@@ -495,6 +495,9 @@ public sealed class ProductDetailsApiTests
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
             // Fijado, nunca heredado de appsettings.json. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }

@@ -65,8 +65,11 @@ internal static class FileResourceMapping
                 .ToArray(),
             resource.CreatedAt);
 
+    // Un recurso purgado conserva PublicStorageKey (la purga de D19 no la borra), pero su objeto ya no
+    // existe: anunciar la URL sería dar un enlace muerto (revisión final, M6).
     private static string? PublicUrl(FileResource resource, IPublicObjectStorage? storage) =>
-        resource.PublicStorageKey is { } key && storage?.IsConfigured == true
+        resource.Status is not FileResourceStatus.Purged
+        && resource.PublicStorageKey is { } key && storage?.IsConfigured == true
             ? storage.GetUrl(key)
             : null;
 

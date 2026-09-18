@@ -80,7 +80,7 @@ public sealed class OrderExportApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await CreateOrderAsync(client, factory, tenantId);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var quotationsExport =
             $"{QuotationsUrl(tenantId)}/export?createdFrom={Iso(today.AddDays(-7))}&createdTo={Iso(today.AddDays(1))}";
         for (var accepted = 0; accepted < 3; accepted++)
@@ -163,13 +163,15 @@ public sealed class OrderExportApiTests
         Assert.Equal("Pedidos", sheet.Name);
         Assert.Equal(
             ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total",
-                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
+                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3", "Comprobante 4",
+                "Comprobante 5"],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[0]));
         var first = sheet.Rows[1];
         Assert.Equal(items[0].ClientName, first[1]);
         Assert.Equal(items[0].AdvisorName ?? string.Empty, first[2]);
-        Assert.Equal(items[0].ConvertedAt, DateTimeOffset.Parse(first[3], CultureInfo.InvariantCulture));
+        // La fecha sale en la hora del tenant, al minuto y sin offset (spec 2026-09-17, punto 8a).
+        Assert.Equal(LocalMinuteInBogota(items[0].ConvertedAt), first[3]);
         // La API sigue mandando el enum (A8); el archivo, la etiqueta de la tabla (A7).
         Assert.Equal("Pending", items[0].Status);
         Assert.Equal(items[0].PaymentMethod ?? "Pago pendiente", first[4]);
@@ -177,11 +179,13 @@ public sealed class OrderExportApiTests
         Assert.Equal(items[0].Currency, first[6]);
         Assert.True(sheet.NumericCells[1][7]);
         Assert.Equal(items[0].Total, decimal.Parse(first[7], CultureInfo.InvariantCulture));
-        // Sin comprobantes (spec 2026-09-15, E2): la cantidad en cero y las tres celdas vacías, que
+        // Sin comprobantes (spec 2026-09-15, E2): la cantidad en cero y las cinco celdas vacías, que
         // igual salen (E7).
         Assert.True(sheet.NumericCells[1][8]);
         Assert.Equal("0", first[8]);
-        Assert.Equal([string.Empty, string.Empty, string.Empty], first.Skip(9));
+        Assert.Equal(
+            [string.Empty, string.Empty, string.Empty, string.Empty, string.Empty],
+            first.Skip(9));
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -223,7 +227,9 @@ public sealed class OrderExportApiTests
     private static async Task<IReadOnlyList<OrderWithQuotation>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
+        // propósito, lo que se prueba es el keyset.
+        var now = DateTimeOffset.UtcNow;
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IOrderRepository>().ListForExportAsync(
             tenantId,
@@ -232,8 +238,8 @@ public sealed class OrderExportApiTests
             advisorId: null,
             OrderStatus.Pending,
             paymentStatus: null,
-            today.AddDays(-7),
-            today.AddDays(1),
+            now.AddDays(-7),
+            now.AddDays(2),
             orderNumber: null,
             after,
             limit,
@@ -312,7 +318,7 @@ public sealed class OrderExportApiTests
 
     private static string CurrentRange()
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         return $"convertedFrom={Iso(today.AddDays(-7))}&convertedTo={Iso(today.AddDays(1))}";
     }
 
@@ -337,7 +343,7 @@ public sealed class OrderExportApiTests
     }
 
     // Spec 2026-09-15, de punta a punta con la opción encendida: el comprobante que se subió primero
-    // es el enlace «Ver» a su copia pública, uno privado dice «Sin enlace» y el tercero queda vacío.
+    // es el enlace «Ver» a su copia pública, uno privado dice «Sin enlace» y el resto queda vacío.
     // El privado se simula borrando su clave en la base: es lo que tienen los comprobantes de antes
     // de la opción (P8).
     [Fact]
@@ -349,7 +355,7 @@ public sealed class OrderExportApiTests
         using var _ = client;
         var order = await CreateOrderWithProofsAsync(client, factory, tenantId, proofCount: 1);
         var firstProofId = Assert.Single(order.PaymentProofs).Id;
-        var withSecond = await AddProofAsync(client, factory, tenantId, order.QuotationId);
+        var withSecond = await AddProofAsync(client, factory, tenantId, order.Id);
         var secondProofId = Assert.Single(withSecond.PaymentProofs, proof => proof.Id != firstProofId).Id;
         await ClearPublicStorageKeyAsync(factory, secondProofId);
         var firstKey = await PublicStorageKeyOfAsync(factory, firstProofId);
@@ -363,7 +369,8 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3"],
+            ["Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3", "Comprobante 4",
+                "Comprobante 5"],
             sheet.Rows[0].Skip(8));
         var row = sheet.Rows[1];
         Assert.Equal(order.OrderNumber, row[0]);
@@ -375,7 +382,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("Ver", row[9]);
         Assert.Null(sheet.Formulas[1][10]);
         Assert.Equal("Sin enlace", row[10]);
-        Assert.Equal(string.Empty, row[11]);
+        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(11));
     }
 
     // E6 contra Postgres: una sola lectura por lote, por pedido y en el orden de las columnas —fecha de
@@ -392,7 +399,7 @@ public sealed class OrderExportApiTests
         using var _ = client;
         using var __ = otherClient;
         var order = await CreateOrderWithProofsAsync(client, factory, tenantId, proofCount: 2);
-        var withThird = await AddProofAsync(client, factory, tenantId, order.QuotationId);
+        var withThird = await AddProofAsync(client, factory, tenantId, order.Id);
         var withoutProofs = await CreateOrderAsync(client, factory, tenantId);
         var otherOrder = await CreateOrderWithProofsAsync(otherClient, factory, otherTenantId, proofCount: 1);
 
@@ -443,11 +450,11 @@ public sealed class OrderExportApiTests
     /// <summary>Suma un comprobante a un pedido pendiente: su fecha de subida es posterior a la de
     /// los que ya tenía.</summary>
     private static async Task<OrderResponse> AddProofAsync(
-        HttpClient client, QepApiFactory factory, Guid tenantId, Guid quotationId)
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid orderId)
     {
         var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotationId}/order/proofs",
+            $"/api/v1/tenants/{tenantId}/orders/{orderId}/proofs",
             new AddOrderPaymentProofsRequest(
                 "PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 5_000m)]),
             TestContext.Current.CancellationToken);

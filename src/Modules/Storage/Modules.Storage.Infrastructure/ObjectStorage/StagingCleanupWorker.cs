@@ -1,22 +1,18 @@
-using BuildingBlocks.Application;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Modules.Storage.Application;
-using Modules.Storage.Domain;
-using Modules.Storage.Infrastructure.Persistence;
 
 namespace Modules.Storage.Infrastructure.ObjectStorage;
 
+// Temporizador del barrido de staging/. La lógica vive en StagingCleanupProcessor (spec 2026-09-16,
+// D11), que las pruebas de integración invocan directo. Cada tick corre en su propio scope para que
+// el DbContext esté fresco.
 internal sealed partial class StagingCleanupWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<StorageOptions> options,
     ILogger<StagingCleanupWorker> logger) : BackgroundService
 {
-    private const int BatchSize = 100;
-
     [LoggerMessage(Level = LogLevel.Error, Message = "Storage staging cleanup tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
@@ -28,9 +24,14 @@ internal sealed partial class StagingCleanupWorker(
         {
             try
             {
-                await ProcessBatchAsync(stoppingToken);
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var processor = scope.ServiceProvider.GetRequiredService<IStagingCleanupProcessor>();
+                await processor.CleanupAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            // Sólo el apagado del host detiene el worker, como PaymentProofMoveWorker. Otra cancelación
+            // (un timeout de R2 que llega como TaskCanceledException) es un tick fallido más: se
+            // registra y el siguiente reintenta.
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -38,31 +39,6 @@ internal sealed partial class StagingCleanupWorker(
             {
                 LogTickFailed(logger, exception);
             }
-        }
-    }
-
-    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
-    {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
-        var objectStorage = scope.ServiceProvider.GetRequiredService<IObjectStorage>();
-        var clock = scope.ServiceProvider.GetRequiredService<IClock>();
-        var cutoff = clock.UtcNow.AddHours(-options.Value.StagingRetentionHours);
-        var abandoned = await dbContext.FileResources
-            .Where(file => file.Status == FileResourceStatus.PendingUpload)
-            .Where(file => file.CreatedAt < cutoff)
-            .OrderBy(file => file.CreatedAt)
-            .Take(BatchSize)
-            .ToArrayAsync(cancellationToken);
-
-        foreach (var file in abandoned)
-        {
-            await objectStorage.DeleteAsync(file.StorageKey, cancellationToken);
-            file.PurgeAbandonedUpload(clock.UtcNow);
-        }
-        if (abandoned.Length > 0)
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 }

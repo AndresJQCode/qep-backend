@@ -45,7 +45,8 @@ public sealed class AuthorizationCatalogApiTests
     /// <summary>
     /// Lo que la pantalla de roles muestra de los permisos de pedidos (spec 2026-09-14): códigos
     /// nuevos, textos en masculino y con tilde, y los mismos permisos efectivos en los tres roles
-    /// de fábrica que antes tenían los de pedidos.
+    /// de fábrica que antes tenían los de pedidos. Anular (spec 2026-09-16) es permiso propio y
+    /// sólo de admin.
     /// </summary>
     [Fact]
     public async Task TheCatalogNamesTheOrderPermissions()
@@ -61,6 +62,8 @@ public sealed class AuthorizationCatalogApiTests
         Assert.NotNull(catalog);
         CatalogPermissionPayload[] expected =
         [
+            new("quotations.order.cancel", "Anular pedidos",
+                "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.", "Quotations", "high"),
             new("quotations.order.manage", "Gestionar pedidos",
                 "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.", "Quotations", "medium"),
             new("quotations.order.read", "Leer pedidos",
@@ -75,19 +78,31 @@ public sealed class AuthorizationCatalogApiTests
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
         Assert.DoesNotContain(
             catalog.Permissions, permission => permission.Permission.Contains("sale", StringComparison.Ordinal));
+        // Spec 2026-09-16, decisión 5: anular es sólo de admin. Asesor y facturación quedan igual.
         Assert.Equal(
-            ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
+            ["quotations.order.cancel", "quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
             OrderPermissionsOf(catalog, "admin"));
         Assert.Equal(
             ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
             OrderPermissionsOf(catalog, "advisor"));
         Assert.Equal(["quotations.order.read"], OrderPermissionsOf(catalog, "billing"));
+        // Facturación abre los comprobantes de pago desde el detalle del pedido, y ese enlace sale
+        // de POST /files/{id}/download-url, que exige storage.file.read. Sólo lectura: subir,
+        // borrar y publicar archivos siguen fuera del rol.
+        Assert.Equal(["storage.file.read"], PermissionsOf(catalog, "billing", "storage."));
     }
 
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
     [
         .. catalog.Roles.Single(item => item.Role == role).Permissions
             .Where(permission => permission.Contains("order", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal),
+    ];
+
+    private static string[] PermissionsOf(CatalogPayload catalog, string role, string prefix) =>
+    [
+        .. catalog.Roles.Single(item => item.Role == role).Permissions
+            .Where(permission => permission.StartsWith(prefix, StringComparison.Ordinal))
             .Order(StringComparer.Ordinal),
     ];
 
@@ -211,6 +226,9 @@ public sealed class AuthorizationCatalogApiTests
             // del archivo mueren antes de llegar a su aserción.
             // El canal de log es el default de desarrollo (SDD-CT-03). SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         }
     }

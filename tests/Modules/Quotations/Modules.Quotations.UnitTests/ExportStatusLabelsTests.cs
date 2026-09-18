@@ -32,6 +32,8 @@ public sealed class ExportStatusLabelsTests
             {
                 [OrderStatus.Pending] = "Pendiente",
                 [OrderStatus.Approved] = "Aprobado",
+                // Decisión 6 del spec 2026-09-16: la exportación muestra los anulados.
+                [OrderStatus.Cancelled] = "Anulado",
             },
             ExportStatusLabels.For);
 

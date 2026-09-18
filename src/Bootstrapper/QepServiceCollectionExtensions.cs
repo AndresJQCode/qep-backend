@@ -354,6 +354,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ApproveOrderCommand, OrderDto>,
             ApproveOrderHandler>();
         services.AddScoped<
+            ICommandHandler<CancelOrderCommand, OrderDto>,
+            CancelOrderHandler>();
+        services.AddScoped<
             ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>,
             ConvertQuotationToOrderHandler>();
         services.AddScoped<
@@ -365,6 +368,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>,
             RemoveOrderPaymentProofHandler>();
+        services.AddScoped<
+            ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>,
+            SaveOrderEditsHandler>();
+        services.AddScoped<
+            IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>,
+            PreviewOrderEditsHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
@@ -564,6 +573,9 @@ public static class QepServiceCollectionExtensions
                 QuotationsPermissions.QuotationManage,
                 OrdersPermissions.OrderRead,
                 OrdersPermissions.OrderManage,
+                // Sólo admin (spec 2026-09-16, decisión 5): anular deshace también un pedido ya
+                // aprobado. El rol vive en código, así que no hay migración de datos.
+                OrdersPermissions.OrderCancel,
                 // Los cuatro reportes. Admin es el unico rol que ve los de cambios de precio y
                 // padron de clientes: el primero expone el historial comercial completo del
                 // catalogo, y el segundo el padron entero con datos de identificacion.
@@ -635,7 +647,11 @@ public static class QepServiceCollectionExtensions
                 // ver el estado del pago y los comprobantes, no aprobar conversiones ni editar
                 // cotizaciones -- eso sigue siendo trabajo de la asesora.
                 QuotationsPermissions.QuotationRead,
-                OrdersPermissions.OrderRead
+                OrdersPermissions.OrderRead,
+                // Ver los comprobantes desde el detalle del pedido: el pedido sólo guarda el fileId,
+                // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
+                // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
+                StoragePermissions.FileRead
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -790,6 +806,14 @@ public static class QepServiceCollectionExtensions
             "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
             "medium"));
+        // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
+        // persona ya aprobó.
+        services.AddSingleton(new PermissionDefinition(
+            OrdersPermissions.OrderCancel,
+            "Anular pedidos",
+            "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
+            "Quotations",
+            "high"));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.OrdersRead,
             "Reporte de pedidos",
@@ -1028,6 +1052,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 OrdersPermissions.OrderManage,
                 policy => AddPermissionRequirement(policy, OrdersPermissions.OrderManage))
+            .AddPolicy(
+                OrdersPermissions.OrderCancel,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderCancel))
             // La otra mitad del permiso, para los cuatro de Reporting. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 -- mismo gotcha que
             // TaxRateRead/TaxRateManage, ClassificationRead/ClassificationManage y los de

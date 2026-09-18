@@ -471,6 +471,28 @@ public sealed class ProductTests
         Assert.Equal("catalog.product.price_scale.restriction_required", error.Code);
     }
 
+    // Una escala sin restricción sólo la produce la copia (ver PriceScaleCopy). El formulario
+    // sigue sin poder guardarla: completar la copia es justamente elegirle una restricción.
+    [Fact]
+    public void UpdateRejectsAScaleWithoutARestriction()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m }, Now);
+
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            product.Update(
+                "Vela de soja", "VS-001", ProductDetails.Empty,
+                new ProductPricing
+                {
+                    BaseUsd = 10m,
+                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, null, 10m, null)]
+                },
+                Now.AddMinutes(5)));
+
+        Assert.Equal("catalog.product.price_scale.restriction_required", error.Code);
+    }
+
     [Fact]
     public void CreateRejectsAMultipleRestrictionWithoutAMultiple()
     {

@@ -22,9 +22,12 @@ internal static class QuotationPriceScaleMapping
             scale.PackagingUnit,
             scale.AllowGrouping);
 
-    private static QuotationPriceScaleRestriction ToRestriction(PriceScaleRestriction restriction) =>
+    // Null pasa como null: la escala incompleta tiene que llegar a Quotations tal cual para que
+    // allá se bloquee el producto, no traducirse a un caso que parezca configurado.
+    private static QuotationPriceScaleRestriction? ToRestriction(PriceScaleRestriction? restriction) =>
         restriction switch
         {
+            null => null,
             PriceScaleRestriction.Multiple => QuotationPriceScaleRestriction.Multiple,
             PriceScaleRestriction.PackagingUnit => QuotationPriceScaleRestriction.PackagingUnit,
             _ => throw new ArgumentOutOfRangeException(nameof(restriction))

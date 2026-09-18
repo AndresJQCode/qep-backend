@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -15,6 +18,8 @@ using Modules.Quotations.Infrastructure.Exports;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Storage.Application;
 using Npgsql;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -41,7 +46,31 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 internal static class QuotationsApiHarness
 {
+    /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
+    /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
+    public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
+
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
+
+    /// <summary>El huso con el que nacen los tenants de este harness (ver
+    /// <see cref="RegisterTenantAsync"/>).</summary>
+    public static readonly TimeZoneInfo BogotaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
+    /// <summary>Cómo escribe un Excel un instante para un tenant de Bogotá (spec 2026-09-17, punto
+    /// 8a): la hora local al minuto y sin offset. Los tenants de este harness nacen en
+    /// America/Bogota.</summary>
+    public static string LocalMinuteInBogota(DateTimeOffset instant) =>
+        TimeZoneInfo.ConvertTime(instant, BogotaTimeZone)
+            .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// El "hoy" del tenant, que desde la spec 2026-09-17 es quien decide qué venció y qué entra en
+    /// un rango. Derivarlo de <c>DateTime.UtcNow</c> no es lo mismo: Bogotá es UTC-5, así que entre
+    /// las 19:00 locales y la medianoche la fecha UTC ya es la de mañana, y ahí el "ayer" de UTC es
+    /// el hoy del tenant. Una prueba que arma su vigencia así pasa de día y falla de noche.
+    /// </summary>
+    public static DateOnly TodayInBogota() =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BogotaTimeZone).DateTime);
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
@@ -98,8 +127,14 @@ internal static class QuotationsApiHarness
     /// <summary>Registra un tenant nuevo (signup publico) para conseguir una Membership de dueño
     /// ya en estado Active, y devuelve un cliente autenticado como ese dueño con los permisos
     /// pedidos.</summary>
-    public static async Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantAsync(
-        QepApiFactory factory, params string[] permissions)
+    public static Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantAsync(
+        QepApiFactory factory, params string[] permissions) =>
+        RegisterTenantInTimeZoneAsync(factory, "America/Bogota", permissions);
+
+    /// <summary>Lo mismo que <see cref="RegisterTenantAsync"/> con otro huso: el barrido de
+    /// vencimiento corta el día por tenant (spec 2026-09-17, punto 1).</summary>
+    public static async Task<(Guid TenantId, Guid OwnerUserId, HttpClient Client)> RegisterTenantInTimeZoneAsync(
+        QepApiFactory factory, string timeZone, params string[] permissions)
     {
         var email = $"owner-{Guid.CreateVersion7():N}@example.com";
         using var bootstrap = CreateClient(
@@ -114,7 +149,7 @@ internal static class QuotationsApiHarness
                 displayName = "Quotations Test Org",
                 slug = $"org-{Guid.NewGuid():N}"[..12],
                 defaultCulture = "es-CO",
-                timeZone = "America/Bogota",
+                timeZone,
                 dateFormat = "yyyy-MM-dd",
             },
             TestContext.Current.CancellationToken);
@@ -190,6 +225,8 @@ internal static class QuotationsApiHarness
                 identificationType = "NIT",
                 identificationNumber = identificationNumber
                     ?? $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
@@ -226,6 +263,8 @@ internal static class QuotationsApiHarness
                 name = "Verde Esencial S.A.S.",
                 identificationType = "NIT",
                 identificationNumber,
+                phone = "310 935 2187",
+                email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 cityId,
                 classificationId,
@@ -338,14 +377,14 @@ internal static class QuotationsApiHarness
     /// </summary>
     public static async Task<Guid> CreateAvailableFileAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId,
-        string mimeType, byte[] payload, string fileName)
+        string mimeType, byte[] payload, string fileName, string ownerType = "User")
     {
         var sessionResponse = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/files",
             new
             {
                 ownerId = Guid.NewGuid(),
-                ownerType = "User",
+                ownerType,
                 name = fileName,
                 mimeType,
                 sizeBytes = payload.Length,
@@ -384,6 +423,19 @@ internal static class QuotationsApiHarness
         HttpClient client, QepApiFactory factory, Guid tenantId) =>
         CreateAvailableFileAsync(
             client, factory, tenantId, "application/pdf", "%PDF-1.7\nproof"u8.ToArray(), "proof.pdf");
+
+    /// <summary>Spec 2026-09-16: un comprobante v2 (<c>PaymentProof</c>) de imagen. Storage lo deja
+    /// en WebP y en staging/ al completarlo (D7, D8), y lo mueve al público cuando se adjunta (D9).
+    /// </summary>
+    public static async Task<Guid> CreateAvailablePaymentProofImageAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId)
+    {
+        using var image = new Image<Rgba32>(64, 48, Color.CornflowerBlue);
+        await using var png = new MemoryStream();
+        await image.SaveAsPngAsync(png, TestContext.Current.CancellationToken);
+        return await CreateAvailableFileAsync(
+            client, factory, tenantId, "image/png", png.ToArray(), "comprobante.png", ownerType: "PaymentProof");
+    }
 
     /// <summary>Crea una cotización, le agrega un ítem y la marca como enviada -- el punto de
     /// partida que necesita toda prueba de conversión a pedido (US-13 exige <c>Sent</c>).</summary>
@@ -480,7 +532,7 @@ internal static class QuotationsApiHarness
             QuotationsUrl(tenantId),
             new CreateQuotationRequest(
                 clientId,
-                validUntil ?? DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30),
+                validUntil ?? TodayInBogota().AddDays(30),
                 paymentMethod,
                 null,
                 null,
@@ -652,7 +704,10 @@ internal static class QuotationsApiHarness
     private sealed record UploadSessionResponseDto(Guid FileResourceId, string UploadUrl, string StorageKey);
 
     public sealed class QepApiFactory(
-        string connectionString, bool runExportWorker = false, bool publicPaymentProofLinks = false)
+        string connectionString,
+        bool runExportWorker = false,
+        bool publicPaymentProofLinks = false,
+        DateTimeOffset? utcNow = null)
         : WebApplicationFactory<Program>
     {
         // Copia del flag para ConfigureWebHost. Si ese método leyera el parámetro, que además
@@ -685,6 +740,9 @@ internal static class QuotationsApiHarness
             // ausentes, NotificationsOptionsValidator falla al arrancar y todas las pruebas de
             // este proyecto mueren antes de llegar a su asercion. SDD-CT-17.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
 
             // Fijado, nunca heredado, mismo criterio que Notifications:EmailProvider: con la opción
             // prendida en los user-secrets de quien corre las pruebas y sin bucket público,
@@ -719,6 +777,15 @@ internal static class QuotationsApiHarness
             {
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
+
+                // Reloj fijo sólo para las pruebas que lo piden (spec 2026-09-17): cortar un instante
+                // en días se prueba en la frontera, y el reloj real la cruza cuando quiere. Scoped,
+                // igual que SystemClock en QepServiceCollectionExtensions.
+                if (utcNow is { } fixedNow)
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddScoped<IClock>(_ => new FixedClock(fixedNow));
+                }
 
                 // El publicador real de comprobantes copia al bucket público de R2 por este puerto
                 // (spec 2026-09-15); acá las copias quedan en memoria, donde la prueba las ve. El
@@ -759,7 +826,9 @@ internal static class QuotationsApiHarness
 
     public sealed class InMemoryObjectStorage : IObjectStorage
     {
-        private readonly Dictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
+        // Concurrente desde el 2026-09-16: PaymentProofMoveWorker corre en el host cada 3 s y borra
+        // temporales mientras la prueba sube y lee (hallazgo 9 del plan).
+        private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
 
         public Task<Uri> CreatePresignedUploadUrlAsync(
             string key, string contentType, CancellationToken cancellationToken) =>
@@ -789,7 +858,7 @@ internal static class QuotationsApiHarness
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken)
         {
-            _objects.Remove(key);
+            _objects.TryRemove(key, out _);
             return Task.CompletedTask;
         }
 
@@ -814,6 +883,8 @@ internal static class QuotationsApiHarness
         }
 
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
+
+        public bool Exists(string key) => _objects.ContainsKey(key);
     }
 
     /// <summary>
@@ -826,7 +897,9 @@ internal static class QuotationsApiHarness
     {
         public const string BaseUrl = "https://assets.qep.test";
 
-        private readonly Dictionary<string, string> _copies = new(StringComparer.Ordinal);
+        // Concurrente desde D19 (spec 2026-09-16): PaymentProofDetachProcessor borra copias desde el hilo
+        // de PaymentProofMoveWorker mientras la prueba lee.
+        private readonly ConcurrentDictionary<string, string> _copies = new(StringComparer.Ordinal);
         private int _copyAttempts;
 
         /// <summary>El intento de copia (desde 1, contando todos los del host) que falla; null si
@@ -836,7 +909,7 @@ internal static class QuotationsApiHarness
         /// <summary>Las copias que siguen en el bucket: clave pública → clave privada de origen.</summary>
         public IReadOnlyDictionary<string, string> Copies => _copies;
 
-        public List<string> DeletedKeys { get; } = [];
+        public ConcurrentQueue<string> DeletedKeys { get; } = new();
 
         /// <summary>Como R2PublicObjectStorage, configurado sólo con bucket público: la factoría lo
         /// prende con <c>publicPaymentProofLinks</c>, que además fija el bucket. Apagado, lo que lo
@@ -859,11 +932,34 @@ internal static class QuotationsApiHarness
 
         public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
         {
-            _copies.Remove(publicKey);
-            DeletedKeys.Add(publicKey);
+            _copies.TryRemove(publicKey, out _);
+            DeletedKeys.Enqueue(publicKey);
             return Task.CompletedTask;
         }
 
+        /// <summary>Si la copia sigue en el bucket: PaymentProofMoveProcessor lo pregunta antes de borrar
+        /// el temporal (revisión final, I1).</summary>
+        public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+            Task.FromResult(_copies.ContainsKey(publicKey));
+
         public string GetUrl(string publicKey) => $"{BaseUrl}/{publicKey}";
+
+        /// <summary>Las copias vigentes bajo el prefijo, en una sola página. La reconciliación de
+        /// Storage no corre en estas pruebas (su intervalo es de horas): existe porque el puerto lo
+        /// pide.</summary>
+        public Task<PublicObjectPage> ListAsync(
+            string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+            Task.FromResult(new PublicObjectPage(
+                _copies.Keys
+                    .Where(key => key.StartsWith(prefix, StringComparison.Ordinal))
+                    .Select(key => new PublicStoredObject(key, DateTimeOffset.UtcNow))
+                    .ToArray(),
+                ContinuationToken: null));
+    }
+
+    /// <summary>El reloj de <see cref="QepApiFactory"/> cuando la prueba pide <c>utcNow</c>.</summary>
+    public sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
     }
 }

@@ -62,12 +62,15 @@ public sealed record PriceScaleRequest(
     decimal? FinalCop,
     bool? AllowGrouping);
 
+/// <param name="Restriction">Null en una escala incompleta, la que deja la copia de escalas
+/// (<c>PriceScaleCopy</c>). No hay un campo aparte que lo diga: el frontend lo deriva de este null,
+/// y un segundo campo sólo abriría la puerta a que los dos se contradigan.</param>
 public sealed record PriceScaleResponse(
     Guid Id,
     int FromUnit,
     int ToUnit,
     decimal Discount,
-    string Restriction,
+    string? Restriction,
     int? Multiple,
     int? PackagingUnit,
     decimal? FinalUsd,

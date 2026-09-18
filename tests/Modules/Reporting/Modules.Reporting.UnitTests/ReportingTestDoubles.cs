@@ -17,9 +17,19 @@ internal sealed class FakeExecutionContext(Guid tenantId, params string[] permis
     public bool HasPermission(string permission) => permissions.Contains(permission);
 }
 
-internal sealed class FixedClock(DateTimeOffset now) : IClock
+/// <summary>El calendario de un tenant en un huso fijo, Bogotá por defecto (spec 2026-09-17). Sin
+/// instante, media tarde del 3 de septiembre de 2026 en UTC: las pruebas que no miran el hoy no
+/// tienen que inventarlo.</summary>
+internal sealed class FixedTenantClock(DateTimeOffset utcNow, string timeZoneId = "America/Bogota")
+    : ITenantClock
 {
-    public DateTimeOffset UtcNow { get; } = now;
+    public FixedTenantClock()
+        : this(new DateTimeOffset(2026, 9, 3, 14, 30, 0, TimeSpan.Zero))
+    {
+    }
+
+    public Task<TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(new TenantCalendar(utcNow, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId)));
 }
 
 /// <summary>

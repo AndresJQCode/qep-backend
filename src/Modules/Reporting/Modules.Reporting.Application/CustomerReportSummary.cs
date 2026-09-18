@@ -70,13 +70,14 @@ public sealed record GetCustomerReportSummaryQuery(CustomerReportFilter Filter)
     : IQuery<CustomerReportSummaryDto>;
 
 /// <summary>
-/// Sin reloj inyectado, igual que el de cambios de precio: no hay ningún tramo que dependa de qué
-/// día es hoy. Un alta ya pasó — no vence.
+/// Igual que el de cambios de precio, ningún tramo depende de qué día es hoy: un alta ya pasó, no
+/// vence. El calendario del tenant sólo corta el rango (spec 2026-09-17, punto 4).
 /// </summary>
 public sealed class GetCustomerReportSummaryHandler(
     ICustomerReportSource source,
     IValidator<CustomerReportFilter> validator,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantClock tenantClock)
     : IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>
 {
     public async Task<CustomerReportSummaryDto> HandleAsync(
@@ -88,7 +89,8 @@ public sealed class GetCustomerReportSummaryHandler(
             executionContext, query.Filter.TenantId, ReportingPermissions.CustomerRead);
         await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
 
-        var criteria = query.Filter.ToCriteria();
+        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
+        var criteria = query.Filter.ToCriteria(calendar);
         var current = await source.SummarizeAsync(
             criteria, ReportSummaryRules.RankSize, cancellationToken);
 
@@ -98,7 +100,7 @@ public sealed class GetCustomerReportSummaryHandler(
             current.Monthly,
             current.ByClassification,
             current.ByDepartment,
-            await SummarizePrecedingAsync(criteria, cancellationToken));
+            await SummarizePrecedingAsync(query.Filter, criteria, calendar, cancellationToken));
     }
 
     /// <summary>
@@ -110,16 +112,18 @@ public sealed class GetCustomerReportSummaryHandler(
     /// anterior" no aparece en ninguna pantalla.
     /// </summary>
     private async Task<CustomerComparisonDto?> SummarizePrecedingAsync(
+        CustomerReportFilter filter,
         CustomerReportCriteria criteria,
+        TenantCalendar calendar,
         CancellationToken cancellationToken)
     {
-        if (ReportComparisonWindow.Preceding(criteria.From, criteria.To) is not { } window)
+        if (ReportComparisonWindow.Preceding(filter.From, filter.To) is not { } window)
         {
             return null;
         }
 
         var preceding = await source.SummarizeAsync(
-            criteria with { From = window.From, To = window.To },
+            criteria with { Period = ReportPeriod.Of(calendar, window.From, window.To) },
             rankSize: 0,
             cancellationToken);
 

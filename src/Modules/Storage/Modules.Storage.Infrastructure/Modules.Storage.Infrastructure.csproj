@@ -2,6 +2,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Modules.Storage.UnitTests" />
+    <!-- Los procesadores de los workers son internal: las pruebas de integración los invocan directo
+         para no depender del temporizador (spec 2026-09-16), mismo criterio que
+         IQuotationExpirationProcessor en Quotations. -->
+    <InternalsVisibleTo Include="Modules.Storage.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Modules.Storage.Application\Modules.Storage.Application.csproj" />

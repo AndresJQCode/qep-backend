@@ -1,7 +1,8 @@
 namespace Modules.Customers.Domain;
 
 /// <summary>
-/// Los datos de contacto del cliente, todos opcionales, agrupados.
+/// Los datos de contacto del cliente, agrupados. Telefono y correo son obligatorios; la direccion
+/// es un resto opcional de antes de la libreta de direcciones.
 ///
 /// Van juntos y no como tres parametros sueltos de <c>Create</c>/<c>Update</c> por la misma razon
 /// por la que existe <c>CompanyContactInfo</c>. Las propiedades son <c>init</c> y no posicionales,
@@ -29,13 +30,13 @@ public sealed record CustomerContactInfo
 
     public const int AddressMaxLength = 200;
 
-    public static CustomerContactInfo Empty { get; } = new();
-
     internal CustomerContactInfo Normalized() => new()
     {
-        Phone = NormalizeOptional(
+        Phone = NormalizeRequired(
             Phone,
             PhoneMaxLength,
+            "customers.customer.phone_required",
+            "The customer phone is required.",
             "customers.customer.phone_too_long",
             $"The customer phone cannot exceed {PhoneMaxLength} characters."),
         Email = NormalizeEmail(Email),
@@ -66,21 +67,41 @@ public sealed record CustomerContactInfo
             : trimmed;
     }
 
+    // Telefono y correo son obligatorios al crear y al editar. Las propiedades siguen siendo
+    // string? a proposito: las filas anteriores a la regla pueden tener null en base (las columnas
+    // no pasaron a NOT NULL), y el agregado tiene que poder leerlas. La regla muerde al escribir,
+    // no al materializar.
+    private static string NormalizeRequired(
+        string? value,
+        int maxLength,
+        string requiredCode,
+        string requiredMessage,
+        string tooLongCode,
+        string tooLongMessage)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new CustomersDomainException(requiredCode, requiredMessage);
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length > maxLength
+            ? throw new CustomersDomainException(tooLongCode, tooLongMessage)
+            : trimmed;
+    }
+
     // A minusculas por el mismo criterio que CompanyContactInfo: "Compras@Verde.CO" y
     // "compras@verde.co" son la misma casilla, y dejar las dos formas en base obliga a cada
     // consumidor a normalizar de nuevo.
-    private static string? NormalizeEmail(string? email)
+    private static string NormalizeEmail(string? email)
     {
-        var trimmed = NormalizeOptional(
+        var trimmed = NormalizeRequired(
             email,
             EmailMaxLength,
+            "customers.customer.email_required",
+            "The customer email is required.",
             "customers.customer.email_too_long",
             $"The customer email cannot exceed {EmailMaxLength} characters.");
-
-        if (trimmed is null)
-        {
-            return null;
-        }
 
         return IsPlausibleEmail(trimmed)
             ? trimmed.ToLowerInvariant()

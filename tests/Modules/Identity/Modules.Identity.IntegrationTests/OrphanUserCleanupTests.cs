@@ -127,6 +127,64 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
     }
 
+    // El aprobador no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
+    // que retiene al usuario es advisor_id (ya cubierto arriba) o approved_by.
+    [Fact]
+    public async Task ApprovingAnOrderKeepsTheUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var advisor = await InviteAsync(ownerClient, tenantId, NewEmail());
+        var approver = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, advisor.Id);
+        await ActivateMembershipAsync(connectionString, approver.Id);
+        await SeedOrderAsync(
+            factory,
+            Guid.Parse(tenantId),
+            convertedByMembershipId: advisor.Id,
+            approvedByMembershipId: approver.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, approver.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, approver.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, approver.UserId));
+    }
+
+    // Misma razón que ApprovingAnOrderKeepsTheUser: el canceller es una tercera membresía, no el
+    // asesor ni el aprobador.
+    [Fact]
+    public async Task CancellingAnOrderKeepsTheUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var advisor = await InviteAsync(ownerClient, tenantId, NewEmail());
+        var canceller = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, advisor.Id);
+        await ActivateMembershipAsync(connectionString, canceller.Id);
+        await SeedOrderAsync(
+            factory,
+            Guid.Parse(tenantId),
+            convertedByMembershipId: advisor.Id,
+            cancelledByMembershipId: canceller.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, canceller.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, canceller.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, canceller.UserId));
+    }
+
     [Fact]
     public async Task OwningAFileKeepsTheUser()
     {
@@ -137,6 +195,30 @@ public sealed class OrphanUserCleanupTests
         var member = await InviteAsync(ownerClient, tenantId, NewEmail());
         await ActivateMembershipAsync(connectionString, member.Id);
         await SeedFileAsync(factory, Guid.Parse(tenantId), ownerUserId: member.UserId);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, member.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
+    }
+
+    // Spec 2026-09-16, D18: el frontend sube los comprobantes con ownerId = el usuario. Pasarlos a
+    // PaymentProof no puede dejar de retener a quien los subió.
+    [Fact]
+    public async Task OwningAPaymentProofKeepsTheUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, member.Id);
+        await SeedFileAsync(
+            factory, Guid.Parse(tenantId), ownerUserId: member.UserId, FileOwnerType.PaymentProof);
 
         var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
         Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
@@ -364,7 +446,64 @@ public sealed class OrphanUserCleanupTests
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    private static async Task SeedFileAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
+    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by o
+    // cancelled_by, no el resto del contrato de pedidos. La cotización subyacente existe sólo
+    // porque orders.quotation_id tiene FK — su contenido no se ejercita.
+    private static async Task SeedOrderAsync(
+        QepApiFactory factory,
+        Guid tenantId,
+        Guid convertedByMembershipId,
+        Guid? approvedByMembershipId = null,
+        Guid? cancelledByMembershipId = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        var convertedBy = new MemberId(convertedByMembershipId);
+        var occurredAt = DateTimeOffset.UtcNow;
+        var quotation = Quotation.Create(
+            QuotationId.New(),
+            tenantId,
+            $"COT-{Guid.NewGuid():N}"[..20],
+            Guid.CreateVersion7(),
+            convertedBy,
+            validUntil: null,
+            paymentMethod: null,
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: null,
+            customerWithRetention: false,
+            customerVatSurplus: false,
+            convertedBy,
+            occurredAt);
+        dbContext.Quotations.Add(quotation);
+
+        var order = Order.Create(
+            OrderId.New(),
+            tenantId,
+            $"PED-{Guid.NewGuid():N}"[..20],
+            quotation.Id,
+            OrderPaymentStatus.PaymentPending,
+            notes: null,
+            convertedBy,
+            proofs: [],
+            occurredAt);
+
+        if (approvedByMembershipId is { } approvedBy)
+        {
+            order.Approve(new MemberId(approvedBy), occurredAt);
+        }
+
+        if (cancelledByMembershipId is { } cancelledBy)
+        {
+            order.Cancel(new MemberId(cancelledBy), "Motivo de prueba", occurredAt);
+        }
+
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task SeedFileAsync(
+        QepApiFactory factory, Guid tenantId, Guid ownerUserId, FileOwnerType ownerType = FileOwnerType.User)
     {
         using var scope = factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
@@ -372,7 +511,7 @@ public sealed class OrphanUserCleanupTests
             FileResourceId.New(),
             tenantId,
             ownerUserId,
-            FileOwnerType.User,
+            ownerType,
             "avatar.png",
             "image/png",
             1024,
@@ -525,6 +664,9 @@ public sealed class OrphanUserCleanupTests
             // Fijado y no heredado (SDD-CT-17): con el proveedor de correo de appsettings.json y
             // sus credenciales ausentes, el validador de opciones tira la aplicación al arrancar.
             builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.UseSetting("Registration:PublicTenantSignupEnabled", "true");
         }

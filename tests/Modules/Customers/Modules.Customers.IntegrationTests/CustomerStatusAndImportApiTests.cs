@@ -533,6 +533,59 @@ public sealed class CustomerStatusAndImportApiTests
             error.RowNumber == 2 && error.Code == "customers.import.row.address_required");
     }
 
+    // Telefono y correo son obligatorios. Una celda vacia se rechaza como fila, con su codigo, y
+    // no como una excepcion del dominio a mitad del archivo: la fila valida del mismo lote entra.
+    [Fact]
+    public async Task ImportRowsWithoutPhoneOrEmailAreRejectedWithTheirOwnCodes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        using var manager = CreateManager(factory);
+        var here = await EnsureCityAsync(manager);
+        var classification = await CreateClassificationAsync(manager);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Cliente Valido",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: here.DepartmentName,
+                    City: here.CityName,
+                    Classification: classification.Name),
+                new ExcelRowInput(
+                    Name: "Cliente Sin Telefono",
+                    IdentificationNumber: "900.222.222-2",
+                    Phone: null,
+                    Department: here.DepartmentName,
+                    City: here.CityName,
+                    Classification: classification.Name),
+                new ExcelRowInput(
+                    Name: "Cliente Sin Correo",
+                    IdentificationNumber: "900.333.333-3",
+                    Email: null,
+                    Department: here.DepartmentName,
+                    City: here.CityName,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal("completed_with_errors", result.Status);
+        Assert.Equal(1, result.ImportedCount);
+        Assert.Contains(result.Errors, error =>
+            error.RowNumber == 3 && error.Code == "customers.import.row.phone_required");
+        Assert.Contains(result.Errors, error =>
+            error.RowNumber == 4 && error.Code == "customers.import.row.email_required");
+        Assert.DoesNotContain(result.Errors, error =>
+            error.Code == "customers.import.row.email_invalid");
+    }
+
     [Fact]
     public async Task ImportCustomersWithMissingColumnsIsRejected()
     {

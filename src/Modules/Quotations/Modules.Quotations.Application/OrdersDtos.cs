@@ -17,9 +17,18 @@ public sealed record OrderDto(
     /// </summary>
     DateTimeOffset? ApprovedAt,
     Guid? ApprovedBy,
+    /// <summary>Cuándo se anuló, quién (id de membership) y por qué (spec 2026-09-16). Null
+    /// mientras el pedido no se anula.</summary>
+    DateTimeOffset? CancelledAt,
+    Guid? CancelledBy,
+    string? CancellationReason,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    /// <summary>El token de concurrencia del pedido (spec 2026-09-17, decisión 6): el frontend lo
+    /// manda en <c>If-Match</c> al guardar la edición. Sube con cada cambio del pedido, no
+    /// necesariamente de a uno.</summary>
+    long Version,
     IReadOnlyCollection<OrderPaymentProofDto> PaymentProofs);
 
 /// <summary>Un comprobante de pago, tal como viaja en el request de conversión (US-14): el
@@ -71,6 +80,34 @@ public sealed record OrderItemAdditionRequest(Guid ProductId, decimal Quantity);
 /// </summary>
 public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
 
+/// <summary>Anular un pedido (spec 2026-09-16). El motivo viaja nullable a propósito: ausente,
+/// vacío o largo lo rechaza el dominio con su propio código (order.order.cancellation_reason_*),
+/// que es lo que el frontend mapea — no hay validador que lo convierta en validation.failed.</summary>
+public sealed record CancelOrderRequest(string? Reason);
+
+/// <summary>Una línea del estado deseado de «Editar pedido» (spec 2026-09-17).</summary>
+public sealed record OrderEditItemRequest(Guid ProductId, decimal Quantity);
+
+/// <summary>Un comprobante nuevo del borrador. <paramref name="FileId"/> se omite en
+/// <c>POST /orders/{orderId}/preview</c>: los archivos se suben recién al guardar.</summary>
+public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount);
+
+/// <summary>Los comprobantes del borrador. Ausentes o null equivalen a vacíos.</summary>
+public sealed record OrderEditProofsRequest(
+    IReadOnlyList<OrderEditProofAddRequest>? Add,
+    IReadOnlyList<OrderPaymentProofUpdateRequest>? Update,
+    IReadOnlyList<Guid>? RemoveIds);
+
+/// <summary>
+/// El estado deseado completo de «Editar pedido» (spec 2026-09-17, decisión 2): mismo cuerpo para
+/// <c>PUT /orders/{orderId}</c> y <c>POST /orders/{orderId}/preview</c>. <c>Items</c> es la lista
+/// completa; <c>Notes</c> reemplaza el campo entero y null lo limpia.
+/// </summary>
+public sealed record SaveOrderEditsRequest(
+    IReadOnlyList<OrderEditItemRequest>? Items,
+    OrderEditProofsRequest? Proofs,
+    string? Notes);
+
 public sealed record OrderPaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 
 public sealed record OrderResponse(
@@ -84,9 +121,13 @@ public sealed record OrderResponse(
     Guid ConvertedBy,
     DateTimeOffset? ApprovedAt,
     Guid? ApprovedBy,
+    DateTimeOffset? CancelledAt,
+    Guid? CancelledBy,
+    string? CancellationReason,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    long Version,
     IReadOnlyCollection<OrderPaymentProofResponse> PaymentProofs);
 
 /// <summary>

@@ -120,7 +120,7 @@ public sealed class ExportQuotationPdfHandlerTests
                 new StubQuotationResponseComposer(),
                 renderer,
                 storage,
-                new FixedClock(Now)),
+                new FixedTenantClock(Now)),
             storage,
             new StubExecutionContext(SubjectId, TenantId));
 

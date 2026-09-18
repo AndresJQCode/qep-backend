@@ -99,4 +99,94 @@ public sealed class PaymentProofCopiesTests
 
         Assert.Equal([RecordingPaymentProofPublisher.KeyFor(second)], publisher.DeletedKeys);
     }
+
+    // D9 (spec 2026-09-16): sólo un comprobante con copia pública tiene algo que mover.
+    [Fact]
+    public void OnlyTheProofsWithAPublicKeyAreAttached()
+    {
+        var withKey = Guid.CreateVersion7();
+        var withoutKey = Guid.CreateVersion7();
+
+        var attached = PaymentProofCopies.AttachedFrom(
+        [
+            new OrderPaymentProofInput(withKey, 10_000m, "payment-proofs/abc.webp"),
+            new OrderPaymentProofInput(withoutKey, 5_000m),
+        ]);
+
+        Assert.Equal([new AttachedPaymentProof(withKey, "payment-proofs/abc.webp")], attached);
+    }
+
+    // D9 y D19: de las correcciones, sólo un archivo de reemplazo con copia pública tiene algo que mover.
+    // Corregir sólo el monto no cambia el archivo.
+    [Fact]
+    public void OnlyTheReplacementFilesWithAPublicKeyAreAttached()
+    {
+        var replacedWithKey = Guid.CreateVersion7();
+        var replacedWithoutKey = Guid.CreateVersion7();
+
+        var attached = PaymentProofCopies.AttachedFromReplacements(
+        [
+            new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 10_000m, replacedWithKey, "payment-proofs/def.webp"),
+            new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 5_000m, replacedWithoutKey),
+            new OrderPaymentProofAmountUpdate(OrderPaymentProofId.New(), 7_000m),
+        ]);
+
+        Assert.Equal([new AttachedPaymentProof(replacedWithKey, "payment-proofs/def.webp")], attached);
+    }
+
+    // D19 (spec 2026-09-16): se suelta lo que el pedido dejó de usar. Una clave que sigue en el pedido
+    // no se suelta, y un comprobante sin clave sólo se suelta si su archivo ya no lo usa nadie del pedido.
+    [Fact]
+    public void OnlyWhatTheOrderNoLongerUsesIsDetached()
+    {
+        var replaced = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/abc.webp");
+        var stillUsed = new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/def.webp");
+        var withoutKey = new DetachedPaymentProof(Guid.CreateVersion7(), null);
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [replaced, stillUsed, withoutKey],
+            [stillUsed, new DetachedPaymentProof(Guid.CreateVersion7(), "payment-proofs/ghi.webp")]);
+
+        Assert.Equal([replaced, withoutKey], detached);
+    }
+
+    // D19: cada adjunto tiene su propia clave (PublicPaymentProofPublisher), así que reemplazar un
+    // comprobante por el mismo archivo deja una copia nueva y la vieja se suelta.
+    [Fact]
+    public void ReplacingAProofWithItsOwnFileDetachesTheOldKey()
+    {
+        var fileId = Guid.CreateVersion7();
+        var old = new DetachedPaymentProof(fileId, "payment-proofs/old.pdf");
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [old], [new DetachedPaymentProof(fileId, "payment-proofs/new.pdf")]);
+
+        Assert.Equal([old], detached);
+    }
+
+    // D19: dos comprobantes del mismo pedido con el mismo archivo: quitar uno suelta su copia, aunque el
+    // otro siga usando el archivo. Si es un PaymentProof, la sonda de Storage lo retiene.
+    [Fact]
+    public void RemovingOneOfTwoProofsSharingAFileDetachesItsKey()
+    {
+        var fileId = Guid.CreateVersion7();
+        var removed = new DetachedPaymentProof(fileId, "payment-proofs/first.pdf");
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [removed], [new DetachedPaymentProof(fileId, "payment-proofs/second.pdf")]);
+
+        Assert.Equal([removed], detached);
+    }
+
+    // D19: sin clave no hay copia que borrar, sólo el archivo; si el pedido lo sigue usando, no se suelta.
+    [Fact]
+    public void AKeylessProofWhoseFileIsStillUsedIsNotDetached()
+    {
+        var fileId = Guid.CreateVersion7();
+
+        var detached = PaymentProofCopies.DetachedFrom(
+            [new DetachedPaymentProof(fileId, null)], [new DetachedPaymentProof(fileId, null)]);
+
+        Assert.Empty(detached);
+    }
 }

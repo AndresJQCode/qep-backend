@@ -15,7 +15,8 @@ public sealed record ListQuotationsReportQuery(
 public sealed class ListQuotationsReportHandler(
     IQuotationsReportSource source,
     IValidator<QuotationsReportFilter> validator,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantClock tenantClock)
     : IQueryHandler<ListQuotationsReportQuery, ReportPage<QuotationsReportItemDto>>
 {
     public async Task<ReportPage<QuotationsReportItemDto>> HandleAsync(
@@ -29,8 +30,10 @@ public sealed class ListQuotationsReportHandler(
         var page = ReportPaging.NormalizePage(query.Page);
         var pageSize = ReportPaging.NormalizePageSize(query.PageSize);
 
+        // El rango se corta en el día del tenant (spec 2026-09-17, punto 4).
+        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
         var (items, total) = await source.ListAsync(
-            query.Filter.ToCriteria(), page, pageSize, cancellationToken);
+            query.Filter.ToCriteria(calendar), page, pageSize, cancellationToken);
 
         return new ReportPage<QuotationsReportItemDto>(items, total, page, pageSize);
     }

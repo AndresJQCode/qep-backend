@@ -51,6 +51,13 @@ data:
   Storage__R2__PublicBucket: "#{STORAGE_R2_PUBLIC_BUCKET}#"
   Storage__R2__PublicBaseUrl: "#{STORAGE_R2_PUBLIC_BASE_URL}#"
   Storage__R2__Endpoint: "#{STORAGE_R2_ENDPOINT}#"
+  # Reconciliación de payment-proofs/ en el bucket público (spec 2026-09-16, D12). Literal y no token,
+  # y repite el valor por defecto de la imagen a propósito, igual que
+  # Registration__PublicTenantSignupEnabled: el worker borra objetos cuya URL puede estar en un Excel
+  # ya enviado, así que arranca registrando en el log lo que borraría ("Payment proof orphan cleanup
+  # (dry run) would delete ..."). Se pasa a "false" a mano, en un commit propio, después de revisar
+  # esos logs y confirmar que lo marcado como huérfano realmente lo es.
+  Storage__PaymentProofOrphanCleanup__DryRun: "true"
   # Dónde vive qcode-pdf, el servicio de render. Repite el valor por defecto de la imagen y aun
   # así va acá por el mismo motivo que Storage__R2__Endpoint: es un servicio externo compartido
   # con otras aplicaciones de QCode, y mudarlo de host no debería exigir reconstruir y desplegar

@@ -27,6 +27,13 @@ public sealed class ConvertQuotationToOrderValidator : AbstractValidator<Convert
             .MaximumLength(Order.NotesMaxLength)
             .When(command => command.Notes is not null);
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
+
+        // Revisión final (I2): un archivo, un adjunto (D16). Dos veces el mismo archivo tendría dos copias
+        // públicas con claves distintas, y Storage sólo registra una.
+        RuleFor(command => command.PaymentProofs)
+            .Must(proofs => proofs.Select(proof => proof.FileId).Distinct().Count() == proofs.Count)
+            .WithMessage("The same file cannot be attached more than once in a request.")
+            .When(command => command.PaymentProofs is not null);
     }
 }
 
@@ -47,10 +54,12 @@ public sealed class ConvertQuotationToOrderHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
+    IOrderPaymentProofEventPublisher paymentProofEvents,
     IOrderNumberGenerator numberGenerator,
+    IDocumentNumberingFormatLookup numberingFormats,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock,
+    ITenantClock tenantClock,
     IValidator<ConvertQuotationToOrderCommand> validator)
     : ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>
 {
@@ -75,15 +84,24 @@ public sealed class ConvertQuotationToOrderHandler(
         foreach (var proof in command.PaymentProofs)
         {
             await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, command.TenantId, proof.FileId, cancellationToken);
+                fileLookup, orderRepository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
         }
 
         var convertedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
-        var now = clock.UtcNow;
-        var sequence = await numberGenerator.NextAsync(command.TenantId, now.Year, cancellationToken);
-        var orderNumber = OrderNumberFormatter.Format(now.Year, sequence);
+        // El año del pedido es el del día del tenant (spec 2026-09-17, punto 2b).
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var now = calendar.UtcNow;
+        var year = calendar.Today.Year;
+        // El formato es un dato del tenant (spec 2026-09-17 de numeración). Un formato sin año usa
+        // la fila `year = 0` del contador, que no se reinicia; con año, la fila del año, como
+        // siempre. El contador no depende del prefijo: cambiar `PED-` por `PW` no reinicia la serie.
+        var format = await numberingFormats.GetAsync(
+            command.TenantId, DocumentNumberType.Order, cancellationToken);
+        var counterYear = format.IncludeYear ? year : 0;
+        var sequence = await numberGenerator.NextAsync(command.TenantId, counterYear, cancellationToken);
+        var orderNumber = DocumentNumberFormatter.Format(format, year, sequence);
         var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
         // Las copias públicas de los comprobantes (spec 2026-09-15, P4 y P7) van antes del dominio,
@@ -129,6 +147,14 @@ public sealed class ConvertQuotationToOrderHandler(
                 quotation.Id.ToString(),
                 "success",
                 now);
+            // D9 (spec 2026-09-16): en la misma unidad de trabajo que el pedido, así el evento sólo
+            // existe si el pedido se guardó, y Storage nunca borra un temporal que nadie adjuntó.
+            var attached = PaymentProofCopies.AttachedFrom(proofs);
+            if (attached.Length > 0)
+            {
+                paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch

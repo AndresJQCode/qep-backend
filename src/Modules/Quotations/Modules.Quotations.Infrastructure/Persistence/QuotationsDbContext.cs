@@ -16,6 +16,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<QuotationNumberCounter> QuotationNumberCounters => Set<QuotationNumberCounter>();
 
+    internal DbSet<DocumentNumberingFormat> DocumentNumberingFormats => Set<DocumentNumberingFormat>();
+
     public DbSet<Order> Orders => Set<Order>();
 
     internal DbSet<OrderPaymentProof> OrderPaymentProofs => Set<OrderPaymentProof>();
@@ -36,6 +38,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureQuotationHistoryEntry(modelBuilder);
         ConfigureQuotationPdf(modelBuilder);
         ConfigureQuotationNumberCounter(modelBuilder);
+        ConfigureDocumentNumberingFormat(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderPaymentProof(modelBuilder);
         ConfigureOrderNumberCounter(modelBuilder);
@@ -332,6 +335,39 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         counter.Property(value => value.NextValue).HasColumnName("next_value");
     }
 
+    /// <summary>
+    /// El formato del número por (tenant, tipo de documento), spec 2026-09-17. Los tres rangos van
+    /// como CHECK además de en <c>DocumentNumberFormat.Create</c>: la tabla se escribe con SQL a
+    /// mano, y el CHECK es la única red que no depende de quién corra ese SQL. Los nombres de las
+    /// restricciones se escriben completos porque EF los usa literales.
+    /// </summary>
+    private static void ConfigureDocumentNumberingFormat(ModelBuilder modelBuilder)
+    {
+        var format = modelBuilder.Entity<DocumentNumberingFormat>();
+        format.ToTable("document_numbering_formats", "quotations", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_document_numbering_formats_document_type",
+                "document_type IN ('order', 'quotation')");
+            table.HasCheckConstraint(
+                "CK_document_numbering_formats_prefix",
+                "prefix ~ '^[A-Za-z0-9-]{0,10}$'");
+            table.HasCheckConstraint(
+                "CK_document_numbering_formats_year_separator",
+                "year_separator IN ('', '-', '/')");
+            table.HasCheckConstraint(
+                "CK_document_numbering_formats_min_digits",
+                "min_digits BETWEEN 1 AND 10");
+        });
+        format.HasKey(value => new { value.TenantId, value.DocumentType });
+        format.Property(value => value.TenantId).HasColumnName("tenant_id");
+        format.Property(value => value.DocumentType).HasColumnName("document_type").HasMaxLength(20);
+        format.Property(value => value.Prefix).HasColumnName("prefix").HasMaxLength(10);
+        format.Property(value => value.IncludeYear).HasColumnName("include_year");
+        format.Property(value => value.YearSeparator).HasColumnName("year_separator").HasMaxLength(1);
+        format.Property(value => value.MinDigits).HasColumnName("min_digits");
+    }
+
     private static void ConfigureOrder(ModelBuilder modelBuilder)
     {
         var order = modelBuilder.Entity<Order>();
@@ -367,6 +403,17 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new MemberId(value.Value) : null);
+        // Spec 2026-09-16: quién, cuándo y por qué se anuló. Nullables, porque un pedido vivo no
+        // tiene nada que guardar acá; misma conversión nullable que approved_by.
+        order.Property(value => value.CancelledAt).HasColumnName("cancelled_at");
+        order.Property(value => value.CancelledBy)
+            .HasColumnName("cancelled_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        order.Property(value => value.CancellationReason)
+            .HasColumnName("cancellation_reason")
+            .HasMaxLength(Order.CancellationReasonMaxLength);
         order.Property(value => value.RitualCollectionSyncId)
             .HasColumnName("ritual_collection_sync_id")
             .HasMaxLength(100);
@@ -423,12 +470,17 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion(id => id.Value, value => new MemberId(value));
         proof.Property(value => value.UploadedAt).HasColumnName("uploaded_at");
         // La clave de la copia pública (spec 2026-09-15, P5): nullable, porque los comprobantes
-        // privados no tienen, y sin índice, porque nadie busca por ella. La clave mide 51
-        // caracteres (`payment-proofs/` + 32 hex + extensión); 200 deja margen.
+        // privados no tienen. La clave mide 51 caracteres (`payment-proofs/` + 32 hex + extensión);
+        // 200 deja margen.
         proof.Property(value => value.PublicStorageKey)
             .HasColumnName("public_storage_key")
             .HasMaxLength(200);
         proof.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_payment_proofs_order");
+        // Spec 2026-09-16, D17: Storage pregunta por esta tabla en cada barrido. El de staging busca
+        // por archivo (IFileReferenceProbe) y la reconciliación del bucket público por clave
+        // (IPublicObjectReferenceProbe). Sin estos índices, cada pregunta recorre la tabla entera.
+        proof.HasIndex(value => value.FileId).HasDatabaseName("IX_order_payment_proofs_file");
+        proof.HasIndex(value => value.PublicStorageKey).HasDatabaseName("IX_order_payment_proofs_public_key");
 
         // CASCADE: un comprobante no tiene sentido sin su pedido -- mismo criterio que
         // QuotationItem -> Quotation.

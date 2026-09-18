@@ -89,4 +89,61 @@ public sealed class StorageOptionsValidatorTests
 
         Assert.True(_validator.Validate(name: null, options).Failed);
     }
+
+    // Spec 2026-09-16, D12: sin configurar nada, la reconciliación sólo registra, una vez al día y
+    // sobre lo que tiene más de 24 h.
+    [Fact]
+    public void TheOrphanCleanupStartsAsADryRunByDefault()
+    {
+        var cleanup = new StorageOptions().PaymentProofOrphanCleanup;
+
+        Assert.True(cleanup.DryRun);
+        Assert.Equal(24, cleanup.MinimumAgeHours);
+        Assert.Equal(24, cleanup.IntervalHours);
+    }
+
+    // IntervalHours tiene techo porque PeriodicTimer no acepta más de uint.MaxValue - 1 ms (≈ 1193 h).
+    [Theory]
+    [InlineData(0, 24)]
+    [InlineData(24, 0)]
+    [InlineData(24, 1194)]
+    public void OrphanCleanupHoursOutOfRangeFail(int minimumAgeHours, int intervalHours)
+    {
+        var options = new StorageOptions
+        {
+            PaymentProofOrphanCleanup = new PaymentProofOrphanCleanupOptions
+            {
+                MinimumAgeHours = minimumAgeHours,
+                IntervalHours = intervalHours,
+            },
+            R2 = ValidR2(),
+        };
+
+        Assert.True(_validator.Validate(name: null, options).Failed);
+    }
+
+    [Fact]
+    public void OrphanCleanupHoursAtTheLimitsAreValid()
+    {
+        var options = new StorageOptions
+        {
+            PaymentProofOrphanCleanup = new PaymentProofOrphanCleanupOptions
+            {
+                MinimumAgeHours = 1,
+                IntervalHours = 1193,
+            },
+            R2 = ValidR2(),
+        };
+
+        Assert.True(_validator.Validate(name: null, options).Succeeded);
+    }
+
+    private static R2Options ValidR2() =>
+        new()
+        {
+            AccountId = "acct",
+            AccessKeyId = "key",
+            SecretAccessKey = "secret",
+            Bucket = "qep",
+        };
 }

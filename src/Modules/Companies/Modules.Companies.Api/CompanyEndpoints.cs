@@ -209,12 +209,15 @@ public static class CompanyEndpoints
         company.CreatedAt,
         company.UpdatedAt);
 
-    // Del detalle de cada cuenta la grilla solo recibe el numero. Ver el porque en
-    // CompanyListItemResponse.
+    // Del detalle de cada cuenta la grilla recibe banco y numero, sin la moneda. Ver el porque
+    // en CompanyListItemResponse.
     private static CompanyListItemResponse ToListItem(CompanyDto company) => new(
         company.Id,
         company.Name,
         company.BankAccounts.Select(account => account.AccountNumber).ToArray(),
+        company.BankAccounts
+            .Select(account => new CompanyListBankAccount(account.BankName, account.AccountNumber))
+            .ToArray(),
         company.TaxId,
         company.Phone,
         company.City.Name,

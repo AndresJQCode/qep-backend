@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Modules.Quotations.Application;
 using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 
 namespace Modules.Reporting.IntegrationTests;
@@ -67,6 +68,76 @@ public sealed class OrdersReportSummaryApiTests
     }
 
     /// <summary>
+    /// Spec 2026-09-16, decisión 6: un pedido anulado no es una venta. Dos pedidos del mismo
+    /// cliente y asesor, uno anulado: el resumen cuenta uno solo en el total, la serie y los dos
+    /// rankings. Filtrar en la consulta y no en memoria es lo que esta prueba cubre contra
+    /// PostgreSQL.
+    /// </summary>
+    [Fact]
+    public async Task SummaryLeavesOutACancelledOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var kept = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, kept);
+        var cancelled = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        var cancelledOrder = await ConvertToOrderAsync(client, factory, tenant.TenantId, cancelled);
+        (await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenant.TenantId}/orders/{cancelledOrder.Id}/cancel",
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var response = await client.GetAsync(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var summary = await response.Content.ReadFromJsonAsync<OrdersReportSummary>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal(kept.Subtotal, summary.Subtotal);
+        Assert.Equal(kept.TaxAmount, summary.TaxAmount);
+        Assert.Equal(kept.Total, summary.Total);
+        Assert.Equal(1, Assert.Single(summary.Monthly).Count);
+        Assert.Equal(1, Assert.Single(summary.ByAdvisor).Count);
+        Assert.Equal(1, Assert.Single(summary.ByClient).Count);
+    }
+
+    // Spec 2026-09-17, punto 5: el pedido convertido el 31 de diciembre a las 23:00 de Bogotá —ya
+    // enero en UTC— cuenta en la serie de diciembre del tenant.
+    [Fact]
+    public async Task TheMonthlySeriesGroupsByTheTenantsLocalMonth()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?from=2026-12-01&to=2026-12-31",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        var month = Assert.Single(summary.Monthly);
+        Assert.Equal((2026, 12), (month.Year, month.Month));
+        Assert.Equal(quotation.Total, month.Total);
+    }
+
+    /// <summary>
     /// Un tenant sin pedidos devuelve ceros y listas vacias, **no un 404 ni un cuerpo nulo**: el
     /// panel tiene que poder distinguir "no hay pedidos" de "no se pudo cargar", y un agregado
     /// sobre cero filas es un caso valido, no un error.
@@ -112,7 +183,7 @@ public sealed class OrdersReportSummaryApiTests
             client, factory, tenant.TenantId, customer.Id, productId);
         await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = TodayInBogota();
         var from = today.AddDays(-29);
 
         var response = await client.GetAsync(

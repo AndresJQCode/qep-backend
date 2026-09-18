@@ -114,6 +114,19 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("approved_by");
 
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("cancellation_reason");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<Guid?>("CancelledBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cancelled_by");
+
                     b.Property<DateTimeOffset>("ConvertedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("converted_at");
@@ -224,8 +237,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FileId")
+                        .HasDatabaseName("IX_order_payment_proofs_file");
+
                     b.HasIndex("OrderId")
                         .HasDatabaseName("IX_order_payment_proofs_order");
+
+                    b.HasIndex("PublicStorageKey")
+                        .HasDatabaseName("IX_order_payment_proofs_public_key");
 
                     b.ToTable("order_payment_proofs", "quotations");
                 });
@@ -590,6 +609,51 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_quotation_pdfs_tenant");
 
                     b.ToTable("quotation_pdfs", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.DocumentNumberingFormat", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("DocumentType")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("document_type");
+
+                    b.Property<bool>("IncludeYear")
+                        .HasColumnType("boolean")
+                        .HasColumnName("include_year");
+
+                    b.Property<int>("MinDigits")
+                        .HasColumnType("integer")
+                        .HasColumnName("min_digits");
+
+                    b.Property<string>("Prefix")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("prefix");
+
+                    b.Property<string>("YearSeparator")
+                        .IsRequired()
+                        .HasMaxLength(1)
+                        .HasColumnType("character varying(1)")
+                        .HasColumnName("year_separator");
+
+                    b.HasKey("TenantId", "DocumentType");
+
+                    b.ToTable("document_numbering_formats", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_document_numbering_formats_document_type", "document_type IN ('order', 'quotation')");
+
+                            t.HasCheckConstraint("CK_document_numbering_formats_min_digits", "min_digits BETWEEN 1 AND 10");
+
+                            t.HasCheckConstraint("CK_document_numbering_formats_prefix", "prefix ~ '^[A-Za-z0-9-]{0,10}$'");
+
+                            t.HasCheckConstraint("CK_document_numbering_formats_year_separator", "year_separator IN ('', '-', '/')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.OrderNumberCounter", b =>

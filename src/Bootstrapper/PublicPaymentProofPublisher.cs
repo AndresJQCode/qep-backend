@@ -13,9 +13,13 @@ namespace Bootstrapper;
 ///
 /// No pasa por <c>FileResource.Publish</c> a propósito (P6): esa regla —sólo imágenes— protege el
 /// endpoint de publicación de Storage, y relajarla dejaría a cualquiera con <c>FilePublish</c>
-/// publicar un PDF desde la API. Por lo mismo el <c>FileResource</c> no se entera de esta copia: si
-/// alguien lo borra (<c>SoftDeleteFileHandler</c>), la copia pública queda en el bucket. Despublicar
-/// es trabajo aparte.
+/// publicar un PDF desde la API. Por lo mismo, para un comprobante <c>User</c> (v1) el
+/// <c>FileResource</c> no se entera de esta copia: si alguien lo borra (<c>SoftDeleteFileHandler</c>),
+/// la copia pública queda en el bucket. Un <c>PaymentProof</c> (spec 2026-09-16) sí: Storage registra
+/// la clave cuando lo mueve (D10), y no deja borrarlo ni despublicarlo mientras un pedido lo
+/// referencie (D15). Desde D19, reemplazar o quitar un comprobante de un pedido hace que Storage borre
+/// la copia de ese adjunto y, en un <c>PaymentProof</c> que nadie más usa, el archivo entero: este
+/// publicador sólo borra sus copias en el rollback de un request que falló.
 /// </summary>
 internal sealed class PublicPaymentProofPublisher(
     IFileResourceRepository repository,
@@ -29,13 +33,15 @@ internal sealed class PublicPaymentProofPublisher(
     private const string Prefix = "payment-proofs";
 
     // La extensión sale del MimeType y no del nombre, que puede traer ".jpeg", mayúsculas o nada. Son
-    // los tres tipos que OrderPaymentProofResolver deja pasar.
+    // los tipos que OrderPaymentProofResolver deja pasar; WebP es la imagen procesada de un
+    // comprobante v2 (spec 2026-09-16, D7).
     private static readonly Dictionary<string, string> ExtensionsByMimeType =
         new(StringComparer.OrdinalIgnoreCase)
         {
             ["application/pdf"] = ".pdf",
             ["image/jpeg"] = ".jpg",
             ["image/png"] = ".png",
+            ["image/webp"] = ".webp",
         };
 
     public async Task<string?> PublishAsync(
@@ -75,5 +81,5 @@ internal sealed class PublicPaymentProofPublisher(
             ? extension
             : throw new QuotationsDomainException(
                 "order.payment_proof.file_type_not_allowed",
-                "The payment proof must be a PDF, JPG or PNG file.");
+                "The payment proof must be a PDF, JPG, PNG or WEBP file.");
 }

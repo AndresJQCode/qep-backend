@@ -24,10 +24,20 @@ public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderN
 public sealed record OrderExportPaymentProof(
     OrderPaymentProofId Id, string? PublicStorageKey, DateTimeOffset UploadedAt);
 
+/// <summary>
+/// Las fechas de los filtros llegan como instantes: <c>convertedFrom</c> inclusivo y
+/// <c>convertedBefore</c> exclusivo, ya cortados en el día del tenant por quien llama (spec
+/// 2026-09-17, punto 3). El repositorio no decide husos.
+/// </summary>
 public interface IOrderRepository
 {
     Task<Order?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
+
+    /// <summary>Igual que <see cref="FindByIdAsync"/> —con comprobantes— pero sin rastreo: lo usa el
+    /// cálculo previo de «Editar pedido» (spec 2026-09-17, decisión 4).</summary>
+    Task<Order?> FindUntrackedByIdAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Los pedidos de varias cotizaciones de una sola vez, indexados por id de cotizacion. Para el
@@ -62,8 +72,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         int page,
         int pageSize,
@@ -78,8 +88,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         CancellationToken cancellationToken);
 
@@ -94,8 +104,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateOnly? convertedFrom,
-        DateOnly? convertedTo,
+        DateTimeOffset? convertedFrom,
+        DateTimeOffset? convertedBefore,
         string? orderNumber,
         OrderExportCursor? after,
         int limit,
@@ -109,6 +119,14 @@ public interface IOrderRepository
         Guid tenantId,
         IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken);
+
+    /// <summary>Si algún comprobante de algún pedido usa el archivo, salvo <paramref name="exceptProofId"/>
+    /// (revisión final de la spec 2026-09-16, I2): un PaymentProof se adjunta una sola vez (D16), y el
+    /// comprobante que se reemplaza con su propio archivo no cuenta. Sin tenant, igual que
+    /// <c>OrderPaymentProofFileReferenceProbe</c>: el id del archivo es global, y el resolver ya comprobó
+    /// que el archivo es del tenant. Usa el índice <c>IX_order_payment_proofs_file</c> (D17).</summary>
+    Task<bool> IsPaymentProofFileInUseAsync(
+        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken);
 
     void Add(Order order);
 }

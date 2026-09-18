@@ -1,5 +1,5 @@
-using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -22,7 +22,7 @@ public sealed class QuotationPdfProvider(
     IQuotationResponseComposer composer,
     IQuotationPdfRenderer renderer,
     IQuotationPdfStorage storage,
-    IClock clock)
+    ITenantClock tenantClock)
     : IQuotationPdfProvider
 {
     public async Task<QuotationPdf> EnsureCurrentAsync(
@@ -40,15 +40,17 @@ public sealed class QuotationPdfProvider(
 
         // Desde la misma respuesta que dibuja la pantalla: si el documento y la pantalla se
         // armaran por caminos distintos terminarian diciendo cosas distintas de la misma
-        // cotizacion, y la diferencia la descubriria el cliente.
+        // cotizacion, y la diferencia la descubriria el cliente. La fecha de emisión se imprime en
+        // el día del tenant (spec 2026-09-17, punto 7).
+        var calendar = await tenantClock.GetAsync(quotation.TenantId, cancellationToken);
         var response = await composer.ComposeAsync(
             quotation.TenantId, quotation.ToDto(), cancellationToken);
         var content = await renderer.RenderAsync(
-            QuotationPdfDocumentMapper.From(response), cancellationToken);
+            QuotationPdfDocumentMapper.From(response, calendar), cancellationToken);
         var storageKey = await storage.SaveAsync(
             quotation.TenantId, quotation.Id, content, cancellationToken);
 
-        var now = clock.UtcNow;
+        var now = calendar.UtcNow;
         if (pdf is null)
         {
             pdf = QuotationPdf.Generate(

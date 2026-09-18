@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using BuildingBlocks.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Infrastructure.Seed;
 using Modules.Identity.Infrastructure.Seed;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure.Seed;
 using Npgsql;
 
@@ -68,8 +68,14 @@ public static class ExportLoadSeeder
         var connectionString = scope.ServiceProvider.GetRequiredService<IConfiguration>()
             .GetConnectionString("QepDatabase")
             ?? throw new InvalidOperationException("Connection string 'QepDatabase' is required.");
-        var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        // El tenant de la carga ya existe (SeedTenantAsync, arriba). Su hoy es el mismo con el que
+        // vence QuotationExpirationProcessor (spec 2026-09-17, punto 8c): con el de UTC, desde las 19:00
+        // en Bogotá la carga sembraba vencidas que el barrido todavía considera vigentes. La numeración
+        // y la vigencia de la carga siguen calculándose en UTC dentro del SQL.
+        var calendar = await scope.ServiceProvider.GetRequiredService<ITenantClock>()
+            .GetAsync(TenantId, cancellationToken);
+        var now = calendar.UtcNow;
+        var today = calendar.Today;
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);

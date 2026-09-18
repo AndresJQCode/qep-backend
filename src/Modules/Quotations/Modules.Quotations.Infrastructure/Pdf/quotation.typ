@@ -44,10 +44,10 @@
 )
 
 // Las fechas llegan en ISO porque el contrato es JSON; el documento lo lee una persona, así
-// que se arma acá y no en C#. `createdAt` viene con hora y offset (`2026-09-06T10:00:00+00:00`)
-// y `validUntil` sin hora: cortar en la "T" cubre las dos.
+// que se arma acá y no en C#. `issuedOn` y `validUntil` llegan sin hora (`2026-09-06`): la
+// emisión ya viene en el día del tenant (spec 2026-09-17, punto 7), y no hay nada que cortar.
 #let fecha(iso) = {
-  let partes = iso.split("T").at(0).split("-")
+  let partes = iso.split("-")
   str(int(partes.at(2))) + " de " + meses.at(int(partes.at(1)) - 1) + " de " + partes.at(0)
 }
 
@@ -172,7 +172,7 @@
       align: (left, right),
       if hay-emisor { text(size: 7.5pt, fill: apagado)[COTIZACIÓN] } else { [] },
       text(size: 12pt, weight: "bold")[#data.quotationNumber],
-      ..ficha("Emitida", fecha(data.createdAt)),
+      ..ficha("Emitida", fecha(data.issuedOn)),
       ..ficha(
         "Válida hasta",
         if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },

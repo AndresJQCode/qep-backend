@@ -121,6 +121,9 @@ local y por variable de entorno en k8s
 | `Storage:ExportUrlHours`                               | `24`                                                                                          | Vigencia del enlace de descarga de un reporte exportado. Entre 1 y 168 (SigV4 no firma mas de 7 dias)               |
 | `Storage:StagingRetentionHours`                        | `24`                                                                                          | Retención de los objetos en staging. Debe ser positiva                                                              |
 | `Storage:StagingCleanupMinutes`                        | `60`                                                                                          | Período del barrido de staging. Debe ser positivo                                                                   |
+| `Storage:PaymentProofOrphanCleanup:MinimumAgeHours`    | `24`                                                                                          | Edad mínima de un objeto de `payment-proofs/` para que la reconciliación lo considere. Debe ser positiva             |
+| `Storage:PaymentProofOrphanCleanup:IntervalHours`      | `24`                                                                                          | Período de la reconciliación de `payment-proofs/`. Entre 1 y 1193                                                   |
+| `Storage:PaymentProofOrphanCleanup:DryRun`             | `true` en `appsettings.json` y en `k8s/prod-configMap.yaml`                                   | Con `true` la reconciliación sólo escribe en el log lo que borraría. Se pasa a `false` a mano, después de revisar esos logs en producción |
 | `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
 | `Storage:ClamAv:Enabled`                               | `false`                                                                                       | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                         |
 | `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                      | Destino del escaneo. `Port` entre 1 y 65535                                                                         |
@@ -409,6 +412,98 @@ que se despliega desde `main`:
 > Mientras la carga está sembrada, los datos sintéticos conviven con los de desarrollo en la misma
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
+
+## Numeración de documentos por tenant
+
+El número de cotización y el de pedido salen de un formato **por tenant y por tipo de documento**,
+guardado en `quotations.document_numbering_formats`. Sin fila para ese tenant, el formato es el de
+siempre y no hay nada que hacer: `QUO-2026-0001` y `PED-2026-0001`.
+
+Se configura con SQL, no con un endpoint ni una pantalla: la numeración es una decisión de negocio
+que se toma al montar al cliente, y el permiso más cercano (`platform.*`) lo tiene el `admin` **del
+tenant**, o sea el admin del cliente. Spec:
+[`docs/superpowers/specs/2026-09-17-numeracion-configurable-design.md`](docs/superpowers/specs/2026-09-17-numeracion-configurable-design.md).
+
+| Columna          | Qué vale                                                        |
+| ---------------- | --------------------------------------------------------------- |
+| `tenant_id`      | El tenant. Junto a `document_type` es la clave primaria          |
+| `document_type`  | `order` o `quotation`                                           |
+| `prefix`         | De 0 a 10 caracteres en `[A-Za-z0-9-]`. El guion va en el prefijo, si lo quieres |
+| `include_year`   | `true` o `false`                                                 |
+| `year_separator` | `''`, `-` o `/`. Sólo se usa si `include_year`                   |
+| `min_digits`     | De 1 a 10. Relleno con ceros a la izquierda; es un mínimo, no un ancho |
+
+| Caso                       | `prefix` | `include_year` | `year_separator` | `min_digits` | Resultado        |
+| -------------------------- | -------- | -------------- | ---------------- | ------------ | ---------------- |
+| Default actual (sin fila)  | `PED-`   | `true`         | `-`              | `4`          | `PED-2026-0001`  |
+| Cliente que trae su serie  | `PW`     | `false`        | `''`             | `1`          | `PW234235`       |
+| Con año y seis dígitos     | `PW-`    | `true`         | `-`              | `6`          | `PW-2026-000007` |
+
+Los cuatro rangos son `CHECK` en la base: un `min_digits` de 11 o un `document_type` inventado no
+entran, sin importar quién corra el SQL.
+
+### Configurar un tenant
+
+Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al pasar SQL largo por
+`-c`. La contraseña la pide `psql`; **no la saques con `kubectl get secret`, que imprime los valores**
+(ver [Reglas duras](CLAUDE.md)).
+
+1. **El formato.** Guarda esto como `numeracion.sql`, con el tenant y los valores que correspondan:
+
+   ```sql
+   \set tenant_id '00000000-0000-0000-0000-000000000000'
+
+   INSERT INTO quotations.document_numbering_formats
+          (tenant_id, document_type, prefix, include_year, year_separator, min_digits)
+   VALUES (:'tenant_id', 'order', 'PW', false, '', 1)
+   ON CONFLICT (tenant_id, document_type) DO UPDATE
+   SET prefix = EXCLUDED.prefix, include_year = EXCLUDED.include_year,
+       year_separator = EXCLUDED.year_separator, min_digits = EXCLUDED.min_digits;
+   ```
+
+   Repite el `INSERT` con `'quotation'` si también quieres cambiar las cotizaciones: son dos filas
+   independientes, y configurar pedidos no toca cotizaciones.
+
+2. **El consecutivo, si el cliente viene de otro sistema.** Va en el mismo `numeracion.sql` del
+   paso 1, después del `INSERT` del formato, reutilizando su `\set tenant_id`. `:siguiente_numero`
+   es **el próximo número que quieres que salga**, no el último que emitió el sistema viejo.
+   `year = 0` es la fila del formato **sin** año; con año va el año (`2026`).
+
+   ```sql
+   INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
+   VALUES (:'tenant_id', 0, 234235)
+   ON CONFLICT (tenant_id, year) DO UPDATE
+   SET next_value = GREATEST(quotations.order_number_counters.next_value, EXCLUDED.next_value);
+   ```
+
+   El `GREATEST` es la regla «el consecutivo sólo avanza» en una línea: correr el mismo SQL dos
+   veces, o con un número menor, **no** retrocede el contador. Un número repetido chocaría contra
+   `IX_orders_tenant_number` y el alta fallaría. La tabla de cotizaciones es
+   `quotations.quotation_number_counters`, con las mismas columnas.
+
+3. **Correrlo y verificar.**
+
+   ```powershell
+   psql -h <host> -p <puerto> -U <usuario> -d <base> -v ON_ERROR_STOP=1 -f numeracion.sql
+   psql -h <host> -p <puerto> -U <usuario> -d <base> -c "SELECT * FROM quotations.document_numbering_formats WHERE tenant_id = '<tenant-id>'"
+   psql -h <host> -p <puerto> -U <usuario> -d <base> -c "SELECT * FROM quotations.order_number_counters WHERE tenant_id = '<tenant-id>'"
+   ```
+
+   No hace falta reiniciar el pod: el formato se lee en cada emisión, así que el siguiente documento
+   ya sale con el nuevo.
+
+### Qué pasa cuando cambias un formato a mitad de camino
+
+- **Cambiar el prefijo no reinicia nada.** El contador no depende del prefijo: pasar de `PED-` a
+  `PW` deja la serie donde iba.
+- **Pasar de con año a sin año (o al revés) cambia de fila de contador**, porque una es la del año y
+  la otra es la de `year = 0`. Por eso el paso 2 existe: fija el siguiente número de la fila nueva.
+- **Lo ya emitido no se reescribe.** No hay backfill ni renumeración: el formato nuevo aplica a lo
+  que se emita de aquí en adelante.
+- **Si el número no cabe en 20 caracteres**, la emisión falla con `422` y el código
+  `order.order.number_too_long` o `quotation.quotation.number_too_long`. Ese consecutivo se pierde y
+  queda un hueco en la serie. Diez de prefijo, más el año con separador, más diez dígitos no caben:
+  haz la cuenta antes de configurar.
 
 ## API implementada
 
@@ -947,8 +1042,8 @@ deshabilitado existe únicamente para desarrollo local y pruebas.
 
 Con `Quotations:PaymentProofs:PublicLinks=true`, cada comprobante de pago **nuevo** —al convertir
 una cotización en pedido o al sumarle comprobantes— se copia del bucket privado al **bucket
-público** con la clave aleatoria `payment-proofs/{guid}.{pdf|jpg|png}`, y el Excel de pedidos lo
-enlaza en las columnas «Comprobante 1» a «Comprobante 3», con la cantidad total en «Comprobantes».
+público** con la clave aleatoria `payment-proofs/{guid}.{pdf|jpg|png|webp}`, y el Excel de pedidos lo
+enlaza en las columnas «Comprobante 1» a «Comprobante 5», con la cantidad total en «Comprobantes».
 La base guarda la clave, no la URL: la URL se arma al exportar con `Storage:R2:PublicBaseUrl`, así
 que cambiar el dominio no rompe los enlaces. Los comprobantes de antes, y los que se adjunten con la
 opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Producción la enciende en
@@ -961,11 +1056,73 @@ opción apagada, quedan privados y dicen «Sin enlace»: no hay backfill. Produc
   bucket (los PDF que se mandan por WhatsApp) sí puede tener una; confundirlos borraría
   comprobantes cuyos enlaces siguen en Excels ya enviados.
 - **Nada se despublica solo:** apagar la opción deja de publicar y de mostrar enlaces, pero las
-  copias ya hechas siguen en el bucket, y borrar el archivo en Storage tampoco toca su copia.
+  copias ya hechas siguen en el bucket, y borrar un comprobante `User` en Storage tampoco toca su
+  copia. Un comprobante `PaymentProof` que algún pedido referencia **no** se puede borrar ni
+  despublicar: `DELETE /files/{id}` y `DELETE /files/{id}/publication` responden 422
+  `storage.file.invalid_state` sin tocar el bucket, porque su copia pública es la que enlaza el
+  Excel. `PUT /files/{id}/publication` rechaza siempre un `PaymentProof`, con el mismo código: sólo
+  llega al público al adjuntarse a un pedido.
+- **Reemplazar o quitar un comprobante borra su archivo** (spec 2026-09-16, D19): corregir el archivo
+  con `updatedProofs[].newFileId` o quitar el comprobante con `DELETE /orders/{orderId}/proofs/{proofId}` escribe
+  `quotations.order.payment-proofs-detached.v1` con el pedido, y segundos después Storage borra la
+  copia pública de ese adjunto. Si es un `PaymentProof` que ningún otro comprobante usa, borra además
+  el archivo —del bucket público si ya se movió, de `staging/` si no— y lo marca `Purged`, auditado
+  como `storage.file.purged` / `payment_proof_detached`. El original privado de un comprobante `User`
+  no se toca. Un Excel ya enviado con la URL vieja muestra un enlace roto: es a propósito.
 - La copia conserva el `Content-Type` del original (`CopyObject` usa `MetadataDirective = COPY` por
   defecto), así que un PDF se abre en el navegador en vez de descargarse.
 - Un Excel bajado de internet abre en **Vista protegida**, y ahí ningún enlace responde hasta que
   se toca «Habilitar edición». Es comportamiento de Office, igual para cualquier enlace.
+
+### Comprobantes de pago v2: temporal, WebP y movimiento
+
+Desde el 2026-09-16 el frontend sube los comprobantes con `ownerType: "PaymentProof"`
+([spec](docs/superpowers/specs/2026-09-16-comprobantes-publicos-v2-design.md)). Uno así:
+
+1. **No se promueve a `files/`**: al completar la subida queda `Available` en `staging/`. Si es JPG,
+   PNG o WebP se reemplaza ahí mismo por un WebP de lado mayor ≤ 2000 px y calidad 80, sin agrandar
+   y sin EXIF; un PDF queda tal cual.
+2. **Al adjuntarse a un pedido** se copia al bucket público como en v1 y, en la misma transacción que
+   el pedido, Quotations escribe `quotations.order.payment-proofs-attached.v1` en el outbox.
+3. **`PaymentProofMoveWorker`** (cada 3 s) consume ese evento con el inbox `storage.inbox_messages`:
+   primero borra el temporal y después registra el movimiento en `FileResource.PublicStorageKey`.
+   Desde ahí la descarga desde la app devuelve la URL pública, que el navegador **abre** en vez de
+   bajar con el nombre original. En el mismo tick, después del movimiento, consume también
+   `quotations.order.payment-proofs-detached.v1` (D19, ver «Reemplazar o quitar un comprobante
+   borra su archivo», arriba).
+4. **El barrido de staging** (cada `Storage:StagingCleanupMinutes`) purga el comprobante que sigue
+   sin mover después de `Storage:StagingRetentionHours` si ningún módulo lo referencia, y lo audita
+   como `storage.file.purged` / `payment_proof_not_attached`.
+5. **`PaymentProofOrphanCleanupWorker`** (unos 5 minutos después de arrancar y desde ahí cada
+   `Storage:PaymentProofOrphanCleanup:IntervalHours`) recorre sólo `payment-proofs/` del bucket
+   público y borra lo que tiene más de `MinimumAgeHours` y que ningún `FileResource` ni
+   `OrderPaymentProof` referencia, auditándolo como `storage.public_object.purged`. La primera
+   corrida no espera un intervalo completo porque el temporizador no se guarda: con deploys más
+   seguidos que `IntervalHours` nunca correría. Cada réplica corre la suya, a la vez que las demás;
+   se acepta porque borrar un objeto que ya no existe no falla, y en producción `DryRun` arranca en
+   `true`. **Arranca con `DryRun=true`** en `appsettings.json` y en el
+   ConfigMap: sólo escribe `Payment proof orphan cleanup (dry run) would delete …` en el log. Se pasa
+   a `false` a mano, en un commit propio, después de revisar esos logs en producción. Si no hay
+   ninguna sonda de referencias registrada no borra nada y lo avisa con un Warning; un objeto cuyo
+   borrado falla se registra como Error y se reintenta en la corrida siguiente; si lo que falla es
+   auditar un borrado ya hecho, el Error lo dice y no hay reintento.
+
+Un comprobante ya movido no se puede adjuntar a otro pedido (422 `order.payment_proof.file_not_available`),
+y uno que un pedido referencia no se borra ni se despublica desde la API de Storage (ver «Nada se
+despublica solo», arriba). Reemplazarlo o quitarlo del pedido sí lo borra (D19). `FileUserReferenceProbe`
+cuenta también los `PaymentProof`: quien subió un comprobante no se borra como usuario huérfano.
+
+Borrar o despublicar desde la API de Storage un `PaymentProof` movido que ya ningún pedido referencia
+lo deja **sin ninguna copia**: su temporal se borró al moverlo y la copia pública se va con la
+operación. D15 lo permite porque ya no es la evidencia de ningún pedido; el frontend no llama a esos
+endpoints.
+
+Los comprobantes `User` (los de v1) no cambian, salvo que reemplazarlos o quitarlos de un pedido borra
+la copia pública de ese adjunto. Con `Quotations:PaymentProofs:PublicLinks=false` no hay copia ni
+evento de adjunto, así que un `PaymentProof` adjunto se queda en `staging/`, retenido del barrido por
+la sonda de Quotations; si el pedido lo suelta, el evento de retiro sale igual y Storage borra el
+temporal. Una regla de lifecycle sobre `staging/` en el bucket privado borraría comprobantes que
+todavía no se adjuntaron o no se movieron: no debe haber ninguna.
 
 ### Plantilla de WhatsApp (Zenvia)
 

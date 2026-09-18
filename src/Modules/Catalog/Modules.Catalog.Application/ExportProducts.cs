@@ -1,3 +1,4 @@
+using System.Globalization;
 using BuildingBlocks.Application;
 using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
@@ -37,7 +38,7 @@ public sealed class ExportProductsHandler(
     ICatalogAuditPublisher auditPublisher,
     ICatalogUnitOfWork unitOfWork,
     IExecutionContext executionContext,
-    IClock clock)
+    ITenantClock tenantClock)
     : ICommandHandler<ExportProductsCommand, ExportProductsResult>
 {
     /// <summary>
@@ -70,7 +71,8 @@ public sealed class ExportProductsHandler(
                 "There are no products matching the export criteria.");
         }
 
-        var occurredAt = clock.UtcNow;
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var occurredAt = calendar.UtcNow;
 
         // Las tasas se resuelven de una sola vez para todo el lote: el producto guarda el id y la
         // planilla muestra el nombre, y pedirla producto por producto seria el N+1 clasico.
@@ -78,7 +80,7 @@ public sealed class ExportProductsHandler(
         var taxRateNames = taxRates.ToDictionary(rate => rate.Id, rate => rate.Name);
 
         var rows = products.Select(product => ToRow(product, taxRateNames)).ToList();
-        var fileName = FileNameFor(occurredAt);
+        var fileName = FileNameFor(calendar.ToLocal(occurredAt));
         var content = exportBuilder.Build(rows);
 
         // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
@@ -163,7 +165,8 @@ public sealed class ExportProductsHandler(
         taxRateId is { } id && names.TryGetValue(id, out var name) ? name : null;
 
     /// <summary>Con la fecha adentro: quien recibe varios correos necesita distinguirlos, y el
-    /// nombre es lo unico que ve antes de abrir el archivo.</summary>
-    private static string FileNameFor(DateTimeOffset now) =>
-        $"productos-{now:yyyy-MM-dd-HHmm}.xlsx";
+    /// nombre es lo unico que ve antes de abrir el archivo. En la hora del tenant (spec 2026-09-17,
+    /// punto 8a): recibe el instante ya local y escribe su reloj.</summary>
+    private static string FileNameFor(DateTimeOffset localNow) =>
+        $"productos-{localNow.ToString("yyyy-MM-dd-HHmm", CultureInfo.InvariantCulture)}.xlsx";
 }

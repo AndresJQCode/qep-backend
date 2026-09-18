@@ -20,7 +20,7 @@ public sealed class PriceScale
         int fromUnit,
         int toUnit,
         decimal discount,
-        PriceScaleRestriction restriction,
+        PriceScaleRestriction? restriction,
         int? multiple,
         int? packagingUnit,
         decimal? finalUsd,
@@ -54,7 +54,13 @@ public sealed class PriceScale
     /// <summary>Porcentaje, 0 a 100.</summary>
     public decimal Discount { get; private set; }
 
-    public PriceScaleRestriction Restriction { get; private set; }
+    /// <summary>
+    /// Null sólo en una escala **incompleta**: la que deja <see cref="CreateIncomplete"/> al
+    /// copiar escalas de otro producto, que trae rango y descuento pero no la restricción, porque
+    /// ésa depende de cómo se vende cada producto. Nadie puede cotizar el producto hasta que
+    /// alguien la complete desde el formulario, que sí la exige (<see cref="Create"/>).
+    /// </summary>
+    public PriceScaleRestriction? Restriction { get; private set; }
 
     /// <summary>Sólo cuando <see cref="Restriction"/> es <c>Multiple</c>; null en el otro caso.</summary>
     public int? Multiple { get; private set; }
@@ -85,26 +91,7 @@ public sealed class PriceScale
         decimal? productBaseUsd,
         decimal? productBaseCop)
     {
-        if (input.FromUnit < 1)
-        {
-            throw new CatalogDomainException(
-                "catalog.product.price_scale.range_invalid",
-                "The price scale's starting unit must be at least 1.");
-        }
-
-        if (input.ToUnit <= input.FromUnit)
-        {
-            throw new CatalogDomainException(
-                "catalog.product.price_scale.range_invalid",
-                "The price scale's ending unit must be greater than its starting unit.");
-        }
-
-        if (input.Discount < MinDiscount || input.Discount > MaxDiscount)
-        {
-            throw new CatalogDomainException(
-                "catalog.product.price_scale.discount_out_of_range",
-                $"The price scale discount must be between {MinDiscount} and {MaxDiscount}.");
-        }
+        ValidateRangeAndDiscount(input);
 
         if (input.Restriction is null)
         {
@@ -163,6 +150,95 @@ public sealed class PriceScale
             multiple = null;
         }
 
+        ValidateFinals(input, productBaseUsd, productBaseCop);
+
+        return new PriceScale(
+            PriceScaleId.New(),
+            productId,
+            tenantId,
+            input.FromUnit,
+            input.ToUnit,
+            input.Discount,
+            restriction,
+            multiple,
+            packagingUnit,
+            input.FinalUsd,
+            input.FinalCop,
+            input.AllowGrouping);
+    }
+
+    /// <summary>
+    /// Una escala sin restricción, múltiplo, empaque ni agrupación: sólo rango, descuento y los
+    /// finales. La usa **únicamente** la copia de escalas (<see cref="Product.ApplyCopiedPriceScales"/>);
+    /// el formulario pasa por <see cref="Create"/>, que sigue exigiendo la restricción.
+    ///
+    /// Rango, descuento y finales se validan igual que en <see cref="Create"/>: lo incompleto es
+    /// la restricción, no el precio. Una entrada que sí trae restricción no se acepta ni se
+    /// descarta en silencio — quien la armó creía estar copiando algo que esta escala no guarda,
+    /// y eso es un error de programación, no un 422.
+    /// </summary>
+    internal static PriceScale CreateIncomplete(
+        ProductId productId,
+        Guid tenantId,
+        PriceScaleInput input,
+        decimal? productBaseUsd,
+        decimal? productBaseCop)
+    {
+        if (input.Restriction is not null
+            || input.Multiple is not null
+            || input.PackagingUnit is not null
+            || input.AllowGrouping)
+        {
+            throw new ArgumentException(
+                "An incomplete price scale cannot carry a restriction, multiple, packaging unit or grouping.",
+                nameof(input));
+        }
+
+        ValidateRangeAndDiscount(input);
+        ValidateFinals(input, productBaseUsd, productBaseCop);
+
+        return new PriceScale(
+            PriceScaleId.New(),
+            productId,
+            tenantId,
+            input.FromUnit,
+            input.ToUnit,
+            input.Discount,
+            restriction: null,
+            multiple: null,
+            packagingUnit: null,
+            input.FinalUsd,
+            input.FinalCop,
+            allowGrouping: false);
+    }
+
+    private static void ValidateRangeAndDiscount(PriceScaleInput input)
+    {
+        if (input.FromUnit < 1)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.price_scale.range_invalid",
+                "The price scale's starting unit must be at least 1.");
+        }
+
+        if (input.ToUnit <= input.FromUnit)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.price_scale.range_invalid",
+                "The price scale's ending unit must be greater than its starting unit.");
+        }
+
+        if (input.Discount < MinDiscount || input.Discount > MaxDiscount)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.price_scale.discount_out_of_range",
+                $"The price scale discount must be between {MinDiscount} and {MaxDiscount}.");
+        }
+    }
+
+    private static void ValidateFinals(
+        PriceScaleInput input, decimal? productBaseUsd, decimal? productBaseCop)
+    {
         if (input.FinalUsd is null && input.FinalCop is null)
         {
             throw new CatalogDomainException(
@@ -184,20 +260,6 @@ public sealed class PriceScale
             "catalog.product.price_scale.final_without_base_cop",
             "catalog.product.price_scale.final_mismatch_cop",
             "COP");
-
-        return new PriceScale(
-            PriceScaleId.New(),
-            productId,
-            tenantId,
-            input.FromUnit,
-            input.ToUnit,
-            input.Discount,
-            restriction,
-            multiple,
-            packagingUnit,
-            input.FinalUsd,
-            input.FinalCop,
-            input.AllowGrouping);
     }
 
     /// <summary>

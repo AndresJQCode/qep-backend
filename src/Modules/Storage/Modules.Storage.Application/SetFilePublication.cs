@@ -30,6 +30,9 @@ public sealed class PublishFileHandler(
         }
 
         var resource = await LoadAsync(repository, command.TenantId, command.FileId, cancellationToken);
+        // Spec 2026-09-16, D15: un comprobante sólo llega al público por el movimiento. Por acá
+        // copiaría desde su temporal, que después de moverse ya no existe.
+        PaymentProofGuard.EnsureNotPaymentProof(resource);
         resource.EnsureDownloadable();
         var publicKey = resource.PublicStorageKey ?? StorageKey.PublicFor(
             resource.TenantId, resource.Id, resource.Name);
@@ -82,6 +85,7 @@ public sealed class UnpublishFileHandler(
     IFileResourceRepository repository,
     IStorageUnitOfWork unitOfWork,
     IPublicObjectStorage publicStorage,
+    IEnumerable<IFileReferenceProbe> fileReferenceProbes,
     IStorageAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock) : ICommandHandler<UnpublishFileCommand, FileResourceDto>
@@ -94,6 +98,10 @@ public sealed class UnpublishFileHandler(
             executionContext, command.TenantId, StoragePermissions.FilePublish);
         var resource = await PublishFileHandler.LoadAsync(
             repository, command.TenantId, command.FileId, cancellationToken);
+
+        // Spec 2026-09-16, D15: antes de tocar el bucket. La copia pública de un comprobante adjunto
+        // es la que enlaza el Excel.
+        await PaymentProofGuard.EnsureNotReferencedAsync(resource, fileReferenceProbes, cancellationToken);
 
         if (resource.PublicStorageKey is { } publicKey)
         {

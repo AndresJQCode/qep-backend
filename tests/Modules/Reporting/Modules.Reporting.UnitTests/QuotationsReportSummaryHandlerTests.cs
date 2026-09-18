@@ -19,10 +19,13 @@ public sealed class QuotationsReportSummaryHandlerTests
     private static readonly Guid OtherTenant = Guid.Parse("01900000-0000-7000-8000-000000000002");
     private static readonly Guid Advisor = Guid.Parse("01900000-0000-7000-8000-0000000000a1");
 
-    /// <summary>Media tarde en UTC: si el handler tomara la fecha local en vez de la UTC, en un
-    /// huso al oeste esto seria todavia el dia anterior.</summary>
+    /// <summary>Un instante cualquiera para las pruebas que no miran el hoy.</summary>
     private static readonly DateTimeOffset Now =
         new(2026, 9, 3, 14, 30, 0, TimeSpan.Zero);
+
+    /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá: en UTC ya es 1 de enero.</summary>
+    private static readonly DateTimeOffset NewYearsEveInBogota =
+        new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public async Task SummarizingRejectsATenantThatIsNotTheCallersOne()
@@ -91,20 +94,25 @@ public sealed class QuotationsReportSummaryHandlerTests
         }
     }
 
-    /// <summary>El "hoy" que resuelve los tramos sale del reloj inyectado y en UTC — no de
-    /// <c>DateTime.Today</c>, que dependeria del huso de la maquina que corre la API.</summary>
+    /// <summary>El "hoy" de los tramos de vigencia y de la cola de vencimientos es el día del tenant
+    /// (spec 2026-09-17, punto 6), no el de UTC ni el de la máquina que corre la API: el 31 de
+    /// diciembre a las 23:00 en Bogotá, una cotización que vence el 31 todavía no está vencida.</summary>
     [Fact]
-    public async Task SummarizingResolvesTodayFromTheClockInUtc()
+    public async Task SummarizingResolvesTodayInTheTenantsTimeZone()
     {
         var source = new FakeQuotationsReportSource();
-        var handler = Handler(source, Tenant, ReportingPermissions.QuotationRead);
+        var handler = new GetQuotationsReportSummaryHandler(
+            source,
+            new QuotationsReportFilterValidator(),
+            new FakeExecutionContext(Tenant, ReportingPermissions.QuotationRead),
+            new FixedTenantClock(NewYearsEveInBogota));
 
         await handler.HandleAsync(
             new GetQuotationsReportSummaryQuery(Filter()),
             TestContext.Current.CancellationToken);
 
         var options = Assert.Single(source.SummarizedOptions);
-        Assert.Equal(new DateOnly(2026, 9, 3), options.Today);
+        Assert.Equal(new DateOnly(2026, 12, 31), options.Today);
         Assert.Equal(ReportSummaryRules.RankSize, options.RankSize);
         Assert.Equal(ReportSummaryRules.ExpiringWithinDays, options.ExpiringWithinDays);
         Assert.Equal(ReportSummaryRules.ExpiringSize, options.ExpiringSize);
@@ -147,8 +155,10 @@ public sealed class QuotationsReportSummaryHandlerTests
 
         Assert.Equal(2, source.SummarizedCriteria.Count);
         var preceding = source.SummarizedCriteria[1];
-        Assert.Equal(new DateOnly(2025, 12, 1), preceding.From);
-        Assert.Equal(new DateOnly(2025, 12, 31), preceding.To);
+        // La ventana anterior se corta en el día del tenant igual que la pedida (spec 2026-09-17,
+        // punto 4): 00:00 del 1 de diciembre y 00:00 del 1 de enero, en Bogotá.
+        Assert.Equal(new DateTimeOffset(2025, 12, 1, 5, 0, 0, TimeSpan.Zero), preceding.Period.Start);
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 5, 0, 0, TimeSpan.Zero), preceding.Period.EndExclusive);
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(20, summary.Previous.Count);
@@ -213,7 +223,7 @@ public sealed class QuotationsReportSummaryHandlerTests
             source,
             new QuotationsReportFilterValidator(),
             new FakeExecutionContext(callerTenant, permissions),
-            new FixedClock(Now));
+            new FixedTenantClock(Now));
 
     private static QuotationsReportFilter Filter(
         DateOnly? from = null,

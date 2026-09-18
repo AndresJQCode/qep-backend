@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
@@ -12,14 +14,29 @@ namespace Modules.Quotations.IntegrationTests;
 /// enviado (a pedido, 2026-09).</summary>
 public sealed class OrderApiTests
 {
+    // Sólo convertir y leer el pedido de una cotización cuelgan de ella: el pedido es un
+    // sub-recurso suyo para esas dos cosas.
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
 
-    private static string OrderProofsUrl(Guid tenantId, Guid quotationId) =>
-        $"{OrderUrl(tenantId, quotationId)}/proofs";
+    // Todo lo que se le hace al pedido va por su propio id: quien llega desde el listado tiene
+    // el id del pedido, no el de su cotización.
+    private static string OrderByIdUrl(Guid tenantId, Guid orderId) =>
+        $"/api/v1/tenants/{tenantId}/orders/{orderId}";
 
-    private static string OrderItemsUrl(Guid tenantId, Guid quotationId) =>
-        $"{OrderUrl(tenantId, quotationId)}/items";
+    private static string OrderProofsUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/proofs";
+
+    private static string OrderItemsUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/items";
+
+    private static string OrderCancelUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/cancel";
+
+    // Spec 2026-09-16, decisión 5: anular exige su propio permiso; el resto de la siembra y de la
+    // lectura sigue usando los de gestión.
+    private static readonly string[] CancellerPermissions =
+        [.. ManagerPermissions, OrdersPermissions.OrderCancel];
 
     // Bug real, 2026-09-12: el editor de cotizaciones dejo de pedir la forma de pago hace
     // rato (ver `UpdateQuotationRequest` en el frontend), asi que toda cotizacion nueva la
@@ -50,11 +67,13 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    // Reloj en la frontera de fin de año de Bogotá: el pedido numera con el año del tenant (spec
+    // 2026-09-17, punto 2b).
     [Fact]
     public async Task ConvertCreatesTheOrderAndLeavesTheQuotationConverted()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -77,8 +96,7 @@ public sealed class OrderApiTests
         Assert.Equal("Pending", order.Status);
         Assert.Equal("FullPaymentReceived", order.PaymentStatus);
         Assert.Equal(quotation.Id, order.QuotationId);
-        Assert.StartsWith(
-            $"PED-{DateTime.UtcNow.Year}-", order.OrderNumber, StringComparison.Ordinal);
+        Assert.StartsWith("PED-2026-", order.OrderNumber, StringComparison.Ordinal);
         Assert.Null(order.RitualCollectionSyncId);
         var proof = Assert.Single(order.PaymentProofs);
         Assert.Equal(proofFileId, proof.FileId);
@@ -104,6 +122,69 @@ public sealed class OrderApiTests
         Assert.Equal(0, sent.Total);
     }
 
+    /// <summary>
+    /// El caso que motivó el spec 2026-09-17 de numeración: un tenant que viene de otro sistema
+    /// sigue su propio consecutivo, con su prefijo y sin año. El contador es la fila `year = 0`, la
+    /// que no se reinicia. Reloj fijo en la frontera de fin de año de Bogotá para que el año no
+    /// dependa del calendario de la máquina — y para dejar a la vista que acá el año no se usa.
+    /// </summary>
+    [Fact]
+    public async Task ConvertUsesThePrefixAndCounterConfiguredForTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "order", "PW", includeYear: false, "", 1);
+        // El siguiente número que queremos que salga, no el último que emitió el sistema viejo.
+        await SetOrderCounterAsync(factory, tenantId, year: 0, nextValue: 234_235L);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+
+        var first = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        var second = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+
+        Assert.Equal("PW234235", first);
+        Assert.Equal("PW234236", second);
+    }
+
+    internal static async Task<string> ConvertOneAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid clientId, Guid productId)
+    {
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived",
+                "Pago verificado",
+                [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order.OrderNumber;
+    }
+
+    /// <summary>El paso 2 del runbook del README, palabra por palabra: el UPSERT con GREATEST que
+    /// fija el siguiente número sin poder retroceder.</summary>
+    internal static async Task SetOrderCounterAsync(
+        QepApiFactory factory, Guid tenantId, int year, long nextValue)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO quotations.order_number_counters (tenant_id, year, next_value)
+            VALUES ({tenantId}, {year}, {nextValue})
+            ON CONFLICT (tenant_id, year) DO UPDATE
+            SET next_value = GREATEST(quotations.order_number_counters.next_value, EXCLUDED.next_value)
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
     // US-10/US-11: convertida y con el pedido ya aprobado, la cotizacion queda de solo lectura
     // del todo. Mientras se quedaba en Sent despues de convertirse, todo esto seguia permitido:
     // se podia editar, anular o reenviar una cotizacion cuyo pedido ya existia. Se aprueba el
@@ -120,12 +201,12 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
@@ -214,6 +295,46 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("quotation.quotation.already_converted", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// El formato de numeración es dato de un tenant desde el spec 2026-09-17: un prefijo mal
+    /// escrito a mano puede alcanzar el mismo texto que un pedido ya emitido. Mismo patrón que
+    /// <see cref="ConvertingAQuotationThatAlreadyHasAnOrderIsAlreadyConverted"/> con la otra
+    /// constraint -- acá la que protege el número, no la que protege la conversión -- para que la
+    /// colisión salga 422 <c>order.order.number_taken</c> y no 500 con el nombre del índice adentro.
+    /// </summary>
+    [Fact]
+    public async Task AMisconfiguredPrefixThatCollidesWithAnAlreadyIssuedOrderNumberIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+
+        // Con el formato por defecto (sin fila) el primer pedido sale "PED-2026-0001".
+        var firstNumber = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        Assert.Equal("PED-2026-0001", firstNumber);
+
+        // Un prefijo que ya trae el año, sin año propio en el formato, arma el mismo texto que el
+        // pedido anterior -- IX_orders_tenant_number, no IX_orders_quotation.
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "order", "PED-2026-", includeYear: false, "", 4);
+        await SetOrderCounterAsync(factory, tenantId, year: 0, nextValue: 1L);
+
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", "Pago verificado", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body2 = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("order.order.number_taken", body2, StringComparison.Ordinal);
     }
 
     /// <summary>Un pedido "legado" para una cotización que siguió en Sent. Número fuera de la
@@ -486,15 +607,14 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)],
@@ -539,7 +659,7 @@ public sealed class OrderApiTests
         var existingProofId = Assert.Single(created.PaymentProofs).Id;
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -569,14 +689,13 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "PaymentPending",
                 [],
@@ -599,21 +718,20 @@ public sealed class OrderApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var firstProofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
                 "FullPaymentReceived", null, [new OrderPaymentProofRequest(firstProofFileId, quotation.Total)]),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         var approve = await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken);
         approve.EnsureSuccessStatusCode();
 
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(proofFileId, 10_000m)]),
             TestContext.Current.CancellationToken);
@@ -634,15 +752,14 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var secondProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 50_000m);
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -682,16 +799,15 @@ public sealed class OrderApiTests
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
                 "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var secondProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 50_000m);
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -715,20 +831,19 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         var approve = await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken);
         approve.EnsureSuccessStatusCode();
 
         var secondProductId = await CreateProductWithScalesAsync(client, tenantId);
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -749,14 +864,13 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var convert = await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var response = await client.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(productId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -775,18 +889,17 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
         var productId = await CreateProductWithScalesAsync(owner, tenantId);
         var quotation = await CreateSentQuotationAsync(owner, factory, tenantId, clientId, productId);
-        var convert = await owner.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await owner.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken);
-        convert.EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.OrderManage);
         using var __ = otherOwner;
         var secondProductId = await CreateProductWithScalesAsync(owner, tenantId);
 
         var response = await otherOwner.PostAsJsonAsync(
-            OrderItemsUrl(tenantId, quotation.Id),
+            OrderItemsUrl(tenantId, created.Id),
             new AddOrderItemsRequest([new OrderItemAdditionRequest(secondProductId, 1m)]),
             TestContext.Current.CancellationToken);
 
@@ -805,18 +918,18 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         (await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, created.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
@@ -852,7 +965,7 @@ public sealed class OrderApiTests
         var replacementFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var response = await client.PostAsJsonAsync(
-            OrderProofsUrl(tenantId, quotation.Id),
+            OrderProofsUrl(tenantId, order.Id),
             new AddOrderPaymentProofsRequest(
                 "FullPaymentReceived",
                 [],
@@ -888,7 +1001,7 @@ public sealed class OrderApiTests
         var proofId = Assert.Single(order.PaymentProofs).Id;
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}",
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -909,13 +1022,13 @@ public sealed class OrderApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        (await client.PostAsJsonAsync(
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
-            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+            TestContext.Current.CancellationToken));
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{Guid.CreateVersion7()}",
+            $"{OrderProofsUrl(tenantId, created.Id)}/{Guid.CreateVersion7()}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -942,17 +1055,205 @@ public sealed class OrderApiTests
         var order = await ReadOrderAsync(convert);
         var proofId = Assert.Single(order.PaymentProofs).Id;
         (await client.PostAsync(
-            $"{OrderUrl(tenantId, quotation.Id)}/approve",
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
         var response = await client.DeleteAsync(
-            $"{OrderProofsUrl(tenantId, quotation.Id)}/{proofId}",
+            $"{OrderProofsUrl(tenantId, order.Id)}/{proofId}",
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("order.order.not_pending", body, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-09-16: anular desde Pending deja quién, cuándo y por qué, lo persiste, no toca la
+    // cotización (decisión 3) y lo audita. Los nombres de los campos se leen del JSON crudo: son el
+    // contrato que consume el frontend.
+    [Fact]
+    public async Task CancelAPendingOrderReturnsItCancelledWithWhoWhenAndWhy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var converted = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+
+        var response = await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, converted.Id),
+            new CancelOrderRequest("  El cliente desistió  "),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using (var json = JsonDocument.Parse(body))
+        {
+            var root = json.RootElement;
+            Assert.Equal("Cancelled", root.GetProperty("status").GetString());
+            Assert.Equal(JsonValueKind.String, root.GetProperty("cancelledAt").ValueKind);
+            Assert.Equal(JsonValueKind.String, root.GetProperty("cancelledBy").ValueKind);
+            Assert.Equal("El cliente desistió", root.GetProperty("cancellationReason").GetString());
+            Assert.Equal(JsonValueKind.Null, root.GetProperty("approvedAt").ValueKind);
+        }
+
+        var order = JsonSerializer.Deserialize<OrderResponse>(body, JsonSerializerOptions.Web);
+        Assert.NotNull(order);
+        Assert.Equal(converted.Id, order.Id);
+        Assert.NotNull(order.CancelledBy);
+
+        var fetched = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.Equal("Cancelled", fetched.Status);
+        Assert.Equal(order.CancelledAt, fetched.CancelledAt);
+        Assert.Equal(order.CancelledBy, fetched.CancelledBy);
+        Assert.Equal("El cliente desistió", fetched.CancellationReason);
+
+        var fetchedQuotation = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(fetchedQuotation);
+        Assert.Equal("Converted", fetchedQuotation.Status);
+
+        var auditMessages = await OutboxMessagesAsync(factory, "platform.audit.recorded.v1");
+        var cancelled = Assert.Single(
+            auditMessages, message => ActionOf(message) == "quotation.order.cancelled");
+        Assert.Equal(order.Id.ToString(), EntityIdOf(cancelled));
+    }
+
+    // Decisiones 1 y 2: un aprobado también se anula, y conserva quién lo aprobó y cuándo.
+    [Fact]
+    public async Task CancelAnApprovedOrderKeepsTheApproval()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+        var approved = await ReadOrderAsync(await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
+            null,
+            TestContext.Current.CancellationToken));
+
+        var cancelled = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, created.Id),
+            new CancelOrderRequest("Aprobado por error"),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("Cancelled", cancelled.Status);
+        Assert.NotNull(cancelled.ApprovedAt);
+        Assert.Equal(approved.ApprovedAt, cancelled.ApprovedAt);
+        Assert.Equal(approved.ApprovedBy, cancelled.ApprovedBy);
+        Assert.Equal("Aprobado por error", cancelled.CancellationReason);
+    }
+
+    // Decisión 5: gestionar pedidos no alcanza para anularlos.
+    [Fact]
+    public async Task CancelWithOnlyTheManagePermissionIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+
+        var response = await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, created.Id),
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var order = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.Equal("Pending", order.Status);
+    }
+
+    // Un id de pedido que no existe en este tenant: mismo 404 que GET /orders/{orderId}, porque
+    // la acción ya no pasa por la cotización.
+    [Fact]
+    public async Task CancelAnUnknownOrderIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+
+        var response = await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, Guid.CreateVersion7()),
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("order.order.not_found", body, StringComparison.Ordinal);
+    }
+
+    // Los tres 422 son códigos de dominio, no validation.failed (hallazgo 3): el frontend los
+    // mapea por `code`. Un solo pedido para los cuatro requests: los rechazados no lo modifican.
+    [Fact]
+    public async Task CancelRejectsAMissingOrTooLongReasonAndASecondCancellation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+        var url = OrderCancelUrl(tenantId, created.Id);
+
+        var withoutReason = await client.PostAsJsonAsync(
+            url, new { }, TestContext.Current.CancellationToken);
+        var blankReason = await client.PostAsJsonAsync(
+            url, new CancelOrderRequest("   "), TestContext.Current.CancellationToken);
+        var tooLong = await client.PostAsJsonAsync(
+            url, new CancelOrderRequest(new string('a', 501)), TestContext.Current.CancellationToken);
+        (await client.PostAsJsonAsync(
+            url, new CancelOrderRequest("Primera vez"), TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        var twice = await client.PostAsJsonAsync(
+            url, new CancelOrderRequest("Segunda vez"), TestContext.Current.CancellationToken);
+
+        await AssertDomainRejectionAsync(withoutReason, "order.order.cancellation_reason_required");
+        await AssertDomainRejectionAsync(blankReason, "order.order.cancellation_reason_required");
+        await AssertDomainRejectionAsync(tooLong, "order.order.cancellation_reason_too_long");
+        await AssertDomainRejectionAsync(twice, "order.order.already_cancelled");
+        var order = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.Equal("Primera vez", order.CancellationReason);
+    }
+
+    private static async Task AssertDomainRejectionAsync(HttpResponseMessage response, string code)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var json = JsonDocument.Parse(body);
+        Assert.Equal(code, json.RootElement.GetProperty("code").GetString());
+        Assert.False(json.RootElement.TryGetProperty("errors", out _));
     }
 
     private static async Task<OrderResponse> ReadOrderAsync(HttpResponseMessage response)

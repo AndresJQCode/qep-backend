@@ -94,6 +94,44 @@ public sealed class CompanyApiTests
             Assert.Single(Assert.Single(byAccount.Items).AccountNumbers));
     }
 
+    // La grilla pinta el banco junto a cada numero, en el orden guardado. La moneda no viaja:
+    // la grilla no la muestra.
+    [Fact]
+    public async Task ListReturnsTheBankNameOfEachAccountInStoredOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+        var created = await client.PostAsJsonAsync(
+            CompaniesUrl(),
+            new
+            {
+                name = "Andes Logistica S.A.S.",
+                bankAccounts = new[]
+                {
+                    BankAccount("CTA-000123", bankName: "Davivienda"),
+                    BankAccount("CTA-000456", bankName: "Bancolombia"),
+                },
+                taxId = "900.111.222-3",
+                cityId,
+            },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+
+        var list = await ListAsync(client, string.Empty);
+
+        var item = Assert.Single(list.Items);
+        Assert.Equal(
+            [
+                new CompanyListBankAccount("Davivienda", "CTA-000123"),
+                new CompanyListBankAccount("Bancolombia", "CTA-000456"),
+            ],
+            item.BankAccounts);
+        // El campo viejo se queda mientras el frontend desplegado lo siga leyendo.
+        Assert.Equal(["CTA-000123", "CTA-000456"], item.AccountNumbers);
+    }
+
     // Dos cajas separadas (CLI-FILTROS-01): `name` filtra solo por nombre, `taxId` solo por
     // NIT — a diferencia de `search`, que combina nombre y numero de cuenta con OR.
     [Fact]

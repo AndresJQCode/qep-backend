@@ -105,7 +105,30 @@ public sealed class OrdersReportHandlerTests
         new(
             source,
             new OrdersReportFilterValidator(),
-            new FakeExecutionContext(callerTenant, permissions));
+            new FakeExecutionContext(callerTenant, permissions),
+            new FixedTenantClock());
+
+    // Spec 2026-09-17, punto 4: el reporte de diciembre va del 00:00 del 1 de diciembre al 00:00 del
+    // 1 de enero en el huso del tenant, y el huso viaja para la serie mensual.
+    [Fact]
+    public async Task ListingCutsTheRangeAtTheTenantsLocalMidnights()
+    {
+        var source = new FakeOrdersReportSource();
+        var handler = ListHandler(source, Tenant, ReportingPermissions.OrdersRead);
+
+        await handler.HandleAsync(
+            new ListOrdersReportQuery(
+                new OrdersReportFilter(
+                    Tenant, new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 31), null, null, null),
+                1,
+                50),
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(source.LastCriteria);
+        Assert.Equal(new DateTimeOffset(2026, 12, 1, 5, 0, 0, TimeSpan.Zero), source.LastCriteria.Period.Start);
+        Assert.Equal(new DateTimeOffset(2027, 1, 1, 5, 0, 0, TimeSpan.Zero), source.LastCriteria.Period.EndExclusive);
+        Assert.Equal("America/Bogota", source.LastCriteria.Period.TimeZone.Id);
+    }
 
     private static OrdersReportFilter Filter(string? paymentStatus = null) =>
         new(Tenant, From: null, To: null, AdvisorId: null, ClientId: null, paymentStatus);

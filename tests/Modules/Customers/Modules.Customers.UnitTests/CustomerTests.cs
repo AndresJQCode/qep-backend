@@ -42,6 +42,9 @@ public sealed class CustomerTests
             VatSurplus = vatSurplus
         };
 
+    private static CustomerContactInfo ValidContact() =>
+        new() { Phone = "310 935 2187", Email = "compras@verde.co" };
+
     private static Customer Create(
         string cuc = "CLI08000142",
         string name = "Verde Esencial S.A.S.",
@@ -63,7 +66,7 @@ public sealed class CustomerTests
                 CityId = cityId ?? CityId
             },
             identification ?? Identification(),
-            contact ?? CustomerContactInfo.Empty,
+            contact ?? ValidContact(),
             commercial ?? Commercial(),
             Now);
 
@@ -168,17 +171,63 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.classification_required", exception.Code);
     }
 
+    // El correo y el telefono son obligatorios al crear y al editar. Vacio y solo espacios cuentan
+    // como ausente, igual que null: el formulario manda "" cuando el usuario borra el input.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CreateRejectsABlankEmail(string? email)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { Email = email }));
+
+        Assert.Equal("customers.customer.email_required", exception.Code);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CreateRejectsABlankPhone(string? phone)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { Phone = phone }));
+
+        Assert.Equal("customers.customer.phone_required", exception.Code);
+    }
+
+    [Theory]
+    [InlineData(null, "310 935 2187", "customers.customer.email_required")]
+    [InlineData("compras@verde.co", "  ", "customers.customer.phone_required")]
+    public void UpdateRejectsABlankEmailOrPhone(string? email, string? phone, string expectedCode)
+    {
+        var customer = Create();
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            new CustomerContactInfo { Email = email, Phone = phone },
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5)));
+
+        Assert.Equal(expectedCode, exception.Code);
+        Assert.Equal(1, customer.Version);
+    }
+
     [Fact]
-    public void ContactInfoTrimsAndNormalizesBlankToNull()
+    public void ContactInfoTrimsThePhoneAndTheEmail()
     {
         var customer = Create(contact: new CustomerContactInfo
         {
             Phone = "  310 935 2187  ",
-            Email = "   "
+            Email = "  compras@verde.co  "
         });
 
         Assert.Equal("310 935 2187", customer.Phone);
-        Assert.Null(customer.Email);
+        Assert.Equal("compras@verde.co", customer.Email);
     }
 
     // Mismo criterio que CompanyContactInfo: "Compras@Verde.CO" y "compras@verde.co" son la misma
@@ -186,7 +235,7 @@ public sealed class CustomerTests
     [Fact]
     public void ContactInfoLowercasesTheEmail()
     {
-        var customer = Create(contact: new CustomerContactInfo
+        var customer = Create(contact: ValidContact() with
         {
             Email = "Compras@VerdeEsencial.CO"
         });
@@ -201,7 +250,7 @@ public sealed class CustomerTests
     public void ContactInfoRejectsAnInvalidEmail(string email)
     {
         var exception = Assert.Throws<CustomersDomainException>(
-            () => Create(contact: new CustomerContactInfo { Email = email }));
+            () => Create(contact: ValidContact() with { Email = email }));
 
         Assert.Equal("customers.customer.email_invalid", exception.Code);
     }
@@ -210,7 +259,7 @@ public sealed class CustomerTests
     public void ContactInfoRejectsAnAddressLongerThanTheColumn()
     {
         var exception = Assert.Throws<CustomersDomainException>(
-            () => Create(contact: new CustomerContactInfo
+            () => Create(contact: ValidContact() with
             {
                 Address = new string('d', CustomerContactInfo.AddressMaxLength + 1)
             }));
@@ -258,28 +307,23 @@ public sealed class CustomerTests
         Assert.True(customer.VatSurplus);
     }
 
-    // El PUT reemplaza el recurso entero: un campo ausente se **limpia**. Una implementacion que
-    // ignore los null "para no pisar" deja campos imborrables y pasa todas las demas pruebas.
+    // El PUT reemplaza el recurso entero: el telefono y el correo que llegan pisan los guardados.
     [Fact]
-    public void UpdateClearsTheOptionalFieldsThatArriveNull()
+    public void UpdateReplacesThePhoneAndTheEmail()
     {
-        var customer = Create(contact: new CustomerContactInfo
-        {
-            Phone = "310 935 2187",
-            Email = "compras@verde.co"
-        });
+        var customer = Create();
 
         customer.Update(
             "Verde Esencial S.A.S.",
             businessName: null,
             Identification(),
-            CustomerContactInfo.Empty,
+            new CustomerContactInfo { Phone = "604 444 5566", Email = "Ventas@Verde.CO" },
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(5));
 
-        Assert.Null(customer.Phone);
-        Assert.Null(customer.Email);
+        Assert.Equal("604 444 5566", customer.Phone);
+        Assert.Equal("ventas@verde.co", customer.Email);
     }
 
     // La clasificacion se puede reemplazar en el Update: un cliente puede cambiar de categoria
@@ -294,7 +338,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(classificationId: newClassificationId),
             "MAY",
             Now.AddMinutes(5));
@@ -314,7 +358,7 @@ public sealed class CustomerTests
             "Otro Nombre",
             businessName: null,
             Identification(number: "830-9"),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(5));
@@ -336,7 +380,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(classificationId: newClassificationId),
             "MAY",
             Now.AddMinutes(5));
@@ -366,7 +410,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(),
             "OTRO",
             Now.AddMinutes(5));
@@ -388,7 +432,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(),
             prefix,
             Now.AddMinutes(5)));
@@ -406,7 +450,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(number: "830-9"),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(),
             ClassificationPrefix,
             later);
@@ -429,7 +473,7 @@ public sealed class CustomerTests
             "Nombre nuevo",
             businessName: null,
             Identification(number: "   "),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(5)));
@@ -448,7 +492,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(),
             ClassificationPrefix,
             Now));
@@ -496,7 +540,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(),
-            CustomerContactInfo.Empty,
+            ValidContact(),
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(2));
