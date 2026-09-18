@@ -96,6 +96,50 @@ public sealed class DocumentNumberingFormatLookupTests
         Assert.Equal("CK_document_numbering_formats_min_digits", error.ConstraintName);
     }
 
+    /// <summary>Mismo CHECK que <see cref="TheDatabaseRejectsAnOutOfRangeFormat"/>, sobre el
+    /// prefijo: sólo letras, dígitos y guion, hasta 10 caracteres.</summary>
+    [Fact]
+    public async Task TheDatabaseRejectsAPrefixWithAnInvalidCharacter()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+
+        var error = await Assert.ThrowsAsync<PostgresException>(() =>
+            SetDocumentNumberFormatAsync(factory, tenantId, "order", "PW_1", includeYear: false, "", 4));
+
+        Assert.Equal("CK_document_numbering_formats_prefix", error.ConstraintName);
+    }
+
+    /// <summary>Mismo CHECK, sobre el separador de año: sólo vacío, guion o barra.</summary>
+    [Fact]
+    public async Task TheDatabaseRejectsAYearSeparatorOutsideTheAllowedSet()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+
+        var error = await Assert.ThrowsAsync<PostgresException>(() =>
+            SetDocumentNumberFormatAsync(factory, tenantId, "order", "PW", includeYear: true, "_", 4));
+
+        Assert.Equal("CK_document_numbering_formats_year_separator", error.ConstraintName);
+    }
+
+    /// <summary>Mismo CHECK, sobre el tipo de documento: sólo `order` o `quotation` tienen
+    /// consecutivo propio (fuera de alcance del spec, «El resto de los documentos»).</summary>
+    [Fact]
+    public async Task TheDatabaseRejectsADocumentTypeOutsideTheAllowedSet()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+
+        var error = await Assert.ThrowsAsync<PostgresException>(() =>
+            SetDocumentNumberFormatAsync(factory, tenantId, "invoice", "PW", includeYear: false, "", 4));
+
+        Assert.Equal("CK_document_numbering_formats_document_type", error.ConstraintName);
+    }
+
     private static async Task<DocumentNumberFormat> LookupAsync(
         QepApiFactory factory, Guid tenantId, DocumentNumberType documentType)
     {

@@ -72,6 +72,38 @@ public sealed class DocumentNumberingApiTests
     }
 
     /// <summary>
+    /// «Cambio de formato a mitad de camino» del spec: pasar de con año a sin año cambia de fila de
+    /// contador (la del año a la `year = 0`), y por eso el runbook trae el paso 2. La fila del año
+    /// queda tal cual -- no la toca nadie -- porque el contador no se comparte entre formatos.
+    /// </summary>
+    [Fact]
+    public async Task SwitchingFromWithYearToWithoutYearMidSeriesUsesTheYearZeroCounterAndLeavesTheOldOneUntouched()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+
+        // Con el formato por defecto (con año), el primer pedido avanza la fila year = 2026 de 1 a 2.
+        var firstNumber = await OrderApiTests.ConvertOneAsync(client, factory, tenantId, clientId, productId);
+
+        // El owner cambia el formato a mitad de camino: sin año, prefijo propio, y el paso 2 del
+        // runbook siembra la fila year = 0 en el número que sigue.
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "order", "PW", includeYear: false, "", 4);
+        await OrderApiTests.SetOrderCounterAsync(factory, tenantId, year: 0, nextValue: 1L);
+
+        var secondNumber = await OrderApiTests.ConvertOneAsync(client, factory, tenantId, clientId, productId);
+
+        Assert.Equal("PED-2026-0001", firstNumber);
+        Assert.Equal("PW0001", secondNumber);
+        // La fila del año quedó donde el primer pedido la dejó: el cambio de formato no la tocó.
+        Assert.Equal(2L, await OrderCounterAsync(factory, tenantId, year: 2026));
+    }
+
+    /// <summary>
     /// La regla «el consecutivo sólo avanza» (decisión 4 del spec), en una línea: el UPSERT del
     /// runbook con GREATEST. Correrlo dos veces —o con un número menor, que es el error real: copiar
     /// el SQL viejo— no retrocede el contador, porque un número repetido chocaría contra

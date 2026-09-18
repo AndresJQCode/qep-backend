@@ -297,6 +297,46 @@ public sealed class OrderApiTests
         Assert.Contains("quotation.quotation.already_converted", body, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// El formato de numeración es dato de un tenant desde el spec 2026-09-17: un prefijo mal
+    /// escrito a mano puede alcanzar el mismo texto que un pedido ya emitido. Mismo patrón que
+    /// <see cref="ConvertingAQuotationThatAlreadyHasAnOrderIsAlreadyConverted"/> con la otra
+    /// constraint -- acá la que protege el número, no la que protege la conversión -- para que la
+    /// colisión salga 422 <c>order.order.number_taken</c> y no 500 con el nombre del índice adentro.
+    /// </summary>
+    [Fact]
+    public async Task AMisconfiguredPrefixThatCollidesWithAnAlreadyIssuedOrderNumberIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+
+        // Con el formato por defecto (sin fila) el primer pedido sale "PED-2026-0001".
+        var firstNumber = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        Assert.Equal("PED-2026-0001", firstNumber);
+
+        // Un prefijo que ya trae el año, sin año propio en el formato, arma el mismo texto que el
+        // pedido anterior -- IX_orders_tenant_number, no IX_orders_quotation.
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "order", "PED-2026-", includeYear: false, "", 4);
+        await SetOrderCounterAsync(factory, tenantId, year: 0, nextValue: 1L);
+
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", "Pago verificado", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body2 = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("order.order.number_taken", body2, StringComparison.Ordinal);
+    }
+
     /// <summary>Un pedido "legado" para una cotización que siguió en Sent. Número fuera de la
     /// secuencia a propósito: lo único que tiene que chocar es el índice de la cotización.</summary>
     private static async Task InsertLegacyOrderAsync(string connectionString, Guid tenantId, Guid quotationId)
