@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
+using Modules.Quotations.Infrastructure.Persistence;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -41,6 +44,47 @@ public sealed class QuotationApiTests
         Assert.Equal(0m, quotation.Total);
         // RN-013: el impuesto es la suma del de cada línea -- sin líneas, no hay impuesto.
         Assert.Equal(0m, quotation.TaxPercentage);
+    }
+
+    /// <summary>
+    /// La cotización numera con el formato del tenant (spec 2026-09-17 de numeración), y el
+    /// consecutivo sin año sale de la fila `year = 0`, que no se reinicia. Reloj fijo en la frontera
+    /// de Bogotá: el año no se usa, y que la prueba no dependa del calendario de la máquina.
+    /// </summary>
+    [Fact]
+    public async Task CreateUsesThePrefixAndCounterConfiguredForTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        await DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync(
+            factory, tenantId, "quotation", "CT", includeYear: false, "", 5);
+        await SetQuotationCounterAsync(factory, tenantId, year: 0, nextValue: 90_001L);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+
+        var first = await CreateQuotationAsync(client, tenantId, clientId);
+        var second = await CreateQuotationAsync(client, tenantId, clientId);
+
+        Assert.Equal("CT90001", first.QuotationNumber);
+        Assert.Equal("CT90002", second.QuotationNumber);
+    }
+
+    /// <summary>El paso 2 del runbook del README para cotizaciones: el mismo UPSERT con GREATEST,
+    /// sobre <c>quotation_number_counters</c>.</summary>
+    internal static async Task SetQuotationCounterAsync(
+        QepApiFactory factory, Guid tenantId, int year, long nextValue)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO quotations.quotation_number_counters (tenant_id, year, next_value)
+            VALUES ({tenantId}, {year}, {nextValue})
+            ON CONFLICT (tenant_id, year) DO UPDATE
+            SET next_value = GREATEST(quotations.quotation_number_counters.next_value, EXCLUDED.next_value)
+            """,
+            TestContext.Current.CancellationToken);
     }
 
     // Snapshot al crear (Quotation.CustomerVatSurplus): un cliente con excedente de IVA no paga
