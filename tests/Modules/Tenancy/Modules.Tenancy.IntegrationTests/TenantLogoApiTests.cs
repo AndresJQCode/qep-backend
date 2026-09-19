@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,9 @@ public sealed class TenantLogoApiTests
     private const string StoragePermissions =
         "storage.file.upload,tenancy.settings.read,tenancy.settings.update";
 
+    private static readonly JsonSerializerOptions CaseInsensitiveJson =
+        new() { PropertyNameCaseInsensitive = true };
+
     [Fact]
     public async Task UploadCompleteAndAssignShowsTheLogoUrlInSettings()
     {
@@ -52,9 +56,22 @@ public sealed class TenantLogoApiTests
             InMemoryPublicObjectStorage.BaseUrl, settings.Logo.Url, StringComparison.Ordinal);
 
         var getResponse = await client.GetAsync(SettingsUrl, TestContext.Current.CancellationToken);
-        var getSettings = await getResponse.Content.ReadFromJsonAsync<SettingsPayload>(
-            TestContext.Current.CancellationToken);
+        // Leído una sola vez como texto: el HttpContent no es releíble, y de acá salen tanto el
+        // deserializado tipado como el JSON crudo para pinear el contrato de cable.
+        var getJson = await getResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var getSettings = JsonSerializer.Deserialize<SettingsPayload>(getJson, CaseInsensitiveJson);
         Assert.Equal(settings.Logo.Url, getSettings!.Logo!.Url);
+
+        // JsonSerializer con PropertyNameCaseInsensitive (igual que ReadFromJsonAsync por
+        // defecto) no habría detectado una regresión a PascalCase (`Logo.FileId` en vez de
+        // `logo.fileId`) — se ata el contrato de cable leyendo las claves crudas.
+        using var document = JsonDocument.Parse(getJson);
+        var logoElement = document.RootElement.GetProperty("logo");
+        Assert.Equal(fileId, logoElement.GetProperty("fileId").GetGuid());
+        Assert.StartsWith(
+            InMemoryPublicObjectStorage.BaseUrl,
+            logoElement.GetProperty("url").GetString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -91,6 +108,9 @@ public sealed class TenantLogoApiTests
         var etag = await GetEtagAsync(client);
         var afterPut = await PutLogoAsync(client, etag, fileId);
         var putEtag = afterPut.Headers.ETag!.Tag;
+        // Capturada ANTES del DELETE por la misma razón que en ReplacingTheLogoUnpublishesAndDeletesTheOldFile:
+        // FileResource.Unpublish deja PublicStorageKey en null en cuanto se retira.
+        var publicKey = await FileOwnPublicKeyAsync(factory, fileId);
 
         var response = await DeleteLogoAsync(client, putEtag);
 
@@ -99,6 +119,94 @@ public sealed class TenantLogoApiTests
         var settings = await response.Content.ReadFromJsonAsync<SettingsPayload>(
             TestContext.Current.CancellationToken);
         Assert.Null(settings!.Logo);
+        // Spec: "logo == null, copia borrada, Version sube" — las dos primeras partes no las
+        // probaba ninguna prueba todavía.
+        Assert.Contains(publicKey, factory.PublicObjectStorage.DeletedKeys);
+        var status = await FileStatusAsync(factory, fileId);
+        Assert.NotEqual("Available", status);
+    }
+
+    [Fact]
+    public async Task DeleteMissingIfMatchIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"{SettingsUrl}/logo");
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("precondition.if_match_required", problem?.Code);
+    }
+
+    [Fact]
+    public async Task DeleteStaleIfMatchIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
+        var etag = await GetEtagAsync(client);
+        var putResponse = await PutLogoAsync(client, etag, fileId);
+        var staleEtag = putResponse.Headers.ETag!.Tag;
+        await PatchDisplayNameAsync(client, staleEtag);
+
+        var response = await DeleteLogoAsync(client, staleEtag);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("concurrency.conflict", problem?.Code);
+    }
+
+    [Fact]
+    public async Task DeletingWithNoLogoReturnsOkWithUnchangedVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var etag = await GetEtagAsync(client);
+
+        // RemoveTenantLogoHandler corta temprano cuando tenant.LogoFileId ya es null
+        // (RemoveTenantLogo.cs): sin logo que quitar no hay evento ni versión nueva.
+        var response = await DeleteLogoAsync(client, etag);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(etag, response.Headers.ETag!.Tag);
+        var settings = await response.Content.ReadFromJsonAsync<SettingsPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Null(settings!.Logo);
+    }
+
+    [Fact]
+    public async Task RemovingWritesAuditEntry()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
+        var etag = await GetEtagAsync(client);
+        var putResponse = await PutLogoAsync(client, etag, fileId);
+        var putEtag = putResponse.Headers.ETag!.Tag;
+
+        var response = await DeleteLogoAsync(client, putEtag);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var audit = await QueryRowAsync(
+            connection,
+            """
+            SELECT outcome FROM audit.entries
+            WHERE tenant_id = @tenantId AND action = 'tenancy.logo.removed'
+            ORDER BY occurred_at DESC LIMIT 1
+            """,
+            TenantId);
+        Assert.NotNull(audit);
+        Assert.Equal("success", audit![0]);
     }
 
     [Fact]
@@ -170,10 +278,17 @@ public sealed class TenantLogoApiTests
         var response = await PutLogoAsync(client, staleEtag, fileId);
 
         Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("concurrency.conflict", problem?.Code);
         // Decisión 7 del spec: la falla de concurrencia se detecta antes de tocar Storage. El
         // bucket público en memoria del double queda vacío — nada quedó publicado por el intento
         // fallido.
         Assert.Equal(0, factory.PublicObjectStorage.Count);
+        // Ídem, pero probando que nunca se creó una copia (y se retiró) en vez de que nunca se
+        // haya intentado retirar nada — DeletedKeys vacío descarta el camino "publicó y hizo
+        // rollback" que Count por sí solo no distingue.
+        Assert.Empty(factory.PublicObjectStorage.DeletedKeys);
         var status = await FileStatusAsync(factory, fileId);
         Assert.Equal("Available", status);
     }
@@ -194,6 +309,9 @@ public sealed class TenantLogoApiTests
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("precondition.if_match_required", problem?.Code);
     }
 
     [Fact]
