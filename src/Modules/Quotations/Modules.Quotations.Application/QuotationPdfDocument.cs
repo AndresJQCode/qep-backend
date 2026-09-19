@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -58,7 +60,11 @@ public sealed record QuotationPdfDocument(
     /// <summary>El cliente tiene excedente de IVA y por eso el impuesto da cero. Viaja para que
     /// el documento pueda decirlo: un IVA en cero sin explicación se lee como error de
     /// cálculo.</summary>
-    bool CustomerVatSurplus);
+    bool CustomerVatSurplus,
+    /// <summary>El logo del tenant, o null sin logo — el request a qcode-pdf no cambia de forma
+    /// en ese caso (spec 2026-09-19). `Content` lleva [JsonIgnore]: viaja sólo como asset
+    /// (`QCodePdfRenderer`), nunca duplicado en base64 dentro de `data`.</summary>
+    QuotationPdfLogo? Logo);
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">
@@ -116,3 +122,10 @@ public interface IQuotationPdfRenderer
     Task<byte[]> RenderAsync(
         QuotationPdfDocument document, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// El logo tal como lo necesita `qcode-pdf`: el nombre del asset (`logo.png`, `logo.jpg`,
+/// `logo.webp`, según la extensión del original) y sus bytes. `FileName` es lo único que
+/// `data.logo.fileName` expone a la plantilla; `Content` va aparte, en `assets`.
+/// </summary>
+public sealed record QuotationPdfLogo(string FileName, [property: JsonIgnore] byte[] Content);
