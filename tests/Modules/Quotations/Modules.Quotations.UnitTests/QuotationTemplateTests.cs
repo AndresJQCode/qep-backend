@@ -359,7 +359,8 @@ public sealed partial class QuotationTemplateTests
         Total: 1536120m,
         RetentionAmount: 32271.43m,
         NetTotal: 1503848.57m,
-        CustomerVatSurplus: false);
+        CustomerVatSurplus: false,
+        Logo: null);
 
     private static QuotationPdfDocument Minimal() => new(
         QuotationNumber: "QUO-2026-0002",
@@ -385,5 +386,6 @@ public sealed partial class QuotationTemplateTests
         Total: 1550m,
         RetentionAmount: 0m,
         NetTotal: 1550m,
-        CustomerVatSurplus: true);
+        CustomerVatSurplus: true,
+        Logo: null);
 }
