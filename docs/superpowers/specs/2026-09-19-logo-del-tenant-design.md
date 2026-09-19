@@ -137,7 +137,7 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
   pasos 1-3 iguales; sin logo, devolver el DTO; `UnpublishAsync(LogoFileId)` **primero** (decisión 8);
   después `tenant.RemoveLogo`, auditoría `tenancy.logo.removed` con `["logoFileId"]`, outbox, commit.
 - Registrar los dos handlers a mano en `QepServiceCollectionExtensions` como todos
-  (`QepServiceCollectionExtensions.cs:143-147`); `CompositionRootTests.EveryCommandAndQueryHasItsHandlerRegistered`
+  (`QepServiceCollectionExtensions.cs:55-60`); `CompositionRootTests.EveryCommandAndQueryHasItsHandlerRegistered`
   (`CompositionRootTests.cs:28-45`) lo verifica.
 - `ITenantDirectory` (`ITenantDirectory.cs:8-18`) gana `Task<Guid?> GetLogoFileIdAsync(TenantId, CancellationToken)`,
   implementado en `TenantDirectory.cs` con la misma proyección que `GetTimeZoneAsync` (`TenantDirectory.cs:39-43`).
@@ -336,7 +336,7 @@ exige Docker; durante el ciclo, sólo los archivos tocados.
 - **`Modules.Quotations.UnitTests/ExportQuotationPdfHandlerTests.cs`** (junto a `:37-69`, armado en
   `:115-125` con un `StubQuotationLogoLookup` nuevo): `ChangingTheTenantLogoRegenerates` — segundo
   export con otro `FileId` en el stub → `renderer.Calls == 2`; `ExportingTwiceWithTheSameLogoDoesNotRegenerate`.
-- **`Modules.Quotations.IntegrationTests/QuotationExportApiTests.cs`**: `ExportAfterAssigningALogoRegenerates`
+- **`Modules.Quotations.IntegrationTests/QuotationPdfExportApiTests.cs`** (nuevo: `QuotationExportApiTests.cs` cubre el export asíncrono a Excel, no el PDF): `ExportAfterAssigningALogoRegenerates`
   — `generatedAt` cambia tras el `PUT /logo`; el `StubPdfRenderer` (`QuotationsApiHarness.cs:752-757`)
   se amplía a contar llamadas o a registrar si el documento traía logo.
 - **`ArchitectureTests`**: sin cambios esperados; correr igual, incluido `CompositionRootTests`.
