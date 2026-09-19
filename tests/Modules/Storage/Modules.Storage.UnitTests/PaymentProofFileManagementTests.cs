@@ -130,6 +130,7 @@ public sealed class PaymentProofFileManagementTests
             new PublishFileHandler(
                     new InMemoryFileResourceRepository(proof),
                     new CountingStorageUnitOfWork(),
+                    new FilePublication(storage, new FixedClock(Now)),
                     storage,
                     new RecordingStorageAuditPublisher(),
                     new AllowAllExecutionContext(TenantId),
@@ -209,7 +210,7 @@ public sealed class PaymentProofFileManagementTests
         new(
             new InMemoryFileResourceRepository(resource),
             unitOfWork,
-            storage,
+            new FilePublication(storage, new FixedClock(Now)),
             probes,
             new RecordingStorageAuditPublisher(),
             new AllowAllExecutionContext(TenantId),
@@ -223,6 +224,7 @@ public sealed class PaymentProofFileManagementTests
         new(
             new InMemoryFileResourceRepository(resource),
             unitOfWork,
+            new FilePublication(storage, new FixedClock(Now)),
             storage,
             probes,
             new RecordingStorageAuditPublisher(),

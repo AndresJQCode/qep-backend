@@ -38,6 +38,10 @@ public static class StorageInfrastructureExtensions
         services.AddScoped<IFileResourceRepository, FileResourceRepository>();
         services.AddScoped<IStorageUnitOfWork, StorageUnitOfWork>();
         services.AddScoped<IStorageAuditPublisher, StorageAuditPublisher>();
+        // Decisión 5 del spec 2026-09-19: copiar+rollback al bucket público, compartido por
+        // PublishFileHandler/SoftDeleteFileHandler y por el adaptador de logo del tenant
+        // (Bootstrapper). Scoped como el repositorio: sin estado propio entre requests.
+        services.AddScoped<FilePublication>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, FileUserReferenceProbe>();
         // Spec 2026-09-16, D12: un objeto público que un archivo tiene como PublicStorageKey no es
