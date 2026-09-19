@@ -67,8 +67,10 @@ public sealed class SetTenantLogoHandler(
             // El agregado rechazó la asignación (p. ej. tenancy.tenant.not_active): el retiro es
             // mejor esfuerzo, igual que el catch de más abajo. Una UnpublishAsync que lanzara acá
             // taparía el error de dominio original (p. ej. el 422 de tenancy.tenant.not_active) con
-            // uno de Storage, y es el error de dominio el que la persona necesita ver.
-            await logoStorage.TryUnpublishAsync(command.TenantId.Value, command.FileId, cancellationToken);
+            // uno de Storage, y es el error de dominio el que la persona necesita ver. Sin el token
+            // del request: Storage ya commiteó la publicación, y un request cancelado no puede
+            // dejar la copia pública huérfana.
+            await logoStorage.TryUnpublishAsync(command.TenantId.Value, command.FileId, CancellationToken.None);
             throw;
         }
 
@@ -97,15 +99,17 @@ public sealed class SetTenantLogoHandler(
             // El commit de Tenancy falló (p. ej. choque de concurrencia de EF entre dos PUT
             // simultáneos que pasaron el paso de la versión esperada): acá el retiro es mejor
             // esfuerzo, para no tapar la excepción original de SaveChangesAsync con una de Storage.
-            await logoStorage.TryUnpublishAsync(command.TenantId.Value, command.FileId, cancellationToken);
+            // Sin el token del request, por el mismo motivo que el catch de arriba.
+            await logoStorage.TryUnpublishAsync(command.TenantId.Value, command.FileId, CancellationToken.None);
             throw;
         }
 
         if (previousFileId is { } oldFileId && oldFileId != command.FileId)
         {
             // El logo nuevo ya está commiteado: una falla acá no falla el request (decisión 7 del
-            // spec). TryUnpublishAsync la registra en log y no la relanza.
-            await logoStorage.TryUnpublishAsync(command.TenantId.Value, oldFileId, cancellationToken);
+            // spec). TryUnpublishAsync la registra en log y no la relanza. Sin el token del request:
+            // Tenancy ya commiteó, y cancelar ahora sólo dejaría el logo viejo publicado.
+            await logoStorage.TryUnpublishAsync(command.TenantId.Value, oldFileId, CancellationToken.None);
         }
 
         return tenant.ToSettingsDto(logoStorage);

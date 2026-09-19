@@ -51,11 +51,15 @@ public sealed class RemoveTenantLogoHandler(
             return tenant.ToSettingsDto(logoStorage);
         }
 
+        // Primero el agregado, en memoria: su EnsureActive (tenancy.tenant.not_active) tiene que
+        // rechazar antes de que Storage retire nada, o un tenant inactivo se quedaría sin la
+        // copia pública y con el logo todavía asignado.
+        tenant.RemoveLogo(clock.UtcNow);
+
         // Decisión 8 del spec: retirar la copia pública antes de commitear Tenancy. Si el commit
         // falla, la persona vuelve a quitarlo — UnpublishAsync es idempotente.
         await logoStorage.UnpublishAsync(command.TenantId.Value, fileId, cancellationToken);
 
-        tenant.RemoveLogo(clock.UtcNow);
         var events = tenant.PullDomainEvents();
         auditRecorder.Record(
             tenant.Id.Value,
