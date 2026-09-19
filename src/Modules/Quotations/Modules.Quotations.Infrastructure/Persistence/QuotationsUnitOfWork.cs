@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Npgsql;
@@ -28,6 +29,21 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // adentro. La prueba es
     // OrderApiTests.AMisconfiguredPrefixThatCollidesWithAnAlreadyIssuedOrderNumberIsRejected.
     private const string OrderNumberIndex = "IX_orders_tenant_number";
+
+    // IOrderNumberGenerator recibe el mismo QuotationsDbContext scoped que esta clase, así que su
+    // SQL crudo corre en esta conexión y queda dentro de la transacción. Si alguna vez se
+    // registrara con un DbContext propio, el incremento volvería a autocommitearse aparte.
+    public async Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new QuotationsTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    private sealed class QuotationsTransaction(IDbContextTransaction transaction) : IQuotationsTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) =>
+            transaction.CommitAsync(cancellationToken);
+
+        // Disponer sin commit hace rollback, y el rollback es lo que suelta el lock del contador.
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
+    }
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
