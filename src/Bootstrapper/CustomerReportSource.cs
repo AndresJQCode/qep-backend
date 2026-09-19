@@ -163,7 +163,7 @@ internal sealed class CustomerReportSource(
     /// Los departamentos con mas clientes, con el resto plegado en "Otros".
     ///
     /// **Este no se agrupa entero en la base y no se puede:** <c>Customer</c> guarda la ciudad de su
-    /// direccion principal y nada mas, y el departamento vive del otro lado de la frontera de
+    /// domicilio y nada mas, y el departamento vive del otro lado de la frontera de
     /// <c>Geography</c> — el mismo motivo por el que el filtro por departamento primero traduce a
     /// que ciudades caen dentro. Asi que la base agrupa por ciudad, que devuelve **una fila por
     /// ciudad con clientes y no una por cliente** (1.122 municipios en todo el pais como techo), y
