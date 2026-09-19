@@ -64,11 +64,11 @@ public sealed class SetTenantLogoHandler(
         }
         catch
         {
-            // El agregado rechazó la asignación (p. ej. tenancy.tenant.not_active) y Tenancy nunca
-            // llegó a commitear: el retiro va con la variante que sí lanza, para que una falla de
-            // Storage acá no quede en silencio y el archivo nuevo no se quede huérfano sin que nadie
-            // se entere.
-            await logoStorage.UnpublishAsync(command.TenantId.Value, command.FileId, cancellationToken);
+            // El agregado rechazó la asignación (p. ej. tenancy.tenant.not_active): el retiro es
+            // mejor esfuerzo, igual que el catch de más abajo. Una UnpublishAsync que lanzara acá
+            // taparía el error de dominio original (p. ej. el 422 de tenancy.tenant.not_active) con
+            // uno de Storage, y es el error de dominio el que la persona necesita ver.
+            await logoStorage.TryUnpublishAsync(command.TenantId.Value, command.FileId, cancellationToken);
             throw;
         }
 
