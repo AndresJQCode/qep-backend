@@ -22,8 +22,8 @@ public sealed class QuotationPdfDocumentMapperTests
         new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
         TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
 
-    private static QuotationPdfDocument Map(QuotationResponse quotation) =>
-        QuotationPdfDocumentMapper.From(quotation, Calendar);
+    private static QuotationPdfDocument Map(QuotationResponse quotation, QuotationPdfLogo? logo = null) =>
+        QuotationPdfDocumentMapper.From(quotation, Calendar, logo);
 
     // Spec 2026-09-17, punto 7: creada el 31 de diciembre a las 23:00 en Bogotá —1 de enero en UTC—,
     // el documento dice que se emitió el 31 de diciembre de 2026. La fecha viaja sin hora.
@@ -247,6 +247,24 @@ public sealed class QuotationPdfDocumentMapperTests
 
         Assert.Equal("Sede administrativa", document.Billing.Name);
         Assert.Equal(string.Empty, document.Billing.TaxId);
+    }
+
+    [Fact]
+    public void MapsTheLogoWhenPresent()
+    {
+        var logo = new QuotationPdfLogo("logo.png", [0x89, 0x50, 0x4E, 0x47]);
+
+        var document = Map(Response(), logo);
+
+        Assert.Same(logo, document.Logo);
+    }
+
+    [Fact]
+    public void MapsNoLogoAsNull()
+    {
+        var document = Map(Response());
+
+        Assert.Null(document.Logo);
     }
 
     private static QuotationClientResponse Client() => new(

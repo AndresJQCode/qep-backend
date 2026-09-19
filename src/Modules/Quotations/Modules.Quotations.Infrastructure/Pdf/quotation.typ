@@ -8,9 +8,9 @@
 // total resaltado. Esa arquitectura de información no es estética: es la que el comprador ya
 // sabe leer.
 //
-// El documento es white-label —lo manda el tenant a SU cliente y el payload no trae ni logo ni
-// color de marca— así que la referencia se sigue en estructura y no en paleta: una sola tinta
-// neutra, sin acento de color que le ponga la marca de nadie a un documento comercial ajeno.
+// El logo del tenant viaja en el payload como asset (spec 2026-09-19); el color de marca sigue
+// fuera de alcance. La referencia se sigue en estructura y no en paleta: una sola tinta neutra,
+// sin acento de color que le ponga la marca de nadie a un documento comercial ajeno.
 #let data = json(sys.inputs.data)
 
 #let tinta = rgb("#14181F")
@@ -145,8 +145,8 @@
 
 // ---------------------------------------------------------------------------- encabezado
 
-// El emisor ancla arriba a la izquierda, como en la referencia. Sin logo en el payload, el peso
-// tipográfico de la razón social es lo único que sostiene esa esquina.
+// El emisor ancla arriba a la izquierda, como en la referencia. Con logo, va primero — el peso
+// tipográfico de la razón social ya no es lo único que sostiene esa esquina.
 // Sin cuenta de cobro no hay emisor que imprimir, y entonces el ancla de la esquina es el tipo
 // de documento. Con emisor, "Cotización" pasa a ser el rótulo del número en la ficha: decirlo
 // en los dos lados es decirlo dos veces.
@@ -156,13 +156,20 @@
   columns: (1fr, auto),
   column-gutter: 10mm,
   align: (left + top, right + top),
-  if hay-emisor [
-    #text(size: 14pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
-    #if data.billingAccount.companyTaxId != none [
-      \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+  [
+    // El logo no depende de si hay emisor: se declara una sola vez y arriba de las dos ramas.
+    #if data.logo != none [
+      #image("assets/" + data.logo.fileName, height: 16mm, fit: "contain")
+      #v(6pt)
     ]
-  ] else [
-    #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
+    #if hay-emisor [
+      #text(size: 14pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
+      #if data.billingAccount.companyTaxId != none [
+        \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+      ]
+    ] else [
+      #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
+    ]
   ],
   block[
     #grid(

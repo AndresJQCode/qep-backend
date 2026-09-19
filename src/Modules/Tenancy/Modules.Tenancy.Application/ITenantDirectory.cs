@@ -15,4 +15,8 @@ public interface ITenantDirectory
     Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken);
 
     Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>El logo vigente del tenant, o null sin logo. Es la única lectura que Quotations
+    /// necesita de Tenancy para imprimir el logo en el PDF (decisión 9 del spec 2026-09-19).</summary>
+    Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken);
 }

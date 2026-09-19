@@ -5,41 +5,32 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Tenancy.Application;
 
-public sealed record UpdateTenantSettingsCommand(
+public sealed record RemoveTenantLogoCommand(
     TenantId TenantId,
-    string DisplayName,
-    string DefaultCulture,
-    string TimeZone,
-    string DateFormat,
     long ExpectedVersion,
     string CorrelationId) : ICommand<TenantSettingsDto>;
 
-public sealed class UpdateTenantSettingsValidator
-    : AbstractValidator<UpdateTenantSettingsCommand>
+public sealed class RemoveTenantLogoValidator : AbstractValidator<RemoveTenantLogoCommand>
 {
-    public UpdateTenantSettingsValidator()
+    public RemoveTenantLogoValidator()
     {
-        RuleFor(command => command.DisplayName).NotEmpty().MaximumLength(120);
-        RuleFor(command => command.DefaultCulture).NotEmpty().MaximumLength(20);
-        RuleFor(command => command.TimeZone).NotEmpty().MaximumLength(100);
-        RuleFor(command => command.DateFormat).NotEmpty().MaximumLength(30);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
 
-public sealed class UpdateTenantSettingsHandler(
+public sealed class RemoveTenantLogoHandler(
     ITenantRepository tenantRepository,
     ITenancyUnitOfWork unitOfWork,
     IExecutionContext executionContext,
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
     IClock clock,
-    IValidator<UpdateTenantSettingsCommand> validator,
-    ITenantLogoStorage logoStorage)
-    : ICommandHandler<UpdateTenantSettingsCommand, TenantSettingsDto>
+    ITenantLogoStorage logoStorage,
+    IValidator<RemoveTenantLogoCommand> validator)
+    : ICommandHandler<RemoveTenantLogoCommand, TenantSettingsDto>
 {
     public async Task<TenantSettingsDto> HandleAsync(
-        UpdateTenantSettingsCommand command,
+        RemoveTenantLogoCommand command,
         CancellationToken cancellationToken)
     {
         await validator.ValidateAndThrowAsync(command, cancellationToken);
@@ -47,43 +38,37 @@ public sealed class UpdateTenantSettingsHandler(
 
         var tenant = await tenantRepository.GetAsync(command.TenantId, cancellationToken)
             ?? throw new ResourceNotFoundException(
-                "tenancy.tenant.not_found",
-                "Tenant settings were not found.");
+                "tenancy.tenant.not_found", "Tenant settings were not found.");
 
         if (tenant.Version != command.ExpectedVersion)
         {
             throw new RequestConcurrencyException(
-                "concurrency.conflict",
-                "Tenant settings changed after they were loaded.");
+                "concurrency.conflict", "Tenant settings changed after they were loaded.");
         }
 
-        var changed = tenant.UpdateSettings(
-            command.DisplayName,
-            command.DefaultCulture,
-            command.TimeZone,
-            command.DateFormat,
-            clock.UtcNow);
-
-        if (!changed)
+        if (tenant.LogoFileId is not { } fileId)
         {
             return tenant.ToSettingsDto(logoStorage);
         }
 
-        var events = tenant.PullDomainEvents();
-        var changedFields = events
-            .OfType<TenantSettingsUpdatedDomainEvent>()
-            .SelectMany(domainEvent => domainEvent.ChangedFields)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        // Primero el agregado, en memoria: su EnsureActive (tenancy.tenant.not_active) tiene que
+        // rechazar antes de que Storage retire nada, o un tenant inactivo se quedaría sin la
+        // copia pública y con el logo todavía asignado.
+        tenant.RemoveLogo(clock.UtcNow);
 
+        // Decisión 8 del spec: retirar la copia pública antes de commitear Tenancy. Si el commit
+        // falla, la persona vuelve a quitarlo — UnpublishAsync es idempotente.
+        await logoStorage.UnpublishAsync(command.TenantId.Value, fileId, cancellationToken);
+
+        var events = tenant.PullDomainEvents();
         auditRecorder.Record(
             tenant.Id.Value,
             executionContext.SubjectId,
-            "tenancy.settings.updated",
+            "tenancy.logo.removed",
             "tenant",
             tenant.Id.ToString(),
             "success",
-            changedFields,
+            ["logoFileId"],
             clock.UtcNow);
 
         foreach (var domainEvent in events)
@@ -101,8 +86,7 @@ public sealed class UpdateTenantSettingsHandler(
             !executionContext.HasPermission(TenancyPermissions.SettingsUpdate))
         {
             throw new RequestForbiddenException(
-                "authorization.denied",
-                "The subject cannot update tenant settings.");
+                "authorization.denied", "The subject cannot update tenant settings.");
         }
     }
 }

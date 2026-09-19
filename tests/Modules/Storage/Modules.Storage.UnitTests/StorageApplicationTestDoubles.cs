@@ -162,6 +162,29 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
         throw new NotSupportedException();
 }
 
+/// <summary>El bucket público sin configurar: cualquier operación además de leer `IsConfigured` es
+/// inesperada. Sirve para fijar que `PublishFileHandler` lo detecta antes de cargar el archivo
+/// (fix round 1, Task 2: el chequeo se restauró al inicio del handler).</summary>
+internal sealed class UnconfiguredPublicObjectStorage : IPublicObjectStorage
+{
+    public bool IsConfigured => false;
+
+    public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task DeleteAsync(string publicKey, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public string GetUrl(string publicKey) => throw new NotSupportedException();
+
+    public Task<PublicObjectPage> ListAsync(
+        string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}
+
 /// <summary>La sonda de otro módulo, con una respuesta fija, y los archivos por los que le preguntaron.</summary>
 internal sealed class StubFileReferenceProbe(bool referenced) : IFileReferenceProbe
 {
