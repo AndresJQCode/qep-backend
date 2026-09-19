@@ -29,5 +29,10 @@ public enum FileOwnerType
     // Spec 2026-09-16, D2: un comprobante de pago de un pedido. Espera en staging/ hasta que se
     // adjunta (D4) y ahí se mueve al bucket público (D3). Los comprobantes subidos antes de v2
     // siguen siendo User y no cambian (D13).
-    PaymentProof = 5
+    PaymentProof = 5,
+
+    // Spec 2026-09-19: el logo de un tenant. Sube por el mismo pipeline que cualquier imagen
+    // (POST /files, PUT prefirmado, complete) y Tenancy lo asigna después con su propio endpoint
+    // — ver ITenantLogoStorage. OwnerId es el tenantId.
+    Tenant = 6
 }
