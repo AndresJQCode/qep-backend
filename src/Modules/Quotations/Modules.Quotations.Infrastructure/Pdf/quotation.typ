@@ -156,21 +156,20 @@
   columns: (1fr, auto),
   column-gutter: 10mm,
   align: (left + top, right + top),
-  if hay-emisor [
+  [
+    // El logo no depende de si hay emisor: se declara una sola vez y arriba de las dos ramas.
     #if data.logo != none [
       #image("assets/" + data.logo.fileName, height: 16mm, fit: "contain")
       #v(6pt)
     ]
-    #text(size: 14pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
-    #if data.billingAccount.companyTaxId != none [
-      \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+    #if hay-emisor [
+      #text(size: 14pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
+      #if data.billingAccount.companyTaxId != none [
+        \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+      ]
+    ] else [
+      #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
     ]
-  ] else [
-    #if data.logo != none [
-      #image("assets/" + data.logo.fileName, height: 16mm, fit: "contain")
-      #v(6pt)
-    ]
-    #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
   ],
   block[
     #grid(
