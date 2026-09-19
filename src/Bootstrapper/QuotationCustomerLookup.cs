@@ -30,17 +30,12 @@ internal sealed class QuotationCustomerLookup(
             return null;
         }
 
-        // Las ciudades de todas sus direcciones de una vez: la cotizacion muestra la libreta
-        // completa en su selector de envio, y cada fila necesita el nombre de su ciudad.
+        // Las ciudades del domicilio y de toda la libreta de una vez: la cotizacion muestra la
+        // libreta completa en su selector de envio, y cada fila necesita el nombre de su ciudad.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses.Select(address => address.CityId).Distinct().ToArray(),
+            customer.Addresses.Select(address => address.CityId).Append(customer.CityId).Distinct().ToArray(),
             cancellationToken);
-        var principal = customer.PrincipalAddress;
-        CustomerCityRef? principalCity = null;
-        if (principal is not null)
-        {
-            citiesById.TryGetValue(principal.CityId, out principalCity);
-        }
+        citiesById.TryGetValue(customer.CityId, out var contactCity);
 
         return new QuotationCustomerRef(
             customer.Id.Value,
@@ -49,16 +44,18 @@ internal sealed class QuotationCustomerLookup(
             customer.IsActive,
             customer.Name,
             customer.Phone,
-            // La direccion del cliente es la de su principal: es la que la cotizacion propone y
-            // la que viaja en el WhatsApp.
-            principal?.Address,
+            // El domicilio del cliente (spec 2026-09-18), no la principal de la libreta: es el
+            // respaldo de facturacion y envio que QuotationResponseComposer.cs:96-110 entrega a
+            // la cotizacion y al pedido, y lo que viaja en el WhatsApp. La principal sigue yendo
+            // primera en Addresses, que es lo que el selector de envio preselecciona.
+            customer.Address,
             customer.WithRetention,
             customer.VatSurplus,
             customer.Email,
-            principalCity?.CityId,
-            principalCity?.CityName,
-            principalCity?.DepartmentId,
-            principalCity?.DepartmentName,
+            contactCity?.CityId,
+            contactCity?.CityName,
+            contactCity?.DepartmentId,
+            contactCity?.DepartmentName,
             customer.Addresses
                 .OrderByDescending(address => address.IsPrincipal)
                 .ThenBy(address => address.Name)
