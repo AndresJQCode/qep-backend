@@ -110,6 +110,12 @@ public sealed class CustomerContactAddressMigrationTests
             connectionString,
             "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'customers' "
             + "AND table_name = 'customers' AND column_name = 'city_id'"));
+        // El paso 3 tambien vuelve obligatoria address; sin este assert el DROP DEFAULT quedaba
+        // cubierto pero no el SET NOT NULL de esa columna.
+        Assert.Equal("NO", await ScalarAsync<string>(
+            connectionString,
+            "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'customers' "
+            + "AND table_name = 'customers' AND column_name = 'address'"));
         // El DEFAULT '' solo servia para crear la columna; en el esquema final no queda.
         Assert.True(await ScalarAsync<bool>(
             connectionString,

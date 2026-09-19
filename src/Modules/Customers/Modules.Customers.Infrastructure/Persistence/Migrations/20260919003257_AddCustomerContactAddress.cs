@@ -48,12 +48,20 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
             // 2. El backfill desde la principal. Todo cliente tiene exactamente una
             // (Customer.ApplyPrincipal); si alguno no, city_id queda nula y el paso 3 lo denuncia.
+            // El DISTINCT ON es un cinturon para datos anteriores a ese invariante -- si algun
+            // cliente llegara a tener dos principales, gana la fila mas vieja en vez de que
+            // Postgres elija una al azar.
             migrationBuilder.Sql(@"
                 UPDATE customers.customers c
-                SET address = a.address,
-                    city_id = a.city_id
-                FROM customers.customer_addresses a
-                WHERE a.customer_id = c.id AND a.is_principal;");
+                SET address = p.address,
+                    city_id = p.city_id
+                FROM (
+                    SELECT DISTINCT ON (a.customer_id) a.customer_id, a.address, a.city_id
+                    FROM customers.customer_addresses a
+                    WHERE a.is_principal
+                    ORDER BY a.customer_id, a.created_at, a.id
+                ) p
+                WHERE p.customer_id = c.id;");
 
             // 3. Ahora sí obligatorias, y sin el default que sólo servía para crear la columna.
             migrationBuilder.Sql("ALTER TABLE customers.customers ALTER COLUMN city_id SET NOT NULL;");

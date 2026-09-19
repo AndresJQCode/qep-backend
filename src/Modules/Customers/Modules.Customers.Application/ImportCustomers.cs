@@ -98,17 +98,19 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithErrorCode("customers.import.row.phone_too_long")
                 .WithMessage($"The phone cannot exceed {CustomerContactInfo.PhoneMaxLength} characters.");
 
-        // Obligatoria desde la libreta de direcciones (028afe2): la fila crea la direccion
-        // principal del cliente. Se rechaza como fila, con su codigo, y no dejando que reviente
-        // el dominio a mitad del archivo -- eso se llevaria puesto el resto del lote.
+        // La celda es el domicilio del cliente (Customer.Address, CustomerContactInfo.AddressMaxLength);
+        // cuando la fila crea un cliente, ademas siembra la primera fila de la libreta de
+        // direcciones con la misma calle y ciudad. Se rechaza como fila, con su codigo, y no
+        // dejando que reviente el dominio a mitad del archivo -- este metodo no tiene try/catch
+        // por fila, y eso se llevaria puesto el resto del lote.
         RuleFor(row => row.Address)
             .NotEmpty()
                 .WithErrorCode("customers.import.row.address_required")
                 .WithMessage("The address is required.")
-            .MaximumLength(CustomerAddress.AddressMaxLength)
+            .MaximumLength(CustomerContactInfo.AddressMaxLength)
                 .WithErrorCode("customers.import.row.address_too_long")
                 .WithMessage(
-                    $"The address cannot exceed {CustomerAddress.AddressMaxLength} characters.");
+                    $"The address cannot exceed {CustomerContactInfo.AddressMaxLength} characters.");
 
         // Requerido y formato en dos RuleFor, mismo motivo que IdentificationType mas arriba: el
         // When() del formato apagaria un NotEmpty() encadenado delante. Con la celda vacia se
