@@ -449,6 +449,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
         services.AddScoped<IQuotationPdfProvider, QuotationPdfProvider>();
 
+        // Decisión 9 del spec 2026-09-19: el PDF lee el logo del tenant por Tenancy (el
+        // LogoFileId vigente) y Storage (los bytes del original privado).
+        services.AddScoped<IQuotationLogoLookup, QuotationTenantLogoLookup>();
+
         // Decisión 4 del spec 2026-09-19: publica/despublica el logo del tenant sobre Storage sin
         // pasar por sus handlers ni sus permisos.
         services.AddScoped<ITenantLogoStorage, TenantLogoStorage>();
