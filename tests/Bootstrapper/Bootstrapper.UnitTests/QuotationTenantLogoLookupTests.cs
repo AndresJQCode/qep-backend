@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Quotations.Application;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
@@ -97,10 +98,43 @@ public sealed class QuotationTenantLogoLookupTests
         var storage = new UnusedObjectStorage();
 
         await new QuotationTenantLogoLookup(
-            new FakeTenantDirectory(file.Id.Value), new InMemoryFileResourceRepository(file), storage)
+            new FakeTenantDirectory(file.Id.Value), new InMemoryFileResourceRepository(file), storage,
+            NullLogger<QuotationTenantLogoLookup>.Instance)
             .FindAsync(TenantId, TestContext.Current.CancellationToken);
 
         Assert.Equal(0, storage.DownloadCalls);
+    }
+
+    // Un logo que no se puede bajar no bloquea ni el export ni el envío por WhatsApp: ReadAsync
+    // devuelve null y el PDF sale sin logo.
+    [Fact]
+    public async Task ReadAsyncReturnsNullWhenTheDownloadFails()
+    {
+        var storage = new UnusedObjectStorage { DownloadFailure = new InvalidOperationException("R2 down") };
+        var lookup = new QuotationTenantLogoLookup(
+            new FakeTenantDirectory(null), new InMemoryFileResourceRepository(), storage,
+            NullLogger<QuotationTenantLogoLookup>.Instance);
+
+        var content = await lookup.ReadAsync(
+            new QuotationLogoRef(Guid.CreateVersion7(), "files/tenants/x/logo", ".png"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Null(content);
+        Assert.Equal(1, storage.DownloadCalls);
+    }
+
+    // Una cancelación no es un logo ilegible: se propaga para que el request se corte.
+    [Fact]
+    public async Task ReadAsyncPropagatesCancellation()
+    {
+        var storage = new UnusedObjectStorage { DownloadFailure = new OperationCanceledException() };
+        var lookup = new QuotationTenantLogoLookup(
+            new FakeTenantDirectory(null), new InMemoryFileResourceRepository(), storage,
+            NullLogger<QuotationTenantLogoLookup>.Instance);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => lookup.ReadAsync(
+            new QuotationLogoRef(Guid.CreateVersion7(), "files/tenants/x/logo", ".png"),
+            TestContext.Current.CancellationToken));
     }
 
     private static FileResource AvailableLogo(string mimeType)
@@ -121,7 +155,8 @@ public sealed class QuotationTenantLogoLookupTests
         new(
             tenantDirectory,
             file is null ? new InMemoryFileResourceRepository() : new InMemoryFileResourceRepository(file),
-            new UnusedObjectStorage());
+            new UnusedObjectStorage(),
+            NullLogger<QuotationTenantLogoLookup>.Instance);
 
     /// <summary>El único dato que <see cref="QuotationTenantLogoLookup"/> necesita de Tenancy: el
     /// <c>LogoFileId</c> vigente del tenant, o null sin logo.</summary>
@@ -144,6 +179,9 @@ public sealed class QuotationTenantLogoLookupTests
     private sealed class UnusedObjectStorage : IObjectStorage
     {
         public int DownloadCalls { get; private set; }
+
+        /// <summary>Si no es null, <see cref="DownloadAsync"/> la lanza.</summary>
+        public Exception? DownloadFailure { get; init; }
 
         public Task<Uri> CreatePresignedUploadUrlAsync(
             string key, string contentType, CancellationToken cancellationToken) =>
@@ -170,7 +208,9 @@ public sealed class QuotationTenantLogoLookupTests
         public Task<byte[]> DownloadAsync(string key, CancellationToken cancellationToken)
         {
             DownloadCalls++;
-            return Task.FromResult<byte[]>([]);
+            return DownloadFailure is null
+                ? Task.FromResult<byte[]>([])
+                : Task.FromException<byte[]>(DownloadFailure);
         }
 
         public Task UploadAsync(

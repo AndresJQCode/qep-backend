@@ -484,11 +484,15 @@ internal sealed class StubQuotationLogoLookup : IQuotationLogoLookup
 {
     public QuotationLogoRef? Logo { get; set; }
 
+    /// <summary>Los bytes que devuelve <see cref="ReadAsync"/>; null simula un logo que el
+    /// adaptador no pudo leer.</summary>
+    public byte[]? Content { get; set; } = [0x89, 0x50, 0x4E, 0x47];
+
     public Task<QuotationLogoRef?> FindAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult(Logo);
 
-    public Task<byte[]> ReadAsync(QuotationLogoRef reference, CancellationToken cancellationToken) =>
-        Task.FromResult<byte[]>([0x89, 0x50, 0x4E, 0x47]);
+    public Task<byte[]?> ReadAsync(QuotationLogoRef reference, CancellationToken cancellationToken) =>
+        Task.FromResult(Content);
 }
 
 internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfStorage

@@ -105,6 +105,40 @@ public sealed class ExportQuotationPdfHandlerTests
         Assert.Equal(1, renderer.Calls);
     }
 
+    // Un logo que no se pudo leer no bloquea el PDF (ni el export ni el envío por WhatsApp): sale
+    // sin logo y se registra sin LogoFileId, así que el próximo export lo ve vencido y reintenta.
+    [Fact]
+    public async Task AnUnreadableLogoExportsWithoutItAndIsNotCached()
+    {
+        var (handler, renderer, _, repository, logoLookup, _) = NewHandler();
+        logoLookup.Logo = new QuotationLogoRef(Guid.CreateVersion7(), "files/tenants/x/logo", ".png");
+        logoLookup.Content = null;
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, renderer.Calls);
+        Assert.Null(renderer.Last!.Logo);
+        Assert.NotNull(repository.Pdf);
+        Assert.Null(repository.Pdf.LogoFileId);
+    }
+
+    [Fact]
+    public async Task AfterAnUnreadableLogoTheNextExportRegeneratesWithTheLogo()
+    {
+        var (handler, renderer, _, repository, logoLookup, _) = NewHandler();
+        var logo = new QuotationLogoRef(Guid.CreateVersion7(), "files/tenants/x/logo", ".png");
+        logoLookup.Logo = logo;
+        logoLookup.Content = null;
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        logoLookup.Content = [0x89, 0x50, 0x4E, 0x47];
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, renderer.Calls);
+        Assert.NotNull(renderer.Last!.Logo);
+        Assert.Equal(logo.FileId, repository.Pdf!.LogoFileId);
+    }
+
     private static ExportQuotationPdfCommand NewCommand(Guid? quotationId = null) =>
         new(TenantId, quotationId ?? CurrentQuotationId);
 

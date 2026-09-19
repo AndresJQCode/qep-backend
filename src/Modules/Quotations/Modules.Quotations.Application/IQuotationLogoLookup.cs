@@ -13,7 +13,10 @@ public interface IQuotationLogoLookup
     /// Storage): el PDF sale sin logo en vez de fallar.</summary>
     Task<QuotationLogoRef?> FindAsync(Guid tenantId, CancellationToken cancellationToken);
 
-    Task<byte[]> ReadAsync(QuotationLogoRef reference, CancellationToken cancellationToken);
+    /// <summary>Los bytes del logo, o `null` si no se pudieron leer: un logo ilegible no bloquea
+    /// ni el export ni el envío por WhatsApp, el PDF sale sin logo. Una cancelación sí se propaga.
+    /// </summary>
+    Task<byte[]?> ReadAsync(QuotationLogoRef reference, CancellationToken cancellationToken);
 }
 
 /// <summary><paramref name="Extension"/> sale del <c>MimeType</c>, con punto (`.png`, `.jpg`,
