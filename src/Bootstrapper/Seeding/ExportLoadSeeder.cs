@@ -167,32 +167,37 @@ public static class ExportLoadSeeder
         VALUES (@classification, @tenant, 'Carga de exportación', 'CLI', true, 1, @now, @now)
         """;
 
-    // El CUC es {prefijo}{departamento DIVIPOLA}{consecutivo de 6}, con el departamento de la ciudad de
-    // la dirección principal. greatest(6, …) porque lpad trunca lo que pasa del ancho.
+    // El CUC es {prefijo}{departamento DIVIPOLA}{consecutivo de 6}, con el departamento de la ciudad del
+    // cliente. greatest(6, …) porque lpad trunca lo que pasa del ancho. El domicilio (address, city_id)
+    // es obligatorio desde el spec 2026-09-18; la primera fila de la libreta (AddressesSql) repite el
+    // mismo par, como hace Customer.Create.
     private const string CustomersSql = """
         WITH city AS (
-            SELECT left(divipola_code, 2) AS department
+            SELECT id, left(divipola_code, 2) AS department
             FROM geography.cities
             ORDER BY divipola_code
             LIMIT 1
         )
         INSERT INTO customers.customers (
             id, tenant_id, cuc, name, business_name, identification_type, identification_number, is_active,
-            phone, email, classification_id, with_retention, vat_surplus, version, created_at, updated_at)
+            phone, email, address, city_id, classification_id, with_retention, vat_surplus, version,
+            created_at, updated_at)
         SELECT gen_random_uuid(), @tenant,
                'CLI' || city.department || lpad(n::text, greatest(6, length(n::text)), '0'),
                'Cliente de carga ' || n, NULL, 'Nit', (800000000 + n)::text, true,
-               NULL, NULL, @classification, false, false, 1, @now, @now
+               NULL, NULL, 'Calle ' || lpad(n::text, greatest(6, length(n::text)), '0') || ' # 10-20', city.id,
+               @classification, false, false, 1, @now, @now
         FROM generate_series(1, @customers) AS n
         CROSS JOIN city
         """;
 
-    // GET /customers y el detalle exigen una dirección principal (Customer.RequirePrincipalAddress).
+    // La primera fila de la libreta, con el mismo domicilio que el cliente (decisión 3 del spec
+    // 2026-09-18): la cotización preselecciona la principal para el envío.
     private const string AddressesSql = """
         INSERT INTO customers.customer_addresses (
             id, customer_id, name, address, phone, city_id, is_principal, created_at, updated_at)
-        SELECT gen_random_uuid(), customer.id, 'Principal', 'Calle ' || right(customer.cuc, 6) || ' # 10-20', NULL,
-               (SELECT id FROM geography.cities ORDER BY divipola_code LIMIT 1), true, @now, @now
+        SELECT gen_random_uuid(), customer.id, 'Principal', customer.address, NULL,
+               customer.city_id, true, @now, @now
         FROM customers.customers AS customer
         WHERE customer.tenant_id = @tenant
         """;
