@@ -27,6 +27,52 @@ public sealed class TenantLogoHandlerTests
         _unitOfWork = new RecordingTenancyUnitOfWork(_steps);
     }
 
+    // Un 412 no deja copias públicas huérfanas: la versión se compara antes de tocar Storage.
+    [Fact]
+    public async Task AStaleVersionIsRejectedWithoutPublishing()
+    {
+        var command = new SetTenantLogoCommand(
+            _tenant.Id, Guid.CreateVersion7(), _tenant.Version + 1, "corr-1");
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() =>
+            SetHandler().HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+        Assert.Empty(_storage.Calls);
+        Assert.Equal(0, _unitOfWork.Commits);
+    }
+
+    [Fact]
+    public async Task AssigningTheCurrentLogoAgainDoesNotTouchStorage()
+    {
+        var fileId = GiveTheTenantALogo();
+
+        var settings = await SetHandler().HandleAsync(
+            SetCommand(fileId), TestContext.Current.CancellationToken);
+
+        Assert.Empty(_storage.Calls);
+        Assert.Empty(_steps);
+        Assert.Equal(fileId, settings.Logo!.FileId);
+    }
+
+    // Decisión 7 del spec: el logo nuevo ya está commiteado, así que un retiro fallido del viejo
+    // no falla el request. TryUnpublishAsync nunca lanza (el adaptador lo prueba en
+    // TenantLogoStorageTests); acá se fija que el handler no dependa de su resultado.
+    [Fact]
+    public async Task AFailedCleanupOfTheOldLogoDoesNotFailTheRequest()
+    {
+        var oldFileId = GiveTheTenantALogo();
+        var newFileId = Guid.CreateVersion7();
+        _storage.TryUnpublishFails = true;
+
+        var settings = await SetHandler().HandleAsync(
+            SetCommand(newFileId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["publish:" + newFileId, "commit", "try-unpublish-failed:" + oldFileId], _steps);
+        Assert.Equal(newFileId, settings.Logo!.FileId);
+        Assert.Equal(1, _unitOfWork.Commits);
+    }
+
     // El agregado rechazó la asignación después de que Storage ya commiteó la publicación: el
     // retiro del archivo nuevo no puede depender del token del request, que puede estar cancelado.
     [Fact]
