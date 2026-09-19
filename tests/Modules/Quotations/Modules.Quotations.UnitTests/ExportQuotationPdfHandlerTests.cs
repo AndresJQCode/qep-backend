@@ -22,7 +22,7 @@ public sealed class ExportQuotationPdfHandlerTests
     [Fact]
     public async Task TheFirstExportGeneratesTheDocumentAndRecordsIt()
     {
-        var (handler, renderer, _, repository, quotation) = NewHandler();
+        var (handler, renderer, _, repository, _, quotation) = NewHandler();
 
         var result = await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
@@ -37,7 +37,7 @@ public sealed class ExportQuotationPdfHandlerTests
     [Fact]
     public async Task ExportingTwiceWithoutChangesDoesNotRegenerate()
     {
-        var (handler, renderer, storage, _, _) = NewHandler();
+        var (handler, renderer, storage, _, _, _) = NewHandler();
 
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
@@ -49,7 +49,7 @@ public sealed class ExportQuotationPdfHandlerTests
     [Fact]
     public async Task ExportingAfterAChangeRegenerates()
     {
-        var (handler, renderer, _, _, quotation) = NewHandler();
+        var (handler, renderer, _, _, _, quotation) = NewHandler();
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
         // Cualquier mutacion del agregado incrementa Version, que es justo lo que invalida.
@@ -72,11 +72,37 @@ public sealed class ExportQuotationPdfHandlerTests
     [Fact]
     public async Task TheDownloadIsNamedAfterTheQuotation()
     {
-        var (handler, _, storage, _, _) = NewHandler();
+        var (handler, _, storage, _, _, _) = NewHandler();
 
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Cotizacion-QUO-2026-0001.pdf", storage.RequestedFileName);
+    }
+
+    // El logo del tenant invalida la caché igual que un cambio de la cotización (spec 2026-09-19,
+    // decisión 10): el segundo export ve otro FileId en el lookup y vuelve a generar.
+    [Fact]
+    public async Task ChangingTheTenantLogoRegenerates()
+    {
+        var (handler, renderer, _, _, logoLookup, _) = NewHandler();
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        logoLookup.Logo = new QuotationLogoRef(Guid.CreateVersion7(), "files/tenants/x/logo", ".png");
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, renderer.Calls);
+    }
+
+    [Fact]
+    public async Task ExportingTwiceWithTheSameLogoDoesNotRegenerate()
+    {
+        var (handler, renderer, _, _, logoLookup, _) = NewHandler();
+        logoLookup.Logo = new QuotationLogoRef(Guid.CreateVersion7(), "files/tenants/x/logo", ".png");
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, renderer.Calls);
     }
 
     private static ExportQuotationPdfCommand NewCommand(Guid? quotationId = null) =>
@@ -89,6 +115,7 @@ public sealed class ExportQuotationPdfHandlerTests
         CountingPdfRenderer Renderer,
         RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
+        StubQuotationLogoLookup LogoLookup,
         Quotation Quotation) NewHandler()
     {
         var quotation = Quotation.Create(
@@ -111,6 +138,7 @@ public sealed class ExportQuotationPdfHandlerTests
         var repository = new StubQuotationRepository(quotation);
         var renderer = new CountingPdfRenderer();
         var storage = new RecordingPdfStorage(DownloadUrl);
+        var logoLookup = new StubQuotationLogoLookup();
 
         var handler = new ExportQuotationPdfHandler(
             repository,
@@ -120,10 +148,11 @@ public sealed class ExportQuotationPdfHandlerTests
                 new StubQuotationResponseComposer(),
                 renderer,
                 storage,
-                new FixedTenantClock(Now)),
+                new FixedTenantClock(Now),
+                logoLookup),
             storage,
             new StubExecutionContext(SubjectId, TenantId));
 
-        return (handler, renderer, storage, repository, quotation);
+        return (handler, renderer, storage, repository, logoLookup, quotation);
     }
 }

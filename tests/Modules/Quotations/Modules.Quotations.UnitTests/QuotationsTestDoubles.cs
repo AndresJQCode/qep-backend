@@ -477,6 +477,20 @@ internal sealed class CountingPdfRenderer : IQuotationPdfRenderer
     }
 }
 
+/// <summary>El logo que el export ve, mutable entre dos llamados de la misma prueba — así se
+/// puede simular que el tenant cambió de logo entre dos exportaciones (spec 2026-09-19, decisión
+/// 10).</summary>
+internal sealed class StubQuotationLogoLookup : IQuotationLogoLookup
+{
+    public QuotationLogoRef? Logo { get; set; }
+
+    public Task<QuotationLogoRef?> FindAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Logo);
+
+    public Task<byte[]> ReadAsync(QuotationLogoRef reference, CancellationToken cancellationToken) =>
+        Task.FromResult<byte[]>([0x89, 0x50, 0x4E, 0x47]);
+}
+
 internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfStorage
 {
     public int Saves { get; private set; }
