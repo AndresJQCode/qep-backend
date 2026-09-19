@@ -43,11 +43,13 @@ internal sealed partial class QuotationTenantLogoLookup(
 
         var resource = await repository.GetAsync(new FileResourceId(fileId.Value), cancellationToken);
         if (resource is null ||
+            resource.TenantId != tenantId ||
             resource.Status is not FileResourceStatus.Available ||
             !ExtensionsByMimeType.TryGetValue(resource.MimeType, out var extension))
         {
-            // Sin archivo Available (alguien lo borró por Storage) o con un tipo que
-            // TenantLogoStorage no debería haber dejado asignar: el PDF sale sin logo, no falla.
+            // Sin archivo Available (alguien lo borró por Storage), de otro tenant (se revalida en
+            // la frontera aunque Tenancy apunte a él) o con un tipo que TenantLogoStorage no
+            // debería haber dejado asignar: el PDF sale sin logo, no falla.
             return null;
         }
 

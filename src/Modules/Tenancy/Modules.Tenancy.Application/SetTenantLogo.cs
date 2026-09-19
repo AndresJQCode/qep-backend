@@ -42,7 +42,9 @@ public sealed class SetTenantLogoHandler(
             ?? throw new ResourceNotFoundException(
                 "tenancy.tenant.not_found", "Tenant settings were not found.");
 
-        // Estas tres fallas ocurren antes de tocar Storage: un 412 no deja copias públicas huérfanas.
+        // Todo lo que corre antes de PublishAsync (la validación, el permiso y el tenant de arriba;
+        // la versión vencida y el no-op del mismo archivo de abajo) ocurre antes de tocar Storage:
+        // un 412 no deja copias públicas huérfanas.
         if (tenant.Version != command.ExpectedVersion)
         {
             throw new RequestConcurrencyException(

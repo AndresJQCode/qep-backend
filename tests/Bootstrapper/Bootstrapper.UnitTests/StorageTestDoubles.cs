@@ -44,6 +44,9 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
 
     public List<string> DeletedKeys { get; } = [];
 
+    /// <summary>Si no es null, <see cref="DeleteAsync"/> la lanza sin anotar el borrado.</summary>
+    public Exception? DeleteFailure { get; set; }
+
     public bool IsConfigured => true;
 
     public Task CopyFromPrivateAsync(
@@ -55,6 +58,11 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
 
     public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
     {
+        if (DeleteFailure is not null)
+        {
+            return Task.FromException(DeleteFailure);
+        }
+
         DeletedKeys.Add(publicKey);
         return Task.CompletedTask;
     }

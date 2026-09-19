@@ -16,6 +16,9 @@ public sealed class TenantLogoStorageTests
     private static readonly Guid TenantId = Guid.CreateVersion7();
     private static readonly DateTimeOffset Now = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
 
+    private readonly RecordingStorageAuditPublisher _auditPublisher = new();
+    private readonly CountingStorageUnitOfWork _storageUnitOfWork = new();
+
     [Fact]
     public async Task PublishRejectsAFileFromAnotherTenant()
     {
@@ -106,6 +109,9 @@ public sealed class TenantLogoStorageTests
             $"tenants/{TenantId:N}/media/{file.Id.Value:N}/", publication.PublicKey, StringComparison.Ordinal);
         Assert.Equal(file.StorageKey, publicStorage.Copies[publication.PublicKey]);
         Assert.Equal(publication.PublicKey, file.PublicStorageKey);
+        // La publicación se audita y se commitea en Storage, antes del commit de Tenancy.
+        Assert.Equal(["storage.file.published"], _auditPublisher.Actions);
+        Assert.Equal(1, _storageUnitOfWork.Saves);
     }
 
     [Fact]
@@ -120,6 +126,79 @@ public sealed class TenantLogoStorageTests
 
         Assert.NotEmpty(publicStorage.DeletedKeys);
         Assert.Equal(FileResourceStatus.Deleted, file.Status);
+        Assert.Equal(["storage.file.published", "storage.file.deleted"], _auditPublisher.Actions);
+        Assert.Equal(2, _storageUnitOfWork.Saves);
+    }
+
+    // Revalidar el tenant en la frontera: un id de otro tenant no se toca, ni se confirma que
+    // existe (vuelve sin error, igual que un archivo que no existe).
+    [Fact]
+    public async Task UnpublishLeavesAnotherTenantsFileUntouched()
+    {
+        var otherTenantId = Guid.CreateVersion7();
+        var file = AvailableLogo(otherTenantId, "image/png");
+        var publicStorage = new RecordingPublicObjectStorage();
+        await new FilePublication(publicStorage, new FixedClock(Now))
+            .PublishAsync(file, TestContext.Current.CancellationToken);
+
+        await NewStorage(file, publicStorage)
+            .UnpublishAsync(TenantId, file.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.Empty(publicStorage.DeletedKeys);
+        Assert.Equal(FileResourceStatus.Available, file.Status);
+        Assert.Equal(0, _storageUnitOfWork.Saves);
+    }
+
+    // Un archivo del tenant que no es su logo (otro dueño, p. ej. un producto) no se retira por
+    // este camino, que sólo autoriza tenancy.settings.update.
+    [Fact]
+    public async Task UnpublishLeavesAFileOfAnotherOwnerTypeUntouched()
+    {
+        var file = AvailableFile(TenantId, Guid.CreateVersion7(), FileOwnerType.Product);
+        var publicStorage = new RecordingPublicObjectStorage();
+        await new FilePublication(publicStorage, new FixedClock(Now))
+            .PublishAsync(file, TestContext.Current.CancellationToken);
+
+        await NewStorage(file, publicStorage)
+            .UnpublishAsync(TenantId, file.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.Empty(publicStorage.DeletedKeys);
+        Assert.Equal(FileResourceStatus.Available, file.Status);
+        Assert.Equal(0, _storageUnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task UnpublishLeavesATenantFileOfAnotherOwnerUntouched()
+    {
+        var file = AvailableFile(TenantId, Guid.CreateVersion7(), FileOwnerType.Tenant);
+        var publicStorage = new RecordingPublicObjectStorage();
+        await new FilePublication(publicStorage, new FixedClock(Now))
+            .PublishAsync(file, TestContext.Current.CancellationToken);
+
+        await NewStorage(file, publicStorage)
+            .UnpublishAsync(TenantId, file.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.Empty(publicStorage.DeletedKeys);
+        Assert.Equal(FileResourceStatus.Available, file.Status);
+        Assert.Equal(0, _storageUnitOfWork.Saves);
+    }
+
+    // El paso 8 de SetTenantLogoHandler depende de esto: retirar el logo viejo es mejor
+    // esfuerzo, y una falla del bucket público no puede fallar el request que ya commiteó.
+    [Fact]
+    public async Task TryUnpublishSwallowsAStorageFailure()
+    {
+        var file = AvailableLogo(TenantId, "image/png");
+        var publicStorage = new RecordingPublicObjectStorage();
+        var storage = NewStorage(file, publicStorage);
+        await storage.PublishAsync(TenantId, file.Id.Value, TestContext.Current.CancellationToken);
+        publicStorage.DeleteFailure = new InvalidOperationException("R2 down");
+
+        await storage.TryUnpublishAsync(TenantId, file.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.Equal(FileResourceStatus.Available, file.Status);
+        Assert.Equal(["storage.file.published"], _auditPublisher.Actions);
+        Assert.Equal(1, _storageUnitOfWork.Saves);
     }
 
     [Fact]
@@ -145,26 +224,35 @@ public sealed class TenantLogoStorageTests
     }
 
     private static FileResource AvailableLogo(
-        Guid tenantId, string mimeType, string name = "logo.png", long sizeBytes = 2048)
+        Guid tenantId, string mimeType, string name = "logo.png", long sizeBytes = 2048) =>
+        AvailableFile(tenantId, tenantId, FileOwnerType.Tenant, mimeType, name, sizeBytes);
+
+    private static FileResource AvailableFile(
+        Guid tenantId,
+        Guid ownerId,
+        FileOwnerType ownerType,
+        string mimeType = "image/png",
+        string name = "logo.png",
+        long sizeBytes = 2048)
     {
         var file = FileResource.CreatePendingUpload(
-            FileResourceId.New(), tenantId, tenantId, FileOwnerType.Tenant,
+            FileResourceId.New(), tenantId, ownerId, ownerType,
             name, mimeType, sizeBytes, $"staging/tenants/{tenantId:N}/logo", Now);
         file.CompleteUpload("checksum", sizeBytes, Now);
         file.MarkClean(Now);
         return file;
     }
 
-    private static TenantLogoStorage NewStorage(FileResource file, IPublicObjectStorage publicStorage) =>
+    private TenantLogoStorage NewStorage(FileResource file, IPublicObjectStorage publicStorage) =>
         NewStorage([file], publicStorage);
 
-    private static TenantLogoStorage NewStorage(FileResource[] resources, IPublicObjectStorage publicStorage) =>
+    private TenantLogoStorage NewStorage(FileResource[] resources, IPublicObjectStorage publicStorage) =>
         new(
             new InMemoryFileResourceRepository(resources),
             new FilePublication(publicStorage, new FixedClock(Now)),
             publicStorage,
-            new RecordingStorageAuditPublisher(),
-            new CountingStorageUnitOfWork(),
+            _auditPublisher,
+            _storageUnitOfWork,
             new AllowAllExecutionContext(TenantId),
             new FixedClock(Now),
             NullLoggerFactory.Instance.CreateLogger<TenantLogoStorage>());

@@ -21,7 +21,7 @@ public interface ITenantLogoStorage
 
     /// <summary>
     /// Despublica y borra lógicamente el archivo. Idempotente: un archivo que ya no existe, es de
-    /// otro tenant, o ya está borrado, vuelve sin error — el commit de Tenancy que dispara esta
+    /// otro tenant, no es el logo de este tenant (otro dueño), o ya está borrado, vuelve sin error — el commit de Tenancy que dispara esta
     /// llamada puede fallar después de que el archivo nuevo ya se publicó (decisión 8 del spec).
     /// </summary>
     Task UnpublishAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);

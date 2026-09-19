@@ -42,6 +42,33 @@ public sealed class QuotationTenantLogoLookupTests
         Assert.Null(found);
     }
 
+    // Tenancy apunta a un archivo que Storage ya no tiene: el PDF sale sin logo.
+    [Fact]
+    public async Task AFileMissingFromTheRepositoryReturnsNull()
+    {
+        var found = await LookupWith(new FakeTenantDirectory(Guid.CreateVersion7()))
+            .FindAsync(TenantId, TestContext.Current.CancellationToken);
+
+        Assert.Null(found);
+    }
+
+    // Revalidar el tenant en la frontera: aunque Tenancy apunte a él, un archivo de otro tenant
+    // nunca se imprime en este PDF.
+    [Fact]
+    public async Task AnotherTenantsFileReturnsNull()
+    {
+        var otherTenantId = Guid.CreateVersion7();
+        var file = FileResource.CreatePendingUpload(
+            FileResourceId.New(), otherTenantId, otherTenantId, FileOwnerType.Tenant, "logo",
+            "image/png", 1024, $"files/tenants/{otherTenantId:N}/logo", Now);
+        file.CompleteUpload("checksum", 1024, Now);
+        file.MarkClean(Now);
+
+        var found = await LookupWith(file).FindAsync(TenantId, TestContext.Current.CancellationToken);
+
+        Assert.Null(found);
+    }
+
     // Un tipo que TenantLogoStorage no debería haber dejado asignar (spec 2026-09-19): el PDF
     // sale sin logo en vez de fallar por un mapeo de extensión que no existe.
     [Fact]

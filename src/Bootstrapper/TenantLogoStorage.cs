@@ -16,7 +16,7 @@ namespace Bootstrapper;
 /// de dominio de <b>otro</b> módulo (<see cref="TenantDomainException"/>), porque acá es donde
 /// vive la regla de negocio "qué archivo puede ser el logo de un tenant".
 /// </summary>
-internal sealed class TenantLogoStorage(
+internal sealed partial class TenantLogoStorage(
     IFileResourceRepository repository,
     FilePublication filePublication,
     IPublicObjectStorage publicStorage,
@@ -33,11 +33,9 @@ internal sealed class TenantLogoStorage(
     private static readonly HashSet<string> AllowedMimeTypes =
         new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/webp" };
 
-    private static readonly Action<ILogger, Guid, Guid, Exception> LogUnpublishFailed =
-        LoggerMessage.Define<Guid, Guid>(
-            LogLevel.Warning,
-            new EventId(6000, nameof(LogUnpublishFailed)),
-            "No se pudo retirar el logo anterior (tenant {TenantId}, archivo {FileId}); queda publicado hasta que alguien lo borre.");
+    [LoggerMessage(EventId = 6000, Level = LogLevel.Warning,
+        Message = "No se pudo retirar el logo anterior (tenant {TenantId}, archivo {FileId}); queda publicado hasta que alguien lo borre.")]
+    private static partial void LogUnpublishFailed(ILogger logger, Guid tenantId, Guid fileId, Exception exception);
 
     public async Task<TenantLogoPublication> PublishAsync(
         Guid tenantId, Guid fileId, CancellationToken cancellationToken)
@@ -77,10 +75,13 @@ internal sealed class TenantLogoStorage(
     {
         var resource = await repository.GetAsync(new FileResourceId(fileId), cancellationToken);
         if (resource is null || resource.TenantId != tenantId ||
+            resource.OwnerType is not FileOwnerType.Tenant || resource.OwnerId != tenantId ||
             resource.Status is FileResourceStatus.Deleted or FileResourceStatus.Purged)
         {
             // Idempotente (decisión 8 del spec): el commit de Tenancy que dispara esto puede
-            // fallar después de que el archivo ya se retiró en un intento anterior.
+            // fallar después de que el archivo ya se retiró en un intento anterior. Y sólo retira
+            // el logo del propio tenant: el mismo criterio de dueño que PublishAsync, porque este
+            // camino lo autoriza tenancy.settings.update y no storage.file.delete.
             return;
         }
 
