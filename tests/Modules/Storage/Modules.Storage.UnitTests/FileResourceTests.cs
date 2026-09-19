@@ -22,6 +22,16 @@ public sealed class FileResourceTests
             "product.jpg", "image/jpeg", 1024, "staging/product", DateTimeOffset.UtcNow);
 
     [Fact]
+    public void CreatePendingUploadAcceptsTenantAsOwnerType()
+    {
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.Tenant,
+            "logo.png", "image/png", 1024, "staging/tenant-logo", DateTimeOffset.UtcNow);
+
+        Assert.Equal(FileOwnerType.Tenant, resource.OwnerType);
+    }
+
+    [Fact]
     public void CompleteThenCleanReachesAvailable()
     {
         var resource = NewPending();

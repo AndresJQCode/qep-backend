@@ -59,6 +59,12 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<UpdateTenantSettingsCommand, TenantSettingsDto>,
             UpdateTenantSettingsHandler>();
         services.AddScoped<
+            ICommandHandler<SetTenantLogoCommand, TenantSettingsDto>,
+            SetTenantLogoHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveTenantLogoCommand, TenantSettingsDto>,
+            RemoveTenantLogoHandler>();
+        services.AddScoped<
             ICommandHandler<InviteMemberCommand, MembershipDto>,
             InviteMemberHandler>();
         services.AddScoped<
@@ -442,6 +448,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IExportFileStorage, ExportFileStorage>();
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
         services.AddScoped<IQuotationPdfProvider, QuotationPdfProvider>();
+
+        // Decisión 9 del spec 2026-09-19: el PDF lee el logo del tenant por Tenancy (el
+        // LogoFileId vigente) y Storage (los bytes del original privado).
+        services.AddScoped<IQuotationLogoLookup, QuotationTenantLogoLookup>();
+
+        // Decisión 4 del spec 2026-09-19: publica/despublica el logo del tenant sobre Storage sin
+        // pasar por sus handlers ni sus permisos.
+        services.AddScoped<ITenantLogoStorage, TenantLogoStorage>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los

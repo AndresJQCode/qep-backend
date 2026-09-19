@@ -43,7 +43,8 @@ public sealed class QCodePdfRendererTests
         Total: 150000m,
         RetentionAmount: 0m,
         NetTotal: 150000m,
-        CustomerVatSurplus: false);
+        CustomerVatSurplus: false,
+        Logo: null);
 
     [Fact]
     public async Task RenderReturnsThePdfBytesTheServiceProduces()
@@ -113,6 +114,58 @@ public sealed class QCodePdfRendererTests
         var billing = capture.Body().GetProperty("data").GetProperty("billing");
         Assert.Equal("222222222222", billing.GetProperty("taxId").GetString());
         Assert.Equal(string.Empty, billing.GetProperty("contact").GetString());
+    }
+
+    // El logo viaja como asset con el mismo nombre que data.logo.fileName (contrato de
+    // qcode-pdf: README.md:32, Services/TypstService.cs:106-129).
+    [Fact]
+    public async Task RenderSendsTheLogoAsAnAssetAndNamesItInData()
+    {
+        var (renderer, capture) = NewRenderer();
+        var logoBytes = new byte[] { 0x89, 0x50, 0x4E, 0x47 };
+        var document = Document with { Logo = new QuotationPdfLogo("logo.png", logoBytes) };
+
+        await renderer.RenderAsync(document, TestContext.Current.CancellationToken);
+
+        var body = capture.Body();
+        Assert.Equal(
+            Convert.ToBase64String(logoBytes),
+            body.GetProperty("assets").GetProperty("logo.png").GetString());
+        Assert.Equal(
+            "logo.png",
+            body.GetProperty("data").GetProperty("logo").GetProperty("fileName").GetString());
+    }
+
+    // Un tenant sin logo no cambia la forma del request de hoy: sin la propiedad assets, y
+    // data.logo en null.
+    [Fact]
+    public async Task RenderOmitsAssetsWithoutLogo()
+    {
+        var (renderer, capture) = NewRenderer();
+
+        await renderer.RenderAsync(Document, TestContext.Current.CancellationToken);
+
+        var body = capture.Body();
+        Assert.False(body.TryGetProperty("assets", out _));
+        Assert.Equal(
+            JsonValueKind.Null, body.GetProperty("data").GetProperty("logo").ValueKind);
+    }
+
+    // [JsonIgnore] en QuotationPdfLogo.Content: los bytes viajan sólo en assets, nunca
+    // duplicados en base64 dentro de data.
+    [Fact]
+    public async Task RenderDoesNotPutTheLogoBytesInData()
+    {
+        var (renderer, capture) = NewRenderer();
+        var document = Document with
+        {
+            Logo = new QuotationPdfLogo("logo.png", [0x89, 0x50, 0x4E, 0x47]),
+        };
+
+        await renderer.RenderAsync(document, TestContext.Current.CancellationToken);
+
+        var logo = capture.Body().GetProperty("data").GetProperty("logo");
+        Assert.False(logo.TryGetProperty("content", out _));
     }
 
     private static (IQuotationPdfRenderer Renderer, RequestCapture Capture) NewRenderer(

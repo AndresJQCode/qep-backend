@@ -32,12 +32,24 @@ internal sealed class QCodePdfRenderer(
     public async Task<byte[]> RenderAsync(
         QuotationPdfDocument document, CancellationToken cancellationToken)
     {
-        var payload = new
+        // Dictionary y no un anónimo: el request necesita una propiedad `assets` condicional, y
+        // dos formas anónimas distintas no comparten tipo estático. El contrato con qcode-pdf
+        // (README.md:32, Services/TypstService.cs:106-129, verificado el 2026-09-19) es
+        // { source, data, filename, assets: { "<nombre>": "<base64>" } }, con `assets` ausente
+        // cuando no hay nada que adjuntar — el request de un tenant sin logo no cambia de forma.
+        var payload = new Dictionary<string, object?>
         {
-            source = Template,
-            data = JsonSerializer.SerializeToElement(document, DataFormat),
-            filename = $"Cotizacion-{document.QuotationNumber}.pdf",
+            ["source"] = Template,
+            ["data"] = JsonSerializer.SerializeToElement(document, DataFormat),
+            ["filename"] = $"Cotizacion-{document.QuotationNumber}.pdf",
         };
+        if (document.Logo is { } logo)
+        {
+            payload["assets"] = new Dictionary<string, string>
+            {
+                [logo.FileName] = Convert.ToBase64String(logo.Content),
+            };
+        }
 
         using var request = new HttpRequestMessage(
             HttpMethod.Post, $"{settings.BaseUrl.TrimEnd('/')}/pdf")

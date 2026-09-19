@@ -760,7 +760,7 @@ internal static class QuotationsApiHarness
 
     private sealed record TaxRateResponseDto(Guid Id);
 
-    private sealed record UploadSessionResponseDto(Guid FileResourceId, string UploadUrl, string StorageKey);
+    internal sealed record UploadSessionResponseDto(Guid FileResourceId, string UploadUrl, string StorageKey);
 
     public sealed class QepApiFactory(
         string connectionString,
