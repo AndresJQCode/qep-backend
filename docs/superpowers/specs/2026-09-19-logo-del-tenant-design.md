@@ -239,8 +239,10 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
   `README.md:1224-1242`.
 - `quotation.typ`: en la celda izquierda del encabezado (`quotation.typ:155-186`, celda `:159-166`) va
   primero `#if data.logo != none { image("assets/" + data.logo.fileName, height: 16mm, fit: "contain") }` y un
-  `#v(6pt)`, después el emisor o "Cotización" como hoy. Ancho máximo 60mm para que un logo apaisado no
-  empuje la ficha de la derecha. Sin logo el documento es **idéntico** al de hoy. Una sola tinta, sin
+  `#v(6pt)`, después el emisor o "Cotización" como hoy. No hay tope de ancho explícito: la columna
+  `1fr` de la grilla (~87mm con la ficha actual) acota el logo, y uno apaisado 8:1 se achica solo sin
+  tocar la ficha de la derecha (verificado con un render local el 2026-09-19, typst 0.15.1). Sin logo
+  el documento es **idéntico** al de hoy. Una sola tinta, sin
   color de marca: los comentarios de `:11-13` y `:148-149` se corrigen para decir que el logo sí
   viaja y el color no.
 - `QuotationPdf` (`QuotationPdf.cs:13-68`): propiedad `Guid? LogoFileId`; `Generate` y `Regenerate`
@@ -267,7 +269,8 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
   (`:643`, `:654`). No hay ítem de trabajo en roles. Los roles viven en código: sin migración.
 - **Stub de desarrollo.** Concede sólo permisos de Tenancy por defecto (gotcha del `CLAUDE.md`): la prueba
   de integración pide `X-Permissions: storage.file.upload,tenancy.settings.read,tenancy.settings.update`
-  como `StorageFlowTests.cs:20-21`, `:206`. `TenantSettingsApiTests` no lo manda (`:190-199`) y no lo
+  como `TenantLogoApiTests.cs:563` (`CreateClient`, vía `StoragePermissions`). `TenantSettingsApiTests`
+  no lo manda (`:190-199`) y no lo
   necesita para el `PATCH`.
 - **`PUT` con un archivo `Tenant` que ya está publicado** (un `PUT` anterior que falló en el commit de
   Tenancy): `FilePublication.PublishAsync` reusa `PublicStorageKey` (`SetFilePublication.cs:37-38`) y
