@@ -65,15 +65,13 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         RuleFor(command => command.Phone)
             .NotEmpty()
             .MaximumLength(CustomerContactInfo.PhoneMaxLength);
-        // Obligatoria desde la libreta de direcciones (028afe2): el alta y el PUT construyen con
-        // ella la direccion principal del cliente, y una direccion sin calle no es una direccion.
-        // La regla vive aca y no solo en el dominio para que el rechazo llegue como
-        // validation.failed con el mapa errors -- el unico 422 que el formulario sabe leer para
-        // marcar el input. Mide contra CustomerAddress y no contra CustomerContactInfo, que es
-        // donde el campo vivia antes de la libreta.
+        // Obligatoria: es el domicilio del cliente (CustomerContactInfo.Address) y en el alta
+        // ademas siembra la primera fila de la libreta. La regla vive aca y no solo en el dominio
+        // para que el rechazo llegue como validation.failed con el mapa errors -- el unico 422 que
+        // el formulario sabe leer para marcar el input.
         RuleFor(command => command.Address)
             .NotEmpty()
-            .MaximumLength(CustomerAddress.AddressMaxLength);
+            .MaximumLength(CustomerContactInfo.AddressMaxLength);
 
         // El tipo de documento es obligatorio y cerrado. Se comprueba contra la misma tabla que el
         // dominio (IdentificationTypeParser) y no contra una lista repetida aca: dos listas de

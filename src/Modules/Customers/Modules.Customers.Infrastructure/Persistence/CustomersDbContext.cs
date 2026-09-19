@@ -69,6 +69,16 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.Email)
             .HasColumnName("email")
             .HasMaxLength(CustomerContactInfo.EmailMaxLength);
+        // El domicilio del cliente (spec 2026-09-18): vuelve a customers despues de CLI-DIR-01,
+        // separado de la libreta. Misma FK blanda que customer_addresses.city_id: sin navegacion EF
+        // hacia City, que vive en GeographyDbContext; la FK real (FK_customers_cities_city_id, ON
+        // DELETE RESTRICT) la agrega a mano la migracion AddCustomerContactAddress, con el mismo
+        // motivo que se explica en ConfigureCustomerAddress.
+        customer.Property(value => value.Address)
+            .HasColumnName("address")
+            .HasMaxLength(CustomerContactInfo.AddressMaxLength);
+        customer.Property(value => value.CityId).HasColumnName("city_id");
+        customer.HasIndex(value => value.CityId).HasDatabaseName("IX_customers_city");
         // La clasificacion, FK compuesta (tenant_id, classification_id) a
         // customers.client_classifications(tenant_id, id) — compuesta y no simple sobre id, para
         // que un cliente no pueda referenciar la clasificacion de otro tenant. A diferencia de la

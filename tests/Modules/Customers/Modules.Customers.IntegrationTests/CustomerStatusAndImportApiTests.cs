@@ -497,9 +497,10 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Empty(result.Errors);
     }
 
-    // La celda Direccion dejo de ser opcional cuando nacio la libreta (028afe2): la fila crea la
-    // direccion principal del cliente. Se rechaza como fila, con su codigo, y no como una
-    // excepcion del dominio a mitad del archivo -- que se llevaria puesto el resto del lote.
+    // La celda Direccion es obligatoria: es el domicilio del cliente y, al crear, siembra ademas
+    // la primera fila de la libreta (spec 2026-09-18). En modo actualizacion cambia solo el
+    // domicilio. Se rechaza como fila, con su codigo, y no como una excepcion del dominio a mitad
+    // del archivo -- que se llevaria puesto el resto del lote.
     [Fact]
     public async Task ImportRowWithoutAnAddressIsRejectedWithItsOwnCode()
     {

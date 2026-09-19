@@ -185,6 +185,65 @@ internal static class QuotationsApiHarness
             "No seeded DIVIPOLA department has at least one city.");
     }
 
+    public sealed record CityInDepartment(Guid CityId, Guid DepartmentId);
+
+    /// <summary>Dos ciudades de departamentos distintos, en el orden en que la API devuelve los
+    /// departamentos: la primera es la misma que <see cref="EnsureCityIdAsync"/>, asi que un
+    /// cliente creado con <see cref="CreateActiveCustomerAsync"/> vive en <c>First</c>.</summary>
+    public static async Task<(CityInDepartment First, CityInDepartment Second)> EnsureCityIdsInTwoDepartmentsAsync(
+        HttpClient client)
+    {
+        var departments = await client.GetFromJsonAsync<List<GeographyDepartmentDto>>(
+            "/api/v1/departments", TestContext.Current.CancellationToken);
+        Assert.NotNull(departments);
+
+        var found = new List<CityInDepartment>();
+        foreach (var department in departments)
+        {
+            if (found.Count == 2)
+            {
+                break;
+            }
+
+            var cities = await client.GetFromJsonAsync<List<GeographyCityDto>>(
+                $"/api/v1/cities?departmentId={department.Id}",
+                TestContext.Current.CancellationToken);
+            if (cities is { Count: > 0 })
+            {
+                found.Add(new CityInDepartment(cities[0].Id, department.Id));
+            }
+        }
+
+        if (found.Count < 2)
+        {
+            throw new InvalidOperationException(
+                "Fewer than two seeded DIVIPOLA departments have at least one city.");
+        }
+
+        return (found[0], found[1]);
+    }
+
+    /// <summary>Agrega una direccion de envio a la libreta del cliente y la marca principal
+    /// (<c>POST /customers/{id}/addresses</c>). Devuelve el id de la fila nueva. Es la operacion
+    /// que antes del spec 2026-09-18 movia el domicilio del cliente.</summary>
+    public static async Task<Guid> AddPrincipalAddressAsync(
+        HttpClient client,
+        Guid tenantId,
+        Guid customerId,
+        Guid cityId,
+        string address = "Carrera 7 # 71-21")
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers/{customerId}/addresses",
+            new { name = "Oficina", address, cityId, isPrincipal = true },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var customer = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        return Assert.Single(customer.Addresses, item => item.IsPrincipal).Id;
+    }
+
     // name/prefix quedan en null por defecto y se generan unicos por llamada: nombre y prefijo
     // de clasificacion son unicos por tenant, y varias pruebas (p. ej. filtros del listado)
     // necesitan mas de un cliente -- y por lo tanto mas de una clasificacion -- en el mismo

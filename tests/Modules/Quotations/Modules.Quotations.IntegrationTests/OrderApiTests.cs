@@ -337,9 +337,97 @@ public sealed class OrderApiTests
         Assert.Contains("order.order.number_taken", body2, StringComparison.Ordinal);
     }
 
+    // Regla de negocio: los números de pedido no tienen huecos. Una conversión que el dominio
+    // rechaza no puede gastar un número: la precondición se revisa antes de pedirlo.
+    [Fact]
+    public async Task AConversionRejectedByTheDomainDoesNotConsumeAnOrderNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        (await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var rejected = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+
+        var next = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        Assert.Equal("PED-2026-0002", next);
+    }
+
+    // La falla llega al guardar, con el número ya tomado: el índice de Order.QuotationId choca con
+    // un pedido legado. El incremento del contador tiene que deshacerse con el pedido que no se
+    // guardó, o el siguiente pedido deja un hueco.
+    [Fact]
+    public async Task AConversionThatFailsWhenSavingDoesNotConsumeAnOrderNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await InsertLegacyOrderAsync(database.GetConnectionString(), tenantId, quotation.Id);
+
+        var rejected = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+
+        var next = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        Assert.Equal("PED-2026-0001", next);
+    }
+
+    // Varios asesores convierten la misma cotización a la vez: gana uno y los demás salen 409
+    // (token de concurrencia) o 422 (estado o IX_orders_quotation). Ninguno de los perdedores
+    // puede dejar un número gastado, así que el pedido siguiente es el consecutivo del ganador.
+    [Fact]
+    public async Task ConcurrentConversionsOfTheSameQuotationLeaveNoGapInOrderNumbers()
+    {
+        const int Attempts = 5;
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: NewYearsEveInBogota);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, Attempts).Select(_ =>
+            client.PostAsJsonAsync(
+                OrderUrl(tenantId, quotation.Id),
+                new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+                TestContext.Current.CancellationToken)));
+
+        var created = Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Created);
+        Assert.All(
+            responses.Where(response => response != created),
+            response => Assert.Contains(
+                response.StatusCode,
+                new[] { HttpStatusCode.Conflict, HttpStatusCode.UnprocessableEntity }));
+        var winner = await created.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(winner);
+        Assert.Equal("PED-2026-0001", winner.OrderNumber);
+
+        var next = await ConvertOneAsync(client, factory, tenantId, clientId, productId);
+        Assert.Equal("PED-2026-0002", next);
+    }
+
     /// <summary>Un pedido "legado" para una cotización que siguió en Sent. Número fuera de la
     /// secuencia a propósito: lo único que tiene que chocar es el índice de la cotización.</summary>
-    private static async Task InsertLegacyOrderAsync(string connectionString, Guid tenantId, Guid quotationId)
+    internal static async Task InsertLegacyOrderAsync(string connectionString, Guid tenantId, Guid quotationId)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);

@@ -227,6 +227,18 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
 internal sealed class NoOpQuotationsUnitOfWork : IQuotationsUnitOfWork
 {
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => Task.FromResult(0);
+
+    public Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IQuotationsTransaction>(new NoOpQuotationsTransaction());
+}
+
+/// <summary>Sin base no hay nada que confirmar ni deshacer: las pruebas unitarias que la piden
+/// afirman sobre los dobles, no sobre la transacción.</summary>
+internal sealed class NoOpQuotationsTransaction : IQuotationsTransaction
+{
+    public Task CommitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
 /// <summary>Registra las acciones publicadas. Enviar y reenviar son la misma llamada al canal

@@ -316,6 +316,59 @@ internal static class CustomersApiHarness
         return response;
     }
 
+    /// <summary>La ficha completa de un cliente, como la devuelve <c>GET /customers/{id}</c>.</summary>
+    public static async Task<CustomerResponse> GetAsync(
+        HttpClient client, Guid customerId, string tenantId = TenantId)
+    {
+        var customer = await client.GetFromJsonAsync<CustomerResponse>(
+            $"{CustomersUrl(tenantId)}/{customerId}",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        return customer;
+    }
+
+    /// <summary>Agrega una direccion de envio a la libreta (<c>POST /customers/{id}/addresses</c>)
+    /// y devuelve la ficha completa, como hace el endpoint. Otra calle y otra ciudad por defecto:
+    /// las pruebas del spec 2026-09-18 necesitan que la libreta y el domicilio sean distinguibles.
+    /// El telefono no viaja y llega null, que es lo que admite CustomerAddressRequest.</summary>
+    public static async Task<CustomerResponse> AddAddressAsync(
+        HttpClient client,
+        Guid customerId,
+        Guid cityId,
+        bool isPrincipal = false,
+        string name = "Bodega Norte",
+        string address = "Carrera 7 # 71-21",
+        string tenantId = TenantId)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"{CustomersUrl(tenantId)}/{customerId}/addresses",
+            new { name, address, cityId, isPrincipal },
+            TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        var customer = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        return customer;
+    }
+
+    /// <summary><c>POST /customers/{id}/addresses/{addressId}/principal</c>: la operacion que
+    /// antes del spec 2026-09-18 movia el domicilio del cliente.</summary>
+    public static async Task<CustomerResponse> MakeAddressPrincipalAsync(
+        HttpClient client, Guid customerId, Guid addressId, string tenantId = TenantId)
+    {
+        var response = await client.PostAsync(
+            $"{CustomersUrl(tenantId)}/{customerId}/addresses/{addressId}/principal",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        var customer = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        return customer;
+    }
+
     /// <summary>
     /// Los nombres de campo del mapa <c>errors</c> de un 422 de validacion. Es el contrato que el
     /// formulario consume: <c>customerFieldErrors</c> descarta cualquier 422 sin este mapa, y mapea

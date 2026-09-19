@@ -147,8 +147,11 @@ public sealed class ExportCustomersHandler(
         IReadOnlyList<Customer> customers,
         CancellationToken cancellationToken)
     {
+        // La ciudad del domicilio y las de la libreta, de una vez: el domicilio arma los campos
+        // planos y el resto acompaña a cada direccion de envio del DTO.
         var cityIds = customers
-            .SelectMany(customer => customer.Addresses.Select(address => address.CityId))
+            .SelectMany(customer =>
+                customer.Addresses.Select(address => address.CityId).Append(customer.CityId))
             .Distinct()
             .ToArray();
         var classificationIds = customers
@@ -165,12 +168,10 @@ public sealed class ExportCustomersHandler(
         var items = new List<CustomerDto>(customers.Count);
         foreach (var customer in customers)
         {
-            // La FK de base garantiza las dos referencias: un miss aca es corrupcion de datos, no
-            // entrada de usuario invalida. Mismo criterio que ListCustomersHandler.
-            var city = citiesById.TryGetValue(customer.RequirePrincipalAddress().CityId, out var cityRef)
+            var city = citiesById.TryGetValue(customer.CityId, out var cityRef)
                 ? cityRef
                 : throw new InvalidOperationException(
-                    $"City '{customer.RequirePrincipalAddress().CityId}' referenced by customer '{customer.Id}' " +
+                    $"City '{customer.CityId}' referenced by customer '{customer.Id}' " +
                     "was not found.");
             var classification = classificationsById.TryGetValue(
                 customer.ClassificationId, out var classificationValue)

@@ -72,22 +72,10 @@ public sealed class UpdateCustomerHandler(
         // entero, asi que un campo ausente se limpia. El CUC no esta en la firma porque no viaja
         // en el request — lo emite el backend al crear. Update si recibe el prefijo de la
         // clasificacion resuelta: lo usa para reescribir el CUC solo si la clasificacion cambio.
-        // `cityId`/`address` del request describen la **direccion principal**: es lo que el
-        // formulario muestra como "donde esta el cliente". Las demas direcciones no se tocan acá
-        // — tienen su propio recurso (`/customers/{id}/addresses`).
-        var principal = customer.RequirePrincipalAddress();
-        customer.UpdateAddress(
-            principal.Id,
-            new CustomerAddressDetails
-            {
-                Name = principal.Name,
-                Address = command.Address ?? string.Empty,
-                CityId = command.CityId,
-                Phone = principal.Phone
-            },
-            isPrincipal: true,
-            now);
-
+        // `address`/`cityId` del request son el **domicilio del cliente** (spec 2026-09-18) y
+        // nada mas: la libreta de envio tiene su propio recurso (`/customers/{id}/addresses`) y
+        // no se toca desde aca. Espejar el domicilio en la principal era justo el acoplamiento
+        // que hacia perder direcciones al marcar otra como principal y volver a guardar.
         customer.Update(
             command.Name,
             command.BusinessName,
@@ -96,7 +84,9 @@ public sealed class UpdateCustomerHandler(
             new CustomerContactInfo
             {
                 Phone = command.Phone,
-                Email = command.Email
+                Email = command.Email,
+                Address = command.Address ?? string.Empty,
+                CityId = command.CityId
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),

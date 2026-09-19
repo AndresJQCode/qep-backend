@@ -323,11 +323,10 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("ClassificationId", fields);
     }
 
-    // La direccion dejo de ser un campo opcional del cliente cuando nacio la libreta (028afe2):
-    // el alta crea la principal --su ciudad emite el CUC y la cotizacion la propone por
-    // defecto-- y una direccion sin calle no es una direccion. El rechazo tiene que llegar como
-    // validation.failed con el mapa errors, no como el 422 pelado del dominio: es el unico que
-    // el formulario sabe leer para marcar el input.
+    // La direccion es obligatoria: es el domicilio del cliente (spec 2026-09-18) y ademas
+    // siembra la primera fila de la libreta, cuya ciudad emite el CUC. El rechazo tiene que
+    // llegar como validation.failed con el mapa errors, no como el 422 pelado del dominio: es el
+    // unico que el formulario sabe leer para marcar el input.
     [Fact]
     public async Task CreateWithoutAnAddressMarksTheAddressField()
     {
@@ -620,15 +619,15 @@ public sealed class CustomerWriteApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        var city = await EnsureCityAsync(client);
+        var cities = await EnsureCitiesAsync(client, 2);
         var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
         var newClassification = await CreateClassificationAsync(client, "Grande", "GRA");
-        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var created = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
         var originalSuffix = created.Cuc[3..];
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{created.Id}",
-            NewCustomerBody(city.CityId, newClassification.Id, name: created.Name),
+            NewCustomerBody(cities[1].CityId, newClassification.Id, name: created.Name),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -636,7 +635,71 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(updated);
         Assert.Equal(newClassification.Id, updated.Classification.Id);
+        // La ciudad nueva es la del domicilio; el CUC conserva el departamento de alta.
+        Assert.Equal(cities[1].CityId, updated.City.Id);
         Assert.Equal($"GRA{originalSuffix}", updated.Cuc);
+    }
+
+    // El bug que motivo el spec 2026-09-18: marcar otra direccion de la libreta como principal
+    // movia el domicilio del cliente. Los campos planos (address/city/department) describen el
+    // domicilio y tienen que quedar iguales, en la respuesta y en un GET posterior; addresses[]
+    // si cambia de principal.
+    [Fact]
+    public async Task MakingAnotherAddressPrincipalKeepsTheCustomerAddressAndCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
+        var withTwo = await AddAddressAsync(client, created.Id, cities[1].CityId);
+        var warehouse = Assert.Single(withTwo.Addresses, address => !address.IsPrincipal);
+
+        var response = await MakeAddressPrincipalAsync(client, created.Id, warehouse.Id);
+        var after = await GetAsync(client, created.Id);
+
+        foreach (var customer in new[] { response, after })
+        {
+            Assert.Equal(created.Address, customer.Address);
+            Assert.Equal(created.City.Id, customer.City.Id);
+            Assert.Equal(created.Department.Id, customer.Department.Id);
+            Assert.Equal(2, customer.Addresses.Count);
+            Assert.Equal(warehouse.Id, customer.Addresses.First().Id);
+            Assert.True(customer.Addresses.First().IsPrincipal);
+        }
+    }
+
+    // Decision 4 del spec: el PUT escribe solo el contacto. La fila principal conserva su calle y
+    // su ciudad aunque el domicilio nuevo tenga otras.
+    [Fact]
+    public async Task UpdateChangesTheCustomerAddressWithoutTouchingTheAddressBook()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
+        var principal = Assert.Single(created.Addresses);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewCustomerBody(cities[1].CityId, classification.Id, address: "Carrera 7 # 71-21"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(updated);
+        Assert.Equal("Carrera 7 # 71-21", updated.Address);
+        Assert.Equal(cities[1].CityId, updated.City.Id);
+        Assert.Equal(cities[1].DepartmentId, updated.Department.Id);
+        var stillPrincipal = Assert.Single(updated.Addresses);
+        Assert.Equal(principal.Id, stillPrincipal.Id);
+        Assert.Equal("Calle 10 # 45-12", stillPrincipal.Address);
+        Assert.Equal(cities[0].CityId, stillPrincipal.CityId);
+        Assert.True(stillPrincipal.IsPrincipal);
     }
 
     // El id de otro tenant no se alcanza ni con el permiso puesto: la autorizacion corta antes de

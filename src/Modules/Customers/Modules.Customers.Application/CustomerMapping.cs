@@ -22,9 +22,10 @@ internal static class CustomerMapping
         customer.IdentificationNumber,
         customer.Phone,
         customer.Email,
-        // `address`/`city`/`department` describen la **principal**: lo que la pantalla muestra
-        // como "donde esta el cliente". La libreta entera viaja en `addresses`.
-        customer.RequirePrincipalAddress().Address,
+        // `address`/`city`/`department` describen el **domicilio del cliente** (spec 2026-09-18):
+        // donde esta, lo que la ficha muestra arriba. Las direcciones de envio van en `addresses`,
+        // y marcar otra como principal no mueve estos tres campos.
+        customer.Address,
         new CustomerCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
         new CustomerDepartmentDto(
             city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
@@ -42,7 +43,7 @@ internal static class CustomerMapping
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo
-    // que hace ToDtoAsync con la principal (esa si es estructural).
+    // que hace ToDtoAsync con la ciudad del domicilio (esa si es estructural).
     private static CustomerAddressDto ToAddressDto(
         CustomerAddress address,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
@@ -77,16 +78,15 @@ internal static class CustomerMapping
         IClientClassificationRepository classificationRepository,
         CancellationToken cancellationToken)
     {
-        // Las ciudades de **todas** sus direcciones de una vez: la principal arma los campos
-        // planos del DTO y el resto acompaña a cada dirección de la libreta.
+        // Las ciudades del domicilio y de todas las direcciones de envio de una vez: el domicilio
+        // arma los campos planos del DTO y el resto acompaña a cada fila de la libreta.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses.Select(address => address.CityId).Distinct().ToArray(),
+            customer.Addresses.Select(address => address.CityId).Append(customer.CityId).Distinct().ToArray(),
             cancellationToken);
-        var principalCityId = customer.RequirePrincipalAddress().CityId;
-        var city = citiesById.TryGetValue(principalCityId, out var principalCity)
-            ? principalCity
+        var city = citiesById.TryGetValue(customer.CityId, out var contactCity)
+            ? contactCity
             : throw new InvalidOperationException(
-                $"City '{principalCityId}' referenced by customer '{customer.Id}' " +
+                $"City '{customer.CityId}' referenced by customer '{customer.Id}' " +
                 "was not found.");
         var classification = await classificationRepository.FindAsync(
             customer.TenantId, customer.ClassificationId, cancellationToken)
