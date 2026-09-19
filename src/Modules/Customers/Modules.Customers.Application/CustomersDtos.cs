@@ -45,9 +45,10 @@ public sealed record CustomerDto(
     string IdentificationNumber,
     string? Phone,
     string? Email,
-    /// <summary>La calle de la direccion **principal**. Se conserva plano —y no solo dentro de
-    /// `Addresses`— porque es lo que la cotizacion y el PDF muestran como domicilio del
-    /// cliente.</summary>
+    /// <summary>La calle del **domicilio del cliente**; su ciudad va en <c>City</c>. Se conserva
+    /// plano —y no solo dentro de `Addresses`— porque es lo que la cotizacion y el PDF muestran
+    /// como domicilio. Las direcciones de envio van en `Addresses`, y marcar otra como principal
+    /// no cambia este campo (spec 2026-09-18).</summary>
     string? Address,
     CustomerCityDto City,
     CustomerDepartmentDto Department,

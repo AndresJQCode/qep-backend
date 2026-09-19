@@ -78,8 +78,10 @@ public sealed class CreateCustomerHandler(
             cuc,
             command.Name,
             command.BusinessName,
-            // La primera direccion nace con el request de alta: su ciudad es la que acaba de
-            // emitir el CUC, y sin ella el cliente quedaria sin destino por defecto.
+            // La primera direccion de envio nace con el request de alta, con el mismo par que el
+            // domicilio de abajo (spec 2026-09-18, decision 3): su ciudad es la que acaba de
+            // emitir el CUC, y sin ella la cotizacion no tendria nada que preseleccionar. Desde
+            // aca son dos datos distintos: editar la ficha no la toca.
             new CustomerAddressDetails
             {
                 Name = command.Name,

@@ -532,19 +532,9 @@ public sealed class ImportCustomersHandler(
                     continue;
                 }
 
-                var principal = customer.RequirePrincipalAddress();
-                customer.UpdateAddress(
-                    principal.Id,
-                    new CustomerAddressDetails
-                    {
-                        Name = principal.Name,
-                        Address = candidate.Address ?? string.Empty,
-                        CityId = candidate.City.CityId,
-                        Phone = candidate.Phone
-                    },
-                    isPrincipal: true,
-                    now);
-
+                // La fila actualiza el domicilio del cliente (address, ciudad) y el resto de la
+                // ficha; la libreta de envio no se toca, mismo criterio que UpdateCustomerHandler
+                // (spec 2026-09-18).
                 customer.Update(
                     candidate.Name,
                     candidate.BusinessName,
