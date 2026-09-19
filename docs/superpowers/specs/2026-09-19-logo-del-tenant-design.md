@@ -123,19 +123,21 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
   1. Validador: `FileId` no vacío, `ExpectedVersion > 0` (como `:26`).
   2. `EnsureAuthorized` con `SettingsUpdate` (`:97-106`).
   3. Cargar el tenant; `404 tenancy.tenant.not_found`; `Version != ExpectedVersion` → `RequestConcurrencyException` (`:52-57`).
-     Estas tres fallas ocurren **antes** de tocar Storage: un 412 no deja copias públicas huérfanas.
+     Todo esto —el validador, la autorización, el `404` y este `412`— ocurre **antes** de tocar Storage:
+     un 412 no deja copias públicas huérfanas.
   4. Si `FileId == tenant.LogoFileId`: devolver el DTO sin más.
   5. `logoStorage.PublishAsync` → commit de **Storage** (ver Adaptadores).
-  6. `tenant.SetLogo(fileId, publication.PublicKey, clock.UtcNow)`. Si lanza (`not_active`), `UnpublishAsync`
+  6. `tenant.SetLogo(fileId, publication.PublicKey, clock.UtcNow)`. Si lanza (`not_active`), `TryUnpublishAsync`
      del nuevo en `catch` y relanzar.
   7. `PullDomainEvents`, `auditRecorder.Record(tenantId, subjectId, "tenancy.logo.updated", "tenant", id, "success", ["logoFileId"], now)`,
      `outboxWriter.Add` por evento, `unitOfWork.SaveChangesAsync` → commit de **Tenancy**. Si falla,
-     `UnpublishAsync` del nuevo en `catch` (mejor esfuerzo) y relanzar.
-  8. Si había un logo anterior distinto: `UnpublishAsync(oldFileId)`. Una excepción acá **no** falla el
-     request: el logo nuevo ya está commiteado. Se registra por `ILogger` en el adaptador (ver abajo).
-  Los retiros de los pasos 6, 7 y 8 van con `CancellationToken.None`, no con el token del request:
-  cada uno corre después de un commit (de Storage o de Tenancy), y un request cancelado no puede
-  dejar una copia pública huérfana.
+     `TryUnpublishAsync` del nuevo en `catch` (mejor esfuerzo) y relanzar.
+  8. Si había un logo anterior distinto: `TryUnpublishAsync(oldFileId)`. Una excepción acá **no** falla el
+     request: el logo nuevo ya está commiteado. `TryUnpublishAsync` la traga y la registra por
+     `[LoggerMessage]` en el propio adaptador (ver abajo).
+  Los tres `TryUnpublishAsync` de los pasos 6, 7 y 8 van con `CancellationToken.None`, no con el token
+  del request: cada uno corre después de un commit (de Storage o de Tenancy), y un request cancelado
+  no puede dejar una copia pública huérfana.
 - **`RemoveTenantLogoCommand(TenantId, long ExpectedVersion, string CorrelationId)`** y su handler:
   pasos 1-3 iguales; sin logo, devolver el DTO; `tenant.RemoveLogo` en memoria (su `EnsureActive`
   rechaza antes de tocar Storage); `UnpublishAsync(LogoFileId)` **antes del commit** (decisión 8);
@@ -208,10 +210,12 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
     (`OwnerType != Tenant || OwnerId != tenantId`), o ya está `Deleted`/`Purged`, volver sin
     error; si no, `filePublication.UnpublishAsync`, `resource.SoftDelete` (`FileResource.cs:158-170`),
     auditoría `storage.file.deleted` (`SoftDeleteFile.cs:53-59`), commit de Storage. Una excepción se
-    propaga: el handler decide si la traga (paso 8) o la relanza (pasos 6-7). En el paso 8 la registra el
-    handler con un `ILogger<SetTenantLogoHandler>`: `Modules.Tenancy.Application` no usa logging hoy y
-    hace falta la referencia a `Microsoft.Extensions.Logging.Abstractions`; si se prefiere no sumarla,
-    el mejor esfuerzo se mueve al adaptador como `TryUnpublishAsync` y se documenta ahí.
+    propaga tal cual.
+  - `TryUnpublishAsync`: envuelve `UnpublishAsync` en un `try/catch` para los tres retiros de mejor
+    esfuerzo del handler (pasos 6, 7 y 8). Si falla, la registra con `LogUnpublishFailed`, un
+    `[LoggerMessage]` generado en el propio adaptador (`EventId = 6000`, `LogLevel.Warning`), y no
+    relanza. `Modules.Tenancy.Application` no referencia logging: el mejor esfuerzo y su registro
+    quedan enteros en Bootstrapper.
   - `GetUrl`: `publicStorage.IsConfigured ? publicStorage.GetUrl(key) : null`.
 - **`QuotationTenantLogoLookup : IQuotationLogoLookup`**, nuevo, con `ITenantDirectory`,
   `IFileResourceRepository` e `IObjectStorage`. `FindAsync(tenantId)` → `GetLogoFileIdAsync`; `null` si
