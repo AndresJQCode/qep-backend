@@ -63,6 +63,12 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.DateFormat)
             .HasColumnName("date_format")
             .HasMaxLength(30);
+        // 512 es el largo de storage.file_resources.public_storage_key (StorageDbContext.cs:56):
+        // la clave que se guarda acá es esa misma.
+        tenant.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
+        tenant.Property(value => value.LogoPublicKey)
+            .HasColumnName("logo_public_key")
+            .HasMaxLength(512);
         tenant.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
