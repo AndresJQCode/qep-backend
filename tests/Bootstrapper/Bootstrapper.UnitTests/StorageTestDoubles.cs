@@ -1,5 +1,8 @@
+using BuildingBlocks.Application;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Bootstrapper.UnitTests;
 
@@ -66,4 +69,42 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
     public Task<PublicObjectPage> ListAsync(
         string prefix, string? continuationToken, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+}
+
+internal sealed class CountingStorageUnitOfWork : IStorageUnitOfWork
+{
+    public int Saves { get; private set; }
+
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        Saves++;
+        return Task.FromResult(1);
+    }
+}
+
+internal sealed class RecordingStorageAuditPublisher : IStorageAuditPublisher
+{
+    public List<string> Actions { get; } = [];
+
+    public void Publish(
+        Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Actions.Add(action);
+
+    public void PublishSystem(
+        Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Actions.Add(action);
+}
+
+internal sealed class AllowAllExecutionContext(Guid tenantId) : IExecutionContext
+{
+    public Guid SubjectId { get; } = Guid.CreateVersion7();
+
+    public TenantId TenantId { get; } = new(tenantId);
+
+    public bool HasPermission(string permission) => true;
+}
+
+internal sealed class FixedClock(DateTimeOffset now) : IClock
+{
+    public DateTimeOffset UtcNow { get; } = now;
 }
