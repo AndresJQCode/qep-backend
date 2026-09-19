@@ -56,8 +56,14 @@ Sin cambios de forma. Cambia el **significado** de tres campos de `CustomerRespo
   `Address = address`, `CityId = cityId`, `isPrincipal = true`, y guarda lo mismo como contacto.
 - Códigos de error del `PUT`/`POST`: `customers.customer.address_too_long` (existente,
   `CustomerContactInfo.cs:46`) vuelve a poder salir; `customers.customer.city_required` (existente,
-  `Customer.cs:506`, emitido por `EnsureValidCityId`) para `cityId` vacío; y
-  `customers.customer.address_required`, **nuevo**, para calle vacía.
+  `Customer.cs:506`, emitido por `EnsureValidCityId`) sale en el `PUT` (y en `Update`) para `cityId`
+  vacío — en el `POST` el mismo vacío sale antes, como `customers.address.city_required`, porque el
+  agregado arma la primera fila de la libreta (`Customer.cs`, ctor, y `CustomerAddress.Create`) antes
+  de correr `Assign(contact)`; y `customers.customer.address_required`, **nuevo**, para calle vacía.
+  Los tres son defensa en profundidad: sobre HTTP los intercepta antes `CustomerWriteRules`
+  (FluentValidation), que rechaza los valores vacíos como `422 validation.failed` con el mapa
+  `errors`, y las reglas de fila de importación hacen lo mismo por fila — el frontend normalmente ve
+  `validation.failed`, no estos códigos de dominio.
 
 ## Dominio (`Modules.Customers.Domain`)
 
