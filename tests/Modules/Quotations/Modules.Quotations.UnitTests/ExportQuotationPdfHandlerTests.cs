@@ -91,6 +91,10 @@ public sealed class ExportQuotationPdfHandlerTests
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, renderer.Calls);
+        // El logo llega al renderer con el nombre que arma la extensión y los bytes que leyó el lookup.
+        Assert.NotNull(renderer.Last!.Logo);
+        Assert.Equal("logo.png", renderer.Last.Logo.FileName);
+        Assert.Equal(logoLookup.Content, renderer.Last.Logo.Content);
     }
 
     [Fact]
