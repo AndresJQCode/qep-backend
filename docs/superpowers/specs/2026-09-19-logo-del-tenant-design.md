@@ -133,9 +133,13 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
      `UnpublishAsync` del nuevo en `catch` (mejor esfuerzo) y relanzar.
   8. Si había un logo anterior distinto: `UnpublishAsync(oldFileId)`. Una excepción acá **no** falla el
      request: el logo nuevo ya está commiteado. Se registra por `ILogger` en el adaptador (ver abajo).
+  Los retiros de los pasos 6, 7 y 8 van con `CancellationToken.None`, no con el token del request:
+  cada uno corre después de un commit (de Storage o de Tenancy), y un request cancelado no puede
+  dejar una copia pública huérfana.
 - **`RemoveTenantLogoCommand(TenantId, long ExpectedVersion, string CorrelationId)`** y su handler:
-  pasos 1-3 iguales; sin logo, devolver el DTO; `UnpublishAsync(LogoFileId)` **primero** (decisión 8);
-  después `tenant.RemoveLogo`, auditoría `tenancy.logo.removed` con `["logoFileId"]`, outbox, commit.
+  pasos 1-3 iguales; sin logo, devolver el DTO; `tenant.RemoveLogo` en memoria (su `EnsureActive`
+  rechaza antes de tocar Storage); `UnpublishAsync(LogoFileId)` **antes del commit** (decisión 8);
+  después auditoría `tenancy.logo.removed` con `["logoFileId"]`, outbox, commit.
 - Registrar los dos handlers a mano en `QepServiceCollectionExtensions` como todos
   (`QepServiceCollectionExtensions.cs:55-60`); `CompositionRootTests.EveryCommandAndQueryHasItsHandlerRegistered`
   (`CompositionRootTests.cs:28-45`) lo verifica.
@@ -200,7 +204,8 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
     Después `filePublication.PublishAsync(resource)`, `auditPublisher.Publish(..., "storage.file.published", ...)`
     como `SetFilePublication.cs:65-67`, y `storageUnitOfWork.SaveChangesAsync`. **Ese commit es de
     Storage y ocurre antes del de Tenancy** (paso 5 del handler).
-  - `UnpublishAsync`: cargar; si no existe, es de otro tenant, o ya está `Deleted`/`Purged`, volver sin
+  - `UnpublishAsync`: cargar; si no existe, es de otro tenant, no es el logo del tenant
+    (`OwnerType != Tenant || OwnerId != tenantId`), o ya está `Deleted`/`Purged`, volver sin
     error; si no, `filePublication.UnpublishAsync`, `resource.SoftDelete` (`FileResource.cs:158-170`),
     auditoría `storage.file.deleted` (`SoftDeleteFile.cs:53-59`), commit de Storage. Una excepción se
     propaga: el handler decide si la traga (paso 8) o la relanza (pasos 6-7). En el paso 8 la registra el
@@ -212,8 +217,9 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
   `IFileResourceRepository` e `IObjectStorage`. `FindAsync(tenantId)` → `GetLogoFileIdAsync`; `null` si
   no hay; carga el `FileResource` y devuelve `QuotationLogoRef(FileId, StorageKey, Extension)` con la
   extensión derivada del `MimeType` (tabla como `PublicPaymentProofPublisher.cs:38-45`, sin PDF). Si
-  el archivo no está `Available` (alguien lo borró por Storage) devuelve `null`: el PDF sale sin logo
-  en vez de fallar. `ReadAsync(ref)` → `objectStorage.DownloadAsync(ref.StorageKey)` (`IObjectStorage.cs:47`).
+  el archivo no existe, es de otro tenant o no está `Available` (alguien lo borró por Storage) devuelve
+  `null`: el PDF sale sin logo en vez de fallar. `ReadAsync(ref)` → `objectStorage.DownloadAsync(ref.StorageKey)`
+  (`IObjectStorage.cs:47`), y `null` si la descarga falla (ver Bordes, "Logo que no se puede leer").
   Mismo patrón que `QuotationFileLookup.cs:22-25` y `ProductImageLookup.cs:20-22`.
 - `QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules` (`QuotationsLayerTests.cs:61-71`)
   y `TenancyLayerTests.ApplicationDoesNotReferenceInfrastructureOrApi` (`TenancyLayerTests.cs:21-28`)
@@ -272,18 +278,29 @@ cuanto exista el valor del enum; el frontend lo envía tal cual, sin dígitos.
   como `TenantLogoApiTests.cs:563` (`CreateClient`, vía `StoragePermissions`). `TenantSettingsApiTests`
   no lo manda (`:190-199`) y no lo
   necesita para el `PATCH`.
-- **`PUT` con un archivo `Tenant` que ya está publicado** (un `PUT` anterior que falló en el commit de
-  Tenancy): `FilePublication.PublishAsync` reusa `PublicStorageKey` (`SetFilePublication.cs:37-38`) y
-  `FileResource.Publish` lo sobreescribe con la misma clave; la copia se vuelve a hacer y es idempotente.
+- **`PUT` con un archivo `Tenant` de una asignación que falló** (un `PUT` anterior que falló en el
+  agregado o en el commit de Tenancy): el `catch` de los pasos 6-7 no sólo retira la copia pública,
+  también **borra lógicamente** el archivo nuevo (`TryUnpublishAsync` → `UnpublishAsync` →
+  `resource.SoftDelete`). Reintentar con el mismo `fileId` responde `422 tenancy.logo.not_available`:
+  el reintento necesita una subida nueva. El frontend siempre vuelve a subir el archivo antes de
+  asignarlo, así que en la práctica no se ve.
 - **Bucket público sin configurar.** `PUT` → `422 storage.public.not_configured` antes de tocar nada.
   `GET /settings` de un tenant con logo → `logo.url = null`. Producción lo configura por
   `k8s/prod-configMap.yaml:51-52`; local, por user-secrets (`README.md:127`, `:200-201`).
 - **Archivo del logo borrado por Storage** (`DELETE /files/{id}` con `storage.file.delete`): el sidebar
-  recibe una `url` muerta hasta que alguien quite o reemplace el logo; el PDF sale sin logo
-  (`QuotationTenantLogoLookup` devuelve `null` si no está `Available`) y no se regenera por eso — la
-  caché compara `LogoFileId`, que no cambió. Aceptado: hoy pasa lo mismo con una portada de producto.
+  recibe una `url` muerta hasta que alguien quite o reemplace el logo. El PDF **se regenera una vez,
+  sin logo**: `QuotationTenantLogoLookup.FindAsync` devuelve `null` si el archivo no está `Available`,
+  así que la caché compara el `LogoFileId` guardado contra `null`, lo ve vencido y regenera; desde ahí
+  queda guardado sin `LogoFileId` y los exports siguientes lo reusan. Aceptado: hoy pasa lo mismo con
+  una portada de producto.
+- **Logo que no se puede leer** (R2 caído, objeto privado faltante): `QuotationTenantLogoLookup.ReadAsync`
+  registra un warning y devuelve `null` —salvo una cancelación, que se propaga—, y el PDF sale sin logo
+  en vez de fallar: ni el export ni el envío por WhatsApp se bloquean por el logo. `QuotationPdfProvider`
+  guarda ese PDF **sin** `LogoFileId`, así que el próximo export lo ve vencido y vuelve a intentar
+  con el logo.
 - **Tenant inactivo**: `422 tenancy.tenant.not_active` en `PUT` y `DELETE`. La copia pública del nuevo
-  archivo se retira en el `catch` del paso 6.
+  archivo se retira en el `catch` del paso 6. En `DELETE`, `tenant.RemoveLogo` corre en memoria antes
+  de `UnpublishAsync`, así que el rechazo llega antes de retirar nada.
 - **Concurrencia**: `Version` sube en `SetLogo` y `RemoveLogo`; un `PATCH /settings` con el `If-Match`
   de antes del logo responde 412, como corresponde. Dos `PUT /logo` simultáneos: el segundo pierde por
   `Version` en el paso 3, antes de publicar; si los dos pasan el paso 3, el token de concurrencia de EF
