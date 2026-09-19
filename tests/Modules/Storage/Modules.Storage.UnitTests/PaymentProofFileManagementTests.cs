@@ -142,6 +142,28 @@ public sealed class PaymentProofFileManagementTests
         Assert.Null(proof.PublicStorageKey);
     }
 
+    // Fix round 1 (Important): antes del refactor a FilePublication, un bucket público sin
+    // configurar se detectaba antes de cargar el archivo. Un fileId inexistente fija el orden: si
+    // el handler cargara primero, esto tiraría storage.file.not_found en cambio.
+    [Fact]
+    public async Task PublishingWithAnUnconfiguredPublicBucketFailsBeforeLoadingTheFile()
+    {
+        var storage = new UnconfiguredPublicObjectStorage();
+
+        var error = await Assert.ThrowsAsync<StorageDomainException>(() =>
+            new PublishFileHandler(
+                    new InMemoryFileResourceRepository(),
+                    new CountingStorageUnitOfWork(),
+                    new FilePublication(storage, new FixedClock(Now)),
+                    storage,
+                    new RecordingStorageAuditPublisher(),
+                    new AllowAllExecutionContext(TenantId),
+                    new FixedClock(Now))
+                .HandleAsync(new PublishFileCommand(TenantId, Guid.NewGuid()), TestContext.Current.CancellationToken));
+
+        Assert.Equal("storage.public.not_configured", error.Code);
+    }
+
     // D13: la guarda es sólo para comprobantes. A una imagen User no se le pregunta a ninguna sonda.
     [Fact]
     public async Task AUserImageIsDeletedWithoutAskingTheProbes()

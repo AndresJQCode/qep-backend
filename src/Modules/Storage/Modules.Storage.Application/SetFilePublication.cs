@@ -23,6 +23,15 @@ public sealed class PublishFileHandler(
     {
         StorageAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, StoragePermissions.FilePublish);
+        // Fix round 1 (Important): precedencia original, de antes de extraer FilePublication —
+        // el bucket sin configurar se detecta antes de cargar el archivo, no después.
+        // FilePublication repite este chequeo porque el adaptador de Tenancy la llama directo.
+        if (!publicStorage.IsConfigured)
+        {
+            throw new StorageDomainException(
+                "storage.public.not_configured",
+                "Public image storage is not configured.");
+        }
 
         var resource = await LoadAsync(repository, command.TenantId, command.FileId, cancellationToken);
         // Spec 2026-09-16, D15: un comprobante sólo llega al público por el movimiento. Por acá
