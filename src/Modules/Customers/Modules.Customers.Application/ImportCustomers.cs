@@ -552,7 +552,9 @@ public sealed class ImportCustomersHandler(
                     new CustomerContactInfo
                     {
                         Phone = candidate.Phone,
-                        Email = candidate.Email
+                        Email = candidate.Email,
+                        Address = candidate.Address ?? string.Empty,
+                        CityId = candidate.City.CityId
                     },
                     new CustomerCommercialInfo
                     {
@@ -590,7 +592,9 @@ public sealed class ImportCustomersHandler(
                 new CustomerContactInfo
                 {
                     Phone = candidate.Phone,
-                    Email = candidate.Email
+                    Email = candidate.Email,
+                    Address = candidate.Address ?? string.Empty,
+                    CityId = candidate.City.CityId
                 },
                 new CustomerCommercialInfo
                 {

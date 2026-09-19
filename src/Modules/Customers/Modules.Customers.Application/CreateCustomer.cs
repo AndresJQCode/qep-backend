@@ -92,7 +92,9 @@ public sealed class CreateCustomerHandler(
             new CustomerContactInfo
             {
                 Phone = command.Phone,
-                Email = command.Email
+                Email = command.Email,
+                Address = command.Address ?? string.Empty,
+                CityId = command.CityId
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),

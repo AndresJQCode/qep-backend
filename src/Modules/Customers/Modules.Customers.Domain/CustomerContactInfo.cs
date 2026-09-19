@@ -1,17 +1,20 @@
 namespace Modules.Customers.Domain;
 
 /// <summary>
-/// Los datos de contacto del cliente, agrupados. Telefono y correo son obligatorios; la direccion
-/// es un resto opcional de antes de la libreta de direcciones.
+/// Los datos de contacto del cliente, agrupados: teléfono, correo y su domicilio (calle y
+/// ciudad). Los cuatro son obligatorios al escribir.
 ///
-/// Van juntos y no como tres parametros sueltos de <c>Create</c>/<c>Update</c> por la misma razon
-/// por la que existe <c>CompanyContactInfo</c>. Las propiedades son <c>init</c> y no posicionales,
-/// asi que solo se construye por nombre.
+/// Van juntos y no como parámetros sueltos de <c>Create</c>/<c>Update</c> por la misma razón por
+/// la que existe <c>CompanyContactInfo</c>. Las propiedades son <c>init</c> y no posicionales, así
+/// que sólo se construye por nombre.
 ///
-/// **Ya no lleva ciudad ni departamento.** Ese par vivio aca como texto libre hasta que la FK a
-/// <c>Modules.Geography</c> los reemplazo: dejaron de ser "info de contacto libre" —ahora son una
-/// relacion estructural del agregado, obligatoria— y se movieron a <see cref="Customer.CityId"/>,
-/// de primer nivel. Ver ahi el porque no es un id fuertemente tipado de Geography.
+/// El domicilio es **del cliente, no de su libreta** (spec 2026-09-18). <c>CLI-DIR-01</c> lo había
+/// movido a la fila principal de <see cref="CustomerAddress"/>, y desde entonces marcar otra
+/// dirección de envío como principal cambiaba dónde está el cliente, y el siguiente PUT de la
+/// ficha pisaba esa dirección. La libreta quedó como catálogo de destinos de envío; este par
+/// volvió a <see cref="Customer.Address"/> y <see cref="Customer.CityId"/>. La ciudad es un
+/// <see cref="Guid"/> y no un id fuertemente tipado de Geography: FK blanda a otro módulo, mismo
+/// criterio que <see cref="CustomerAddress.CityId"/>.
 /// </summary>
 public sealed record CustomerContactInfo
 {
@@ -19,7 +22,9 @@ public sealed record CustomerContactInfo
 
     public string? Email { get; init; }
 
-    public string? Address { get; init; }
+    public required string Address { get; init; }
+
+    public required Guid CityId { get; init; }
 
     // Espejan los anchos de columna. Salen del schema del formulario que ya existe
     // (customer-form.schema.ts); el del correo no esta ahi: 254 es el maximo de una direccion por
@@ -30,6 +35,9 @@ public sealed record CustomerContactInfo
 
     public const int AddressMaxLength = 200;
 
+    // La ciudad no se valida acá sino en Customer.EnsureValidCityId, que es donde vive
+    // customers.customer.city_required desde antes de la libreta; Update la comprueba antes de
+    // asignar nada para conservar el todo-o-nada.
     internal CustomerContactInfo Normalized() => new()
     {
         Phone = NormalizeRequired(
@@ -40,32 +48,15 @@ public sealed record CustomerContactInfo
             "customers.customer.phone_too_long",
             $"The customer phone cannot exceed {PhoneMaxLength} characters."),
         Email = NormalizeEmail(Email),
-        Address = NormalizeOptional(
+        Address = NormalizeRequired(
             Address,
             AddressMaxLength,
+            "customers.customer.address_required",
+            "The customer address is required.",
             "customers.customer.address_too_long",
-            $"The customer address cannot exceed {AddressMaxLength} characters.")
+            $"The customer address cannot exceed {AddressMaxLength} characters."),
+        CityId = CityId
     };
-
-    // Vacio y ausente son lo mismo para un campo opcional. El formulario manda "" cuando el
-    // usuario borra el input, y guardar esa cadena dejaria dos representaciones de "no hay dato"
-    // que cada consumidor tendria que comparar.
-    private static string? NormalizeOptional(
-        string? value,
-        int maxLength,
-        string tooLongCode,
-        string tooLongMessage)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        var trimmed = value.Trim();
-        return trimmed.Length > maxLength
-            ? throw new CustomersDomainException(tooLongCode, tooLongMessage)
-            : trimmed;
-    }
 
     // Telefono y correo son obligatorios al crear y al editar. Las propiedades siguen siendo
     // string? a proposito: las filas anteriores a la regla pueden tener null en base (las columnas
