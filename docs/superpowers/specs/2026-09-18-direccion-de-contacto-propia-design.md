@@ -187,9 +187,12 @@ completa al final.
 
 El frontend **no depende** de un cambio de forma del contrato: funciona contra el backend viejo y el
 nuevo. Pero sólo con el backend nuevo deja de perderse la dirección al marcar principal y guardar.
-Orden de deploy: backend primero (con migración), frontend después. Si el frontend sale antes, la
-ficha deja de copiar la principal pero el backend sigue devolviéndola como domicilio: el bug queda
-igual, no peor.
+Orden de deploy: backend primero (con migración), frontend después — es una compuerta de release,
+no una preferencia. Si el frontend sale antes, deja de seguir a la principal en pantalla, y un
+guardado contra este backend viejo todavía en pie espeja la calle/ciudad vieja del formulario sobre
+la fila principal de la libreta: se pierde esa dirección, sin forma de recuperarla desde la UI. La
+dirección inversa —backend nuevo con una pestaña del frontend viejo todavía abierta— es la benigna:
+en el peor caso escribe una dirección de contacto vieja, recuperable editándola de nuevo.
 
 ## Fuera de alcance
 
