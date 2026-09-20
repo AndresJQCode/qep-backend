@@ -210,6 +210,56 @@ No existe fallback local. La validación de arranque exige `AccessKeyId`,
 Las pruebas automatizadas sustituyen `IObjectStorage` por un test double en
 memoria; ese adapter no forma parte de la aplicación.
 
+### `QCODE_PDF_API_KEY` — el MCP de `qcode-pdf`
+
+**La aplicación no lee esta variable.** No es un secreto de usuario como los de arriba: es la
+credencial que presenta tu **cliente MCP** —el de Claude Code, vía [`.mcp.json`](.mcp.json)—
+cuando le habla a `https://qcode-pdf.qcode.co/mcp`. Sirve para validar un template Typst contra
+el compilador real (`validate_typst`) sin desplegar nada ni tener el binario instalado.
+
+No la confundas con la que usa el backend para generar el PDF de una cotización: ésa es
+`Quotations:Pdf:ApiKey`, va por user-secrets en local y por `prod-secret.yaml` en producción
+(token `QUOTATIONS_PDF_API_KEY`). Son dos claves distintas a propósito.
+
+**De dónde sale el valor.** `qcode-pdf` declara sus clientes en `k8s/prod-configMap.yaml`
+(`api-keys.json`), uno por entrada. El de herramientas de desarrollo es **`qep-dev`**, y su
+valor vive en el variable group **`Backend-prod`** de Azure DevOps, como
+`QCODE_PDF_API_KEY_QEP_DEV`. Pedíselo a quien administre ese grupo; no está en este repo ni
+debe estarlo.
+
+Es clave propia y no la de `qep` porque el servicio resuelve el `clientId` por el **hash de la
+clave**: compartiéndola, el tráfico de tus pruebas queda indistinguible del de un asesor
+enviando una cotización de verdad en los logs y las métricas del servicio, y rotarla obligaría
+a tocar producción.
+
+**Dónde se configura.** Como variable de entorno de usuario de Windows, en cualquier PowerShell
+(no necesita administrador):
+
+```powershell
+[Environment]::SetEnvironmentVariable("QCODE_PDF_API_KEY", "<clave-de-qep-dev>", "User")
+```
+
+Ese comando deja la clave en el historial de PowerShell (`ConsoleHost_history.txt`). Para
+evitarlo, pedila sin eco:
+
+```powershell
+$k = Read-Host "clave qep-dev" -AsSecureString
+[Environment]::SetEnvironmentVariable("QCODE_PDF_API_KEY",
+  [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($k)), "User")
+```
+
+Después **cerrá VS Code por completo y volvé a abrirlo**: los procesos heredan el entorno al
+arrancar, así que ni la ventana donde corriste el comando ni una sesión de Claude Code ya
+abierta la ven. Para comprobar que quedó guardada sin imprimirla, en una PowerShell nueva:
+
+```powershell
+([Environment]::GetEnvironmentVariable("QCODE_PDF_API_KEY","User")).Length
+```
+
+`.mcp.json` está versionado y **no contiene el valor**: sólo la expansión `${QCODE_PDF_API_KEY}`,
+que Claude Code resuelve contra tu entorno. Cada quien pone la suya.
+
 ## Identidad local
 
 El tenant creado para desarrollo es:
