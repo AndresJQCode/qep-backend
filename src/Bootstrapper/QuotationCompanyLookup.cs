@@ -26,6 +26,8 @@ internal sealed class QuotationCompanyLookup(ICompanyRepository repository)
                 company.Name,
                 company.TaxId,
                 company.IsActive,
+                company.Address,
+                company.Phone,
                 company.BankAccounts
                     .Select(account => new QuotationCompanyAccountRef(
                         account.BankName, account.AccountNumber, account.Currency))

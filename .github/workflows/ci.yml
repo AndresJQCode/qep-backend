@@ -30,7 +30,7 @@ jobs:
       # este pin se mueve con ella. Se usa el binario musl a propósito — es el de la imagen.
       - name: Install Typst (pinned to qcode-pdf's runtime)
         env:
-          TYPST_VERSION: v0.13.1
+          TYPST_VERSION: v0.15.1
         run: |
           curl -fsSL -o /tmp/typst.tar.xz \
             "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz"

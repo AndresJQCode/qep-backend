@@ -88,6 +88,10 @@ public sealed record QuotationPdfParty(
 public sealed record QuotationPdfBillingAccount(
     string CompanyName,
     string? CompanyTaxId,
+    /// <summary>Dirección y teléfono del membrete, vacíos si la empresa no los cargó — el
+    /// documento no inventa un renglón que no tiene qué decir.</summary>
+    string CompanyAddress,
+    string CompanyPhone,
     string BankName,
     string AccountNumber,
     string Currency);

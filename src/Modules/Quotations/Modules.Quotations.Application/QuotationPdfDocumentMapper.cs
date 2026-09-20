@@ -135,6 +135,8 @@ public static class QuotationPdfDocumentMapper
                 // y la cotización tiene que poder exportarse igual.
                 account.CompanyName ?? string.Empty,
                 account.CompanyTaxId,
+                account.CompanyAddress ?? string.Empty,
+                account.CompanyPhone ?? string.Empty,
                 account.BankName,
                 account.AccountNumber,
                 account.Currency)
