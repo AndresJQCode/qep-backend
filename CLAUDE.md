@@ -44,6 +44,16 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
   `-o custom-columns=KEYS:.data`. Las cuatro se rotaron. Es la **segunda** vez que pasa en este
   proyecto: la primera fue la API key de Infobip el 2026-08-09.
 
+- **`.mcp.json` se versiona: la clave va por `${VAR}`, nunca literal.** No está en `.gitignore`,
+  así que un valor escrito ahí se commitea. Claude Code expande variables de entorno en `url`,
+  `headers`, `command`, `args` y `env`, así que el archivo puede viajar en el repo sin secreto
+  adentro y cada quien pone el suyo en su entorno. La única que usa hoy es
+  `QCODE_PDF_API_KEY` — de dónde sale y dónde se configura, en
+  [README § `QCODE_PDF_API_KEY`](README.md#qcode_pdf_api_key--el-mcp-de-qcode-pdf). **No es** la
+  clave con la que el backend renderiza cotizaciones (`Quotations:Pdf:ApiKey`): `qcode-pdf`
+  resuelve el `clientId` por el hash de la clave, así que compartirla mezclaría las pruebas de
+  un desarrollador con el tráfico real en sus logs, y rotarla obligaría a tocar producción.
+
 - **TDD obligatorio.** RED antes que GREEN, con evidencia literal de ambos.
 - **No inventar.** Campos, estados, rutas, permisos, roles y códigos de error deben existir en
   el código. Lo que falte se registra explícitamente como decisión pendiente, no se asume.

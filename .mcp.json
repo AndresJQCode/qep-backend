@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "qcode-pdf": {
+      "type": "http",
+      "url": "https://qcode-pdf.qcode.co/mcp",
+      "headers": { "X-Api-Key": "${QCODE_PDF_API_KEY}" }
+    }
+  }
+}
