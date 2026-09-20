@@ -42,7 +42,7 @@ public sealed partial class QuotationTemplateTests
     [Fact]
     public async Task EveryFieldTheTemplateReadsExistsInThePayload()
     {
-        var (source, data) = await CapturedRequestAsync(Complete());
+        var (source, data, _) = await CapturedRequestAsync(Complete());
 
         // Los comentarios del `.typ` nombran campos a proposito ("la plantilla lee
         // data.quotationNumber"), y un ejemplo en un comentario no es un campo que haga falta.
@@ -74,6 +74,21 @@ public sealed partial class QuotationTemplateTests
     public async Task TheTemplateCompilesWithACompleteDocument() =>
         await AssertCompilesAsync(Complete());
 
+    // El logo del tenant viaja por `assets`, no dentro de `data`, y la plantilla lo resuelve por
+    // nombre de archivo. Ninguna otra prueba compila esa rama: el merge con `feature/sales`
+    // reescribio justo ese bloque del membrete. En **webp** a proposito — es el formato que un
+    // tenant sube y el que rompia el PDF mientras `qcode-pdf` corria Typst 0.13
+    // (`unknown image format`); si alguien vuelve a bajar `TYPST_VERSION`, esto lo agarra.
+    [Fact]
+    public async Task TheTemplateCompilesWithATenantLogo() =>
+        await AssertCompilesAsync(Complete() with
+        {
+            Logo = new QuotationPdfLogo(
+                "logo-del-tenant.webp",
+                Convert.FromBase64String(
+                    "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=")),
+        });
+
     // Y el caso vacio ejercita las que **no** dibujan. Es donde una plantilla se rompe de verdad:
     // `data.billingAccount.companyName` revienta si nadie pregunto por el `none` de arriba.
     [Fact]
@@ -95,7 +110,7 @@ public sealed partial class QuotationTemplateTests
     [Fact]
     public async Task TheTemplatePrintsStorePickupFromItsOwnFlag()
     {
-        var (source, data) = await CapturedRequestAsync(Minimal() with { IsStorePickup = true });
+        var (source, data, _) = await CapturedRequestAsync(Minimal() with { IsStorePickup = true });
 
         Assert.True(data.GetProperty("isStorePickup").GetBoolean());
         Assert.Contains("data.isStorePickup", source, StringComparison.Ordinal);
@@ -108,7 +123,7 @@ public sealed partial class QuotationTemplateTests
     [Fact]
     public async Task TheTemplatePrintsTheIssueDateFromItsLocalDate()
     {
-        var (source, data) = await CapturedRequestAsync(Minimal() with { IssuedOn = new DateOnly(2026, 12, 31) });
+        var (source, data, _) = await CapturedRequestAsync(Minimal() with { IssuedOn = new DateOnly(2026, 12, 31) });
 
         Assert.Equal("2026-12-31", data.GetProperty("issuedOn").GetString());
         Assert.Contains("fecha(data.issuedOn)", source, StringComparison.Ordinal);
@@ -120,7 +135,7 @@ public sealed partial class QuotationTemplateTests
     [Fact]
     public async Task TheTemplatePrintsThePartyTaxIdFromItsOwnField()
     {
-        var (source, data) = await CapturedRequestAsync(Minimal() with
+        var (source, data, _) = await CapturedRequestAsync(Minimal() with
         {
             Billing = FinalConsumerBilling(),
         });
@@ -161,7 +176,7 @@ public sealed partial class QuotationTemplateTests
             Assert.Fail("`typst` tiene que estar instalado en CI para compilar la plantilla.");
         }
 
-        var (source, data) = await CapturedRequestAsync(document);
+        var (source, data, assets) = await CapturedRequestAsync(document);
 
         // Mismo layout que arma `qcode-pdf`: la plantilla y su `data.json` en el mismo directorio,
         // porque la ruta de `--input` se resuelve relativa al `.typ` y no al directorio de trabajo.
@@ -175,6 +190,21 @@ public sealed partial class QuotationTemplateTests
                 Path.Combine(workspace.FullName, "data.json"),
                 data.GetRawText(),
                 TestContext.Current.CancellationToken);
+
+            // `qcode-pdf` deja cada asset en `assets/<nombre>` junto al `.typ` (README, "assets"),
+            // que es lo que resuelve el `#image("assets/" + data.logo.fileName)` de la plantilla.
+            if (assets is { } adjuntos)
+            {
+                var carpeta = Directory.CreateDirectory(
+                    Path.Combine(workspace.FullName, "assets"));
+                foreach (var adjunto in adjuntos.EnumerateObject())
+                {
+                    await File.WriteAllBytesAsync(
+                        Path.Combine(carpeta.FullName, adjunto.Name),
+                        Convert.FromBase64String(adjunto.Value.GetString()!),
+                        TestContext.Current.CancellationToken);
+                }
+            }
 
             var output = Path.Combine(workspace.FullName, "quotation.pdf");
             var (exitCode, diagnostics) = await RunAsync(
@@ -288,8 +318,8 @@ public sealed partial class QuotationTemplateTests
 
     // ------------------------------------------------------------------ el request real
 
-    private static async Task<(string Source, JsonElement Data)> CapturedRequestAsync(
-        QuotationPdfDocument document)
+    private static async Task<(string Source, JsonElement Data, JsonElement? Assets)>
+        CapturedRequestAsync(QuotationPdfDocument document)
     {
         var capture = new RequestCapture();
         var options = Options.Create(new QuotationsOptions
@@ -302,7 +332,8 @@ public sealed partial class QuotationTemplateTests
         await renderer.RenderAsync(document, TestContext.Current.CancellationToken);
 
         var body = JsonDocument.Parse(capture.Json).RootElement;
-        return (body.GetProperty("source").GetString()!, body.GetProperty("data"));
+        var assets = body.TryGetProperty("assets", out var found) ? found : (JsonElement?)null;
+        return (body.GetProperty("source").GetString()!, body.GetProperty("data"), assets);
     }
 
     private sealed class RequestCapture
@@ -344,7 +375,8 @@ public sealed partial class QuotationTemplateTests
         AdvisorLabel: "ana.perez@ejemplo.co",
         Currency: "COP",
         BillingAccount: new QuotationPdfBillingAccount(
-            "Ferretería Andina S.A.S.", "900.123.456-7", "Bancolombia", "123-456789-01", "COP"),
+            "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
+            "Bancolombia", "123-456789-01", "COP"),
         PaymentMethod: "Transferencia bancaria a 30 días",
         Notes: "Los precios no incluyen transporte hasta la bodega del cliente.",
         Items:
