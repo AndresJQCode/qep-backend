@@ -22,6 +22,11 @@ public sealed record QuotationCompanyRef(
     string Name,
     string TaxId,
     bool IsActive,
+    /// <summary>Membrete del PDF: dirección y teléfono tal como están hoy en la empresa, no
+    /// congelados como la cuenta bancaria — son datos de contacto, no un compromiso financiero
+    /// que el documento tenga que preservar si la empresa los corrige después.</summary>
+    string? Address,
+    string? Phone,
     IReadOnlyCollection<QuotationCompanyAccountRef> BankAccounts);
 
 public sealed record QuotationCompanyAccountRef(

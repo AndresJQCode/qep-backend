@@ -18,7 +18,18 @@
 #let apagado = rgb("#5F6672")
 #let filete = rgb("#E3E5E9")
 #let panel = rgb("#F5F6F8")
-#let realce = rgb("#E6E9ED")
+// Celeste neutro para el remate del total, como en la referencia: no es el color de marca de
+// ningún tenant, es el mismo acento para todos — sólo marca la última cifra que importa.
+#let realce = rgb("#DCE9F7")
+
+// Acentos fijos de la plantilla, iguales para todos los tenants — no son el color de marca de
+// nadie, son el estilo estándar del documento, como en la referencia: naranja para lo comercial
+// (la tabla de productos, el aviso de pago y el resultado de esa tabla) y azul rey sólo para el
+// remate de los totales, la única cifra que el documento quiere que salte por encima de todo lo
+// demás. El resto del texto administrativo (ficha del documento, condiciones de pago, el resto
+// de los totales) se queda en la tinta neutra.
+#let naranja = rgb("#C0392B")
+#let azul-rey = rgb("#0047AB")
 
 // Liberation Sans la instala la imagen de `qcode-pdf` (`apk add ttf-liberation`), a propósito
 // por ser metric-compatible con Arial. No está embebida en Typst, así que la lista de respaldo
@@ -115,11 +126,62 @@
 // arranca solo abajo, así que acá se abren en líneas.
 #let contacto(texto) = texto.split(" · ").map(parte => [#parte]).join(linebreak())
 
-// Un renglón de la ficha del documento: rótulo a la izquierda, dato a la derecha.
-#let ficha(etiqueta, valor) = (
-  text(size: 7.5pt, fill: apagado)[#upper(etiqueta)],
-  [#valor],
+// Un renglón de la ficha del documento: "Etiqueta: dato" en una sola línea, como en la
+// referencia — no una tabla de rótulo/valor, sino el formato de formulario que el comprador
+// ya lee en la cotización que el owner fijó.
+#let renglon(etiqueta, valor) = [#etiqueta: #valor]
+
+// ---------------------------------------------------------------------------- logo
+//
+// `qcode-pdf` sólo recibe `source` (este markup) y `data` (JSON): no hay un tercer canal para
+// mandar un binario aparte, y Typst no trae un decodificador de base64 en su librería estándar.
+// Así que el logo viaja como texto base64 dentro de `data.logo` —lo agrega `QCodePdfRenderer`,
+// no este documento: es configuración de despliegue, no un campo de la cotización— y estas dos
+// funciones lo devuelven a bytes acá mismo.
+//
+// Por aritmética y no por operadores de bits: Typst no los expone en el lenguaje del documento,
+// así que cada grupo de 4 caracteres (24 bits) se arma y se parte con `calc.quo`/`calc.rem`,
+// igual que `miles()` más abajo arma separadores de millar sin formato por locale.
+//
+// `.chunks(4)` con `.map()` y no un `while`: Typst corta un bucle que decide que "parece
+// infinito" a las ~10.000 iteraciones, y un logo de este tamaño en base64 pasa esa marca.
+#let base64-valor(caracter) = {
+  let codigo = caracter.to-unicode()
+  if codigo >= 65 and codigo <= 90 { codigo - 65 } // A-Z
+  else if codigo >= 97 and codigo <= 122 { codigo - 71 } // a-z
+  else if codigo >= 48 and codigo <= 57 { codigo + 4 } // 0-9
+  else if codigo == 43 { 62 } // +
+  else if codigo == 47 { 63 } // /
+  else { 0 } // relleno "="
+}
+
+#let base64-decodificar(texto) = bytes(
+  texto
+    .clusters()
+    .chunks(4)
+    .map(grupo => {
+      let v0 = base64-valor(grupo.at(0))
+      let v1 = base64-valor(grupo.at(1))
+      let c2 = grupo.at(2)
+      let c3 = grupo.at(3)
+      let v2 = base64-valor(c2)
+      let v3 = base64-valor(c3)
+      let n24 = v0 * 262144 + v1 * 4096 + v2 * 64 + v3
+      let byte0 = calc.quo(n24, 65536)
+      let byte1 = calc.rem(calc.quo(n24, 256), 256)
+      let byte2 = calc.rem(n24, 256)
+      if c2 == "=" { (byte0,) } else if c3 == "=" { (byte0, byte1) } else { (byte0, byte1, byte2) }
+    })
+    .flatten(),
 )
+
+// El deploy que no cargó logo (o el `data.json` armado a mano de una prueba local) no trae la
+// clave: el documento se imprime igual, sin la imagen, en vez de reventar.
+#let logo = if "logo" in data and data.logo != none and data.logo != "" {
+  base64-decodificar(data.logo)
+} else {
+  none
+}
 
 // ---------------------------------------------------------------------------- página
 
@@ -145,43 +207,56 @@
 
 // ---------------------------------------------------------------------------- encabezado
 
-// El emisor ancla arriba a la izquierda, como en la referencia. Sin logo en el payload, el peso
-// tipográfico de la razón social es lo único que sostiene esa esquina.
+// El emisor ancla arriba a la izquierda, como en la referencia: logo, razón social, NIT,
+// dirección y teléfono, en ese orden.
 // Sin cuenta de cobro no hay emisor que imprimir, y entonces el ancla de la esquina es el tipo
-// de documento. Con emisor, "Cotización" pasa a ser el rótulo del número en la ficha: decirlo
-// en los dos lados es decirlo dos veces.
+// de documento. Con emisor, "Cotización" pasa a ser el encabezado del renglón de número a la
+// derecha: decirlo en los dos lados es decirlo dos veces.
 #let hay-emisor = data.billingAccount != none
 
 #grid(
   columns: (1fr, auto),
   column-gutter: 10mm,
   align: (left + top, right + top),
-  if hay-emisor [
-    #text(size: 14pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
-    #if data.billingAccount.companyTaxId != none [
-      \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+  [
+    #if logo != none [
+      #image(logo, width: 34mm)
+      #v(5pt, weak: true)
     ]
-  ] else [
-    #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
+    #if hay-emisor [
+      #text(size: 13pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
+      #if data.billingAccount.companyTaxId != none [
+        \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+      ]
+      #if data.billingAccount.companyAddress != "" [
+        \ #text(size: 8.5pt, fill: apagado)[Dirección empresa: #data.billingAccount.companyAddress]
+      ]
+      #if data.billingAccount.companyPhone != "" [
+        \ #text(size: 8.5pt, fill: apagado)[Teléfono: #data.billingAccount.companyPhone]
+      ]
+    ] else [
+      #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
+    ]
   ],
   block[
-    #grid(
-      columns: (auto, auto),
-      column-gutter: 7mm,
-      row-gutter: 4pt,
-      align: (left, right),
-      if hay-emisor { text(size: 7.5pt, fill: apagado)[COTIZACIÓN] } else { [] },
-      text(size: 12pt, weight: "bold")[#data.quotationNumber],
-      ..ficha("Emitida", fecha(data.issuedOn)),
-      ..ficha(
+    #if hay-emisor [
+      #text(size: 12pt, weight: "bold")[Cotización]
+    ] else [
+      #text(size: 12pt, weight: "bold")[#data.quotationNumber]
+    ]
+    #v(3pt, weak: true)
+    #par(leading: 0.6em)[
+      #if hay-emisor [#renglon("N.°", data.quotationNumber) \ ]
+      #renglon("Emitida", fecha(data.issuedOn)) \
+      #renglon(
         "Válida hasta",
         if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
-      ),
-      ..ficha("Asesor", if data.advisorLabel == "" { vacio } else { data.advisorLabel }),
-      ..ficha("Cliente", if data.customerName == "" { vacio } else { data.customerName }),
-      ..if data.customerCuc != "" { ficha("NIT / CUC", data.customerCuc) } else { () },
-      ..if data.customerContact != "" { ficha("Contacto", data.customerContact) } else { () },
-    )
+      ) \
+      #renglon("Asesor", if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
+      #renglon("Cliente", if data.customerName == "" { vacio } else { data.customerName })
+      #if data.customerCuc != "" [ \ #renglon("NIT / CUC", data.customerCuc)]
+      #if data.customerContact != "" [ \ #renglon("Contacto", data.customerContact)]
+    ]
   ],
 )
 
@@ -198,24 +273,29 @@
     stroke: 0.8pt + tinta,
     inset: 10pt,
   )[
-    #grid(
-      columns: (1fr, 1.5fr),
-      column-gutter: 8mm,
-      if data.paymentMethod != none [
-        #rotulo("Forma de pago")
-        #v(3pt, weak: true)
-        #data.paymentMethod
-      ] else [],
-      if data.billingAccount != none [
-        #rotulo("Cuenta para el pago")
-        #v(3pt, weak: true)
-        #data.billingAccount.companyName \
+    #par(leading: 0.6em)[
+      #if data.paymentMethod != none [#renglon("Forma de pago", data.paymentMethod) \ ]
+      #if data.billingAccount != none [
+        #renglon("Cuenta para el pago", data.billingAccount.companyName) \
+        #data.billingAccount.bankName \
         #text(weight: "bold")[
-          #data.billingAccount.bankName · #data.billingAccount.accountNumber
-          (#data.billingAccount.currency)
+          Número: #data.billingAccount.accountNumber (#data.billingAccount.currency)
         ]
-      ] else [],
-    )
+      ]
+    ]
+  ]
+  // Aviso fijo del pie de pago, como en la referencia: no es un dato de la cotización —no hay
+  // dónde guardarlo hoy, ni varía de una a otra— sino la política bancaria del negocio que usa
+  // esta plantilla, igual para todos sus documentos.
+  #if data.billingAccount != none [
+    #v(6pt, weak: true)
+    #text(size: 7.5pt, fill: naranja)[
+      #text(weight: "bold")[Ten en cuenta:] \
+      no aceptamos pagos por corresponsal bancario, \
+      ni depósitos en entidades bancarias, ni cajeros. \
+      Solo debes pagar el valor de tu pedido, el valor a pagar \
+      debe de ser libre de toda comisión bancaria.
+    ]
   ]
   #v(12pt)
 ]
@@ -289,21 +369,16 @@
   columns: columnas,
   align: (left, ..titulos.slice(1).map(_ => right)),
   inset: (x: 8pt, y: 7.5pt),
-  fill: (x, y) => if y == 0 { tinta },
+  // Fila 0 oscura para el encabezado; el resto alterna blanco y panel, como en la referencia
+  // — la cebra ayuda a leer una fila completa en una tabla ancha, sin depender del color.
+  fill: (x, y) => if y == 0 { tinta } else if calc.even(y) { panel },
   stroke: (x, y) => (bottom: if y == 0 { none } else { 0.4pt + filete }),
   table.header(..titulos.map(titulo => rotulo(titulo, color: white))),
   ..data.items
     .map(item => {
       let celdas = ([#item.productName],)
       if hay-descuento {
-        // El valor público tachado marca de dónde bajó el precio; el efectivo va al lado.
-        celdas.push(
-          if item.discountPercentage > 0 {
-            text(fill: apagado)[#strike[#importe(item.unitPrice)]]
-          } else {
-            [#importe(item.unitPrice)]
-          },
-        )
+        celdas.push([#importe(item.unitPrice)])
         celdas.push([#importe(item.discountedUnitPrice)])
       } else {
         celdas.push([#importe(item.unitPrice)])
@@ -327,7 +402,9 @@
   #v(14pt)
   #rotulo("Observaciones")
   #v(4pt, weak: true)
-  #block(width: 130mm)[#data.notes]
+  // En mayúsculas como en la referencia: es la letra chica que el vendedor quiere que el
+  // comprador no pase por alto, y en mayúsculas se lee como aviso, no como un párrafo más.
+  #block(width: 130mm)[#upper(data.notes)]
 ]
 
 #v(14pt)
@@ -339,26 +416,35 @@
 // cifra que importa, que no siempre es el total: con retención, lo que el cliente gira es el
 // neto.
 //
-// La retención va **después** del total y no antes. El orden importa: total es lo facturado y
-// la retención se calcula sobre eso (`Total - Retención = Neto`), así que ponerla arriba
-// sugiere que se resta para llegar al total, que es falso. Con retención en cero el renglón no
-// aparece: una fila que dice "0" en el lugar equivocado no informa, confunde.
+// La retención va entre el IVA y el total, como en la referencia, y se imprime siempre —incluso
+// en cero— porque ahí es donde el comprador espera verla. Lo que sigue siendo cierto es que no
+// resta del total: `Total inversión` es lo facturado, y sólo cuando hay retención de verdad
+// aparece además `Neto a pagar`, que es lo que el cliente gira. Sin eso, una retención distinta
+// de cero se leería como si ya estuviera descontada del total de arriba, que es falso.
 #let hay-retencion = data.retentionAmount > 0
 
 #let renglones = {
   let filas = (
-    ("Valor antes de IVA", importe(data.subtotal), 0),
+    ("Valor antes de IVA:", "$ " + importe(data.subtotal), 0),
     (
-      if data.customerVatSurplus { "Total IVA · excedente de IVA" } else { "Total IVA" },
-      importe(data.taxAmount),
+      if data.customerVatSurplus { "Total IVA · excedente de IVA:" } else { "Total IVA:" },
+      "$ " + importe(data.taxAmount),
       0,
     ),
-    ("Total inversión (" + data.currency + ")", importe(data.total), if hay-retencion { 1 } else { 2 }),
+    (
+      "Retención en la fuente:",
+      (if hay-retencion { "-$ " } else { "$ " }) + importe(data.retentionAmount),
+      0,
+    ),
+    (
+      "Total inversión (" + data.currency + "):",
+      "$ " + importe(data.total),
+      if hay-retencion { 1 } else { 2 },
+    ),
   )
 
   if hay-retencion {
-    filas.push(("Retención en la fuente", "-" + importe(data.retentionAmount), 0))
-    filas.push(("Neto a pagar (" + data.currency + ")", importe(data.netTotal), 2))
+    filas.push(("Neto a pagar (" + data.currency + "):", "$ " + importe(data.netTotal), 2))
   }
 
   filas
@@ -372,10 +458,7 @@
     // Lo que el mayorista gana si revende a valor público: la suma de los descuentos de línea.
     // Es un argumento de venta, y por eso vive al lado del total y no escondido en la tabla.
     if data.discountAmount > 0 [
-      #text(size: 8pt, fill: apagado, style: "italic")[
-        Ahorro sobre el valor público \
-      ]
-      #text(size: 11pt, weight: "bold")[#data.currency #importe(data.discountAmount)]
+      #text(style: "italic")[Total utilidad: \$ #importe(data.discountAmount)]
     ] else [],
     block(width: 82mm)[
       #table(
@@ -388,13 +471,15 @@
           .map(fila => {
             let peso = fila.at(2)
             (
-              if peso == 0 {
-                text(size: 8.5pt, fill: apagado)[#upper(fila.at(0))]
-              } else {
+              if peso == 2 {
+                text(size: 9pt, weight: "bold", fill: azul-rey)[#upper(fila.at(0))]
+              } else if peso == 1 {
                 text(size: 9pt, weight: "bold")[#upper(fila.at(0))]
+              } else {
+                text(size: 8.5pt)[#upper(fila.at(0))]
               },
               if peso == 2 {
-                text(size: 12pt, weight: "bold")[#fila.at(1)]
+                text(size: 12pt, weight: "bold", fill: azul-rey)[#fila.at(1)]
               } else if peso == 1 {
                 text(size: 9.5pt, weight: "bold")[#fila.at(1)]
               } else {
@@ -407,3 +492,54 @@
     ],
   )
 ]
+
+// ---------------------------------------------------------------------------- proceso
+//
+// Segunda página fija, igual que el logo y el aviso de pago: no es un dato de la cotización —no
+// cambia de una a otra— sino la política de logística del negocio que emite el documento, así
+// que va escrita acá y no armada desde `data`.
+#pagebreak()
+
+#text(size: 11pt, weight: "bold")[Proceso de Alistamiento y Recepción de Pedidos.]
+
+#v(10pt)
+
+#text(weight: "bold")[Alistamiento y Entrega:] \
+El proveedor preparará los pedidos bajo filmación y los entregará a la empresa transportadora
+dentro de los 8 días hábiles siguientes a la confirmación del pedido, siempre que estos hayan
+sido solicitados y pagados por el mayorista.
+
+#v(8pt)
+
+#text(weight: "bold")[Recepción de la Mercancía:] \
+Al recibir los productos de la transportadora, el mayorista deberá revisar el estado del
+paquete. No recibir en caso de detectar:
+
+\- Cinta contramarcada deteriorada \
+\- Cajas dañadas y/o abiertas \
+\- Cintas, zunchos o cajas diferentes a las del proveedor
+
+#v(4pt)
+
+Si decide recibir el paquete a pesar de alguna de estas irregularidades, lo hará bajo su
+responsabilidad. En este caso, deberá:
+
+\- Dejar constancia de la novedad en la guía de recepción de la transportadora. \
+\- Informar de inmediato al proveedor. \
+\- Enviar fotografías como evidencia.
+
+#v(8pt)
+
+#text(weight: "bold")[Verificación del Contenido:] \
+Una vez recibido el pedido, el mayorista deberá grabar un video al abrir las cajas o paquetes,
+evidenciando el estado y la cantidad de los productos.
+
+#v(8pt)
+
+#text(weight: "bold")[Reporte de Novedades:] \
+Si detecta daños, faltantes o deterioro en los productos, deberá informar al proveedor en un
+plazo máximo de 1 día hábil después de recibirlos. El reporte debe incluir:
+
+\- Video de la apertura del paquete. \
+\- Fotografías de las cajas. \
+\- Imágenes de los 3 stickers identificativos del proveedor.

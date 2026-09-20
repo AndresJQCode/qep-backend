@@ -344,7 +344,8 @@ public sealed partial class QuotationTemplateTests
         AdvisorLabel: "ana.perez@ejemplo.co",
         Currency: "COP",
         BillingAccount: new QuotationPdfBillingAccount(
-            "Ferretería Andina S.A.S.", "900.123.456-7", "Bancolombia", "123-456789-01", "COP"),
+            "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
+            "Bancolombia", "123-456789-01", "COP"),
         PaymentMethod: "Transferencia bancaria a 30 días",
         Notes: "Los precios no incluyen transporte hasta la bodega del cliente.",
         Items:

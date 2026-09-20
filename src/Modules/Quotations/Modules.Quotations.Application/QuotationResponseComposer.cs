@@ -170,6 +170,8 @@ public sealed class QuotationResponseComposer(
                 account.CompanyId,
                 company?.Name,
                 company?.TaxId,
+                company?.Address,
+                company?.Phone,
                 account.BankName,
                 account.AccountNumber,
                 account.Currency);

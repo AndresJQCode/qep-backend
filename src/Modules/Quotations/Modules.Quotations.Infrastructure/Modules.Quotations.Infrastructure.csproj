@@ -27,5 +27,10 @@
     <!-- La plantilla es parte del contrato con `qcode-pdf`, no configuracion: viaja adentro
          del ensamblado para que no se pierda al publicar la imagen. -->
     <EmbeddedResource Include="Pdf\quotation.typ" />
+    <!-- El logo del membrete es configuración de despliegue, no dato de tenant —igual que
+         `VITE_TENANT_BRAND_LOGO` del frontend: una sola imagen para todos los tenants de esta
+         instalación. Viaja embebida por el mismo motivo que la plantilla: `qcode-pdf` sólo
+         recibe `source` y `data`, así que el renderer la manda en base64 dentro de `data`. -->
+    <EmbeddedResource Include="Pdf\tenant-logo.webp" />
   </ItemGroup>
 </Project>
