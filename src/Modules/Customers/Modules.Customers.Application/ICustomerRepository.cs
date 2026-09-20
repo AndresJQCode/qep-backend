@@ -136,5 +136,17 @@ public interface ICustomerRepository
         IReadOnlyCollection<CustomerId> customerIds,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// La ficha completa (con su libreta de direcciones) de cada uno de estos clientes, en una
+    /// sola consulta batch — mismo criterio que <see cref="FindNamesByIdsAsync"/> pero trayendo el
+    /// agregado entero, para cuando quien llama necesita más que el nombre (el Excel de pedidos
+    /// vía <c>IQuotationCustomerLookup.FindManyAsync</c>). Sin tracking: es lectura de reporte, no
+    /// una mutación. Un id que no existe en el tenant simplemente no aparece en el resultado.
+    /// </summary>
+    Task<IReadOnlyDictionary<CustomerId, Customer>> FindManyAsync(
+        Guid tenantId,
+        IReadOnlyCollection<CustomerId> customerIds,
+        CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }

@@ -35,6 +35,38 @@ internal sealed class QuotationCustomerLookup(
         var citiesById = await geographyLookup.FindCitiesAsync(
             customer.Addresses.Select(address => address.CityId).Distinct().ToArray(),
             cancellationToken);
+
+        return ToRef(customer, citiesById);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
+    {
+        var customers = await repository.FindManyAsync(
+            tenantId,
+            clientIds.Select(id => new CustomerId(id)).ToArray(),
+            cancellationToken);
+        if (customers.Count == 0)
+        {
+            return new Dictionary<Guid, QuotationCustomerRef>();
+        }
+
+        // Las ciudades de todas las direcciones de todos los clientes del lote, de una sola vez —
+        // mismo motivo que FindAsync, pero por lote y no por cliente.
+        var citiesById = await geographyLookup.FindCitiesAsync(
+            customers.Values
+                .SelectMany(customer => customer.Addresses.Select(address => address.CityId))
+                .Distinct()
+                .ToArray(),
+            cancellationToken);
+
+        return customers.Values.ToDictionary(
+            customer => customer.Id.Value, customer => ToRef(customer, citiesById));
+    }
+
+    private static QuotationCustomerRef ToRef(
+        Customer customer, IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
+    {
         var principal = customer.PrincipalAddress;
         CustomerCityRef? principalCity = null;
         if (principal is not null)

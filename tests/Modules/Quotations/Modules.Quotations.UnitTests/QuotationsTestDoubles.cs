@@ -110,6 +110,24 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
                 .Distinct()
                 .ToDictionary(id => id, id => Names[id]));
     }
+
+    /// <summary>Las fichas completas que <see cref="FindManyAsync"/> resuelve. Arranca con el
+    /// cliente base, igual que <see cref="Names"/>; una prueba agrega los otros clientes que su
+    /// lote necesita.</summary>
+    public Dictionary<Guid, QuotationCustomerRef> Refs { get; } = new() { [customer.Id] = customer };
+
+    public int FindManyCalls { get; private set; }
+
+    public Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
+    {
+        FindManyCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationCustomerRef>>(
+            clientIds
+                .Where(Refs.ContainsKey)
+                .Distinct()
+                .ToDictionary(id => id, id => Refs[id]));
+    }
 }
 
 /// <summary><paramref name="resolves"/> en false simula la membresía que ya no es del tenant: el
@@ -685,6 +703,23 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
                         .ToArray()));
     }
 
+    // Las líneas y las partes ya viven en el agregado sembrado: a diferencia del repositorio
+    // real, acá no hace falta una consulta aparte, sólo leer lo que la prueba cargó con
+    // Quotation.AddItemAfterConversion / UpdateDetails.
+    public Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>> ListItemsForExportAsync(
+        Guid tenantId, IReadOnlyCollection<QuotationId> quotationIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>>(
+            rows
+                .Where(row => quotationIds.Contains(row.Quotation.Id) && row.Quotation.Items.Count > 0)
+                .ToDictionary(row => row.Quotation.Id, row => (IReadOnlyList<QuotationItem>)row.Quotation.Items.ToArray()));
+
+    public Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>> ListPartiesForExportAsync(
+        Guid tenantId, IReadOnlyCollection<QuotationId> quotationIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>>(
+            rows
+                .Where(row => quotationIds.Contains(row.Quotation.Id) && row.Quotation.Parties.Count > 0)
+                .ToDictionary(row => row.Quotation.Id, row => (IReadOnlyList<QuotationParty>)row.Quotation.Parties.ToArray()));
+
     private IEnumerable<OrderWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
         clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
 
@@ -760,4 +795,37 @@ internal sealed class RecordingPaymentProofPublisher(bool enabled = true) : IPay
     }
 
     public string? UrlFor(string publicKey) => enabled ? $"{BaseUrl}/{publicKey}" : null;
+}
+
+/// <summary>Dobles del Excel de pedidos con ERP (ajuste 2026-09-20): producto, empresa y ciudad de
+/// una parte, resueltos en lote como los reales, pero desde un diccionario sembrado a mano.</summary>
+internal sealed class StubQuotationProductLookup(
+    IReadOnlyDictionary<Guid, QuotationProductRef> products) : IQuotationProductLookup
+{
+    public int FindManyCalls { get; private set; }
+
+    public Task<IReadOnlyDictionary<Guid, QuotationProductRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
+    {
+        FindManyCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductRef>>(
+            productIds.Where(products.ContainsKey).Distinct().ToDictionary(id => id, id => products[id]));
+    }
+}
+
+internal sealed class StubQuotationCompanyLookup(
+    IReadOnlyDictionary<Guid, QuotationCompanyRef> companies) : IQuotationCompanyLookup
+{
+    public Task<QuotationCompanyRef?> FindAsync(
+        Guid tenantId, Guid companyId, CancellationToken cancellationToken) =>
+        Task.FromResult(companies.GetValueOrDefault(companyId));
+}
+
+internal sealed class StubQuotationGeographyLookup(
+    IReadOnlyDictionary<Guid, string> cityNames) : IQuotationGeographyLookup
+{
+    public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            cityIds.Where(cityNames.ContainsKey).Distinct().ToDictionary(id => id, id => cityNames[id]));
 }

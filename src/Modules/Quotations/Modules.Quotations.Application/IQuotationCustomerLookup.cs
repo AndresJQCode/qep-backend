@@ -45,6 +45,16 @@ public interface IQuotationCustomerLookup
     /// </summary>
     Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// La ficha completa de cada uno de estos clientes, en una sola consulta batch — la usa el
+    /// Excel de pedidos para resolver ciudad/dirección/teléfono/correo cuando la entrega de un
+    /// pedido "son los mismos datos del cliente" (el caso normal, ver <see cref="QuotationParty"/>),
+    /// que sin esto sería una consulta por fila. Un id sin match simplemente no aparece en el
+    /// resultado, mismo criterio que <see cref="FindNamesAsync"/>.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken);
 }
 
 // Name/Phone/Address se agregaron para el envío por WhatsApp (SendQuotation.cs): son los

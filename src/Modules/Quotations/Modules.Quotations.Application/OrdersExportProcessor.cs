@@ -5,20 +5,23 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Arma el Excel del listado de pedidos en el worker (D7, D8). Mismo esquema que
-/// <see cref="QuotationsExportProcessor"/>: lotes de mil con keyset y el filtro del listado
-/// (<see cref="OrderListing"/> y el <c>Filtered</c> de OrderRepository), streaming y subida con el id
-/// del job. El lote de lectura y escritura lo comparten los dos en <see cref="ExportBatchLoop"/>.
+/// Arma el Excel de pedidos para el ERP contable del tenant (ajuste 2026-09-20): una fila por
+/// línea de producto, no por pedido — el ERP necesita Cod. Producto, Cantidad, Valor Unit, IVA y
+/// Descuento por línea, y esos datos no existen a nivel pedido. Los campos que sí son del pedido
+/// entero (EMPRESA, Forma de pago, la cuenta a consignar, Pedido, Documento, dirección de entrega,
+/// Observaciones) se repiten en cada una de sus líneas.
 ///
-/// Suma los comprobantes de pago de cada pedido (spec 2026-09-15): se leen con una consulta por lote
-/// (E6), y cada uno es el enlace a su copia pública, «Sin enlace» si es privado, o una celda vacía
-/// si el pedido no lo tiene (E2).
+/// Mismo esquema de lote que <see cref="QuotationsExportProcessor"/>: keyset de a mil y streaming
+/// (<see cref="ExportBatchLoop"/>). Lo que cambia es que <c>toRows</c> ya no devuelve una fila por
+/// entidad del lote — un pedido con tres líneas aporta tres filas — así que el conteo de filas del
+/// archivo se lleva aparte del conteo de pedidos leídos (ver <see cref="ProcessAsync"/>).
 /// </summary>
 public sealed class OrdersExportProcessor(
     IOrderRepository repository,
     IQuotationCustomerLookup customerLookup,
-    IQuotationAdvisorLookup advisorLookup,
-    IPaymentProofPublisher paymentProofPublisher,
+    IQuotationProductLookup productLookup,
+    IQuotationCompanyLookup companyLookup,
+    IQuotationGeographyLookup geographyLookup,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
     ITenantClock tenantClock)
@@ -28,41 +31,37 @@ public sealed class OrdersExportProcessor(
 
     public const string FilePrefix = "pedidos";
 
-    /// <summary>El texto de la celda de un comprobante con copia pública (E2).</summary>
-    public const string ProofLinkText = "Ver";
-
-    /// <summary>La celda de un comprobante privado (E2): que no haya enlace no es lo mismo que no
-    /// haya comprobante, y una celda vacía no puede significar las dos cosas.</summary>
-    public const string PrivateProofText = "Sin enlace";
-
-    /// <summary>Cuántos comprobantes tienen columna propia (E1). Eran tres en el spec 2026-09-15;
-    /// el owner lo subió a cinco el 2026-09-17, que es lo que paga un pedido en la práctica. Los que
-    /// pasen de ahí siguen contándose en «Comprobantes», que por eso existe.</summary>
-    public const int ProofColumns = 5;
+    /// <summary>Cuántas fechas de pago tienen columna propia, mismo criterio y mismo número que
+    /// <c>OrderPaymentProof</c> antes de este ajuste: es lo que paga un pedido en la práctica.
+    /// </summary>
+    public const int PaymentDateColumns = 5;
 
     /// <summary>
-    /// Las de la tabla de pedidos en su orden (order-table.tsx: Pedido, Cliente, Asesora, Fecha, Pago,
-    /// Estado, Total), con la moneda aparte del total y "Asesor" como en el Excel de cotizaciones.
-    /// "Pago" replica el respaldo de la tabla: la forma de pago o, mientras llegue vacía, la etiqueta del
-    /// estado del pago. Los estados van con la etiqueta de la pantalla (spec 2026-09-13, A7).
-    ///
-    /// Después de Total, las de los comprobantes (spec 2026-09-15, E1): la cantidad y los
-    /// <see cref="ProofColumns"/> primeros. Van al final para que las ocho de la tabla no se muevan, y
-    /// salen siempre, aunque la opción de publicar esté apagada (E7): la forma del archivo no depende
-    /// del ambiente.
+    /// Las columnas que el ERP contable espera, en su orden (ajuste 2026-09-20). "Nota Detalle"
+    /// sale siempre vacía: no existe una nota por línea, sólo <c>Quotation.Notes</c> a nivel
+    /// pedido, que ya es la columna "Observaciones". "Vencimiento" no está: no hay lote ni
+    /// caducidad de producto en ningún lado del sistema todavía.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
+        new("EMPRESA", 30),
+        new("Forma de pago 1", 24),
+        new("V. Consignacion 1", 18),
+        new("Cod. Producto", 18),
+        new("U.Medida", 22),
+        new("Cantidad", 12),
+        new("Valor Unit", 16),
+        new("IVA", 14),
+        new("Descuento", 14),
+        new("Nota Detalle", 30),
+        .. Enumerable.Range(1, PaymentDateColumns).Select(number => new ExportColumn($"Fecha Pago {number}", 18)),
+        new("Ciudad", 20),
+        new("Documento", 16),
         new("Pedido", 18),
-        new("Cliente", 40),
-        new("Asesor", 32),
-        new("Fecha", 34),
-        new("Pago", 24),
-        new("Estado", 12),
-        new("Moneda", 10),
-        new("Total", 16),
-        new("Comprobantes", 14),
-        .. Enumerable.Range(1, ProofColumns).Select(number => new ExportColumn($"Comprobante {number}", 16)),
+        new("Direccion", 40),
+        new("Observaciones", 40),
+        new("Telefono", 16),
+        new("Email", 30),
     ];
 
     public ExportJobKind Kind => ExportJobKind.Orders;
@@ -79,8 +78,14 @@ public sealed class OrdersExportProcessor(
         var converted = TenantDayRange.Of(calendar, filters.ConvertedFrom, filters.ConvertedTo);
         var generatedAt = calendar.UtcNow;
 
+        // El conteo del archivo (filas de producto) se lleva aparte del que devuelve el lote
+        // (pedidos leídos, para el chequeo de "vacío" de abajo): un pedido con tres líneas aporta
+        // tres filas, y ExportBatchLoop no lo sabe — cuenta entidades del lote, no lo que
+        // devuelve `toRows`.
+        var exportedRows = 0;
+
         using var workbook = writer.Create(SheetName, Columns);
-        var rowCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
+        var orderCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
             workbook,
             (after, limit, ct) => repository.ListForExportAsync(
                 job.TenantId,
@@ -97,17 +102,15 @@ public sealed class OrdersExportProcessor(
                 ct),
             async (batch, ct) =>
             {
-                var rows = await OrderListing.ToListItemsAsync(
-                    customerLookup, advisorLookup, job.TenantId, batch, ct);
-                // E6: los comprobantes del lote en una sola ida, igual que los nombres y los correos.
-                var proofs = await repository.ListPaymentProofsForExportAsync(
-                    job.TenantId, batch.Select(row => row.Order.Id).ToArray(), ct);
-                return rows.Select(row => ToCells(row, ProofsOf(proofs, row.Id), calendar));
+                var context = await LoadBatchContextAsync(job.TenantId, batch, ct);
+                var rows = batch.SelectMany(row => RowsFor(row, context, calendar)).ToArray();
+                exportedRows += rows.Length;
+                return rows;
             },
             row => new OrderExportCursor(row.Order.ConvertedAt, row.Order.OrderNumber),
             cancellationToken);
 
-        if (rowCount == 0)
+        if (orderCount == 0)
         {
             throw new ExportJobDefinitiveException(
                 "Empty: no orders matched the export filters when the export ran.");
@@ -116,7 +119,7 @@ public sealed class OrdersExportProcessor(
         var fileName = ExportFileNames.For(FilePrefix, calendar.ToLocal(generatedAt));
         var upload = await storage.UploadAsync(
             job.TenantId, job.Id, fileName, workbook.Complete(), cancellationToken);
-        return new ExportJobResult(fileName, rowCount, upload.DownloadUrl, upload.ExpiresAt);
+        return new ExportJobResult(fileName, exportedRows, upload.DownloadUrl, upload.ExpiresAt);
     }
 
     // El request ya validó el estado y la forma de pago; si igual no se pueden leer —el enum
@@ -133,45 +136,184 @@ public sealed class OrdersExportProcessor(
         }
     }
 
-    private static IReadOnlyList<OrderExportPaymentProof> ProofsOf(
-        IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>> proofs, Guid orderId) =>
-        proofs.TryGetValue(new OrderId(orderId), out var found) ? found : [];
+    /// <summary>Todo lo que un lote necesita resuelto de una sola vez, para que <see cref="RowsFor"/>
+    /// no pida nada por fila: líneas y partes por cotización, comprobantes por pedido, productos y
+    /// empresas por id, ciudades de las partes de entrega, y la ficha de cada cliente del lote —
+    /// la necesitan tanto "Documento" (siempre) como el respaldo de "los mismos datos del cliente"
+    /// cuando el pedido no tiene una parte de entrega propia.</summary>
+    private readonly record struct BatchContext(
+        IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>> ItemsByQuotation,
+        IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>> PartiesByQuotation,
+        IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>> ProofsByOrder,
+        IReadOnlyDictionary<Guid, QuotationProductRef> Products,
+        IReadOnlyDictionary<Guid, QuotationCompanyRef> Companies,
+        IReadOnlyDictionary<Guid, string> CityNames,
+        IReadOnlyDictionary<Guid, QuotationCustomerRef> Customers);
 
-    private ExportCell[] ToCells(
-        OrderListItemDto row, IReadOnlyList<OrderExportPaymentProof> proofs, TenantCalendar calendar) =>
-    [
-        ExportCell.OfText(row.OrderNumber),
-        ExportCell.OfText(row.ClientName),
-        // El nombre con respaldo al correo, igual que la tabla (spec 2026-09-11, D1, nota del
-        // 2026-09-15). El encabezado sigue siendo "Asesor", como en el Excel de cotizaciones.
-        ExportCell.OfText(row.AdvisorName),
-        // Texto y no celda de fecha, mismo criterio que cotizaciones, en la hora del tenant, al minuto
-        // y sin offset (spec 2026-09-17, punto 8a).
-        ExportCell.OfText(calendar.ToLocal(row.ConvertedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)),
-        // El DTO trae los nombres de los enums, que son contrato de la API (OrderMapping.cs);
-        // acá se vuelven al enum sólo para etiquetarlos.
-        ExportCell.OfText(row.PaymentMethod
-            ?? ExportStatusLabels.For(Enum.Parse<OrderPaymentStatus>(row.PaymentStatus))),
-        ExportCell.OfText(ExportStatusLabels.For(Enum.Parse<OrderStatus>(row.Status))),
-        ExportCell.OfText(row.Currency),
-        ExportCell.OfNumber(row.Total),
-        // La cantidad cuenta todos, también los que no tienen columna (E1).
-        ExportCell.OfNumber(proofs.Count),
-        .. Enumerable.Range(0, ProofColumns).Select(index => ProofCell(proofs, index)),
-    ];
-
-    // E2: el enlace «Ver» si tiene copia pública y la opción está encendida, «Sin enlace» si no, y
-    // vacía si el pedido no tiene ese comprobante.
-    private ExportCell ProofCell(IReadOnlyList<OrderExportPaymentProof> proofs, int index)
+    private async Task<BatchContext> LoadBatchContextAsync(
+        Guid tenantId, IReadOnlyList<OrderWithQuotation> batch, CancellationToken cancellationToken)
     {
-        if (index >= proofs.Count)
+        var quotationIds = batch.Select(row => row.Quotation.Id).ToArray();
+        var orderIds = batch.Select(row => row.Order.Id).ToArray();
+
+        var itemsByQuotation = await repository.ListItemsForExportAsync(tenantId, quotationIds, cancellationToken);
+        var partiesByQuotation = await repository.ListPartiesForExportAsync(tenantId, quotationIds, cancellationToken);
+        var proofsByOrder = await repository.ListPaymentProofsForExportAsync(tenantId, orderIds, cancellationToken);
+
+        var productIds = itemsByQuotation.Values
+            .SelectMany(items => items)
+            .Select(item => item.ProductId)
+            .Distinct()
+            .ToArray();
+        var products = await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
+
+        // Pocas empresas distintas en la práctica (un tenant no suele facturar por más de un
+        // puñado de cuentas), así que una consulta por empresa distinta y no un puerto batch
+        // nuevo — a diferencia de clientes, donde "los mismos datos del cliente" es el caso
+        // normal y el batch sí importa.
+        var companyIds = batch
+            .Select(row => row.Quotation.BillingAccount?.CompanyId)
+            .Where(id => id is not null)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToArray();
+        var companies = new Dictionary<Guid, QuotationCompanyRef>();
+        foreach (var companyId in companyIds)
         {
-            return ExportCell.OfText(string.Empty);
+            var company = await companyLookup.FindAsync(tenantId, companyId, cancellationToken);
+            if (company is not null)
+            {
+                companies[companyId] = company;
+            }
         }
 
-        var url = proofs[index].PublicStorageKey is { } publicKey
-            ? paymentProofPublisher.UrlFor(publicKey)
-            : null;
-        return url is null ? ExportCell.OfText(PrivateProofText) : ExportCell.OfLink(url, ProofLinkText);
+        var shippingCityIds = partiesByQuotation.Values
+            .SelectMany(parties => parties)
+            .Where(party => party.Role == QuotationPartyRole.Shipping && party.CityId is not null)
+            .Select(party => party.CityId!.Value)
+            .Distinct()
+            .ToArray();
+        var cityNames = await geographyLookup.FindCityNamesAsync(shippingCityIds, cancellationToken);
+
+        // Todos los clientes del lote, no sólo los que necesitan el respaldo: "Documento" los
+        // necesita a todos.
+        var clientIds = batch.Select(row => row.Quotation.ClientId).Distinct().ToArray();
+        var customers = await customerLookup.FindManyAsync(tenantId, clientIds, cancellationToken);
+
+        return new BatchContext(
+            itemsByQuotation, partiesByQuotation, proofsByOrder, products, companies, cityNames, customers);
     }
+
+    private static IEnumerable<ExportCell[]> RowsFor(
+        OrderWithQuotation row, BatchContext context, TenantCalendar calendar)
+    {
+        var quotation = row.Quotation;
+        var order = row.Order;
+
+        var items = context.ItemsByQuotation.TryGetValue(quotation.Id, out var foundItems)
+            ? foundItems
+            : [];
+        if (items.Count == 0)
+        {
+            yield break;
+        }
+
+        var proofs = context.ProofsByOrder.TryGetValue(order.Id, out var foundProofs)
+            ? foundProofs
+            : [];
+
+        var empresa = quotation.BillingAccount is { } billing
+            && context.Companies.TryGetValue(billing.CompanyId, out var company)
+                ? company.Name
+                : string.Empty;
+
+        context.Customers.TryGetValue(quotation.ClientId, out var customer);
+        var documento = customer?.Cuc ?? string.Empty;
+
+        var shipping = context.PartiesByQuotation.TryGetValue(quotation.Id, out var parties)
+            ? parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping)
+            : null;
+        var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
+
+        var pago = quotation.PaymentMethod ?? string.Empty;
+        var observaciones = quotation.Notes ?? string.Empty;
+
+        foreach (var item in items)
+        {
+            context.Products.TryGetValue(item.ProductId, out var product);
+
+            yield return
+            [
+                ExportCell.OfText(empresa),
+                ExportCell.OfText(pago),
+                ExportCell.OfNumber(quotation.Total),
+                ExportCell.OfText(product?.Code ?? string.Empty),
+                ExportCell.OfText(UnitOfMeasureFor(product, item.Quantity)),
+                ExportCell.OfNumber(item.Quantity),
+                ExportCell.OfNumber(item.UnitPrice),
+                ExportCell.OfNumber(item.TaxAmount),
+                ExportCell.OfNumber(item.DiscountAmount),
+                ExportCell.OfText(string.Empty), // Nota Detalle: no existe nota por línea.
+                .. Enumerable.Range(0, PaymentDateColumns).Select(index => PaymentDateCell(proofs, index, calendar)),
+                ExportCell.OfText(ciudad),
+                ExportCell.OfText(documento),
+                ExportCell.OfText(order.OrderNumber),
+                ExportCell.OfText(direccion),
+                ExportCell.OfText(observaciones),
+                ExportCell.OfText(telefono),
+                ExportCell.OfText(email),
+            ];
+        }
+    }
+
+    // La entrega con datos propios manda; sin ella, "los mismos datos del cliente" (el caso
+    // normal, ver QuotationParty) resuelve contra la ficha del cliente ya cargada en el contexto.
+    private static (string Ciudad, string Direccion, string Telefono, string Email) ContactFor(
+        QuotationParty? shipping,
+        QuotationCustomerRef? customer,
+        IReadOnlyDictionary<Guid, string> cityNames)
+    {
+        if (shipping is not null)
+        {
+            var ciudad = shipping.CityId is { } cityId && cityNames.TryGetValue(cityId, out var name)
+                ? name
+                : string.Empty;
+            return (ciudad, shipping.Address ?? string.Empty, shipping.Phone ?? string.Empty, shipping.Email ?? string.Empty);
+        }
+
+        return (
+            customer?.CityName ?? string.Empty,
+            customer?.Address ?? string.Empty,
+            customer?.Phone ?? string.Empty,
+            customer?.Email ?? string.Empty);
+    }
+
+    // U.Medida (ajuste 2026-09-20): la restricción de la escala de precios del producto que cubre
+    // la cantidad de esta línea — Múltiplo o Empaque, según cómo esté configurada esa escala. Se
+    // recalcula contra el catálogo de HOY: la línea nunca guardó a qué escala respondió al
+    // cotizarse, así que un pedido viejo puede mostrar algo distinto si las escalas del producto
+    // cambiaron después (decisión confirmada, ajuste 2026-09-20). Sin escala que cubra la
+    // cantidad, o sin restricción configurada en la que sí cubre, la celda queda vacía.
+    private static string UnitOfMeasureFor(QuotationProductRef? product, decimal quantity)
+    {
+        if (product is null)
+        {
+            return string.Empty;
+        }
+
+        var scale = QuotationDiscountResolver.Resolve(product.Scales, quantity);
+        return scale?.Restriction switch
+        {
+            QuotationPriceScaleRestriction.Multiple => $"Múltiplo de {scale.Multiple}",
+            QuotationPriceScaleRestriction.PackagingUnit => $"Empaque de {scale.PackagingUnit}",
+            _ => string.Empty,
+        };
+    }
+
+    private static ExportCell PaymentDateCell(
+        IReadOnlyList<OrderExportPaymentProof> proofs, int index, TenantCalendar calendar) =>
+        index >= proofs.Count
+            ? ExportCell.OfText(string.Empty)
+            : ExportCell.OfText(calendar.ToLocal(proofs[index].UploadedAt)
+                .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
 }
