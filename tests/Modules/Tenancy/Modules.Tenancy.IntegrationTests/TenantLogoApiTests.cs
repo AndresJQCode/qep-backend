@@ -152,7 +152,7 @@ public sealed class TenantLogoApiTests
         var etag = await GetEtagAsync(client);
         var putResponse = await PutLogoAsync(client, etag, fileId);
         var staleEtag = putResponse.Headers.ETag!.Tag;
-        await PatchDisplayNameAsync(client, staleEtag);
+        await UpdateDisplayNameAsync(client, staleEtag);
 
         var response = await DeleteLogoAsync(client, staleEtag);
 
@@ -273,7 +273,7 @@ public sealed class TenantLogoApiTests
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var staleEtag = await GetEtagAsync(client);
-        await PatchDisplayNameAsync(client, staleEtag);
+        await UpdateDisplayNameAsync(client, staleEtag);
 
         var response = await PutLogoAsync(client, staleEtag, fileId);
 
@@ -478,9 +478,9 @@ public sealed class TenantLogoApiTests
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static async Task PatchDisplayNameAsync(HttpClient client, string ifMatch)
+    private static async Task UpdateDisplayNameAsync(HttpClient client, string ifMatch)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Patch, SettingsUrl)
+        using var request = new HttpRequestMessage(HttpMethod.Put, SettingsUrl)
         {
             Content = JsonContent.Create(new
             {
