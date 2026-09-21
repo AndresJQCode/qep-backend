@@ -120,6 +120,31 @@ public interface IOrderRepository
         IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Las líneas de un lote de cotizaciones del Excel de pedidos, en una sola consulta, indexadas
+    /// por cotización — el Excel pasó a ser una fila por línea de producto y no una por pedido, y
+    /// sin esto sería una consulta por pedido. Mismo criterio que
+    /// <see cref="ListPaymentProofsForExportAsync"/>: <c>ListForExportAsync</c> no las trae para no
+    /// repetir el mismo problema que <c>QuotationRepository.SearchAsync</c> evita (un <c>Include</c>
+    /// de líneas y partes juntos multiplica filas). Una cotización sin líneas —no debería pasar en
+    /// un pedido ya convertido, pero el método no lo asume— no aparece en el diccionario.
+    /// </summary>
+    Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>> ListItemsForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Las partes (facturación/entrega con datos propios) de un lote de cotizaciones del Excel de
+    /// pedidos, en una sola consulta, indexadas por cotización — mismo motivo y mismo criterio que
+    /// <see cref="ListItemsForExportAsync"/>. Una cotización que factura y entrega "a los mismos
+    /// datos del cliente" —el caso normal— no tiene fila propia y no aparece en el diccionario.
+    /// </summary>
+    Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>> ListPartiesForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken);
+
     /// <summary>Si algún comprobante de algún pedido usa el archivo, salvo <paramref name="exceptProofId"/>
     /// (revisión final de la spec 2026-09-16, I2): un PaymentProof se adjunta una sola vez (D16), y el
     /// comprobante que se reemplaza con su propio archivo no cuenta. Sin tenant, igual que
