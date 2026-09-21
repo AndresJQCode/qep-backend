@@ -90,10 +90,10 @@ public sealed class CompaniesSeedDataTests
         {
             ["901.862.895-1"] = "00800007490",
             ["901.593.212-7"] = "008000007366",
-            // Sin puntos, tal como lo escribio el owner. No se normaliza: el modulo guarda el NIT
-            // como viene (Company.NormalizeTaxId solo recorta), y emparejarlo con los demas seria
-            // decidir por el owner cual de las dos formas es la correcta.
-            ["901591549-4"] = "00800007620",
+            // Con puntos como los otros cuatro. La tabla del owner lo traia sin ellos
+            // (901591549-4) y lo homologo el 2026-09-21: el formato es de el, no del modulo
+            // —Company.NormalizeTaxId solo recorta— asi que hizo falta que lo decidiera.
+            ["901.591.549-4"] = "00800007620",
             ["901.846.471-5"] = "01400003212",
         };
 

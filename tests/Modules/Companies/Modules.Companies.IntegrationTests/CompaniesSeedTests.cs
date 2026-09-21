@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Companies.Infrastructure.Persistence;
+using Modules.Companies.Infrastructure.Seed;
 using Modules.Geography.Application;
 using Modules.Geography.Domain;
 using Modules.Tenancy.Infrastructure.Seed;
@@ -96,6 +97,29 @@ public sealed class CompaniesSeedTests
         // ya existe, asi que tampoco le duplica las cuentas.
         Assert.Equal(6, companies.Sum(company => company.BankAccounts.Count));
         Assert.All(companies, company => Assert.Equal(1, company.Version));
+    }
+
+    // La ciudad se resuelve perezosa: es un prerrequisito de **construir** las empresas que
+    // faltan, no del arranque. Con las cinco ya sembradas no hay nada que construir, asi que
+    // tampoco hay por que consultar a Geography — y mucho menos tumbar el arranque si esa
+    // consulta fallara. Un resolvedor que revienta es la unica forma de afirmar que no se llamo:
+    // si se llamara, la prueba se cae con esa misma excepcion.
+    [Fact]
+    public async Task SeedDoesNotResolveTheCityWhenEveryCompanyIsAlreadyThere()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var client = factory.CreateClient();
+
+        await factory.Services.SeedCompaniesAsync(
+            TenancySeeder.SeedTenantId,
+            _ => throw new InvalidOperationException(
+                "The city must not be resolved when there is nothing to seed."),
+            TestContext.Current.CancellationToken);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CompaniesDbContext>();
+        Assert.Equal(5, await dbContext.Companies.CountAsync(TestContext.Current.CancellationToken));
     }
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()

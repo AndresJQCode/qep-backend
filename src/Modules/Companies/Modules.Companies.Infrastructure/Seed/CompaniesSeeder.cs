@@ -40,17 +40,54 @@ public static class CompaniesSeeder
     private const string SavingsBank = "BANCOLOMBIA Ahorros";
 
     /// <summary>
-    /// Siembra las empresas que falten sobre el tenant y la ciudad que se le pasan.
+    /// Las cinco filas de la tabla del owner, en su orden. Son datos, no agregados: el agregado
+    /// necesita la ciudad, y la ciudad se resuelve recien cuando se sabe que hay algo que sembrar.
+    /// </summary>
+    private static readonly CompanySeedRow[] Rows =
+    [
+        // Armonia Cosmetica venia en dos filas de la tabla, con el mismo NIT y dos cuentas
+        // distintas: es una empresa con dos cuentas. La de Panama va en USD por indicacion del
+        // owner; la tabla solo traia el SWIFT, que viaja pegado al numero porque
+        // CompanyBankAccount no tiene columna propia para el.
+        new(
+            "Armonía Cosmética",
+            "901.851.609-4",
+            [
+                new CompanyBankAccount
+                {
+                    BankName = "BANCOLOMBIA Panamá",
+                    AccountNumber = "80100033226 SWIFT (COLOPAPAXXX)",
+                    Currency = "USD",
+                },
+                Savings("00800007542"),
+            ]),
+        new("Hechizo de Belleza", "901.862.895-1", [Savings("00800007490")]),
+        new("Ritual Botánico", "901.593.212-7", [Savings("008000007366")]),
+
+        // El owner lo escribio sin puntos (901591549-4) y lo homologo con los otros cuatro el
+        // 2026-09-21. El formato es decision suya y no del modulo: Company.NormalizeTaxId solo
+        // recorta, asi que guardar una forma u otra no cambia nada del dominio — cambia con que
+        // NIT se reconoce a esta empresa, que es justo lo que hace la idempotencia del seeder.
+        new("Grupo Human", "901.591.549-4", [Savings("00800007620")]),
+        new("Raíces Orgánicas", "901.846.471-5", [Savings("01400003212")]),
+    ];
+
+    /// <summary>
+    /// Siembra las empresas que falten sobre el tenant que se le pasa.
     ///
-    /// La ciudad llega resuelta desde afuera —<c>QepSeedRunner</c>, que es el composition root—
-    /// y no se busca aca: <c>Modules.Companies.Infrastructure</c> no referencia a Geography, por
-    /// la misma regla que obliga a <c>ICompanyGeographyLookup</c> a tener su adaptador en
-    /// <c>Bootstrapper</c>.
+    /// La ciudad llega como resolvedor y no como <c>Guid</c>, y se invoca **solo si hay algo que
+    /// sembrar**. Es un prerrequisito de construir una empresa nueva, no del arranque: con las
+    /// cinco ya cargadas —que es el caso de todo arranque despues del primero— no hay por que
+    /// consultar a Geography, y mucho menos tumbar el arranque si esa consulta fallara.
+    ///
+    /// Quien resuelve es <c>QepSeedRunner</c>, que es el composition root:
+    /// <c>Modules.Companies.Infrastructure</c> no referencia a Geography, por la misma regla que
+    /// obliga a <c>ICompanyGeographyLookup</c> a tener su adaptador en <c>Bootstrapper</c>.
     /// </summary>
     public static async Task SeedCompaniesAsync(
         this IServiceProvider services,
         Guid tenantId,
-        Guid cityId,
+        Func<CancellationToken, Task<Guid>> resolveCityId,
         CancellationToken cancellationToken = default)
     {
         await using var scope = services.CreateAsyncScope();
@@ -62,26 +99,24 @@ public static class CompaniesSeeder
             .ToListAsync(cancellationToken);
         var existing = new HashSet<string>(existingTaxIds, StringComparer.Ordinal);
 
-        var added = false;
-        foreach (var company in BuildSeedCompanies(tenantId, cityId, DateTimeOffset.UtcNow))
+        var missing = Rows.Where(row => !existing.Contains(row.TaxId)).ToList();
+        if (missing.Count == 0)
         {
-            if (!existing.Add(company.TaxId))
-            {
-                continue;
-            }
-
-            dbContext.Companies.Add(company);
-            added = true;
+            return;
         }
 
-        if (added)
+        var cityId = await resolveCityId(cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        foreach (var row in missing)
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            dbContext.Companies.Add(ToCompany(row, tenantId, cityId, now));
         }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>
-    /// Los agregados de la semilla, ya construidos por el dominio.
+    /// Los cinco agregados de la semilla, ya construidos por el dominio.
     ///
     /// internal y no private: <c>CompaniesSeedDataTests</c> lo llama directo via
     /// <c>InternalsVisibleTo</c>, para que un dato que viola un invariante —un NIT demasiado
@@ -89,61 +124,29 @@ public static class CompaniesSeeder
     /// arranque del ambiente, que es donde el seeder corre de verdad.
     /// </summary>
     internal static IReadOnlyList<Company> BuildSeedCompanies(
-        Guid tenantId, Guid cityId, DateTimeOffset occurredAt)
-    {
-        var contact = new CompanyContactInfo
-        {
-            Phone = SharedPhone,
-            Address = SharedAddress,
+        Guid tenantId, Guid cityId, DateTimeOffset occurredAt) =>
+        [.. Rows.Select(row => ToCompany(row, tenantId, cityId, occurredAt))];
 
-            // El correo no estaba en la tabla. Se deja sin dato en vez de inventarle uno: null es
-            // lo que CompanyContactInfo normaliza y lo que el resto del modulo lee como ausente.
-            Email = null,
-        };
+    private static Company ToCompany(
+        CompanySeedRow row, Guid tenantId, Guid cityId, DateTimeOffset occurredAt) =>
+        Company.Create(
+            CompanyId.New(),
+            tenantId,
+            row.Name,
+            row.BankAccounts,
+            row.TaxId,
+            cityId,
+            new CompanyContactInfo
+            {
+                Phone = SharedPhone,
+                Address = SharedAddress,
 
-        return
-        [
-            // Armonia Cosmetica venia en dos filas de la tabla, con el mismo NIT y dos cuentas
-            // distintas: es una empresa con dos cuentas. La de Panama va en USD por indicacion
-            // del owner; la tabla solo traia el SWIFT, que viaja pegado al numero porque
-            // CompanyBankAccount no tiene columna propia para el.
-            Create(
-                tenantId, cityId, occurredAt, contact,
-                "Armonía Cosmética",
-                "901.851.609-4",
-                new CompanyBankAccount
-                {
-                    BankName = "BANCOLOMBIA Panamá",
-                    AccountNumber = "80100033226 SWIFT (COLOPAPAXXX)",
-                    Currency = "USD",
-                },
-                Savings("00800007542")),
-            Create(
-                tenantId, cityId, occurredAt, contact,
-                "Hechizo de Belleza",
-                "901.862.895-1",
-                Savings("00800007490")),
-            Create(
-                tenantId, cityId, occurredAt, contact,
-                "Ritual Botánico",
-                "901.593.212-7",
-                Savings("008000007366")),
-
-            // Sin puntos, tal como lo escribio el owner. No se empareja con el formato de los
-            // otros cuatro: el modulo guarda el NIT como viene —Company.NormalizeTaxId solo
-            // recorta— y elegir una de las dos formas seria decidir por el.
-            Create(
-                tenantId, cityId, occurredAt, contact,
-                "Grupo Human",
-                "901591549-4",
-                Savings("00800007620")),
-            Create(
-                tenantId, cityId, occurredAt, contact,
-                "Raíces Orgánicas",
-                "901.846.471-5",
-                Savings("01400003212")),
-        ];
-    }
+                // El correo no estaba en la tabla. Se deja sin dato en vez de inventarle uno:
+                // null es lo que CompanyContactInfo normaliza y lo que el resto del modulo lee
+                // como ausente.
+                Email = null,
+            },
+            occurredAt);
 
     private static CompanyBankAccount Savings(string accountNumber) => new()
     {
@@ -152,14 +155,6 @@ public static class CompaniesSeeder
         Currency = "COP",
     };
 
-    private static Company Create(
-        Guid tenantId,
-        Guid cityId,
-        DateTimeOffset occurredAt,
-        CompanyContactInfo contact,
-        string name,
-        string taxId,
-        params CompanyBankAccount[] bankAccounts) =>
-        Company.Create(
-            CompanyId.New(), tenantId, name, bankAccounts, taxId, cityId, contact, occurredAt);
+    private sealed record CompanySeedRow(
+        string Name, string TaxId, IReadOnlyList<CompanyBankAccount> BankAccounts);
 }

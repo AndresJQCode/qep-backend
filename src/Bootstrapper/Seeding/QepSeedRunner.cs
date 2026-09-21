@@ -62,16 +62,21 @@ public static class QepSeedRunner
         await services.SeedCatalogAsync(TenancySeeder.SeedTenantId, cancellationToken);
 
         // Despues del catalogo y no antes por comodidad de lectura nada mas: las empresas no
-        // dependen de el. La ciudad si es un prerrequisito duro, y ya esta: Geography se importa
-        // en InitializeGeographyDatabaseAsync, antes de esta semilla (Program.cs).
-        var cityId = await ResolveCompaniesCityAsync(scope.ServiceProvider, cancellationToken);
-        await services.SeedCompaniesAsync(TenancySeeder.SeedTenantId, cityId, cancellationToken);
+        // dependen de el. La ciudad viaja como resolvedor y no resuelta: el seeder la pide solo
+        // si hay empresas que crear, que es el primer arranque y ninguno mas.
+        await services.SeedCompaniesAsync(
+            TenancySeeder.SeedTenantId,
+            token => ResolveCompaniesCityAsync(scope.ServiceProvider, token),
+            cancellationToken);
     }
 
     // Revienta en vez de saltear la siembra: una empresa sin ciudad no se puede crear —CityId es
     // FK a geography.cities y Company.Create la exige—, asi que si el DIVIPOLA no trajo Rionegro
     // el ambiente esta mal y tiene que verse en el arranque, no como una tabla vacia que alguien
     // descubre semanas despues.
+    //
+    // Solo corre cuando falta al menos una empresa, porque el seeder invoca el resolvedor recien
+    // ahi. Un ambiente ya sembrado no vuelve a consultar a Geography ni puede caerse por esto.
     private static async Task<Guid> ResolveCompaniesCityAsync(
         IServiceProvider scopedServices, CancellationToken cancellationToken)
     {
