@@ -129,6 +129,12 @@ public sealed class UpdateQuotationItemHandler(
             "success",
             now);
 
+        // Antes de mirar el total: cambiar la cantidad de una línea mueve el tramo de las otras
+        // que agrupan con ella, y con eso el total. El descuento que trajo UpdateQuantity es
+        // provisional.
+        await QuotationPricingRecalculation.ApplyAsync(
+            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+
         // El total de la cotización cambió: lo que ya está cargado en comprobantes no cambia,
         // pero el estado del pago sí puede -- mismo motivo que AddOrderItemsHandler.
         order?.RecalculatePaymentStatus(quotation.Total, now);

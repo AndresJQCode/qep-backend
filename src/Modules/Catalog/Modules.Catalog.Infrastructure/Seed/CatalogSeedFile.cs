@@ -13,4 +13,18 @@ internal sealed record CatalogSeedProduct(
     string Sku,
     string Name,
     decimal? PriceCop,
-    decimal? PriceUsd);
+    decimal? PriceUsd,
+    IReadOnlyList<CatalogSeedScale> Scales);
+
+// Restriction viaja como texto ("multiple" | "packaging_unit") y lo traduce CatalogSeeder al
+// enum del dominio: un literal desconocido tiene que reventar al arrancar con el SKU y el
+// valor, no deserializarse a cero en silencio. Los finales no están acá porque el seeder los
+// calcula con PriceScale.FinalFor a partir de los precios base del producto.
+internal sealed record CatalogSeedScale(
+    int FromUnit,
+    int ToUnit,
+    decimal Discount,
+    string Restriction,
+    int? Multiple,
+    int? PackagingUnit,
+    bool AllowGrouping);

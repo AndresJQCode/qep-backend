@@ -42,6 +42,10 @@ public sealed class TenantRegistrationService(
             Origin,
             now);
         membershipRepository.Add(membership);
+        // El tenant nombra a su autoridad acá, en la misma transacción: el id de la membresía ya
+        // existe antes de persistir (MembershipId.New()), así que las dos filas se escriben
+        // juntas o no se escribe ninguna.
+        tenant.AssignOwner(membership.Id);
 
         auditRecorder.Record(
             tenant.Id.Value,

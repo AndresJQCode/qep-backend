@@ -12,9 +12,9 @@ namespace Modules.Reporting.IntegrationTests;
 ///
 /// - La serie mensual agrupa por <c>CreatedAt</c> en el mes del tenant (spec 2026-09-17, punto 5),
 ///   con una expresión que EF tiene que saber traducir, o con la proyección que la reemplaza.
-/// - El reparto por departamento agrupa por **la ciudad de la direccion principal**, que en LINQ es
-///   una subconsulta correlacionada dentro de un <c>GROUP BY</c>. Si EF no la traduce, la evalua en
-///   cliente o revienta — y las dos cosas solo se ven contra PostgreSQL real.
+/// - El reparto por departamento agrupa por **la ciudad del cliente** (su domicilio, spec
+///   2026-09-18), y el departamento vive del otro lado de la frontera de Geography: la consulta
+///   agrupa en la base y resuelve el nombre después, y eso solo se ve contra PostgreSQL real.
 /// </summary>
 public sealed class CustomerReportSummaryApiTests
 {
@@ -68,28 +68,32 @@ public sealed class CustomerReportSummaryApiTests
     }
 
     /// <summary>
-    /// El reparto por departamento es el que no se puede agrupar entero en la base: el cliente
-    /// guarda ciudad, y el departamento vive del otro lado de la frontera de <c>Geography</c>. Esta
-    /// prueba existe para que esa consulta se ejecute de verdad contra PostgreSQL.
+    /// El reparto por departamento agrupa por la ciudad del cliente —su domicilio—, y el
+    /// departamento vive del otro lado de la frontera de <c>Geography</c>. La libreta no cuenta:
+    /// una principal en otro departamento no mueve al cliente de grupo (spec 2026-09-18,
+    /// decision 5). Sin eso, el listado diria una ciudad y el panel otra para el mismo cliente.
     /// </summary>
     [Fact]
-    public async Task SummaryGroupsByTheDepartmentOfThePrincipalAddress()
+    public async Task SummaryGroupsByTheDepartmentOfTheCustomerAddress()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
         using var client = tenant.Client;
+        var (home, elsewhere) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var first = await CreateActiveCustomerAsync(client, tenant.TenantId);
         await CreateActiveCustomerAsync(client, tenant.TenantId);
-        await CreateActiveCustomerAsync(client, tenant.TenantId);
+        await AddPrincipalAddressAsync(client, tenant.TenantId, first.Id, elsewhere.CityId);
 
         var summary = await client.GetFromJsonAsync<CustomerReportSummary>(
             $"{ReportsUrl(tenant.TenantId)}/customers/summary",
             TestContext.Current.CancellationToken);
 
         Assert.NotNull(summary);
-        // El harness siembra los dos en la misma ciudad, asi que caen en el mismo departamento.
+        // El harness siembra los dos en la misma ciudad, asi que caen en el mismo departamento
+        // aunque uno tenga su direccion de envio principal en otro.
         var department = Assert.Single(summary.ByDepartment);
-        Assert.NotNull(department.Id);
+        Assert.Equal(home.DepartmentId, department.Id);
         Assert.False(string.IsNullOrWhiteSpace(department.Label));
         Assert.Equal(1, department.EntityCount);
         Assert.Equal(2, department.Count);

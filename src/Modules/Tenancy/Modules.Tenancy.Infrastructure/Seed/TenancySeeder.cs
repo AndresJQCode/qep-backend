@@ -59,20 +59,37 @@ public static class TenancySeeder
     }
 
     /// <summary>
-    /// Crea la membresía del owner, ya en <c>Active</c>. Usa
-    /// <see cref="Membership.RegistrationOrigin"/> y no un origen propio porque esta membresía
-    /// **es** la del owner del tenant, el mismo caso que <c>TenantRegistrationService</c>: así
-    /// hereda la protección del agregado, que impide suspenderla, quitarla o dejarla sin el rol
-    /// admin. La contrapartida es que tampoco se puede quitar por la API — correcto para un
-    /// tenant cuya única salida es borrar la base y volver a sembrarlo.
+    /// Crea la membresía del owner, ya en <c>Active</c>, y la nombra autoridad del tenant
+    /// sembrado. Nombrarla es lo que le da la protección del agregado —no se puede suspender,
+    /// quitar ni dejar sin el rol admin—; el <see cref="Membership.RegistrationOrigin"/> es sólo
+    /// su partida de nacimiento. Hasta que el owner pasó a vivir en <c>tenants</c>, el origen
+    /// tenía que reusarse acá justamente para heredar esa protección.
     /// </summary>
+    /// <remarks>
+    /// Idempotente como el resto del sembrador: si el tenant ya tiene owner no lo reasigna, así
+    /// que correrlo dos veces no falla.
+    /// </remarks>
     public static async Task SeedOwnerMembershipAsync(
         this IServiceProvider services,
         Guid ownerUserId,
         CancellationToken cancellationToken = default)
     {
-        await services.SeedAdminMembershipAsync(
+        var membershipId = await services.SeedAdminMembershipAsync(
             SeedTenantId, ownerUserId, Membership.RegistrationOrigin, cancellationToken);
+
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenantId = new TenantId(SeedTenantId);
+        var tenant = await dbContext.Tenants.SingleOrDefaultAsync(
+            value => value.Id == tenantId,
+            cancellationToken);
+        if (tenant is null || tenant.OwnerMembershipId is not null)
+        {
+            return;
+        }
+
+        tenant.AssignOwner(new MembershipId(membershipId));
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>

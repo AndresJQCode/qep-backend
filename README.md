@@ -124,7 +124,7 @@ local y por variable de entorno en k8s
 | `Storage:PaymentProofOrphanCleanup:MinimumAgeHours`    | `24`                                                                                          | Edad mínima de un objeto de `payment-proofs/` para que la reconciliación lo considere. Debe ser positiva             |
 | `Storage:PaymentProofOrphanCleanup:IntervalHours`      | `24`                                                                                          | Período de la reconciliación de `payment-proofs/`. Entre 1 y 1193                                                   |
 | `Storage:PaymentProofOrphanCleanup:DryRun`             | `true` en `appsettings.json` y en `k8s/prod-configMap.yaml`                                   | Con `true` la reconciliación sólo escribe en el log lo que borraría. Se pasa a `false` a mano, después de revisar esos logs en producción |
-| `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta |
+| `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta. Los usa la publicación de imágenes de producto **y** el logo del tenant (`PUT /settings/logo`); sin ellos, `PUT` responde `422 storage.public.not_configured` |
 | `Storage:ClamAv:Enabled`                               | `false`                                                                                       | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                         |
 | `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                      | Destino del escaneo. `Port` entre 1 y 65535                                                                         |
 | `Quotations:PaymentProofs:PublicLinks`                 | `false` en `appsettings.json`                                                                 | Con `true`, cada comprobante de pago nuevo se copia al bucket público al adjuntarse y el Excel de pedidos lo enlaza. **Exige `Storage:R2:PublicBucket` y `Storage:R2:PublicBaseUrl` en cualquier ambiente**: sin ellos la API no arranca. Apagarla no despublica lo ya copiado |
@@ -209,6 +209,56 @@ No existe fallback local. La validación de arranque exige `AccessKeyId`,
 `SecretAccessKey`, `Bucket` y `Endpoint` o `AccountId` en todos los ambientes.
 Las pruebas automatizadas sustituyen `IObjectStorage` por un test double en
 memoria; ese adapter no forma parte de la aplicación.
+
+### `QCODE_PDF_API_KEY` — el MCP de `qcode-pdf`
+
+**La aplicación no lee esta variable.** No es un secreto de usuario como los de arriba: es la
+credencial que presenta tu **cliente MCP** —el de Claude Code, vía [`.mcp.json`](.mcp.json)—
+cuando le habla a `https://qcode-pdf.qcode.co/mcp`. Sirve para validar un template Typst contra
+el compilador real (`validate_typst`) sin desplegar nada ni tener el binario instalado.
+
+No la confundas con la que usa el backend para generar el PDF de una cotización: ésa es
+`Quotations:Pdf:ApiKey`, va por user-secrets en local y por `prod-secret.yaml` en producción
+(token `QUOTATIONS_PDF_API_KEY`). Son dos claves distintas a propósito.
+
+**De dónde sale el valor.** `qcode-pdf` declara sus clientes en `k8s/prod-configMap.yaml`
+(`api-keys.json`), uno por entrada. El de herramientas de desarrollo es **`qep-dev`**, y su
+valor vive en el variable group **`Backend-prod`** de Azure DevOps, como
+`QCODE_PDF_API_KEY_QEP_DEV`. Pedíselo a quien administre ese grupo; no está en este repo ni
+debe estarlo.
+
+Es clave propia y no la de `qep` porque el servicio resuelve el `clientId` por el **hash de la
+clave**: compartiéndola, el tráfico de tus pruebas queda indistinguible del de un asesor
+enviando una cotización de verdad en los logs y las métricas del servicio, y rotarla obligaría
+a tocar producción.
+
+**Dónde se configura.** Como variable de entorno de usuario de Windows, en cualquier PowerShell
+(no necesita administrador):
+
+```powershell
+[Environment]::SetEnvironmentVariable("QCODE_PDF_API_KEY", "<clave-de-qep-dev>", "User")
+```
+
+Ese comando deja la clave en el historial de PowerShell (`ConsoleHost_history.txt`). Para
+evitarlo, pedila sin eco:
+
+```powershell
+$k = Read-Host "clave qep-dev" -AsSecureString
+[Environment]::SetEnvironmentVariable("QCODE_PDF_API_KEY",
+  [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($k)), "User")
+```
+
+Después **cerrá VS Code por completo y volvé a abrirlo**: los procesos heredan el entorno al
+arrancar, así que ni la ventana donde corriste el comando ni una sesión de Claude Code ya
+abierta la ven. Para comprobar que quedó guardada sin imprimirla, en una PowerShell nueva:
+
+```powershell
+([Environment]::GetEnvironmentVariable("QCODE_PDF_API_KEY","User")).Length
+```
+
+`.mcp.json` está versionado y **no contiene el valor**: sólo la expansión `${QCODE_PDF_API_KEY}`,
+que Claude Code resuelve contra tu entorno. Cada quien pone la suya.
 
 ## Identidad local
 
@@ -526,7 +576,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/auth/me`, `/api/v1/auth/logout`           | `GET`, `POST`                                                                               | sólo autenticación                                                                           |
 | `/api/v1/tenants/{tenantId}/authorization/me`      | `GET`                                                                                       | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
 | `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `advisorship.read`                                                                    |
-| `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PATCH`                                                                              | `tenancy.settings.read` / `.update`                                                          |
+| `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PUT`                                                                                | `tenancy.settings.read` / `.update`                                                          |
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `display-name` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
@@ -544,14 +594,26 @@ Es anónimo y responde `200 OK` con `{"status":"healthy"}`.
 
 ### Configuración del tenant
 
-| Método  | Ruta                                  | Permiso                   |
-| ------- | ------------------------------------- | ------------------------- |
-| `GET`   | `/api/v1/tenants/{tenantId}/settings` | `tenancy.settings.read`   |
-| `PATCH` | `/api/v1/tenants/{tenantId}/settings` | `tenancy.settings.update` |
+| Método   | Ruta                                        | Permiso                   |
+| -------- | -------------------------------------------- | -------------------------- |
+| `GET`    | `/api/v1/tenants/{tenantId}/settings`        | `tenancy.settings.read`   |
+| `PUT`    | `/api/v1/tenants/{tenantId}/settings`        | `tenancy.settings.update` |
+| `PUT`    | `/api/v1/tenants/{tenantId}/settings/logo`   | `tenancy.settings.update` |
+| `DELETE` | `/api/v1/tenants/{tenantId}/settings/logo`   | `tenancy.settings.update` |
 
 El `GET` devuelve la configuración y un encabezado `ETag` con su versión. El
 `PATCH` exige enviar esa versión en `If-Match`; una versión desactualizada
 produce `412 Precondition Failed`.
+
+El logo se sube primero por la biblioteca de archivos (`POST /files` con
+`ownerType: "Tenant"`, `PUT` a la URL firmada, `POST /files/{id}/complete` — ver
+"Biblioteca de archivos" más abajo) y recién después se asigna con `PUT .../settings/logo`,
+cuerpo `{ "fileId": "<guid>" }` y el mismo `If-Match` que el `PATCH`. Sólo PNG, JPEG o WEBP, hasta
+2 MiB; `DELETE` lo quita, mismo `If-Match`. Los dos devuelven el `TenantSettingsResponse`
+completo, con `version`/`ETag` nuevos. Exigen `Storage:R2:PublicBucket` y
+`Storage:R2:PublicBaseUrl` configurados (ver la tabla de arriba); sin ellos, `PUT` responde
+`422 storage.public.not_configured` y `GET` sigue devolviendo `logo.url: null` para un tenant que
+ya tenía uno asignado.
 
 Ejemplo completo en PowerShell:
 
@@ -593,7 +655,8 @@ Respuesta:
   "defaultCulture": "es-CO",
   "timeZone": "America/Bogota",
   "dateFormat": "dd/MM/yyyy",
-  "version": 2
+  "version": 2,
+  "logo": null
 }
 ```
 

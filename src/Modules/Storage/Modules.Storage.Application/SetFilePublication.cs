@@ -11,6 +11,7 @@ public sealed record UnpublishFileCommand(Guid TenantId, Guid FileId) : ICommand
 public sealed class PublishFileHandler(
     IFileResourceRepository repository,
     IStorageUnitOfWork unitOfWork,
+    FilePublication filePublication,
     IPublicObjectStorage publicStorage,
     IStorageAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -22,6 +23,9 @@ public sealed class PublishFileHandler(
     {
         StorageAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, StoragePermissions.FilePublish);
+        // Fix round 1 (Important): precedencia original, de antes de extraer FilePublication —
+        // el bucket sin configurar se detecta antes de cargar el archivo, no después.
+        // FilePublication repite este chequeo porque el adaptador de Tenancy la llama directo.
         if (!publicStorage.IsConfigured)
         {
             throw new StorageDomainException(
@@ -33,38 +37,12 @@ public sealed class PublishFileHandler(
         // Spec 2026-09-16, D15: un comprobante sólo llega al público por el movimiento. Por acá
         // copiaría desde su temporal, que después de moverse ya no existe.
         PaymentProofGuard.EnsureNotPaymentProof(resource);
-        resource.EnsureDownloadable();
-        var publicKey = resource.PublicStorageKey ?? StorageKey.PublicFor(
-            resource.TenantId, resource.Id, resource.Name);
-        var now = clock.UtcNow;
-        // Validar todos los invariantes de publicación antes de crear cualquier objeto público.
-        resource.Publish(publicKey, now);
-        var copiedKeys = new List<string>();
 
-        try
-        {
-            await publicStorage.CopyFromPrivateAsync(resource.StorageKey, publicKey, cancellationToken);
-            copiedKeys.Add(publicKey);
-            foreach (var variant in resource.Variants)
-            {
-                var variantKey = StorageKey.PublicVariantFor(publicKey, variant);
-                await publicStorage.CopyFromPrivateAsync(variant.StorageKey, variantKey, cancellationToken);
-                copiedKeys.Add(variantKey);
-            }
-        }
-        catch
-        {
-            foreach (var key in copiedKeys)
-            {
-                try { await publicStorage.DeleteAsync(key, CancellationToken.None); }
-                catch { /* best-effort rollback; retrying publish is safe */ }
-            }
-            throw;
-        }
+        var publicKey = await filePublication.PublishAsync(resource, cancellationToken);
 
         auditPublisher.Publish(
             command.TenantId, executionContext.SubjectId, "storage.file.published",
-            resource.Id.ToString(), "success", now);
+            resource.Id.ToString(), "success", clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return resource.ToDto(publicStorage);
     }
@@ -84,6 +62,7 @@ public sealed class PublishFileHandler(
 public sealed class UnpublishFileHandler(
     IFileResourceRepository repository,
     IStorageUnitOfWork unitOfWork,
+    FilePublication filePublication,
     IPublicObjectStorage publicStorage,
     IEnumerable<IFileReferenceProbe> fileReferenceProbes,
     IStorageAuditPublisher auditPublisher,
@@ -103,15 +82,9 @@ public sealed class UnpublishFileHandler(
         // es la que enlaza el Excel.
         await PaymentProofGuard.EnsureNotReferencedAsync(resource, fileReferenceProbes, cancellationToken);
 
-        if (resource.PublicStorageKey is { } publicKey)
+        if (resource.PublicStorageKey is not null)
         {
-            await publicStorage.DeleteAsync(publicKey, cancellationToken);
-            foreach (var variant in resource.Variants)
-            {
-                await publicStorage.DeleteAsync(
-                    StorageKey.PublicVariantFor(publicKey, variant), cancellationToken);
-            }
-            resource.Unpublish(clock.UtcNow);
+            await filePublication.UnpublishAsync(resource, cancellationToken);
             auditPublisher.Publish(
                 command.TenantId, executionContext.SubjectId, "storage.file.unpublished",
                 resource.Id.ToString(), "success", clock.UtcNow);

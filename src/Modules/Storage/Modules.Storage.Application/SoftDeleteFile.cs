@@ -10,7 +10,7 @@ public sealed record SoftDeleteFileCommand(Guid TenantId, Guid FileResourceId)
 public sealed class SoftDeleteFileHandler(
     IFileResourceRepository repository,
     IStorageUnitOfWork unitOfWork,
-    IPublicObjectStorage publicStorage,
+    FilePublication filePublication,
     IEnumerable<IFileReferenceProbe> fileReferenceProbes,
     IStorageAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -36,19 +36,9 @@ public sealed class SoftDeleteFileHandler(
         // es la que enlaza el Excel.
         await PaymentProofGuard.EnsureNotReferencedAsync(resource, fileReferenceProbes, cancellationToken);
 
-        var now = clock.UtcNow;
-        if (resource.PublicStorageKey is { } publicKey)
-        {
-            await publicStorage.DeleteAsync(publicKey, cancellationToken);
-            foreach (var variant in resource.Variants)
-            {
-                await publicStorage.DeleteAsync(
-                    StorageKey.PublicVariantFor(publicKey, variant), cancellationToken);
-            }
-            resource.Unpublish(now);
-        }
+        await filePublication.UnpublishAsync(resource, cancellationToken);
         // Borrado lógico; el objeto se retiene hasta que pase la ventana de retención.
-        resource.SoftDelete(now);
+        resource.SoftDelete(clock.UtcNow);
 
         auditPublisher.Publish(
             resource.TenantId,
@@ -56,7 +46,7 @@ public sealed class SoftDeleteFileHandler(
             "storage.file.deleted",
             resource.Id.ToString(),
             "success",
-            now);
+            clock.UtcNow);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return new SoftDeleteResult(true);

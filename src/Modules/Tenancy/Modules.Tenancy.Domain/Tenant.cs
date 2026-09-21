@@ -53,6 +53,38 @@ public sealed class Tenant
 
     public string DateFormat { get; private set; } = string.Empty;
 
+    /// <summary>
+    /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
+    /// arma al leer con <see cref="LogoPublicKey"/> y la base pública configurada (decisión 3 del
+    /// spec 2026-09-19) — igual que <c>FileResourceDto.PublicUrl</c>. `Tenant` no conoce
+    /// `FileResource`: los límites de tipo y tamaño del logo los valida el adaptador que sí lo
+    /// tiene a mano (<c>ITenantLogoStorage</c>).
+    /// </summary>
+    public Guid? LogoFileId { get; private set; }
+
+    /// <summary>La clave pública en el bucket, sólo para armar la URL sin volver a preguntarle a
+    /// Storage en cada <c>GET /settings</c>.</summary>
+    public string? LogoPublicKey { get; private set; }
+
+    /// <summary>
+    /// La membresía que manda en este tenant: la última autoridad (ADR 0017), la que no se puede
+    /// suspender, quitar ni dejar sin el rol admin.
+    /// </summary>
+    /// <remarks>
+    /// Hasta este cambio el owner se deducía de <c>Membership.Origin == "registration"</c>. Esa
+    /// columna responde **cómo nació** la membresía, no **quién manda**: dos preguntas distintas
+    /// que coincidían sólo porque el owner siempre era el que auto-registró el tenant. El roce ya
+    /// estaba a la vista en <c>TenancySeeder</c>, que reusaba el origen de registro en un tenant
+    /// que nunca se auto-registró, sólo para heredar la protección.
+    ///
+    /// Nulo mientras nadie lo haya nombrado: los tenants anteriores a la columna hasta que el
+    /// backfill de la migración los llene, y la ventana entre <see cref="Create"/> y
+    /// <see cref="AssignOwner"/> dentro de la misma transacción de registro. Sin owner nadie es
+    /// owner — <see cref="IsOwner"/> devuelve <c>false</c> — y no al revés: una guarda que protege
+    /// a una membresía al azar es peor que no tener guarda.
+    /// </remarks>
+    public MembershipId? OwnerMembershipId { get; private set; }
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -70,6 +102,39 @@ public sealed class Tenant
         string dateFormat,
         DateTimeOffset createdAt) =>
         new(id, slug, displayName, defaultCulture, timeZone, dateFormat, createdAt);
+
+    /// <summary>
+    /// Nombra a la membresía que manda en este tenant. Es parte del nacimiento del tenant —el
+    /// registro la llama en la misma transacción que crea la membresía del owner—, así que no sube
+    /// <see cref="Version"/> ni emite evento: no hay un "antes" que auditar.
+    /// </summary>
+    /// <remarks>
+    /// No es <c>Create</c> quien lo recibe porque la membresía se crea después del tenant y
+    /// necesita su <c>TenantId</c>. Su id sí existe antes de persistir
+    /// (<c>MembershipId.New()</c>), así que las dos filas se escriben juntas y ninguna queda
+    /// a medias.
+    ///
+    /// Una sola vez: transferir el ownership es otra operación —con su evento, su auditoría y su
+    /// permiso— y todavía no existe. Que este método la rechace evita que alguien la implemente
+    /// por accidente reasignando en silencio.
+    /// </remarks>
+    public void AssignOwner(MembershipId ownerMembershipId)
+    {
+        if (OwnerMembershipId is not null)
+        {
+            throw new TenantDomainException(
+                "tenancy.tenant.owner_already_assigned",
+                "The tenant already has an owner membership.");
+        }
+
+        OwnerMembershipId = ownerMembershipId;
+    }
+
+    /// <summary>
+    /// Si esa membresía es la autoridad de este tenant. <c>false</c> mientras no haya owner
+    /// nombrado.
+    /// </summary>
+    public bool IsOwner(MembershipId membershipId) => OwnerMembershipId == membershipId;
 
     public bool UpdateSettings(
         string displayName,
@@ -108,6 +173,51 @@ public sealed class Tenant
             Id,
             Version,
             changedFields));
+
+        return true;
+    }
+
+    /// <summary>
+    /// Asigna el logo. `false` sin cambios (mismo `fileId` ya vigente) — el caller no sube
+    /// `Version` ni escribe auditoría en ese caso. `publicKey` vacía es un error del adaptador, no
+    /// de la persona que sube el archivo: por eso `ArgumentException` y no un código de dominio.
+    /// </summary>
+    public bool SetLogo(Guid fileId, string publicKey, DateTimeOffset occurredAt)
+    {
+        EnsureActive();
+        ArgumentException.ThrowIfNullOrWhiteSpace(publicKey);
+
+        if (LogoFileId == fileId)
+        {
+            return false;
+        }
+
+        LogoFileId = fileId;
+        LogoPublicKey = publicKey;
+        Version++;
+        UpdatedAt = occurredAt;
+        _domainEvents.Add(new TenantLogoUpdatedDomainEvent(
+            Guid.CreateVersion7(), occurredAt, Id, Version, LogoFileId));
+
+        return true;
+    }
+
+    /// <summary>`false` si el tenant ya no tenía logo.</summary>
+    public bool RemoveLogo(DateTimeOffset occurredAt)
+    {
+        EnsureActive();
+
+        if (LogoFileId is null)
+        {
+            return false;
+        }
+
+        LogoFileId = null;
+        LogoPublicKey = null;
+        Version++;
+        UpdatedAt = occurredAt;
+        _domainEvents.Add(new TenantLogoUpdatedDomainEvent(
+            Guid.CreateVersion7(), occurredAt, Id, Version, null));
 
         return true;
     }

@@ -119,12 +119,12 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // `null` es "sin filtro"; una coleccion (incluso vacia) filtra por esos ids exactos —
         // Departamento ya se tradujo a ids de ciudad en ListCustomersHandler, asi que aca no hay
         // nada que resolver, solo aplicar el IN. Va aca y no en FilteredQuery porque la
-        // exportacion no filtra por ciudad.
+        // exportacion no filtra por ciudad. Filtra por la ciudad del **domicilio** del cliente
+        // (spec 2026-09-18), no por sus direcciones de envio: es la misma ciudad que la fila
+        // muestra, y filtrar por una columna y mostrar otra deja filas que no parecen coincidir.
         if (cityIds is not null)
         {
-            query = query.Where(customer =>
-                customer.Addresses.Any(address =>
-                    address.IsPrincipal && cityIds.Contains(address.CityId)));
+            query = query.Where(customer => cityIds.Contains(customer.CityId));
         }
 
         // El total se cuenta sobre la consulta **ya filtrada** y antes de paginar: es cuantos
@@ -178,9 +178,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         CustomerId customerId,
         CancellationToken cancellationToken) =>
         dbContext.Customers
-            // Con las direcciones: los llamadores editan la principal (UpdateCustomerHandler) o
-            // la libreta entera, y sin las filas viejas en el change tracker un borrado no se
-            // veria. Mismo criterio que QuotationRepository con Items.
+            // Con las direcciones: los llamadores editan la libreta (ManageCustomerAddresses) y
+            // el DTO la devuelve entera, y sin las filas viejas en el change tracker un borrado no
+            // se veria. Mismo criterio que QuotationRepository con Items.
             .Include(customer => customer.Addresses)
             .SingleOrDefaultAsync(
                 customer => customer.TenantId == tenantId && customer.Id == customerId,

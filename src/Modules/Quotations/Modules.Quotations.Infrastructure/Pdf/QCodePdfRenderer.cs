@@ -27,28 +27,29 @@ internal sealed class QCodePdfRenderer(
 
     private static readonly string Template = ReadTemplate();
 
-    // Base64 y no la ruta del archivo: `qcode-pdf` no ve el disco del backend, sólo lo que viaja
-    // en el request. La plantilla lo decodifica ella misma (no hay decodificador nativo en
-    // Typst) porque el servicio sólo acepta `source` y `data`, sin un tercer canal para binarios.
-    private static readonly string LogoBase64 = ReadLogoBase64();
-
     private readonly PdfOptions settings = options.Value.Pdf;
 
     public async Task<byte[]> RenderAsync(
         QuotationPdfDocument document, CancellationToken cancellationToken)
     {
-        // El logo no es parte de `QuotationPdfDocument`: es configuración de despliegue, no dato
-        // de la cotización (mismo criterio que `VITE_TENANT_BRAND_LOGO` en el frontend), así que
-        // se agrega acá, en el borde de infraestructura, y no ensucia el documento de dominio.
-        var data = JsonSerializer.SerializeToNode(document, DataFormat)!.AsObject();
-        data["logo"] = LogoBase64;
-
-        var payload = new
+        // Dictionary y no un anónimo: el request necesita una propiedad `assets` condicional, y
+        // dos formas anónimas distintas no comparten tipo estático. El contrato con qcode-pdf
+        // (README.md:32, Services/TypstService.cs:106-129, verificado el 2026-09-19) es
+        // { source, data, filename, assets: { "<nombre>": "<base64>" } }, con `assets` ausente
+        // cuando no hay nada que adjuntar — el request de un tenant sin logo no cambia de forma.
+        var payload = new Dictionary<string, object?>
         {
-            source = Template,
-            data,
-            filename = $"Cotizacion-{document.QuotationNumber}.pdf",
+            ["source"] = Template,
+            ["data"] = JsonSerializer.SerializeToElement(document, DataFormat),
+            ["filename"] = $"Cotizacion-{document.QuotationNumber}.pdf",
         };
+        if (document.Logo is { } logo)
+        {
+            payload["assets"] = new Dictionary<string, string>
+            {
+                [logo.FileName] = Convert.ToBase64String(logo.Content),
+            };
+        }
 
         using var request = new HttpRequestMessage(
             HttpMethod.Post, $"{settings.BaseUrl.TrimEnd('/')}/pdf")
@@ -86,22 +87,5 @@ internal sealed class QCodePdfRenderer(
         using var stream = assembly.GetManifestResourceStream(name)!;
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
-    }
-
-    // Mismo criterio que la plantilla: embebido, no configuración, para que no se pierda al
-    // publicar la imagen.
-    private static string ReadLogoBase64()
-    {
-        var assembly = typeof(QCodePdfRenderer).Assembly;
-        var name = Array.Find(
-            assembly.GetManifestResourceNames(),
-            resource => resource.EndsWith("tenant-logo.webp", StringComparison.Ordinal))
-            ?? throw new InvalidOperationException(
-                "The logo 'tenant-logo.webp' is not embedded in the assembly.");
-
-        using var stream = assembly.GetManifestResourceStream(name)!;
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return Convert.ToBase64String(buffer.ToArray());
     }
 }

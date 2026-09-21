@@ -163,7 +163,7 @@ internal sealed class CustomerReportSource(
     /// Los departamentos con mas clientes, con el resto plegado en "Otros".
     ///
     /// **Este no se agrupa entero en la base y no se puede:** <c>Customer</c> guarda la ciudad de su
-    /// direccion principal y nada mas, y el departamento vive del otro lado de la frontera de
+    /// domicilio y nada mas, y el departamento vive del otro lado de la frontera de
     /// <c>Geography</c> — el mismo motivo por el que el filtro por departamento primero traduce a
     /// que ciudades caen dentro. Asi que la base agrupa por ciudad, que devuelve **una fila por
     /// ciudad con clientes y no una por cliente** (1.122 municipios en todo el pais como techo), y
@@ -183,18 +183,11 @@ internal sealed class CustomerReportSource(
             return [];
         }
 
-        // La proyeccion a tipo anonimo antes del GroupBy no es adorno: EF no traduce un agregado
-        // sobre una proyeccion a record, y agrupar directo por la subconsulta de la direccion
-        // principal lo lleva a evaluar en cliente.
+        // Agrupa por la ciudad del domicilio del cliente (spec 2026-09-18): una columna propia,
+        // sin subconsulta a la libreta. El departamento se resuelve despues, del otro lado de la
+        // frontera de Geography.
         var byCity = await filtered
-            .Select(customer => new
-            {
-                CityId = customer.Addresses
-                    .Where(address => address.IsPrincipal)
-                    .Select(address => address.CityId)
-                    .FirstOrDefault(),
-            })
-            .GroupBy(row => row.CityId)
+            .GroupBy(customer => customer.CityId)
             .Select(group => new { CityId = group.Key, Count = group.Count() })
             .ToListAsync(cancellationToken);
 
@@ -296,11 +289,9 @@ internal sealed class CustomerReportSource(
                 [departmentId], cancellationToken);
             // Un departamento sin ciudades no puede tener clientes: la lista vacia hace que el
             // Contains no matchee nada, que es la respuesta correcta y no "todos".
-            // La ciudad del cliente es la de su direccion principal (CLI-DIR-01): el reporte
-            // agrupa por donde esta el cliente, no por cada bodega que tenga.
-            query = query.Where(customer =>
-                customer.Addresses.Any(address =>
-                    address.IsPrincipal && cityIds.Contains(address.CityId)));
+            // La ciudad del cliente es la de su domicilio (spec 2026-09-18), no la de cada bodega
+            // de su libreta: el reporte agrupa y filtra por donde esta el cliente.
+            query = query.Where(customer => cityIds.Contains(customer.CityId));
         }
 
         return query;
@@ -333,10 +324,7 @@ internal sealed class CustomerReportSource(
                 row.customer.IdentificationNumber,
                 row.customer.ClassificationId,
                 row.classification == null ? null : row.classification.Name,
-                row.customer.Addresses
-                    .Where(address => address.IsPrincipal)
-                    .Select(address => address.CityId)
-                    .FirstOrDefault(),
+                row.customer.CityId,
                 row.customer.IsActive,
                 row.customer.CreatedAt));
     }

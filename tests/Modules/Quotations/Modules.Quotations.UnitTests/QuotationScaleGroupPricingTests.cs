@@ -1,4 +1,4 @@
-using Modules.Quotations.Application;
+﻿using Modules.Quotations.Application;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -25,14 +25,12 @@ public sealed class QuotationScaleGroupPricingTests
     private static QuotationLinePricing For(IReadOnlyList<QuotationLinePricing> result, Guid itemId) =>
         result.Single(line => line.ItemId == itemId);
 
-    // El caso del requisito: 10 + 8 + 12 = 30, multiplo de 3, y las tres reciben su descuento.
-    //
-    // Pero no por la misma via, y por eso se afirma linea por linea: 10 y 8 no cumplen solas y
-    // las rescata el total; 12 si cumple sola, asi que conserva su escala por su cuenta y ni
-    // siquiera queda marcada como agrupada. Su cantidad sigue sumando al total que rescata a las
-    // otras dos.
+    // Antes este era "el caso del requisito": 10 + 8 + 12 = 30 era multiplo de 3 y las tres
+    // recibian el descuento. El owner corrigio la regla el 2026-09-21 -- el multiplo es POR
+    // LINEA -- asi que 10 y 8 ya no lo reciben, y el 12, que si cumple solo, lo recibe por su
+    // cuenta y sin quedar marcado como agrupado.
     [Fact]
-    public void GroupedLinesSatisfyTheMultipleTogether()
+    public void OnlyTheLineThatMeetsTheMultipleOnItsOwnGetsTheDiscount()
     {
         var a = Guid.NewGuid();
         var b = Guid.NewGuid();
@@ -49,21 +47,19 @@ public sealed class QuotationScaleGroupPricingTests
                 (ProductB, Scale(allowGrouping: true)),
                 (ProductC, Scale(allowGrouping: true))));
 
-        Assert.All(result, line => Assert.Equal(5m, line.DiscountPercentage));
+        Assert.Equal(0m, For(result, a).DiscountPercentage);
+        Assert.Equal(0m, For(result, b).DiscountPercentage);
 
-        Assert.True(For(result, a).Grouped);
-        Assert.Equal(30m, For(result, a).Restriction!.EvaluatedQuantity);
-        Assert.True(For(result, b).Grouped);
-        Assert.Equal(30m, For(result, b).Restriction!.EvaluatedQuantity);
-
+        Assert.Equal(5m, For(result, c).DiscountPercentage);
         Assert.False(For(result, c).Grouped);
         Assert.Equal(12m, For(result, c).Restriction!.EvaluatedQuantity);
     }
 
-    // 10 + 13 = 23: le falta 1 unidad para 24. Ninguna de las dos cumple sola, el total tampoco,
-    // y las dos reportan el mismo total y el mismo faltante.
+    // 10 % 3 y 13 % 3 fallan las dos, asi que ninguna califica y no hay grupo que armar. Cada
+    // una reporta su propia cantidad y su propio faltante: antes las dos decian 23, el total de
+    // un grupo que con el multiplo por linea ya no existe.
     [Fact]
-    public void GroupedLinesThatMissTheMultipleLoseTheScale()
+    public void LinesThatMissTheMultipleNeverFormAGroup()
     {
         var a = Guid.NewGuid();
         var b = Guid.NewGuid();
@@ -78,12 +74,13 @@ public sealed class QuotationScaleGroupPricingTests
                 (ProductB, Scale(allowGrouping: true))));
 
         Assert.All(result, line => Assert.Equal(0m, line.DiscountPercentage));
-        Assert.All(result, line => Assert.True(line.Grouped));
-        Assert.All(result, line => Assert.Equal(23m, line.Restriction!.EvaluatedQuantity));
-        Assert.All(result, line => Assert.Equal(1m, line.Restriction!.Shortfall));
+        Assert.All(result, line => Assert.False(line.Grouped));
         Assert.All(
             result,
             line => Assert.Equal("quotation.item.quantity_not_multiple", line.Restriction!.Code));
+
+        Assert.Equal(10m, For(result, a).Restriction!.EvaluatedQuantity);
+        Assert.Equal(13m, For(result, b).Restriction!.EvaluatedQuantity);
     }
 
     // Sin el switch, cada linea valida su multiplo sola: 10 % 3 y 8 % 3 fallan las dos.
@@ -152,8 +149,10 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Equal(10m, For(result, b).Restriction!.EvaluatedQuantity);
     }
 
-    // El descuento queda fuera de la clave del grupo: agrupan igual, y cada linea conserva el
-    // de su propia escala.
+    // El descuento queda fuera de la clave del grupo: dos productos con el mismo Desde/Hasta/
+    // Multiplo agrupan aunque descuenten distinto, y cada linea se lleva el suyo.
+    //
+    // 3 + 3 = 6 entra al tramo 5-48 al que ninguna llega sola, que es donde se ve que agruparon.
     [Fact]
     public void GroupingIgnoresTheDiscountAndEachLineKeepsItsOwn()
     {
@@ -162,8 +161,8 @@ public sealed class QuotationScaleGroupPricingTests
 
         var result = QuotationScaleGroupPricing.Resolve(
             [
-                new QuotationPricingLine(a, ProductA, 10m),
-                new QuotationPricingLine(b, ProductB, 8m)
+                new QuotationPricingLine(a, ProductA, 3m),
+                new QuotationPricingLine(b, ProductB, 3m)
             ],
             Catalog(
                 (ProductA, Scale(allowGrouping: true, discount: 10m)),
@@ -171,6 +170,7 @@ public sealed class QuotationScaleGroupPricingTests
 
         Assert.Equal(10m, For(result, a).DiscountPercentage);
         Assert.Equal(15m, For(result, b).DiscountPercentage);
+        Assert.All(result, line => Assert.True(line.Grouped));
     }
 
     // La unidad de empaque nunca agrupa y nunca lanza desde aca: 6 no es empaque entero de 12,
@@ -223,14 +223,15 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Null(For(result, a).Restriction);
     }
 
-    // Una linea que cumple el multiplo sola conserva su descuento aunque el total del grupo
-    // falle: la agrupacion existe para rescatar a las que no cumplen, no para hundir a las que
-    // si. A=6 cumple (6 % 3), B=10 no; el total 16 tampoco, pero eso es cosa de B.
+    // Una linea que no cumple el multiplo no le hace nada a la que si: A=6 cumple (6 % 3) y se
+    // lleva su descuento por su cuenta; B=10 no cumple, se queda en cero, y reporta SU propia
+    // cantidad.
     //
-    // No cambia el veredicto de B: con multiplo puro toda linea que cumple es congruente con 0
-    // modulo el paso, asi que sacarla de la suma deja el mismo resto. 16 % 3 y 10 % 3 dan 1.
+    // Antes B decia 16 -- el total de un grupo del que ahora ni siquiera es parte -- y quedaba
+    // marcada como agrupada. Con el multiplo por linea, una linea que no califica no entra en
+    // ninguna suma, asi que no tiene ningun total que reportar.
     [Fact]
-    public void ALineThatSatisfiesTheMultipleAloneKeepsItsScaleWhenTheGroupFails()
+    public void ALineThatMissesTheMultipleDoesNotAffectTheOneThatMeetsIt()
     {
         var a = Guid.NewGuid();
         var b = Guid.NewGuid();
@@ -249,9 +250,9 @@ public sealed class QuotationScaleGroupPricingTests
 
         var lineB = For(result, b);
         Assert.Equal(0m, lineB.DiscountPercentage);
-        Assert.True(lineB.Grouped);
+        Assert.False(lineB.Grouped);
         Assert.Equal("quotation.item.quantity_not_multiple", lineB.Restriction!.Code);
-        Assert.Equal(16m, lineB.Restriction.EvaluatedQuantity);
+        Assert.Equal(10m, lineB.Restriction.EvaluatedQuantity);
     }
 
     // Recalcular nunca lanza, ni siquiera ante una escala incompleta: la línea ya estaba en la
@@ -268,5 +269,112 @@ public sealed class QuotationScaleGroupPricingTests
         var line = For(result, item);
         Assert.Equal(0m, line.DiscountPercentage);
         Assert.False(line.Restriction!.IsSatisfied);
+    }
+
+    // ---- Agrupación para ALCANZAR el tramo (2026-09-21) ----
+    //
+    // Hasta acá la suma sólo servía para cumplir el múltiplo de un tramo que cada línea ya había
+    // alcanzado sola. Ahora también decide en qué tramo cae la línea: 3 + 3 = 6 entra al tramo
+    // 6-48 aunque ninguna de las dos llegue sola.
+
+    private static Dictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> MultiScaleCatalog(
+        params (Guid ProductId, QuotationPriceScaleRef[] Scales)[] entries) =>
+        entries.ToDictionary(
+            entry => entry.ProductId,
+            entry => (IReadOnlyCollection<QuotationPriceScaleRef>)entry.Scales);
+
+    // Los tres tramos del producto tipo: el primero sin descuento, el segundo agrupable, el
+    // tercero para volumen y sin agrupar.
+    private static QuotationPriceScaleRef[] Tiers() =>
+    [
+        new(1, 5, 0m, QuotationPriceScaleRestriction.Multiple, 1, null, false),
+        new(6, 48, 5m, QuotationPriceScaleRestriction.Multiple, 3, null, true),
+        new(49, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+    ];
+
+    // El caso que pidió el owner: dos productos con 3 unidades cada uno, los dos con el mismo
+    // tramo agrupable. Solas caen en 1-5 y no descuentan; sumadas llegan a 6 y las dos toman el
+    // tramo 6-48.
+    [Fact]
+    public void GroupingReachesTheTierThatNoLineReachesAlone()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(a, ProductA, 3m),
+                new QuotationPricingLine(b, ProductB, 3m)
+            ],
+            MultiScaleCatalog((ProductA, Tiers()), (ProductB, Tiers())));
+
+        Assert.Equal(5m, For(result, a).DiscountPercentage);
+        Assert.Equal(5m, For(result, b).DiscountPercentage);
+        Assert.True(For(result, a).Grouped);
+        Assert.Equal(6m, For(result, a).Restriction!.EvaluatedQuantity);
+    }
+
+    // Una línea que ya pasó el techo del tramo no arrastra al grupo: 100 no se suma al total del
+    // tramo 6-48 porque no cabe en él. Si se sumara, 3 + 3 + 100 = 106 se saldría del rango y las
+    // dos líneas chicas perderían el descuento que el grupo les consiguió.
+    //
+    // La de 100 conserva el tramo que alcanzó sola.
+    [Fact]
+    public void ALineAboveTheTierCeilingDoesNotDragTheGroup()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        var c = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(a, ProductA, 3m),
+                new QuotationPricingLine(b, ProductB, 3m),
+                new QuotationPricingLine(c, ProductC, 100m)
+            ],
+            MultiScaleCatalog((ProductA, Tiers()), (ProductB, Tiers()), (ProductC, Tiers())));
+
+        Assert.Equal(5m, For(result, a).DiscountPercentage);
+        Assert.Equal(5m, For(result, b).DiscountPercentage);
+        Assert.Equal(6m, For(result, a).Restriction!.EvaluatedQuantity);
+
+        Assert.Equal(10m, For(result, c).DiscountPercentage);
+        Assert.False(For(result, c).Grouped);
+    }
+
+    // El caso reportado por el owner el 2026-09-21, con la escala real del catalogo sembrado:
+    // 6-48, 15%, multiplo 3, agrupable. Cinco lineas de 3 y una de 5.
+    //
+    // Las cinco de 3 cumplen el multiplo solas y suman 15, que cae en 6-48: se llevan el 15%
+    // aunque ninguna llegue sola a 6. La de 5 no cumple el multiplo, asi que no recibe nada y --
+    // esto es lo que estaba roto -- tampoco entra en la suma: antes daba 20, que no es multiplo
+    // de 3, y dejaba a las seis lineas en cero.
+    [Fact]
+    public void ALineThatMissesTheMultipleNoLongerDragsTheGroupDown()
+    {
+        var products = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).ToArray();
+        var quantities = new decimal[] { 3m, 3m, 3m, 3m, 3m, 5m };
+        var itemIds = quantities.Select(_ => Guid.NewGuid()).ToArray();
+
+        var seeded = new QuotationPriceScaleRef(
+            6, 48, 15m, QuotationPriceScaleRestriction.Multiple, 3, null, true);
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            itemIds.Select((id, i) => new QuotationPricingLine(id, products[i], quantities[i]))
+                .ToArray(),
+            products.ToDictionary(
+                id => id,
+                _ => (IReadOnlyCollection<QuotationPriceScaleRef>)[seeded]));
+
+        foreach (var itemId in itemIds.Take(5))
+        {
+            Assert.Equal(15m, For(result, itemId).DiscountPercentage);
+            Assert.True(For(result, itemId).Grouped);
+            Assert.Equal(15m, For(result, itemId).Restriction!.EvaluatedQuantity);
+        }
+
+        var odd = For(result, itemIds[5]);
+        Assert.Equal(0m, odd.DiscountPercentage);
+        Assert.False(odd.Grouped);
     }
 }

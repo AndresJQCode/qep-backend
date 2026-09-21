@@ -589,6 +589,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("generated_at");
 
+                    b.Property<Guid?>("LogoFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("logo_file_id");
+
                     b.Property<long>("QuotationVersion")
                         .HasColumnType("bigint")
                         .HasColumnName("quotation_version");

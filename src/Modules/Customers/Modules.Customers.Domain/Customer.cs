@@ -31,6 +31,7 @@ public sealed class Customer
         Cuc = string.Empty;
         Name = string.Empty;
         IdentificationNumber = string.Empty;
+        Address = string.Empty;
     }
 
     private Customer(
@@ -56,9 +57,12 @@ public sealed class Customer
         first.MarkPrincipal(true, occurredAt);
         _addresses.Add(first);
         // Directo y no por Assign: el analisis de flujo del compilador no atraviesa metodos, asi
-        // que asignar IdentificationNumber alla deja el constructor con un CS8618.
+        // que asignar IdentificationNumber alla deja el constructor con un CS8618. Address tiene
+        // el mismo problema desde que dejo de ser opcional: se inicializa aca por lo mismo, y
+        // Assign(contact) la pisa enseguida con el valor normalizado real.
         IdentificationType = identification.Type;
         IdentificationNumber = identification.Number;
+        Address = string.Empty;
         Assign(contact);
         Assign(commercial);
         IsActive = true;
@@ -101,8 +105,11 @@ public sealed class Customer
     public string? BusinessName { get; private set; }
 
     /// <summary>
-    /// Las direcciones del cliente (CLI-DIR-01). Siempre hay al menos una mientras el cliente
-    /// existe: la principal se crea junto con el, porque su ciudad es la que emitio el CUC.
+    /// La libreta de direcciones de envío (CLI-DIR-01): a dónde se le entrega. Siempre hay al
+    /// menos una mientras el cliente existe: la primera nace del alta con el mismo par que el
+    /// domicilio (decisión 3 del spec 2026-09-18), para que un cliente nuevo tenga a dónde
+    /// enviar sin abrir la libreta. Desde ahí son dos datos distintos: editar la ficha no la
+    /// toca, y marcar otra principal no mueve <see cref="Address"/> ni <see cref="CityId"/>.
     /// </summary>
     public IReadOnlyCollection<CustomerAddress> Addresses => _addresses;
 
@@ -114,8 +121,8 @@ public sealed class Customer
 
     /// <summary>La principal, o una excepcion clara si la consulta no incluyo las direcciones.
     /// Todo cliente creado tiene una; que falte solo puede ser un <c>Include</c> olvidado en el
-    /// repositorio, y ese error conviene leerlo asi y no como un NullReference tres capas mas
-    /// arriba.</summary>
+    /// repositorio. Desde el spec 2026-09-18 la lectura del domicilio no pasa por acá
+    /// (<see cref="Address"/>/<see cref="CityId"/>); queda para la libreta.</summary>
     public CustomerAddress RequirePrincipalAddress() =>
         PrincipalAddress
             ?? throw new InvalidOperationException(
@@ -147,6 +154,25 @@ public sealed class Customer
     public string? Phone { get; private set; }
 
     public string? Email { get; private set; }
+
+    /// <summary>
+    /// El domicilio del cliente: la calle. Junto con <see cref="CityId"/> es "dónde está el
+    /// cliente" — lo que la ficha muestra en los campos planos, la ciudad por la que el listado
+    /// y el reporte lo agrupan, y el respaldo de facturación y envío de la cotización
+    /// (<c>QuotationResponseComposer.cs:96-110</c>). **No es la principal de la libreta** (spec
+    /// 2026-09-18): <see cref="Addresses"/> son destinos de envío y su principal es sólo la que
+    /// se ofrece primero. CLI-DIR-01 había fundido las dos cosas y marcar otra principal movía el
+    /// domicilio; volvieron a separarse.
+    /// </summary>
+    public string Address { get; private set; }
+
+    /// <summary>
+    /// FK blanda a <c>Modules.Geography</c>: <see cref="Guid"/> y no un id fuertemente tipado de
+    /// otro dominio, mismo criterio que <see cref="CustomerAddress.CityId"/>. La FK real
+    /// (<c>FK_customers_cities_city_id</c>) la escribe a mano la migración, porque City vive en
+    /// otro DbContext.
+    /// </summary>
+    public Guid CityId { get; private set; }
 
     /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
@@ -246,8 +272,8 @@ public sealed class Customer
 
     /// <summary>
     /// Quita una direccion. La principal no se puede quitar: primero hay que nombrar otra. Es la
-    /// misma regla que hace que el cliente siempre tenga a donde entregar —y la que evita que
-    /// quitar la ultima deje al agregado sin ciudad, que es la del CUC.
+    /// regla que hace que la cotizacion siempre tenga una direccion de envio que proponer por
+    /// defecto; el domicilio del cliente no depende de la libreta.
     /// </summary>
     public void RemoveAddress(CustomerAddressId addressId, DateTimeOffset occurredAt)
     {
@@ -325,6 +351,9 @@ public sealed class Customer
         var normalizedBusinessName = NormalizeBusinessName(businessName);
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
+        // La ciudad se comprueba acá y no sólo en Assign: hace falta **antes** de asignar el
+        // nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
+        EnsureValidCityId(normalizedContact.CityId);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         var normalizedClassificationPrefix = NormalizeClassificationPrefix(classificationPrefix);
 
@@ -351,15 +380,18 @@ public sealed class Customer
         IdentificationNumber = identification.Number;
     }
 
-    // Asigna los tres siempre, incluidos los null. Se puede **limpiar** un campo, no solo
-    // setearlo: una implementacion que ignore los null "para no pisar" deja campos imborrables y
-    // pasa todas las demas pruebas.
+    // Asigna los cuatro siempre. Telefono y correo se pueden **limpiar**, no solo setear: una
+    // implementacion que ignore los null "para no pisar" deja campos imborrables y pasa todas las
+    // demas pruebas. La direccion llega validada por Normalized; la ciudad vacia se rechaza aca
+    // con el codigo que este agregado emitia antes de la libreta.
     private void Assign(CustomerContactInfo contact)
     {
         var normalized = contact.Normalized();
 
         Phone = normalized.Phone;
         Email = normalized.Email;
+        Address = normalized.Address;
+        CityId = EnsureValidCityId(normalized.CityId);
     }
 
     private void Assign(CustomerCommercialInfo commercial)

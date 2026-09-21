@@ -22,7 +22,8 @@ public sealed class QuotationPdfProvider(
     IQuotationResponseComposer composer,
     IQuotationPdfRenderer renderer,
     IQuotationPdfStorage storage,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IQuotationLogoLookup logoLookup)
     : IQuotationPdfProvider
 {
     public async Task<QuotationPdf> EnsureCurrentAsync(
@@ -31,9 +32,13 @@ public sealed class QuotationPdfProvider(
         var pdf = await repository.FindPdfAsync(
             quotation.TenantId, quotation.Id, cancellationToken);
 
+        // Una lectura de Tenancy y otra de Storage por export, sin bajar bytes todavía (spec
+        // 2026-09-19, decisión 9): sólo hace falta el FileId para decidir si el PDF sigue vigente.
+        var logo = await logoLookup.FindAsync(quotation.TenantId, cancellationToken);
+
         // Generar cuesta una llamada de red a `qcode-pdf` mas una subida a R2, y la mayoria de
         // los pedidos son de cotizaciones que nadie toco desde el anterior.
-        if (pdf is not null && !pdf.IsStaleFor(quotation.Version))
+        if (pdf is not null && !pdf.IsStaleFor(quotation.Version, logo?.FileId))
         {
             return pdf;
         }
@@ -45,8 +50,16 @@ public sealed class QuotationPdfProvider(
         var calendar = await tenantClock.GetAsync(quotation.TenantId, cancellationToken);
         var response = await composer.ComposeAsync(
             quotation.TenantId, quotation.ToDto(), cancellationToken);
+        // Los bytes sólo se bajan acá, al regenerar — nunca sólo para decidir si hace falta.
+        var logoContent = logo is null ? null : await logoLookup.ReadAsync(logo, cancellationToken);
+        var pdfLogo = logo is null || logoContent is null
+            ? null
+            : new QuotationPdfLogo("logo" + logo.Extension, logoContent);
+        // Sólo se registra el logo que de verdad se imprimió: si no se pudo leer, el PDF queda
+        // sin LogoFileId, el próximo export lo ve vencido y vuelve a intentar con el logo.
+        var printedLogoFileId = pdfLogo is null ? null : logo?.FileId;
         var content = await renderer.RenderAsync(
-            QuotationPdfDocumentMapper.From(response, calendar), cancellationToken);
+            QuotationPdfDocumentMapper.From(response, calendar, pdfLogo), cancellationToken);
         var storageKey = await storage.SaveAsync(
             quotation.TenantId, quotation.Id, content, cancellationToken);
 
@@ -54,12 +67,12 @@ public sealed class QuotationPdfProvider(
         if (pdf is null)
         {
             pdf = QuotationPdf.Generate(
-                quotation.Id, quotation.TenantId, storageKey, quotation.Version, now);
+                quotation.Id, quotation.TenantId, storageKey, quotation.Version, printedLogoFileId, now);
             repository.AddPdf(pdf);
         }
         else
         {
-            pdf.Regenerate(storageKey, quotation.Version, now);
+            pdf.Regenerate(storageKey, quotation.Version, printedLogoFileId, now);
         }
 
         return pdf;

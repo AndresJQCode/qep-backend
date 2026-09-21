@@ -34,7 +34,8 @@ public sealed class UpdateTenantSettingsHandler(
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
     IClock clock,
-    IValidator<UpdateTenantSettingsCommand> validator)
+    IValidator<UpdateTenantSettingsCommand> validator,
+    ITenantLogoStorage logoStorage)
     : ICommandHandler<UpdateTenantSettingsCommand, TenantSettingsDto>
 {
     public async Task<TenantSettingsDto> HandleAsync(
@@ -65,7 +66,7 @@ public sealed class UpdateTenantSettingsHandler(
 
         if (!changed)
         {
-            return tenant.ToSettingsDto();
+            return tenant.ToSettingsDto(logoStorage);
         }
 
         var events = tenant.PullDomainEvents();
@@ -91,7 +92,7 @@ public sealed class UpdateTenantSettingsHandler(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return tenant.ToSettingsDto();
+        return tenant.ToSettingsDto(logoStorage);
     }
 
     private void EnsureAuthorized(TenantId tenantId)

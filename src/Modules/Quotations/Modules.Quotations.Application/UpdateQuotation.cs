@@ -116,6 +116,12 @@ public sealed class UpdateQuotationHandler(
             quotation.Id.ToString(),
             "success",
             now);
+
+        // Cambiar de moneda revaloriza cada línea por separado, y el mínimo de compra tiene un
+        // umbral distinto por moneda: lo que alcanzaba en pesos puede no alcanzar en dólares.
+        await QuotationPricingRecalculation.ApplyAsync(
+            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();

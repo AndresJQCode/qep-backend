@@ -197,6 +197,19 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("display_name");
 
+                    b.Property<Guid?>("LogoFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("logo_file_id");
+
+                    b.Property<string>("LogoPublicKey")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("logo_public_key");
+
+                    b.Property<Guid?>("OwnerMembershipId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_membership_id");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(63)

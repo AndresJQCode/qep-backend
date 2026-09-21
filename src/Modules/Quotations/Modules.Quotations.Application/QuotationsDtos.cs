@@ -7,6 +7,11 @@ public sealed record QuotationItemDto(
     decimal UnitPrice,
     decimal DiscountPercentage,
     decimal DiscountAmount,
+    /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
+    /// unidad que <c>UnitPrice</c>, no la de <c>Subtotal</c>. Lo calcula la línea
+    /// (<c>QuotationItem.DiscountedUnitPrice</c>) y no quien lo muestra: la pantalla y el PDF lo
+    /// derivaban cada uno por su cuenta.</summary>
+    decimal DiscountedUnitPrice,
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,
@@ -80,7 +85,47 @@ public sealed record QuotationDto(
     /// <summary>Si convertir en pedido es posible: enviada, sin cambios desde ese envío, con
     /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
     bool CanBeConvertedToOrder,
+    /// <summary>En qué anda la cotización contra la compra mínima que habilita los descuentos por
+    /// volumen. Viaja **siempre**, alcanzada o no.</summary>
+    QuotationMinimumPurchaseDto MinimumPurchase,
     IReadOnlyCollection<QuotationItemDto> Items);
+
+/// <summary>
+/// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
+///
+/// Existe por el mismo motivo que <c>QuotationDto.CustomerVatSurplus</c>: sin esto el frontend ve
+/// un descuento en cero y tiene que adivinar por qué. Y adivinar no le alcanza — el umbral depende
+/// de la moneda, la regla es un OR de dos ramas, y ninguna de las dos cosas se deduce mirando los
+/// importes.
+///
+/// <b>Es prospectivo, no retrospectivo.</b> Dice "te faltan 4 unidades o $480.000 para acceder a
+/// los descuentos", no "perdiste un descuento". La diferencia importa: una cotización que se lee
+/// de la base ya tiene sus descuentos en cero y **no guarda rastro** de cuál era el candidato que
+/// la compuerta se llevó; reconstruirlo obligaría a consultar el catálogo en cada lectura. Lo que
+/// sí se puede afirmar sin ir a ningún lado —y es lo accionable para quien cotiza— es cuánto falta
+/// para el umbral.
+///
+/// <b>Los faltantes se calculan acá y no en el cliente</b> para que dos pantallas no redondeen
+/// distinto, mismo criterio que <c>/reports/orders/summary</c>.
+/// </summary>
+/// <param name="Met">Si la cotización ya habilita descuentos. Con cualquiera de las dos ramas
+/// cumplida es true, y los dos faltantes son 0.</param>
+/// <param name="Units">Suma de las cantidades de todas las líneas.</param>
+/// <param name="MinimumUnits">Las unidades que habilitan el descuento por sí solas.</param>
+/// <param name="MinimumTotal">El total que habilita el descuento por sí solo, **en la moneda de
+/// la cotización** (<c>Currency</c>). No es una conversión: este módulo no tiene tabla de cambio,
+/// así que el mínimo en dólares es un número propio.</param>
+/// <param name="MissingUnits">Cuántas unidades faltan para <paramref name="MinimumUnits"/>. 0
+/// cuando <paramref name="Met"/>.</param>
+/// <param name="MissingTotal">Cuánta plata falta para <paramref name="MinimumTotal"/>, contra el
+/// total ya descontado y con IVA. 0 cuando <paramref name="Met"/>.</param>
+public sealed record QuotationMinimumPurchaseDto(
+    bool Met,
+    decimal Units,
+    decimal MinimumUnits,
+    decimal MinimumTotal,
+    decimal MissingUnits,
+    decimal MissingTotal);
 
 /// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto
 /// y no el enum del dominio, mismo criterio que Status.</summary>
@@ -321,7 +366,30 @@ public sealed record QuotationResponse(
     bool CanBeSent,
     bool HasChangesSinceSent,
     bool CanBeConvertedToOrder,
+    /// <summary>En qué anda la cotización contra la compra mínima. Misma posición que en
+    /// <see cref="QuotationDto.MinimumPurchase"/> para que las dos formas se lean en
+    /// paralelo.</summary>
+    QuotationMinimumPurchaseResponse MinimumPurchase,
     IReadOnlyCollection<QuotationItemResponse> Items);
+
+/// <summary>
+/// La compra mínima tal como viaja por HTTP. Es un gemelo de
+/// <see cref="QuotationMinimumPurchaseDto"/> —mismos campos, mismo significado— y no el mismo
+/// record a propósito: ningún <c>*Response</c> de este archivo referencia un <c>*Dto</c>.
+///
+/// Esa separación es el seam que defiende <c>QuotationResponseComposer</c>: el contrato HTTP se
+/// arma a mano ahí, así que agregar un campo al DTO interno no lo publica solo. El costo de la
+/// regla es este archivo con pares; el beneficio es que nadie cambia lo que ve el navegador sin
+/// tocar el contrato. Ver <see cref="QuotationMinimumPurchaseDto"/> para qué significa cada campo
+/// y por qué el mensaje es prospectivo.
+/// </summary>
+public sealed record QuotationMinimumPurchaseResponse(
+    bool Met,
+    decimal Units,
+    decimal MinimumUnits,
+    decimal MinimumTotal,
+    decimal MissingUnits,
+    decimal MissingTotal);
 
 /// <summary>
 /// La cuenta con la que se factura, ya resuelta para la pantalla: la copia guardada más la razón
@@ -402,6 +470,10 @@ public sealed record QuotationItemResponse(
     decimal UnitPrice,
     decimal DiscountPercentage,
     decimal DiscountAmount,
+    /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
+    /// unidad que <c>UnitPrice</c>. <c>Subtotal</c> está en la otra: es la base <b>sin</b> IVA.
+    /// Multiplicar éste por <c>Quantity</c> da lo que se cobra por la línea.</summary>
+    decimal DiscountedUnitPrice,
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,

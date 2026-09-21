@@ -71,6 +71,21 @@ public sealed class QuotationItem
     /// único aplicado al subtotal completo.</summary>
     public decimal TaxAmount { get; private set; }
 
+    /// <summary>
+    /// Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — la misma unidad que
+    /// <see cref="UnitPrice"/>, no la de <see cref="Subtotal"/>.
+    ///
+    /// Derivado, no persistido: sale de los tres campos que sí se guardan, así que no hay columna
+    /// ni migración y una línea vieja lo reporta igual. Se calcula desde el total de la línea y
+    /// no como <c>UnitPrice × (1 − %)</c>: <see cref="DiscountAmount"/> se redondea sobre el
+    /// bruto, y restarlo es lo único que reconstruye exactamente lo que se cobra. Mismo criterio
+    /// que ya usaba <c>QuotationPdfDocumentMapper</c> para imprimirlo, que ahora lo lee de acá.
+    /// La cantidad es siempre mayor que cero por invariante de <see cref="Apply"/>; el guardia
+    /// cubre la entidad a medio materializar, no al agregado.
+    /// </summary>
+    public decimal DiscountedUnitPrice =>
+        Quantity > 0 ? Round((Round(Quantity * UnitPrice) - DiscountAmount) / Quantity) : 0m;
+
     /// <summary>Posición de la fila para mantener el orden de despliegue.</summary>
     public int Position { get; private set; }
 
@@ -93,6 +108,13 @@ public sealed class QuotationItem
     internal void UpdateQuantity(
         decimal quantity, decimal discountPercentage, int taxPercentage, DateTimeOffset occurredAt) =>
         Apply(quantity, UnitPrice, discountPercentage, taxPercentage, occurredAt);
+
+    /// <summary>Cambia sólo el descuento y rehace los importes de la línea, conservando cantidad,
+    /// precio y tasa. Lo usa el recálculo global de la cotización
+    /// (<see cref="Quotation.ApplyGroupDiscounts"/>): la agrupación de escalas y la compuerta de
+    /// compra mínima mueven el descuento sin que la línea haya cambiado en nada más.</summary>
+    internal void ApplyDiscount(decimal discountPercentage, DateTimeOffset occurredAt) =>
+        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, occurredAt);
 
     /// <summary>Vuelve a nacer con el precio del producto en otra moneda, sin tocar la
     /// cantidad. El descuento y el impuesto también se rehacen: la escala de cantidad y la

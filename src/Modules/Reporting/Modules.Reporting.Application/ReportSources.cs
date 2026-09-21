@@ -136,7 +136,7 @@ public interface ICustomerReportSource
     /// "no me traigas los repartos": la ventana anterior solo necesita el conteo.
     ///
     /// **El reparto por departamento no se agrupa entero en la base, y no se puede.**
-    /// <c>Customer</c> guarda la ciudad de su direccion principal y nada mas — el departamento vive
+    /// <c>Customer</c> guarda la ciudad de su domicilio y nada mas — el departamento vive
     /// del otro lado de la frontera de <c>Geography</c>. Se agrupa por ciudad en la base, que es
     /// una fila por ciudad y no una por cliente, y el plegado a departamento lo hace el adaptador
     /// sobre ese resultado ya chico.

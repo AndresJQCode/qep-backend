@@ -156,6 +156,32 @@ public sealed class CustomerApiTests
         Assert.Equal(2, page.Items.Count);
     }
 
+    // La ciudad de la fila y la del filtro son la misma: la del domicilio del cliente (spec
+    // 2026-09-18). Una principal en otra ciudad no lo mueve de fila ni lo hace aparecer al
+    // filtrar por esa otra ciudad — mostrar una columna y filtrar por otra deja al usuario con
+    // filas que no parecen coincidir.
+    [Fact]
+    public async Task ListShowsAndFiltersByTheCustomerCityNotByThePrincipalAddress()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
+        await AddAddressAsync(client, created.Id, cities[1].CityId, isPrincipal: true);
+
+        var page = await ListAsync(client, string.Empty);
+        var byContactCity = await ListAsync(client, $"?cityIds={cities[0].CityId}");
+        var byPrincipalCity = await ListAsync(client, $"?cityIds={cities[1].CityId}");
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(cities[0].CityId, item.City.Id);
+        Assert.Equal(cities[0].DepartmentId, item.Department.Id);
+        Assert.Equal(created.Id, Assert.Single(byContactCity.Items).Id);
+        Assert.Empty(byPrincipalCity.Items);
+    }
+
     // Con clientes en ciudades y clasificaciones distintas, el listado tiene que resolver cada uno
     // sin un N+1: esta prueba no lo mide directamente (esa es la responsabilidad de
     // ListCustomersHandler.ToDtosAsync, en lote), pero si confirma que cada fila trae los datos

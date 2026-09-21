@@ -17,7 +17,7 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -86,10 +86,20 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("address");
+
                     b.Property<string>("BusinessName")
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)")
                         .HasColumnName("business_name");
+
+                    b.Property<Guid>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
 
                     b.Property<Guid>("ClassificationId")
                         .HasColumnType("uuid")
@@ -159,6 +169,9 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnName("with_retention");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CityId")
+                        .HasDatabaseName("IX_customers_city");
 
                     b.HasIndex("ClassificationId")
                         .HasDatabaseName("IX_customers_classification");

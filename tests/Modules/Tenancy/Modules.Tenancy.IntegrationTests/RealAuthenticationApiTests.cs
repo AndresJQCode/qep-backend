@@ -91,7 +91,7 @@ public sealed class RealAuthenticationApiTests
         var etag = await GetSettingsEtagAsync(owner, tenantId);
 
         using var withoutHeader = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/settings")
         {
             Content = JsonContent.Create(NewSettingsBody()),
@@ -104,7 +104,7 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
 
         using var withHeader = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/settings")
         {
             Content = JsonContent.Create(NewSettingsBody()),

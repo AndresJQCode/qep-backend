@@ -42,9 +42,32 @@ public sealed class CustomerTests
             VatSurplus = vatSurplus
         };
 
-    private static CustomerContactInfo ValidContact() =>
-        new() { Phone = "310 935 2187", Email = "compras@verde.co" };
+    private static readonly Guid OtherCityId =
+        Guid.Parse("01900000-0000-7000-8000-000000000011");
 
+    private static CustomerContactInfo ValidContact(Guid? cityId = null) =>
+        new()
+        {
+            Phone = "310 935 2187",
+            Email = "compras@verde.co",
+            Address = "Calle 10 # 45-12",
+            CityId = cityId ?? CityId
+        };
+
+    // Una direccion de envio distinta del domicilio, para probar que la libreta y el contacto
+    // son dos datos: otra calle y otra ciudad.
+    private static CustomerAddressDetails Warehouse(Guid? cityId = null) =>
+        new()
+        {
+            Name = "Bodega Norte",
+            Address = "Carrera 7 # 71-21",
+            CityId = cityId ?? OtherCityId
+        };
+
+    // `cityId` alimenta las dos cosas que nacen del alta: la primera fila de la libreta y el
+    // domicilio del cliente (decision 3 del spec 2026-09-18). El constructor crea la libreta
+    // antes de asignar el contacto, asi que con Guid.Empty el codigo que sale es el de la
+    // libreta (ver CreateRejectsAnEmptyCityId).
     private static Customer Create(
         string cuc = "CLI08000142",
         string name = "Verde Esencial S.A.S.",
@@ -66,7 +89,7 @@ public sealed class CustomerTests
                 CityId = cityId ?? CityId
             },
             identification ?? Identification(),
-            contact ?? ValidContact(),
+            contact ?? ValidContact(cityId),
             commercial ?? Commercial(),
             Now);
 
@@ -149,8 +172,9 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.cuc_required", exception.Code);
     }
 
-    // La ciudad es una FK obligatoria de primer nivel (Fase 3): un Guid.Empty no es "sin ciudad",
-    // es un dato mal formado, y el dominio lo rechaza antes de que llegue a la FK de base.
+    // El fixture pasa Guid.Empty a la libreta y al contacto; el constructor crea la primera
+    // direccion antes de asignar el contacto, asi que el codigo que sale es el de la libreta. El
+    // del contacto lo cubre ContactInfoRejectsAnEmptyCityId.
     [Fact]
     public void CreateRejectsAnEmptyCityId()
     {
@@ -208,7 +232,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
-            new CustomerContactInfo { Email = email, Phone = phone },
+            ValidContact() with { Email = email, Phone = phone },
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(5)));
@@ -220,7 +244,7 @@ public sealed class CustomerTests
     [Fact]
     public void ContactInfoTrimsThePhoneAndTheEmail()
     {
-        var customer = Create(contact: new CustomerContactInfo
+        var customer = Create(contact: ValidContact() with
         {
             Phone = "  310 935 2187  ",
             Email = "  compras@verde.co  "
@@ -255,6 +279,8 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.email_invalid", exception.Code);
     }
 
+    // Ya no es un vestigio: la direccion de contacto es el domicilio del cliente (spec
+    // 2026-09-18).
     [Fact]
     public void ContactInfoRejectsAnAddressLongerThanTheColumn()
     {
@@ -265,6 +291,111 @@ public sealed class CustomerTests
             }));
 
         Assert.Equal("customers.customer.address_too_long", exception.Code);
+    }
+
+    // Decision 3 del spec 2026-09-18: el alta guarda el domicilio en el cliente **y** siembra la
+    // primera fila de la libreta con el mismo par. Son dos datos desde el nacimiento, no uno
+    // derivado del otro.
+    [Fact]
+    public void CreateSeedsTheContactAddressAndTheFirstAddressBookRow()
+    {
+        var customer = Create();
+
+        Assert.Equal("Calle 10 # 45-12", customer.Address);
+        Assert.Equal(CityId, customer.CityId);
+        var principal = Assert.Single(customer.Addresses);
+        Assert.True(principal.IsPrincipal);
+        Assert.Equal("Calle 10 # 45-12", principal.Address);
+        Assert.Equal(CityId, principal.CityId);
+    }
+
+    // El bug que motivo el spec: marcar otra direccion de la libreta como principal movia el
+    // domicilio del cliente. La libreta cambia de principal; el domicilio no se entera.
+    [Fact]
+    public void MakeAddressPrincipalDoesNotChangeTheContactAddress()
+    {
+        var customer = Create();
+        var warehouse = customer.AddAddress(Warehouse(), isPrincipal: false, Now.AddMinutes(1));
+
+        customer.MakeAddressPrincipal(warehouse.Id, Now.AddMinutes(2));
+
+        Assert.Equal("Calle 10 # 45-12", customer.Address);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.True(warehouse.IsPrincipal);
+        Assert.Equal(warehouse.Id, customer.PrincipalAddress?.Id);
+    }
+
+    // Decision 4: el PUT escribe solo el contacto. La libreta —incluida la principal— queda como
+    // estaba, aunque el domicilio nuevo tenga otra calle y otra ciudad.
+    [Fact]
+    public void UpdateChangesTheContactAddressAndLeavesTheAddressBookUntouched()
+    {
+        var customer = Create();
+        var principal = Assert.Single(customer.Addresses);
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            ValidContact(OtherCityId) with { Address = "Carrera 7 # 71-21" },
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Equal("Carrera 7 # 71-21", customer.Address);
+        Assert.Equal(OtherCityId, customer.CityId);
+        var stillPrincipal = Assert.Single(customer.Addresses);
+        Assert.Same(principal, stillPrincipal);
+        Assert.Equal("Calle 10 # 45-12", stillPrincipal.Address);
+        Assert.Equal(CityId, stillPrincipal.CityId);
+        Assert.True(stillPrincipal.IsPrincipal);
+    }
+
+    // Codigo nuevo, mismo estilo que customers.address.address_required: la calle del domicilio
+    // es obligatoria, como antes de CLI-DIR-01.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ContactInfoRejectsAnEmptyAddress(string address)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { Address = address }));
+
+        Assert.Equal("customers.customer.address_required", exception.Code);
+    }
+
+    // El codigo existente de Customer.EnsureValidCityId, que desde CLI-DIR-01 no tenia caller.
+    // Solo el contacto lleva Guid.Empty: la libreta del fixture nace con ciudad valida.
+    [Fact]
+    public void ContactInfoRejectsAnEmptyCityId()
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { CityId = Guid.Empty }));
+
+        Assert.Equal("customers.customer.city_required", exception.Code);
+    }
+
+    // Misma garantia de todo-o-nada que UpdateLeavesTheCustomerUntouchedWhenALaterFieldIsRejected,
+    // para la ciudad: si EnsureValidCityId corriera solo dentro de Assign, el nombre nuevo ya
+    // estaria pegado cuando la ciudad vacia se rechaza.
+    [Fact]
+    public void UpdateLeavesTheCustomerUntouchedWhenTheCityIsRejected()
+    {
+        var customer = Create(name: "Verde Esencial");
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            "Nombre nuevo",
+            businessName: null,
+            Identification(),
+            ValidContact(Guid.Empty),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("customers.customer.city_required", exception.Code);
+        Assert.Equal("Verde Esencial", customer.Name);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Equal(1, customer.Version);
     }
 
     // withRetention es obligatorio en el formulario y no tiene "sin definir": un cliente o retiene
@@ -317,7 +448,7 @@ public sealed class CustomerTests
             "Verde Esencial S.A.S.",
             businessName: null,
             Identification(),
-            new CustomerContactInfo { Phone = "604 444 5566", Email = "Ventas@Verde.CO" },
+            ValidContact() with { Phone = "604 444 5566", Email = "Ventas@Verde.CO" },
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(5));
@@ -327,7 +458,7 @@ public sealed class CustomerTests
     }
 
     // La clasificacion se puede reemplazar en el Update: un cliente puede cambiar de categoria
-    // comercial. La ciudad ya no viaja aca — es la de su direccion principal (CLI-DIR-01).
+    // comercial.
     [Fact]
     public void UpdateReplacesTheClassification()
     {

@@ -7,7 +7,8 @@ public sealed record GetTenantSettingsQuery(TenantId TenantId) : IQuery<TenantSe
 
 public sealed class GetTenantSettingsHandler(
     ITenantRepository tenantRepository,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantLogoStorage logoStorage)
     : IQueryHandler<GetTenantSettingsQuery, TenantSettingsDto>
 {
     public async Task<TenantSettingsDto> HandleAsync(
@@ -20,7 +21,7 @@ public sealed class GetTenantSettingsHandler(
                 "tenancy.tenant.not_found",
                 "Tenant settings were not found.");
 
-        return tenant.ToSettingsDto();
+        return tenant.ToSettingsDto(logoStorage);
     }
 
     private void EnsureAuthorized(TenantId tenantId)

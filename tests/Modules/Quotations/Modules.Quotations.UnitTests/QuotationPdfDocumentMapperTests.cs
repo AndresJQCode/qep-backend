@@ -22,8 +22,8 @@ public sealed class QuotationPdfDocumentMapperTests
         new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
         TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
 
-    private static QuotationPdfDocument Map(QuotationResponse quotation) =>
-        QuotationPdfDocumentMapper.From(quotation, Calendar);
+    private static QuotationPdfDocument Map(QuotationResponse quotation, QuotationPdfLogo? logo = null) =>
+        QuotationPdfDocumentMapper.From(quotation, Calendar, logo);
 
     // Spec 2026-09-17, punto 7: creada el 31 de diciembre a las 23:00 en Bogotá —1 de enero en UTC—,
     // el documento dice que se emitió el 31 de diciembre de 2026. La fecha viaja sin hora.
@@ -249,6 +249,24 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(string.Empty, document.Billing.TaxId);
     }
 
+    [Fact]
+    public void MapsTheLogoWhenPresent()
+    {
+        var logo = new QuotationPdfLogo("logo.png", [0x89, 0x50, 0x4E, 0x47]);
+
+        var document = Map(Response(), logo);
+
+        Assert.Same(logo, document.Logo);
+    }
+
+    [Fact]
+    public void MapsNoLogoAsNull()
+    {
+        var document = Map(Response());
+
+        Assert.Null(document.Logo);
+    }
+
     private static QuotationClientResponse Client() => new(
         Guid.CreateVersion7(),
         "CUC-0042",
@@ -304,6 +322,10 @@ public sealed class QuotationPdfDocumentMapperTests
         true,
         false,
         false,
+        // El PDF no la imprime: viaja porque el contrato la exige. Coherente con las 24 unidades
+        // de las dos lineas, que ya pasan el minimo -- una cotizacion con descuento del 15% no
+        // podria decir que no lo alcanzo.
+        new QuotationMinimumPurchaseResponse(true, 24m, 6m, 500_000m, 0m, 0m),
         [
             // 12 x 35.900 = 430.800; 15% = 64.620; linea = 366.180 con IVA adentro.
             // IVA contenido = 366.180 x 19 / 119 = 58.465,71; base = 307.714,29.
@@ -318,6 +340,7 @@ public sealed class QuotationPdfDocumentMapperTests
                 35900m,
                 15m,
                 64620m,
+                30515m,
                 307714.29m,
                 19,
                 58465.71m,
@@ -335,6 +358,7 @@ public sealed class QuotationPdfDocumentMapperTests
                 114700m,
                 15m,
                 206460m,
+                97495m,
                 983142.86m,
                 19,
                 186797.14m,

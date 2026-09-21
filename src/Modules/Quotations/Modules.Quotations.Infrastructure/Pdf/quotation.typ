@@ -8,9 +8,9 @@
 // total resaltado. Esa arquitectura de información no es estética: es la que el comprador ya
 // sabe leer.
 //
-// El documento es white-label —lo manda el tenant a SU cliente y el payload no trae ni logo ni
-// color de marca— así que la referencia se sigue en estructura y no en paleta: una sola tinta
-// neutra, sin acento de color que le ponga la marca de nadie a un documento comercial ajeno.
+// El logo del tenant viaja en el payload como asset (spec 2026-09-19); el color de marca sigue
+// fuera de alcance. La referencia se sigue en estructura y no en paleta: una sola tinta neutra,
+// sin acento de color que le ponga la marca de nadie a un documento comercial ajeno.
 #let data = json(sys.inputs.data)
 
 #let tinta = rgb("#14181F")
@@ -131,58 +131,6 @@
 // ya lee en la cotización que el owner fijó.
 #let renglon(etiqueta, valor) = [#etiqueta: #valor]
 
-// ---------------------------------------------------------------------------- logo
-//
-// `qcode-pdf` sólo recibe `source` (este markup) y `data` (JSON): no hay un tercer canal para
-// mandar un binario aparte, y Typst no trae un decodificador de base64 en su librería estándar.
-// Así que el logo viaja como texto base64 dentro de `data.logo` —lo agrega `QCodePdfRenderer`,
-// no este documento: es configuración de despliegue, no un campo de la cotización— y estas dos
-// funciones lo devuelven a bytes acá mismo.
-//
-// Por aritmética y no por operadores de bits: Typst no los expone en el lenguaje del documento,
-// así que cada grupo de 4 caracteres (24 bits) se arma y se parte con `calc.quo`/`calc.rem`,
-// igual que `miles()` más abajo arma separadores de millar sin formato por locale.
-//
-// `.chunks(4)` con `.map()` y no un `while`: Typst corta un bucle que decide que "parece
-// infinito" a las ~10.000 iteraciones, y un logo de este tamaño en base64 pasa esa marca.
-#let base64-valor(caracter) = {
-  let codigo = caracter.to-unicode()
-  if codigo >= 65 and codigo <= 90 { codigo - 65 } // A-Z
-  else if codigo >= 97 and codigo <= 122 { codigo - 71 } // a-z
-  else if codigo >= 48 and codigo <= 57 { codigo + 4 } // 0-9
-  else if codigo == 43 { 62 } // +
-  else if codigo == 47 { 63 } // /
-  else { 0 } // relleno "="
-}
-
-#let base64-decodificar(texto) = bytes(
-  texto
-    .clusters()
-    .chunks(4)
-    .map(grupo => {
-      let v0 = base64-valor(grupo.at(0))
-      let v1 = base64-valor(grupo.at(1))
-      let c2 = grupo.at(2)
-      let c3 = grupo.at(3)
-      let v2 = base64-valor(c2)
-      let v3 = base64-valor(c3)
-      let n24 = v0 * 262144 + v1 * 4096 + v2 * 64 + v3
-      let byte0 = calc.quo(n24, 65536)
-      let byte1 = calc.rem(calc.quo(n24, 256), 256)
-      let byte2 = calc.rem(n24, 256)
-      if c2 == "=" { (byte0,) } else if c3 == "=" { (byte0, byte1) } else { (byte0, byte1, byte2) }
-    })
-    .flatten(),
-)
-
-// El deploy que no cargó logo (o el `data.json` armado a mano de una prueba local) no trae la
-// clave: el documento se imprime igual, sin la imagen, en vez de reventar.
-#let logo = if "logo" in data and data.logo != none and data.logo != "" {
-  base64-decodificar(data.logo)
-} else {
-  none
-}
-
 // ---------------------------------------------------------------------------- página
 
 // El pie repite el número en cada hoja: una cotización de varias páginas se imprime, se separa
@@ -208,7 +156,9 @@
 // ---------------------------------------------------------------------------- encabezado
 
 // El emisor ancla arriba a la izquierda, como en la referencia: logo, razón social, NIT,
-// dirección y teléfono, en ese orden.
+// dirección y teléfono, en ese orden. El logo es el que sube el tenant en `/settings` y viaja
+// por el canal `assets` de `qcode-pdf`, no un archivo del despliegue: sin logo subido, el
+// membrete se imprime sin imagen.
 // Sin cuenta de cobro no hay emisor que imprimir, y entonces el ancla de la esquina es el tipo
 // de documento. Con emisor, "Cotización" pasa a ser el encabezado del renglón de número a la
 // derecha: decirlo en los dos lados es decirlo dos veces.
@@ -219,8 +169,11 @@
   column-gutter: 10mm,
   align: (left + top, right + top),
   [
-    #if logo != none [
-      #image(logo, width: 34mm)
+    // Acotado por alto y por ancho: el archivo lo sube el tenant, así que su relación de
+    // aspecto es desconocida y un logo alto y angosto fijado sólo por ancho empuja el resto
+    // del membrete hacia abajo. `fit: "contain"` lo mete dentro de la caja sin deformarlo.
+    #if data.logo != none [
+      #image("assets/" + data.logo.fileName, width: 34mm, height: 16mm, fit: "contain")
       #v(5pt, weak: true)
     ]
     #if hay-emisor [

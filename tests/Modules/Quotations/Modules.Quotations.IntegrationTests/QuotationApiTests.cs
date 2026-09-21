@@ -70,6 +70,37 @@ public sealed class QuotationApiTests
         Assert.Equal("CT90002", second.QuotationNumber);
     }
 
+    /// <summary>
+    /// El domicilio de la cotizacion es el del cliente (su contacto), no la principal de la libreta
+    /// (spec 2026-09-18, decision 5): <c>QuotationResponseComposer.cs:96-110</c> entrega
+    /// <c>customer.address</c> como respaldo de facturacion y envio, y <c>addresses[0]</c> es la
+    /// principal, la que el selector de envio preselecciona. Con la principal en otra ciudad, las
+    /// dos cosas se distinguen.
+    /// </summary>
+    [Fact]
+    public async Task CreateShowsTheCustomerAddressAndKeepsThePrincipalFirstInTheAddressBook()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (home, elsewhere) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var principalAddressId = await AddPrincipalAddressAsync(client, tenantId, clientId, elsewhere.CityId);
+
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        Assert.NotNull(quotation.Client);
+        Assert.Equal("Calle 10 # 45-12", quotation.Client.Address);
+        Assert.Equal(home.CityId, quotation.Client.CityId);
+        Assert.Equal(home.DepartmentId, quotation.Client.DepartmentId);
+        Assert.Equal(2, quotation.Client.Addresses.Count);
+        var principal = quotation.Client.Addresses.First();
+        Assert.Equal(principalAddressId, principal.Id);
+        Assert.True(principal.IsPrincipal);
+        Assert.Equal(elsewhere.CityId, principal.CityId);
+    }
+
     /// <summary>El paso 2 del runbook del README para cotizaciones: el mismo UPSERT con GREATEST,
     /// sobre <c>quotation_number_counters</c>.</summary>
     internal static async Task SetQuotationCounterAsync(

@@ -163,6 +163,12 @@ public sealed class BatchUpdateQuotationItemsHandler(
                 now);
         }
 
+        // Una sola vez al final de la tanda, no por línea: el descuento depende de la cotización
+        // entera, así que resolverlo en medio del lote lo calcularía contra un estado a medio
+        // aplicar.
+        await QuotationPricingRecalculation.ApplyAsync(
+            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+
         // Una sola escritura para toda la tanda: es justo lo que esto reemplaza — antes,
         // guardar tres altas y una baja eran cuatro viajes a la base, cada uno con su propia
         // versión y su propia chance de chocar contra otra pestaña editando la misma cotización.

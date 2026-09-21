@@ -31,6 +31,24 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// El unitario con descuento se deriva de cantidad, precio y descuento cada vez que se lee:
+    /// no hay columna, no hay migracion, y una linea guardada antes de que el campo existiera lo
+    /// reporta igual. Convertirlo en una propiedad con setter lo volveria persistido sin que el
+    /// compilador diga nada, y ahi si haria falta una migracion.
+    /// </summary>
+    [Fact]
+    public void TheDiscountedUnitPriceIsDerivedAndNeverPersisted()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var item = model.FindEntityType(typeof(QuotationItem))!;
+
+        Assert.Null(item.FindProperty(nameof(QuotationItem.DiscountedUnitPrice)));
+        Assert.NotNull(item.FindProperty(nameof(QuotationItem.DiscountAmount)));
+    }
+
+    /// <summary>
     /// El SQL crudo de la toma (ExportJobQueue) nombra las columnas a mano, así que un nombre que
     /// EF pusiera por convención rompería la toma sin que el compilador lo vea. Y `attempts` es
     /// token de concurrencia: es lo que impide que un worker con el lease vencido cierre un job

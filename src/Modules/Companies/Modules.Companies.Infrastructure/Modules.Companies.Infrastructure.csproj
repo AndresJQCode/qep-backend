@@ -13,4 +13,7 @@
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Modules.Companies.UnitTests" />
+  </ItemGroup>
 </Project>
