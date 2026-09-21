@@ -92,6 +92,7 @@ internal static class QuotationMapping
         item.UnitPrice,
         item.DiscountPercentage,
         item.DiscountAmount,
+        item.DiscountedUnitPrice,
         item.Subtotal,
         item.TaxPercentage,
         item.TaxAmount,

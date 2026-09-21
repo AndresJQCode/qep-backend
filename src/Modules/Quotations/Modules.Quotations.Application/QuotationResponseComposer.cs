@@ -154,6 +154,7 @@ public sealed class QuotationResponseComposer(
             item.UnitPrice,
             item.DiscountPercentage,
             item.DiscountAmount,
+            item.DiscountedUnitPrice,
             item.Subtotal,
             item.TaxPercentage,
             item.TaxAmount,

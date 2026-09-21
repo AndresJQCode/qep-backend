@@ -7,6 +7,11 @@ public sealed record QuotationItemDto(
     decimal UnitPrice,
     decimal DiscountPercentage,
     decimal DiscountAmount,
+    /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
+    /// unidad que <c>UnitPrice</c>, no la de <c>Subtotal</c>. Lo calcula la línea
+    /// (<c>QuotationItem.DiscountedUnitPrice</c>) y no quien lo muestra: la pantalla y el PDF lo
+    /// derivaban cada uno por su cuenta.</summary>
+    decimal DiscountedUnitPrice,
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,
@@ -465,6 +470,10 @@ public sealed record QuotationItemResponse(
     decimal UnitPrice,
     decimal DiscountPercentage,
     decimal DiscountAmount,
+    /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
+    /// unidad que <c>UnitPrice</c>. <c>Subtotal</c> está en la otra: es la base <b>sin</b> IVA.
+    /// Multiplicar éste por <c>Quantity</c> da lo que se cobra por la línea.</summary>
+    decimal DiscountedUnitPrice,
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,
