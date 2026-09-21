@@ -127,8 +127,9 @@ public sealed class OrderExportApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    // De punta a punta: el POST encola, un tick arma el Excel con las filas del listado de pedidos
-    // en el orden de su tabla, y el correo sale.
+    // De punta a punta: el POST encola, un tick arma el Excel del ERP contable (ajuste
+    // 2026-09-20) con las columnas y el correo sale. Cada pedido de CreateOrderAsync tiene una
+    // sola línea, así que filas de archivo y pedidos leídos coinciden.
     [Fact]
     public async Task TheWorkerTurnsTheRequestIntoTheOrdersWorkbookAndTheEmail()
     {
@@ -162,30 +163,44 @@ public sealed class OrderExportApiTests
         var items = list!.Items.ToArray();
         Assert.Equal("Pedidos", sheet.Name);
         Assert.Equal(
-            ["Pedido", "Cliente", "Asesor", "Fecha", "Pago", "Estado", "Moneda", "Total",
-                "Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3", "Comprobante 4",
-                "Comprobante 5"],
+            [
+                "EMPRESA", "Forma de pago 1", "V. Consignacion 1", "Cod. Producto", "U.Medida",
+                "Cantidad", "Valor Unit", "IVA", "Descuento", "Nota Detalle",
+                "Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5",
+                "Ciudad", "Documento", "Pedido", "Direccion", "Observaciones", "Telefono", "Email",
+            ],
             sheet.Rows[0]);
-        Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[0]));
+        Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[17]));
         var first = sheet.Rows[1];
-        Assert.Equal(items[0].ClientName, first[1]);
-        Assert.Equal(items[0].AdvisorName ?? string.Empty, first[2]);
-        // La fecha sale en la hora del tenant, al minuto y sin offset (spec 2026-09-17, punto 8a).
-        Assert.Equal(LocalMinuteInBogota(items[0].ConvertedAt), first[3]);
-        // La API sigue mandando el enum (A8); el archivo, la etiqueta de la tabla (A7).
-        Assert.Equal("Pending", items[0].Status);
-        Assert.Equal(items[0].PaymentMethod ?? "Pago pendiente", first[4]);
-        Assert.Equal("Pendiente", first[5]);
-        Assert.Equal(items[0].Currency, first[6]);
+        // CreateCompanyWithBankAccountAsync siempre da de alta la misma razón social.
+        Assert.Equal("QEP Comercial S.A.S.", first[0]);
+        Assert.Equal(items[0].PaymentMethod, first[1]);
+        Assert.True(sheet.NumericCells[1][2]);
+        Assert.Equal(items[0].Total, decimal.Parse(first[2], CultureInfo.InvariantCulture));
+        // La única línea del pedido: cantidad 1 de un producto sin tasa de impuesto, en la
+        // primera escala (1-9, sin descuento, múltiplo de 1).
+        Assert.NotEqual(string.Empty, first[3]);
+        Assert.Equal("Múltiplo de 1", first[4]);
+        Assert.True(sheet.NumericCells[1][5]);
+        Assert.Equal(1m, decimal.Parse(first[5], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][6]);
+        Assert.Equal(100_000m, decimal.Parse(first[6], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][7]);
-        Assert.Equal(items[0].Total, decimal.Parse(first[7], CultureInfo.InvariantCulture));
-        // Sin comprobantes (spec 2026-09-15, E2): la cantidad en cero y las cinco celdas vacías, que
-        // igual salen (E7).
+        Assert.Equal(0m, decimal.Parse(first[7], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][8]);
-        Assert.Equal("0", first[8]);
+        Assert.Equal(0m, decimal.Parse(first[8], CultureInfo.InvariantCulture));
+        Assert.Equal(string.Empty, first[9]);
+        // Sin comprobantes: las cinco fechas de pago quedan vacías.
         Assert.Equal(
             [string.Empty, string.Empty, string.Empty, string.Empty, string.Empty],
-            first.Skip(9));
+            first.Skip(10).Take(5));
+        // Sin parte de entrega propia: "los mismos datos del cliente" (CreateActiveCustomerAsync).
+        Assert.NotEqual(string.Empty, first[15]);
+        Assert.NotEqual(string.Empty, first[16]);
+        Assert.Equal(items[0].OrderNumber, first[17]);
+        Assert.Equal("Calle 10 # 45-12", first[18]);
+        Assert.Equal("310 935 2187", first[20]);
+        Assert.Equal("compras@verde.co", first[21]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -342,23 +357,19 @@ public sealed class OrderExportApiTests
         return order;
     }
 
-    // Spec 2026-09-15, de punta a punta con la opción encendida: el comprobante que se subió primero
-    // es el enlace «Ver» a su copia pública, uno privado dice «Sin enlace» y el resto queda vacío.
-    // El privado se simula borrando su clave en la base: es lo que tienen los comprobantes de antes
-    // de la opción (P8).
+    // De punta a punta (ajuste 2026-09-20): dos comprobantes de un mismo pedido llenan "Fecha Pago
+    // 1" y "Fecha Pago 2" en el orden en que se subieron, y las tres columnas restantes quedan
+    // vacías. Reemplaza a la prueba de los enlaces «Ver»/«Sin enlace»: esas columnas de
+    // comprobante ya no existen, el ERP contable pide la fecha y no el archivo.
     [Fact]
-    public async Task TheOrdersWorkbookLinksEachPublicProof()
+    public async Task TheOrdersWorkbookFillsAPaymentDatePerProofInUploadOrder()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var order = await CreateOrderWithProofsAsync(client, factory, tenantId, proofCount: 1);
-        var firstProofId = Assert.Single(order.PaymentProofs).Id;
         var withSecond = await AddProofAsync(client, factory, tenantId, order.Id);
-        var secondProofId = Assert.Single(withSecond.PaymentProofs, proof => proof.Id != firstProofId).Id;
-        await ClearPublicStorageKeyAsync(factory, secondProofId);
-        var firstKey = await PublicStorageKeyOfAsync(factory, firstProofId);
 
         var response = await client.PostAsync(
             $"{OrdersUrl(tenantId)}/export?{CurrentRange()}", content: null, TestContext.Current.CancellationToken);
@@ -369,20 +380,17 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["Comprobantes", "Comprobante 1", "Comprobante 2", "Comprobante 3", "Comprobante 4",
-                "Comprobante 5"],
-            sheet.Rows[0].Skip(8));
+            ["Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5"],
+            sheet.Rows[0].Skip(10).Take(5));
         var row = sheet.Rows[1];
-        Assert.Equal(order.OrderNumber, row[0]);
-        Assert.True(sheet.NumericCells[1][8]);
-        Assert.Equal("2", row[8]);
-        Assert.Equal(
-            $"HYPERLINK(\"{InMemoryPublicObjectStorage.BaseUrl}/{firstKey}\",\"Ver\")",
-            sheet.Formulas[1][9]);
-        Assert.Equal("Ver", row[9]);
-        Assert.Null(sheet.Formulas[1][10]);
-        Assert.Equal("Sin enlace", row[10]);
-        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(11));
+        Assert.Equal(order.OrderNumber, row[17]);
+        Assert.NotEqual(string.Empty, row[10]);
+        Assert.NotEqual(string.Empty, row[11]);
+        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(12).Take(3));
+        // El segundo comprobante se subió después: su fecha no puede ser anterior a la del
+        // primero. Comparables como texto porque el formato es "yyyy-MM-dd HH:mm".
+        Assert.True(string.CompareOrdinal(row[10], row[11]) <= 0);
+        Assert.NotEmpty(withSecond.PaymentProofs);
     }
 
     // E6 contra Postgres: una sola lectura por lote, por pedido y en el orden de las columnas —fecha de
@@ -462,34 +470,6 @@ public sealed class OrderExportApiTests
         var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return order;
-    }
-
-    // Directo en la base: así queda un comprobante de antes de la opción (P8), sin copia pública.
-    private static async Task ClearPublicStorageKeyAsync(QepApiFactory factory, Guid proofId)
-    {
-        await using var scope = factory.Services.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
-        var id = new OrderPaymentProofId(proofId);
-        var updated = await dbContext.OrderPaymentProofs
-            .Where(proof => proof.Id == id)
-            .ExecuteUpdateAsync(
-                setters => setters.SetProperty(proof => proof.PublicStorageKey, (string?)null),
-                TestContext.Current.CancellationToken);
-        Assert.Equal(1, updated);
-    }
-
-    private static async Task<string> PublicStorageKeyOfAsync(QepApiFactory factory, Guid proofId)
-    {
-        await using var scope = factory.Services.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
-        var id = new OrderPaymentProofId(proofId);
-        var key = await dbContext.OrderPaymentProofs
-            .AsNoTracking()
-            .Where(proof => proof.Id == id)
-            .Select(proof => proof.PublicStorageKey)
-            .SingleAsync(TestContext.Current.CancellationToken);
-        Assert.NotNull(key);
-        return key;
     }
 
     private sealed record AcceptedDto(Guid JobId, DateTimeOffset RequestedAt);

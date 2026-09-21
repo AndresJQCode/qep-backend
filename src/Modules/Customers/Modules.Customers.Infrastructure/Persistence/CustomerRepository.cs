@@ -338,5 +338,28 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return rows.ToDictionary(row => row.Id, row => row.Name);
     }
 
+    // Con las direcciones: quien llama (IQuotationCustomerLookup.FindManyAsync) necesita resolver
+    // la ciudad de cada una, igual que FindAsync con un solo cliente. AsNoTracking porque es
+    // lectura de reporte.
+    public async Task<IReadOnlyDictionary<CustomerId, Customer>> FindManyAsync(
+        Guid tenantId,
+        IReadOnlyCollection<CustomerId> customerIds,
+        CancellationToken cancellationToken)
+    {
+        if (customerIds.Count == 0)
+        {
+            return new Dictionary<CustomerId, Customer>();
+        }
+
+        var ids = customerIds.ToArray();
+        var customers = await dbContext.Customers
+            .AsNoTracking()
+            .Include(customer => customer.Addresses)
+            .Where(customer => customer.TenantId == tenantId && ids.Contains(customer.Id))
+            .ToListAsync(cancellationToken);
+
+        return customers.ToDictionary(customer => customer.Id);
+    }
+
     public void Add(Customer customer) => dbContext.Customers.Add(customer);
 }

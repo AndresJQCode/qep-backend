@@ -226,7 +226,11 @@ public sealed class ExportLoadSeedTests
             factory, ExportLoadSeeder.TenantId, ownerUserId, ExportJobKind.Orders,
             ExportJobFilters.Serialize(new OrdersExportFilters(null, null, null, null, today.AddYears(-1), today, null, null)));
         Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
-        Assert.Equal(result.Orders, (await FindExportJobAsync(factory, ordersJob)).RowCount);
+        // El Excel de pedidos es una fila por línea de producto (ajuste 2026-09-20), y cada
+        // cotización sembrada tiene las mismas ExportLoadSeeder.ItemsPerQuotation líneas.
+        Assert.Equal(
+            result.Orders * ExportLoadSeeder.ItemsPerQuotation,
+            (await FindExportJobAsync(factory, ordersJob)).RowCount);
     }
 
     // Los tres contadores quedan en el siguiente al último sembrado: el primer alta real del tenant no

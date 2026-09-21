@@ -275,6 +275,53 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                     .ToArray());
     }
 
+    public async Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>> ListItemsForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken)
+    {
+        if (quotationIds.Count == 0)
+        {
+            return new Dictionary<QuotationId, IReadOnlyList<QuotationItem>>();
+        }
+
+        var ids = quotationIds.ToArray();
+        var items = await (
+                from item in dbContext.QuotationItems.AsNoTracking()
+                join quotation in dbContext.Quotations.AsNoTracking() on item.QuotationId equals quotation.Id
+                where quotation.TenantId == tenantId && ids.Contains(quotation.Id)
+                orderby item.Position
+                select item)
+            .ToListAsync(cancellationToken);
+
+        return items
+            .GroupBy(item => item.QuotationId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<QuotationItem>)group.ToArray());
+    }
+
+    public async Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>> ListPartiesForExportAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken)
+    {
+        if (quotationIds.Count == 0)
+        {
+            return new Dictionary<QuotationId, IReadOnlyList<QuotationParty>>();
+        }
+
+        var ids = quotationIds.ToArray();
+        var parties = await (
+                from party in dbContext.QuotationParties.AsNoTracking()
+                join quotation in dbContext.Quotations.AsNoTracking() on party.QuotationId equals quotation.Id
+                where quotation.TenantId == tenantId && ids.Contains(quotation.Id)
+                select party)
+            .ToListAsync(cancellationToken);
+
+        return parties
+            .GroupBy(party => party.QuotationId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<QuotationParty>)group.ToArray());
+    }
+
     public Task<bool> IsPaymentProofFileInUseAsync(
         Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
     {
