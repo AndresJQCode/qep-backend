@@ -91,7 +91,7 @@ public sealed class MembershipTests
         membership.Accept(InvitedAt.AddHours(1));
         membership.PullDomainEvents();
 
-        membership.Suspend(InvitedAt.AddHours(2));
+        membership.Suspend(TenantOwnedByAnother(), InvitedAt.AddHours(2));
 
         Assert.Equal(MembershipState.Suspended, membership.State);
         var domainEvent = Assert.Single(membership.DomainEvents);
@@ -105,7 +105,7 @@ public sealed class MembershipTests
         var membership = Invite(Guid.CreateVersion7());
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.Suspend(InvitedAt.AddHours(1)));
+            membership.Suspend(TenantOwnedByAnother(), InvitedAt.AddHours(1)));
 
         Assert.Equal("tenancy.membership.not_active", exception.Code);
         Assert.Equal(MembershipState.Invited, membership.State);
@@ -117,7 +117,7 @@ public sealed class MembershipTests
         var membership = Invite(Guid.CreateVersion7());
         membership.PullDomainEvents();
 
-        membership.Remove(InvitedAt.AddHours(1));
+        membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(1));
 
         Assert.Equal(MembershipState.Removed, membership.State);
         var domainEvent = Assert.Single(membership.DomainEvents);
@@ -130,9 +130,9 @@ public sealed class MembershipTests
     {
         var membership = Invite(Guid.CreateVersion7());
         membership.Accept(InvitedAt.AddHours(1));
-        membership.Suspend(InvitedAt.AddHours(2));
+        membership.Suspend(TenantOwnedByAnother(), InvitedAt.AddHours(2));
 
-        membership.Remove(InvitedAt.AddHours(3));
+        membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(3));
 
         Assert.Equal(MembershipState.Removed, membership.State);
     }
@@ -141,10 +141,10 @@ public sealed class MembershipTests
     public void RemoveAlreadyRemovedThrows()
     {
         var membership = Invite(Guid.CreateVersion7());
-        membership.Remove(InvitedAt.AddHours(1));
+        membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(1));
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.Remove(InvitedAt.AddHours(2)));
+            membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(2)));
 
         Assert.Equal("tenancy.membership.already_terminal", exception.Code);
     }
@@ -156,7 +156,7 @@ public sealed class MembershipTests
         Assert.True(membership.Expire(InvitedAt + Ttl + TimeSpan.FromSeconds(1)));
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.Remove(InvitedAt + Ttl + TimeSpan.FromHours(1)));
+            membership.Remove(TenantOwnedByAnother(), InvitedAt + Ttl + TimeSpan.FromHours(1)));
 
         Assert.Equal("tenancy.membership.already_terminal", exception.Code);
     }
@@ -170,10 +170,11 @@ public sealed class MembershipTests
     public void SuspendOwnerMembershipThrows()
     {
         var membership = CreateOwner();
+        var tenant = TenantOwnedBy(membership);
         membership.PullDomainEvents();
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.Suspend(InvitedAt.AddHours(1)));
+            membership.Suspend(tenant, InvitedAt.AddHours(1)));
 
         Assert.Equal("tenancy.membership.owner_protected", exception.Code);
         Assert.Equal(MembershipState.Active, membership.State);
@@ -184,14 +185,35 @@ public sealed class MembershipTests
     public void RemoveOwnerMembershipThrows()
     {
         var membership = CreateOwner();
+        var tenant = TenantOwnedBy(membership);
         membership.PullDomainEvents();
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.Remove(InvitedAt.AddHours(1)));
+            membership.Remove(tenant, InvitedAt.AddHours(1)));
 
         Assert.Equal("tenancy.membership.owner_protected", exception.Code);
         Assert.Equal(MembershipState.Active, membership.State);
         Assert.Empty(membership.DomainEvents);
+    }
+
+    /// <summary>
+    /// Una membresía con <c>Origin = registration</c> que el tenant **no** nombró owner se
+    /// suspende como cualquier otra. Es el caso que distingue las dos preguntas: `origin` dice
+    /// cómo nació la membresía, `tenants.owner_membership_id` dice quién manda. Antes de este
+    /// cambio el sembrador tenía que reusar el origen de registro para heredar la protección
+    /// (TenancySeeder.cs), y cualquier fila con ese origen quedaba blindada sin que nadie lo
+    /// hubiera decidido.
+    /// </summary>
+    [Fact]
+    public void SuspendMembershipWithRegistrationOriginThatIsNotTheOwnerSucceeds()
+    {
+        var membership = CreateOwner();
+        membership.PullDomainEvents();
+
+        membership.Suspend(TenantOwnedByAnother(), InvitedAt.AddHours(1));
+
+        Assert.Equal(MembershipState.Suspended, membership.State);
+        Assert.IsType<MembershipSuspendedDomainEvent>(Assert.Single(membership.DomainEvents));
     }
 
     [Fact]
@@ -200,7 +222,7 @@ public sealed class MembershipTests
         var membership = Invite(Guid.CreateVersion7());
         membership.PullDomainEvents();
 
-        membership.ChangeRoles(
+        membership.ChangeRoles(TenantOwnedByAnother(), 
             [" admin ", "admin", "advisor"],
             InvitedAt.AddHours(1));
 
@@ -217,7 +239,7 @@ public sealed class MembershipTests
         var membership = Invite(Guid.CreateVersion7());
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.ChangeRoles(["  "], InvitedAt.AddHours(1)));
+            membership.ChangeRoles(TenantOwnedByAnother(), ["  "], InvitedAt.AddHours(1)));
 
         Assert.Equal("tenancy.membership.roles_required", exception.Code);
     }
@@ -226,10 +248,11 @@ public sealed class MembershipTests
     public void ChangeRolesCannotRemoveAdminFromOwnerMembership()
     {
         var membership = CreateOwner();
+        var tenant = TenantOwnedBy(membership);
         membership.PullDomainEvents();
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.ChangeRoles(["advisor"], InvitedAt.AddHours(1)));
+            membership.ChangeRoles(tenant, ["advisor"], InvitedAt.AddHours(1)));
 
         Assert.Equal("tenancy.membership.owner_protected", exception.Code);
         Assert.Equal(["admin"], membership.Roles);
@@ -241,7 +264,7 @@ public sealed class MembershipTests
         var membership = CreateOwner();
         membership.PullDomainEvents();
 
-        membership.ChangeRoles(["admin", "advisor"], InvitedAt.AddHours(1));
+        membership.ChangeRoles(TenantOwnedByAnother(), ["admin", "advisor"], InvitedAt.AddHours(1));
 
         Assert.Equal(["admin", "advisor"], membership.Roles);
     }
@@ -250,10 +273,10 @@ public sealed class MembershipTests
     public void ChangeRolesForRemovedMembershipThrows()
     {
         var membership = Invite(Guid.CreateVersion7());
-        membership.Remove(InvitedAt.AddHours(1));
+        membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(1));
 
         var exception = Assert.Throws<TenantDomainException>(() =>
-            membership.ChangeRoles(["admin"], InvitedAt.AddHours(2)));
+            membership.ChangeRoles(TenantOwnedByAnother(), ["admin"], InvitedAt.AddHours(2)));
 
         Assert.Equal("tenancy.membership.already_terminal", exception.Code);
     }
@@ -460,7 +483,7 @@ public sealed class MembershipTests
     {
         var membership = Invite(Guid.CreateVersion7());
         membership.Accept(InvitedAt + TimeSpan.FromHours(1));
-        membership.Suspend(InvitedAt + TimeSpan.FromHours(2));
+        membership.Suspend(TenantOwnedByAnother(), InvitedAt + TimeSpan.FromHours(2));
 
         var error = Assert.Throws<TenantDomainException>(
             () => membership.Reinvite(
@@ -490,7 +513,7 @@ public sealed class MembershipTests
         var membership = Invite(Guid.CreateVersion7());
         var originalId = membership.Id;
         membership.Accept(InvitedAt + TimeSpan.FromHours(1));
-        membership.Remove(InvitedAt + TimeSpan.FromHours(2));
+        membership.Remove(TenantOwnedByAnother(), InvitedAt + TimeSpan.FromHours(2));
         var versionWhileRemoved = membership.Version;
         membership.PullDomainEvents();
         var renewedAt = InvitedAt + TimeSpan.FromHours(3);
@@ -550,7 +573,7 @@ public sealed class MembershipTests
     {
         var membership = Invite(Guid.CreateVersion7());
         membership.Accept(InvitedAt + TimeSpan.FromHours(1));
-        membership.Suspend(InvitedAt + TimeSpan.FromHours(2));
+        membership.Suspend(TenantOwnedByAnother(), InvitedAt + TimeSpan.FromHours(2));
         var versionWhileSuspended = membership.Version;
         membership.PullDomainEvents();
 
@@ -574,7 +597,7 @@ public sealed class MembershipTests
         var membership = Invite(Guid.CreateVersion7());
         var acceptedAt = InvitedAt + TimeSpan.FromHours(1);
         membership.Accept(acceptedAt);
-        membership.Suspend(InvitedAt + TimeSpan.FromHours(2));
+        membership.Suspend(TenantOwnedByAnother(), InvitedAt + TimeSpan.FromHours(2));
 
         membership.Reactivate(InvitedAt + TimeSpan.FromHours(3));
 
@@ -595,7 +618,7 @@ public sealed class MembershipTests
 
         if (state == MembershipState.Removed)
         {
-            membership.Remove(InvitedAt + TimeSpan.FromHours(2));
+            membership.Remove(TenantOwnedByAnother(), InvitedAt + TimeSpan.FromHours(2));
         }
 
         var error = Assert.Throws<TenantDomainException>(
@@ -705,7 +728,7 @@ public sealed class MembershipTests
     {
         var membership = Invite(Guid.CreateVersion7());
         membership.Accept(InvitedAt.AddHours(1));
-        membership.Suspend(InvitedAt.AddHours(2));
+        membership.Suspend(TenantOwnedByAnother(), InvitedAt.AddHours(2));
 
         Assert.True(membership.Rename("Ana María Pérez", InvitedAt.AddHours(3)));
         Assert.Equal(MembershipState.Suspended, membership.State);
@@ -846,5 +869,27 @@ public sealed class MembershipTests
             TenantId.New(),
             ["admin"],
             Membership.RegistrationOrigin,
+            InvitedAt);
+
+    /// <summary>
+    /// El tenant que nombra owner a esta membresía: es lo que activa la guarda.
+    /// </summary>
+    private static Tenant TenantOwnedBy(Membership membership) => NewTenant(membership.Id);
+
+    /// <summary>
+    /// Un tenant cuya autoridad es otra membresía. Lo usan todos los casos que no son del owner,
+    /// para que la guarda no se active por accidente y la prueba ejercite lo que dice ejercitar.
+    /// </summary>
+    private static Tenant TenantOwnedByAnother() => NewTenant(MembershipId.New());
+
+    private static Tenant NewTenant(MembershipId owner) =>
+        Tenant.Create(
+            TenantId.New(),
+            "qcode-demo",
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            owner,
             InvitedAt);
 }

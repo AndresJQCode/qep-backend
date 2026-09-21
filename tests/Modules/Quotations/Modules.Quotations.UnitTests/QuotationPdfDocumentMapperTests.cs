@@ -340,6 +340,7 @@ public sealed class QuotationPdfDocumentMapperTests
                 35900m,
                 15m,
                 64620m,
+                30515m,
                 307714.29m,
                 19,
                 58465.71m,
@@ -357,9 +358,13 @@ public sealed class QuotationPdfDocumentMapperTests
                 114700m,
                 15m,
                 206460m,
+                97495m,
                 983142.86m,
                 19,
                 186797.14m,
                 2)
-        ]);
+        ],
+        // El PDF tampoco la imprime: viaja porque el contrato la exige, igual que la compra
+        // minima de arriba.
+        3);
 }

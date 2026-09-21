@@ -12,6 +12,7 @@ public sealed record SuspendMemberCommand(
 
 public sealed class SuspendMemberHandler(
     IMembershipRepository membershipRepository,
+    ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     IRolePermissionChecker rolePermissionChecker,
     ITenancyUnitOfWork unitOfWork,
@@ -27,6 +28,8 @@ public sealed class SuspendMemberHandler(
     {
         EnsureAuthorized(command.TenantId);
 
+        var tenant = await TenantLoader.LoadAsync(
+            tenantRepository, command.TenantId, cancellationToken);
         var membership = await MembershipLoader.LoadAsync(
             membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
 
@@ -67,7 +70,7 @@ public sealed class SuspendMemberHandler(
         }
 
         var now = clock.UtcNow;
-        membership.Suspend(now);
+        membership.Suspend(tenant, now);
 
         auditRecorder.Record(
             command.TenantId.Value,
@@ -86,7 +89,7 @@ public sealed class SuspendMemberHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-        return membership.ToListItemDto(email);
+        return membership.ToListItemDto(email, tenant);
     }
 
     private void EnsureAuthorized(TenantId tenantId)

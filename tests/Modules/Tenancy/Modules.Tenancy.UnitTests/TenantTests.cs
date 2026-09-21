@@ -56,12 +56,15 @@ public sealed class TenantTests
                 "_",
                 "America/Bogota",
                 "yyyy-MM-dd",
+                MembershipId.New(),
                 CreatedAt));
 
         Assert.Equal("tenancy.settings.culture.invalid", exception.Code);
     }
 
-    private static Tenant CreateTenant() =>
+    private static readonly MembershipId OwnerMembershipId = MembershipId.New();
+
+    private static Tenant CreateTenant(MembershipId? owner = null) =>
         Tenant.Create(
             TenantId.New(),
             "qcode-demo",
@@ -69,6 +72,7 @@ public sealed class TenantTests
             "es-CO",
             "America/Bogota",
             "yyyy-MM-dd",
+            owner ?? OwnerMembershipId,
             CreatedAt);
 
     // Decisión 3 del spec 2026-09-19: el mismo agregado guarda el archivo y la clave pública
@@ -141,4 +145,30 @@ public sealed class TenantTests
     // explícitamente y lo deja cubierto por el EnsureActive que UpdateSettings ya ejercita
     // (no hay un caso "OnAnInactiveTenant" separado en este archivo para UpdateSettings tampoco;
     // EnsureActive es el mismo guard privado que ambos métodos comparten).
+
+    /// <summary>
+    /// El tenant nombra a su autoridad al nacer. Antes el owner se deducia de
+    /// <c>memberships.origin = 'registration'</c>, que responde "como nacio esta membresia" y no
+    /// "quien manda en este tenant"; despues paso a una columna que admitia <c>NULL</c>, y el
+    /// unico tenant que la dejaba vacia -- el <c>qcode-demo</c> del inicializador -- quedaba sin
+    /// ninguna membresia protegida. Ahora no hay tenant sin owner: lo exige el constructor.
+    /// </summary>
+    [Fact]
+    public void CreateRecordsTheOwnerMembership()
+    {
+        var owner = MembershipId.New();
+
+        var tenant = CreateTenant(owner);
+
+        Assert.Equal(owner, tenant.OwnerMembershipId);
+        Assert.True(tenant.IsOwner(owner));
+    }
+
+    [Fact]
+    public void IsOwnerIsFalseForAnotherMembership()
+    {
+        var tenant = CreateTenant();
+
+        Assert.False(tenant.IsOwner(MembershipId.New()));
+    }
 }

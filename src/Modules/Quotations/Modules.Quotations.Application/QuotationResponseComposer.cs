@@ -88,7 +88,8 @@ public sealed class QuotationResponseComposer(
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
             ToMinimumPurchaseResponse(quotation.MinimumPurchase),
-            quotation.Items.Select(item => ToItemResponse(item, products)).ToArray());
+            quotation.Items.Select(item => ToItemResponse(item, products)).ToArray(),
+            quotation.Version);
     }
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
@@ -154,6 +155,7 @@ public sealed class QuotationResponseComposer(
             item.UnitPrice,
             item.DiscountPercentage,
             item.DiscountAmount,
+            item.DiscountedUnitPrice,
             item.Subtotal,
             item.TaxPercentage,
             item.TaxAmount,

@@ -166,6 +166,7 @@ public sealed class AuthSessionApiTests
                 "es-CO",
                 "America/Bogota",
                 "yyyy-MM-dd",
+                MembershipId.New(),
                 DateTimeOffset.UtcNow));
             dbContext.Tenants.Add(Tenant.Create(
                 new TenantId(suspendedTenantId),
@@ -174,6 +175,7 @@ public sealed class AuthSessionApiTests
                 "es-CO",
                 "America/Bogota",
                 "yyyy-MM-dd",
+                MembershipId.New(),
                 DateTimeOffset.UtcNow));
             await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
         }

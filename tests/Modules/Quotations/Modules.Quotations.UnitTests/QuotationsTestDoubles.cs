@@ -578,7 +578,8 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
                 quotation.MinimumPurchase.MinimumTotal,
                 quotation.MinimumPurchase.MissingUnits,
                 quotation.MinimumPurchase.MissingTotal),
-            []));
+            [],
+            quotation.Version));
 }
 
 /// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>

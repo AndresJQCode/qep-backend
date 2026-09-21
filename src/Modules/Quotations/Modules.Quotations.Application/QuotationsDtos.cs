@@ -7,6 +7,11 @@ public sealed record QuotationItemDto(
     decimal UnitPrice,
     decimal DiscountPercentage,
     decimal DiscountAmount,
+    /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
+    /// unidad que <c>UnitPrice</c>, no la de <c>Subtotal</c>. Lo calcula la línea
+    /// (<c>QuotationItem.DiscountedUnitPrice</c>) y no quien lo muestra: la pantalla y el PDF lo
+    /// derivaban cada uno por su cuenta.</summary>
+    decimal DiscountedUnitPrice,
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,
@@ -83,7 +88,12 @@ public sealed record QuotationDto(
     /// <summary>En qué anda la cotización contra la compra mínima que habilita los descuentos por
     /// volumen. Viaja **siempre**, alcanzada o no.</summary>
     QuotationMinimumPurchaseDto MinimumPurchase,
-    IReadOnlyCollection<QuotationItemDto> Items);
+    IReadOnlyCollection<QuotationItemDto> Items,
+    /// <summary>La versión del agregado con la que se leyó, para mandarla en <c>If-Match</c> al
+    /// guardar de una vez (<c>PUT /quotations/{quotationId}</c>). Ya existía en el dominio
+    /// (<c>Quotation.Version</c>) y no salía de la aplicación: sin ella la pantalla no tiene con
+    /// qué probar que está guardando sobre lo que leyó. Va al final por ser aditiva.</summary>
+    long Version);
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
@@ -233,6 +243,27 @@ public sealed record BatchUpdateQuotationItemsRequest(
     IReadOnlyList<BatchQuotationItemAdditionRequest> ToAdd,
     IReadOnlyList<Guid> ToRemoveItemIds);
 
+/// <summary>Una línea del estado deseado de la cotización. Se direcciona por <c>productId</c> y no
+/// por <c>itemId</c>: la lista es el estado deseado, y el id de línea sólo lo conoce quien ya la
+/// tiene guardada.</summary>
+public sealed record QuotationEditItemRequest(Guid ProductId, decimal Quantity);
+
+/// <summary>
+/// El estado deseado completo de una cotización editable: mismo cuerpo para
+/// <c>PUT /quotations/{quotationId}</c> y <c>POST /quotations/{quotationId}/preview</c>.
+///
+/// El encabezado se reemplaza entero, igual que en <see cref="UpdateQuotationRequest"/>: lo que no
+/// viene se limpia. <c>Items</c> es la lista **completa** de líneas deseadas, no un delta —
+/// ausente o null equivale a vacía, o sea "sin productos".
+/// </summary>
+public sealed record SaveQuotationRequest(
+    DateOnly? ValidUntil,
+    string? PaymentMethod,
+    string? Notes,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount,
+    IReadOnlyList<QuotationEditItemRequest>? Items);
+
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
 /// <summary>
@@ -365,7 +396,13 @@ public sealed record QuotationResponse(
     /// <see cref="QuotationDto.MinimumPurchase"/> para que las dos formas se lean en
     /// paralelo.</summary>
     QuotationMinimumPurchaseResponse MinimumPurchase,
-    IReadOnlyCollection<QuotationItemResponse> Items);
+    IReadOnlyCollection<QuotationItemResponse> Items,
+    /// <summary>Lo que la pantalla tiene que devolver en <c>If-Match</c> al guardar de una vez
+    /// (<c>PUT /quotations/{quotationId}</c>). Viaja en **todas** las respuestas de cotización,
+    /// no sólo en el GET: el frontend cachea lo que devuelve cada mutación, y una respuesta sin
+    /// versión dejaría el próximo guardado sin con qué probar sobre qué está escribiendo. El
+    /// mismo valor va además en el header <c>ETag</c> de la respuesta del PUT.</summary>
+    long Version);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de
@@ -465,6 +502,10 @@ public sealed record QuotationItemResponse(
     decimal UnitPrice,
     decimal DiscountPercentage,
     decimal DiscountAmount,
+    /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
+    /// unidad que <c>UnitPrice</c>. <c>Subtotal</c> está en la otra: es la base <b>sin</b> IVA.
+    /// Multiplicar éste por <c>Quantity</c> da lo que se cobra por la línea.</summary>
+    decimal DiscountedUnitPrice,
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,

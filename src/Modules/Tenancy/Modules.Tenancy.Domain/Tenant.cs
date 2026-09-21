@@ -25,9 +25,11 @@ public sealed class Tenant
         string defaultCulture,
         string timeZone,
         string dateFormat,
+        MembershipId ownerMembershipId,
         DateTimeOffset createdAt)
     {
         Id = id;
+        OwnerMembershipId = ownerMembershipId;
         Slug = ValidateSlug(slug);
         DisplayName = ValidateDisplayName(displayName);
         DefaultCulture = ValidateCulture(defaultCulture);
@@ -66,6 +68,30 @@ public sealed class Tenant
     /// Storage en cada <c>GET /settings</c>.</summary>
     public string? LogoPublicKey { get; private set; }
 
+    /// <summary>
+    /// La membresía que manda en este tenant: la última autoridad (ADR 0017), la que no se puede
+    /// suspender, quitar ni dejar sin el rol admin.
+    /// </summary>
+    /// <remarks>
+    /// Hasta este cambio el owner se deducía de <c>Membership.Origin == "registration"</c>. Esa
+    /// columna responde **cómo nació** la membresía, no **quién manda**: dos preguntas distintas
+    /// que coincidían sólo porque el owner siempre era el que auto-registró el tenant. El roce ya
+    /// estaba a la vista en <c>TenancySeeder</c>, que reusaba el origen de registro en un tenant
+    /// que nunca se auto-registró, sólo para heredar la protección.
+    ///
+    /// <b>Nunca nulo: lo exige <see cref="Create"/>.</b> Existió como opcional entre
+    /// <c>d4a26b8</c> y el 2026-09-21, con la idea de cubrir la ventana entre crear el tenant y
+    /// nombrar su owner. Esa ventana no hacía falta —<c>MembershipId.New()</c> da el id antes de
+    /// persistir, así que el owner se puede pasar al constructor— y el único que se quedaba
+    /// realmente sin owner era el <c>qcode-demo</c> del inicializador de desarrollo, un tenant sin
+    /// ninguna membresía que además daba 403 en todo. Se eliminó junto con este opcional.
+    ///
+    /// Que no pueda ser nulo es lo que hace que la guarda del agregado valga siempre: con un owner
+    /// nulo <see cref="IsOwner"/> devolvía <c>false</c> para todos, y la membresía dueña se podía
+    /// suspender y eliminar como cualquier otra.
+    /// </remarks>
+    public MembershipId OwnerMembershipId { get; private set; }
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -81,8 +107,13 @@ public sealed class Tenant
         string defaultCulture,
         string timeZone,
         string dateFormat,
+        MembershipId ownerMembershipId,
         DateTimeOffset createdAt) =>
-        new(id, slug, displayName, defaultCulture, timeZone, dateFormat, createdAt);
+        new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
+            createdAt);
+
+    /// <summary>Si esa membresía es la autoridad de este tenant.</summary>
+    public bool IsOwner(MembershipId membershipId) => OwnerMembershipId == membershipId;
 
     public bool UpdateSettings(
         string displayName,

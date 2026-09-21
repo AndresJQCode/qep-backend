@@ -262,7 +262,9 @@ public sealed class InvitationServiceTests
             Membership.DefaultInvitationTimeToLive);
 
     private static Tenant TenantNamed(TenantId id, string displayName) =>
-        Tenant.Create(id, "acme", displayName, "es-CO", "America/Bogota", "yyyy-MM-dd", Now);
+        Tenant.Create(
+            id, "acme", displayName, "es-CO", "America/Bogota", "yyyy-MM-dd",
+            MembershipId.New(), Now);
 
     private static InvitationService Service(
         MembershipRepo memberships,

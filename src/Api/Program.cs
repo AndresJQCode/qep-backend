@@ -114,9 +114,7 @@ app.MapOrderEndpoints();
 app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
 
-await app.Services.InitializeTenancyDatabaseAsync(
-    app.Environment,
-    app.Lifetime.ApplicationStopping);
+await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
 // resolver permisos, TODO request autenticado sale 500 — no sólo los de roles. Fue
 // exactamente lo que rompió los tests de integración de Tenancy al agregar el módulo.

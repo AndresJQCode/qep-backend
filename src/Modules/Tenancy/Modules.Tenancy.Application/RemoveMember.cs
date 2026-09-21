@@ -12,6 +12,7 @@ public sealed record RemoveMemberCommand(
 
 public sealed class RemoveMemberHandler(
     IMembershipRepository membershipRepository,
+    ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     IRolePermissionChecker rolePermissionChecker,
     ITenancyUnitOfWork unitOfWork,
@@ -27,6 +28,8 @@ public sealed class RemoveMemberHandler(
     {
         EnsureAuthorized(command.TenantId);
 
+        var tenant = await TenantLoader.LoadAsync(
+            tenantRepository, command.TenantId, cancellationToken);
         var membership = await MembershipLoader.LoadAsync(
             membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
 
@@ -68,7 +71,7 @@ public sealed class RemoveMemberHandler(
         }
 
         var now = clock.UtcNow;
-        membership.Remove(now);
+        membership.Remove(tenant, now);
 
         auditRecorder.Record(
             command.TenantId.Value,
@@ -87,7 +90,7 @@ public sealed class RemoveMemberHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-        return membership.ToListItemDto(email);
+        return membership.ToListItemDto(email, tenant);
     }
 
     private void EnsureAuthorized(TenantId tenantId)

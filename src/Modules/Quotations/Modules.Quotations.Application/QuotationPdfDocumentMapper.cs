@@ -59,26 +59,19 @@ public static class QuotationPdfDocumentMapper
     /// <c>UnitPrice</c> viene <b>con</b> el impuesto adentro (<c>QuotationItem.Apply</c>).
     /// Imprimir esos dos juntos daba una fila que no multiplica: 12 × 35.900 no da 307.714. Acá
     /// se rearma el total bruto con la misma fórmula y los mismos redondeos que el dominio.
+    ///
+    /// El unitario con descuento ya no se deriva acá: lo calcula la línea y viaja en el DTO
+    /// (<c>QuotationItem.DiscountedUnitPrice</c>), desde que la pantalla lo muestra en una
+    /// columna propia. Tenerlo en un solo lado es lo que evita que el PDF y la pantalla impriman
+    /// números distintos.
     /// </summary>
-    private static QuotationPdfLine LineFor(QuotationItemResponse item)
-    {
-        var lineTotal = Round(item.Quantity * item.UnitPrice) - item.DiscountAmount;
-
-        // El unitario con descuento se deriva del total, y no al revés. Calculado como
-        // `UnitPrice × (1 - %)` el redondeo puede dejar Cantidad × Unitario distinto del total
-        // impreso al lado, que es justo la comprobación que el documento tiene que sobrevivir.
-        // La cantidad es siempre mayor que cero por invariante del dominio; el guardia es contra
-        // un DTO armado a mano, no contra el agregado.
-        var discountedUnitPrice = item.Quantity > 0 ? Round(lineTotal / item.Quantity) : 0m;
-
-        return new QuotationPdfLine(
-            item.ProductName,
+    private static QuotationPdfLine LineFor(QuotationItemResponse item) =>
+        new(item.ProductName,
             item.Quantity,
             item.UnitPrice,
             item.DiscountPercentage,
-            discountedUnitPrice,
-            lineTotal);
-    }
+            item.DiscountedUnitPrice,
+            Round(item.Quantity * item.UnitPrice) - item.DiscountAmount);
 
     private static decimal Round(decimal value) =>
         Math.Round(value, 2, MidpointRounding.AwayFromZero);

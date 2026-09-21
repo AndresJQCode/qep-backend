@@ -22,7 +22,8 @@ public sealed class TenantLogoHandlerTests
     public TenantLogoHandlerTests()
     {
         _tenant = Tenant.Create(
-            TenantId.New(), "qcode-demo", "QCode Demo", "es-CO", "America/Bogota", "yyyy-MM-dd", Now);
+            TenantId.New(), "qcode-demo", "QCode Demo", "es-CO", "America/Bogota", "yyyy-MM-dd",
+            MembershipId.New(), Now);
         _storage = new RecordingTenantLogoStorage(_steps);
         _unitOfWork = new RecordingTenancyUnitOfWork(_steps);
     }
