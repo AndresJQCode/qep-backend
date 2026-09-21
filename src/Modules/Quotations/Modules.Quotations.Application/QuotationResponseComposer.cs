@@ -87,6 +87,7 @@ public sealed class QuotationResponseComposer(
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
+            ToMinimumPurchaseResponse(quotation.MinimumPurchase),
             quotation.Items.Select(item => ToItemResponse(item, products)).ToArray());
     }
 
@@ -175,6 +176,18 @@ public sealed class QuotationResponseComposer(
                 account.BankName,
                 account.AccountNumber,
                 account.Currency);
+
+    // Copia campo a campo y sin consultar nada: el DTO que llega ya trae la compra mínima resuelta
+    // (QuotationMinimumPurchase.DescribeFor se arma con las líneas y la moneda de la propia
+    // cotización). Recalcularla acá sería una segunda fuente de verdad del mismo número.
+    private static QuotationMinimumPurchaseResponse ToMinimumPurchaseResponse(
+        QuotationMinimumPurchaseDto minimum) => new(
+            minimum.Met,
+            minimum.Units,
+            minimum.MinimumUnits,
+            minimum.MinimumTotal,
+            minimum.MissingUnits,
+            minimum.MissingTotal);
 
     private static QuotationPartyResponse ToPartyResponse(QuotationPartyDto party) => new(
         party.Id,

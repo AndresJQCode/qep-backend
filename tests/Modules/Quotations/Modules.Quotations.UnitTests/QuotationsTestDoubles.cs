@@ -571,6 +571,13 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
+            new QuotationMinimumPurchaseResponse(
+                quotation.MinimumPurchase.Met,
+                quotation.MinimumPurchase.Units,
+                quotation.MinimumPurchase.MinimumUnits,
+                quotation.MinimumPurchase.MinimumTotal,
+                quotation.MinimumPurchase.MissingUnits,
+                quotation.MinimumPurchase.MissingTotal),
             []));
 }
 
