@@ -16,7 +16,7 @@ public sealed class TenantSettingsApiTests
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     [Fact]
-    public async Task GetAndPatchWithCurrentEtagUpdatesSettings()
+    public async Task GetAndPutWithCurrentEtagUpdatesSettings()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -24,11 +24,11 @@ public sealed class TenantSettingsApiTests
 
         var etag = await GetEtagAsync(client, TenantId);
 
-        var patchResponse = await PatchAsync(client, TenantId, etag, NewDisplayName());
+        var putResponse = await PutAsync(client, TenantId, etag, NewDisplayName());
 
-        Assert.Equal(HttpStatusCode.OK, patchResponse.StatusCode);
-        Assert.NotNull(patchResponse.Headers.ETag);
-        Assert.NotEqual(etag, patchResponse.Headers.ETag!.Tag);
+        Assert.Equal(HttpStatusCode.OK, putResponse.StatusCode);
+        Assert.NotNull(putResponse.Headers.ETag);
+        Assert.NotEqual(etag, putResponse.Headers.ETag!.Tag);
     }
 
     [Fact]
@@ -45,8 +45,8 @@ public sealed class TenantSettingsApiTests
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Forbidden, getResponse.StatusCode);
 
-        var patchResponse = await PatchAsync(client, TenantId, "\"1\"", NewDisplayName());
-        Assert.Equal(HttpStatusCode.Forbidden, patchResponse.StatusCode);
+        var putResponse = await PutAsync(client, TenantId, "\"1\"", NewDisplayName());
+        Assert.Equal(HttpStatusCode.Forbidden, putResponse.StatusCode);
     }
 
     [Fact]
@@ -63,12 +63,12 @@ public sealed class TenantSettingsApiTests
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
 
-        var patchResponse = await PatchAsync(
+        var putResponse = await PutAsync(
             client,
             TenantId,
             getResponse.Headers.ETag!.Tag,
             NewDisplayName());
-        Assert.Equal(HttpStatusCode.Forbidden, patchResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, putResponse.StatusCode);
     }
 
     [Fact]
@@ -80,13 +80,13 @@ public sealed class TenantSettingsApiTests
 
         var staleEtag = await GetEtagAsync(client, TenantId);
 
-        var firstPatch = await PatchAsync(client, TenantId, staleEtag, NewDisplayName());
-        Assert.Equal(HttpStatusCode.OK, firstPatch.StatusCode);
-        Assert.NotEqual(staleEtag, firstPatch.Headers.ETag?.Tag);
+        var firstPut = await PutAsync(client, TenantId, staleEtag, NewDisplayName());
+        Assert.Equal(HttpStatusCode.OK, firstPut.StatusCode);
+        Assert.NotEqual(staleEtag, firstPut.Headers.ETag?.Tag);
 
         // La segunda actualización reutiliza el ETag ya viejo, capturado antes de la primera.
-        var secondPatch = await PatchAsync(client, TenantId, staleEtag, NewDisplayName());
-        Assert.Equal(HttpStatusCode.PreconditionFailed, secondPatch.StatusCode);
+        var secondPut = await PutAsync(client, TenantId, staleEtag, NewDisplayName());
+        Assert.Equal(HttpStatusCode.PreconditionFailed, secondPut.StatusCode);
     }
 
     [Fact]
@@ -97,8 +97,8 @@ public sealed class TenantSettingsApiTests
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var etag = await GetEtagAsync(client, TenantId);
-        var patch = await PatchAsync(client, TenantId, etag, NewDisplayName());
-        Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
+        var put = await PutAsync(client, TenantId, etag, NewDisplayName());
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
 
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -198,14 +198,14 @@ public sealed class TenantSettingsApiTests
         return client;
     }
 
-    private static async Task<HttpResponseMessage> PatchAsync(
+    private static async Task<HttpResponseMessage> PutAsync(
         HttpClient client,
         string tenantId,
         string ifMatch,
         string displayName)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/settings")
         {
             Content = JsonContent.Create(new

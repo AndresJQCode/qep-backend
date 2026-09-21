@@ -1,4 +1,4 @@
-using Modules.Quotations.Domain;
+﻿using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -1392,5 +1392,73 @@ public sealed class QuotationTests
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         quotation.Send(AdvisorId, Now);
         return quotation;
+    }
+
+    // ---- Recalculo global de descuentos (2026-09-21) ----
+    //
+    // La agrupacion y la compuerta de compra minima se resuelven mirando la cotizacion entera, no
+    // linea por linea, asi que la aplicacion necesita poder reescribir el descuento de todas las
+    // lineas de una sola vez. No es una edicion: no toca la version ni el autor, y por eso
+    // tampoco pasa por EnsureEditable.
+    [Fact]
+    public void ApplyGroupDiscountsRewritesEveryItemDiscountAndRecalculates()
+    {
+        var quotation = NewQuotation();
+        var first = QuotationItemId.New();
+        var second = QuotationItemId.New();
+
+        quotation.AddItem(first, Guid.NewGuid(), 3m, 10_000m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(second, Guid.NewGuid(), 3m, 20_000m, 0m, 19, AdvisorId, Now);
+
+        var versionBefore = quotation.Version;
+
+        quotation.ApplyGroupDiscounts(
+            new Dictionary<QuotationItemId, decimal> { [first] = 5m, [second] = 5m }, Now);
+
+        Assert.Equal(5m, quotation.Items.Single(item => item.Id == first).DiscountPercentage);
+        Assert.Equal(5m, quotation.Items.Single(item => item.Id == second).DiscountPercentage);
+
+        // 3 x 10.000 + 3 x 20.000 = 90.000, menos 5% = 85.500, IVA adentro.
+        Assert.Equal(85_500m, quotation.Total);
+        Assert.Equal(4_500m, quotation.DiscountAmount);
+        Assert.Equal(versionBefore, quotation.Version);
+    }
+
+    // La compuerta de compra minima devuelve descuentos a 0, asi que el camino de vuelta tiene que
+    // existir y rehacer los totales igual de bien.
+    [Fact]
+    public void ApplyGroupDiscountsCanTakeADiscountBackToZero()
+    {
+        var quotation = NewQuotation();
+        var item = QuotationItemId.New();
+
+        quotation.AddItem(item, Guid.NewGuid(), 3m, 10_000m, 5m, 19, AdvisorId, Now);
+        Assert.Equal(1_500m, quotation.DiscountAmount);
+
+        quotation.ApplyGroupDiscounts(
+            new Dictionary<QuotationItemId, decimal> { [item] = 0m }, Now);
+
+        Assert.Equal(0m, quotation.Items.Single().DiscountPercentage);
+        Assert.Equal(0m, quotation.DiscountAmount);
+        Assert.Equal(30_000m, quotation.Total);
+    }
+
+    // Una linea que no viene en el diccionario se queda como estaba: el recalculo manda lo que
+    // resolvio, y lo que no menciona no se toca.
+    [Fact]
+    public void ApplyGroupDiscountsLeavesUnmentionedItemsAlone()
+    {
+        var quotation = NewQuotation();
+        var mentioned = QuotationItemId.New();
+        var untouched = QuotationItemId.New();
+
+        quotation.AddItem(mentioned, Guid.NewGuid(), 3m, 10_000m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(untouched, Guid.NewGuid(), 3m, 10_000m, 7m, 19, AdvisorId, Now);
+
+        quotation.ApplyGroupDiscounts(
+            new Dictionary<QuotationItemId, decimal> { [mentioned] = 5m }, Now);
+
+        Assert.Equal(5m, quotation.Items.Single(item => item.Id == mentioned).DiscountPercentage);
+        Assert.Equal(7m, quotation.Items.Single(item => item.Id == untouched).DiscountPercentage);
     }
 }

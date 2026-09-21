@@ -100,6 +100,12 @@ public sealed class PreviewOrderEditsHandler(
             updatedBy,
             now);
         order.UpdateNotes(query.Notes, now);
+
+        // La misma pasada que corre SaveOrderEditsHandler, y por el mismo motivo: si el preview no
+        // la hace, muestra un total y un descuento distintos de los que va a dejar el guardado.
+        await QuotationPricingRecalculation.ApplyAsync(
+            pricingLookup, query.TenantId, quotation, now, cancellationToken);
+
         order.RecalculatePaymentStatus(quotation.Total, now);
 
         return new OrderDetailDto(order.ToDto() with { Version = storedVersion }, quotation.ToDto());

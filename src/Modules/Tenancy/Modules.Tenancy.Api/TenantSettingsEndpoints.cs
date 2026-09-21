@@ -22,7 +22,7 @@ public static class TenantSettingsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        group.MapPatch("/", UpdateAsync)
+        group.MapPut("/", UpdateAsync)
             .RequireAuthorization(TenancyPermissions.SettingsUpdate)
             .Accepts<UpdateTenantSettingsRequest>("application/json")
             .Produces<TenantSettingsResponse>()
@@ -33,7 +33,7 @@ public static class TenantSettingsEndpoints
 
         // Spec 2026-09-19: el archivo ya sube por el pipeline de Storage (POST /files, PUT
         // prefirmado, complete); este endpoint sólo lo asigna. Mismo permiso y mismo If-Match
-        // obligatorio que el PATCH de arriba — administrar el tenant es una sola autoridad.
+        // obligatorio que el PUT de arriba — administrar el tenant es una sola autoridad.
         group.MapPut("/logo", SetLogoAsync)
             .RequireAuthorization(TenancyPermissions.SettingsUpdate)
             .Accepts<SetTenantLogoRequest>("application/json")

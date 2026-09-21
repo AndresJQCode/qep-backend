@@ -89,6 +89,13 @@ public sealed class AddQuotationItemHandler(
             quotation.Id.ToString(),
             "success",
             now);
+
+        // El descuento que llevó AddItem es provisional: la línea nueva puede cambiar el tramo de
+        // las que ya estaban (agrupación) y mueve el total contra el que se mide la compra mínima.
+        // El que vale sale de acá.
+        await QuotationPricingRecalculation.ApplyAsync(
+            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();

@@ -794,6 +794,38 @@ public sealed class Quotation
         RecalculateTotals();
     }
 
+    /// <summary>
+    /// Reescribe el descuento de varias líneas de una sola vez y rehace los totales.
+    ///
+    /// Existe porque desde la agrupación de escalas y la compuerta de compra mínima el descuento
+    /// de una línea **depende de las otras**: la aplicación resuelve la cotización entera contra
+    /// el catálogo (<c>QuotationScaleGroupPricing</c>) y baja acá el resultado ya calculado. El
+    /// dominio no sabe de escalas de otro módulo — mismo criterio que <see cref="AddItem"/>.
+    ///
+    /// **No es una edición.** No toca <see cref="Version"/>, <see cref="UpdatedBy"/> ni
+    /// <see cref="UpdatedAt"/> del encabezado: corre justo después de la mutación que sí lo hizo,
+    /// y volver a tocarlos contaría dos veces el mismo cambio. Por lo mismo **no** pasa por
+    /// <see cref="EnsureEditable"/>: la cotización de un pedido ya convertido también se
+    /// recalcula cuando se editan sus líneas, y ahí <see cref="EnsureEditable"/> lanzaría.
+    ///
+    /// Una línea que no venga en <paramref name="discounts"/> se queda como está. El recálculo
+    /// manda lo que resolvió, y lo que no menciona no se toca — así un llamador que sólo conoce
+    /// parte de las líneas no le borra el descuento al resto.
+    /// </summary>
+    public void ApplyGroupDiscounts(
+        IReadOnlyDictionary<QuotationItemId, decimal> discounts, DateTimeOffset occurredAt)
+    {
+        foreach (var item in _items)
+        {
+            if (discounts.TryGetValue(item.Id, out var discount))
+            {
+                item.ApplyDiscount(discount, occurredAt);
+            }
+        }
+
+        RecalculateTotals();
+    }
+
     /// <summary>US-19: vencimiento automático. Sólo un job programado la llama —qué cotizaciones
     /// calificar (Sent con <see cref="ValidUntil"/> ya pasado) es su criterio de selección, no
     /// una regla que este método vuelva a comprobar—, así que no hay <see cref="MemberId"/>: no
