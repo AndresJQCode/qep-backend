@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -467,6 +468,53 @@ public sealed class QuotationItemApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(problem);
         Assert.Equal("quotation.item.product_price_scales_incomplete", problem.Code);
+    }
+
+    // El contrato HTTP no se deriva del DTO interno: lo arma a mano
+    // `QuotationResponseComposer`, asi que un campo agregado a `QuotationDto` no llega al
+    // navegador hasta que alguien lo pase tambien a `QuotationResponse`. Eso fue exactamente lo
+    // que paso con `minimumPurchase`, y la pantalla del editor murio leyendo `.met` de undefined
+    // apenas la cotizacion tuvo lineas.
+    //
+    // Lee el JSON crudo a proposito, mismo criterio que `OrderContractApiTests`: deserializando
+    // con el record de produccion la prueba quedaria en verde el dia que alguien vuelva a sacar
+    // el campo del contrato, porque el record y la respuesta cambiarian juntos.
+    [Fact]
+    public async Task TheBatchResponseCarriesTheMinimumPurchaseToTheClient()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        // 4 unidades cortan las dos ramas del minimo (6 unidades o $500.000), asi que los dos
+        // faltantes viajan distintos de cero -- que es el caso que la pantalla dibuja. Con el
+        // minimo alcanzado los tres campos serian 0/true y la prueba no distinguiria un mapeo
+        // correcto de uno que devuelve el default del record.
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/batch",
+            new BatchUpdateQuotationItemsRequest(
+                [new BatchQuotationItemAdditionRequest(productId, 4m)],
+                []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(
+            body.RootElement.TryGetProperty("minimumPurchase", out var minimum),
+            "La respuesta de la cotizacion no trae minimumPurchase.");
+        Assert.Equal(JsonValueKind.Object, minimum.ValueKind);
+        Assert.False(minimum.GetProperty("met").GetBoolean());
+        Assert.Equal(4m, minimum.GetProperty("units").GetDecimal());
+        Assert.Equal(6m, minimum.GetProperty("minimumUnits").GetDecimal());
+        Assert.Equal(500_000m, minimum.GetProperty("minimumTotal").GetDecimal());
+        Assert.Equal(2m, minimum.GetProperty("missingUnits").GetDecimal());
+        // total = 4 x 100.000: la escala 1-9 no descuenta y el producto no tiene tasa (RN-013).
+        Assert.Equal(100_000m, minimum.GetProperty("missingTotal").GetDecimal());
     }
 
     private static async Task CopyScalesAsync(

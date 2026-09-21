@@ -322,6 +322,10 @@ public sealed class QuotationPdfDocumentMapperTests
         true,
         false,
         false,
+        // El PDF no la imprime: viaja porque el contrato la exige. Coherente con las 24 unidades
+        // de las dos lineas, que ya pasan el minimo -- una cotizacion con descuento del 15% no
+        // podria decir que no lo alcanzo.
+        new QuotationMinimumPurchaseResponse(true, 24m, 6m, 500_000m, 0m, 0m),
         [
             // 12 x 35.900 = 430.800; 15% = 64.620; linea = 366.180 con IVA adentro.
             // IVA contenido = 366.180 x 19 / 119 = 58.465,71; base = 307.714,29.

@@ -361,7 +361,30 @@ public sealed record QuotationResponse(
     bool CanBeSent,
     bool HasChangesSinceSent,
     bool CanBeConvertedToOrder,
+    /// <summary>En qué anda la cotización contra la compra mínima. Misma posición que en
+    /// <see cref="QuotationDto.MinimumPurchase"/> para que las dos formas se lean en
+    /// paralelo.</summary>
+    QuotationMinimumPurchaseResponse MinimumPurchase,
     IReadOnlyCollection<QuotationItemResponse> Items);
+
+/// <summary>
+/// La compra mínima tal como viaja por HTTP. Es un gemelo de
+/// <see cref="QuotationMinimumPurchaseDto"/> —mismos campos, mismo significado— y no el mismo
+/// record a propósito: ningún <c>*Response</c> de este archivo referencia un <c>*Dto</c>.
+///
+/// Esa separación es el seam que defiende <c>QuotationResponseComposer</c>: el contrato HTTP se
+/// arma a mano ahí, así que agregar un campo al DTO interno no lo publica solo. El costo de la
+/// regla es este archivo con pares; el beneficio es que nadie cambia lo que ve el navegador sin
+/// tocar el contrato. Ver <see cref="QuotationMinimumPurchaseDto"/> para qué significa cada campo
+/// y por qué el mensaje es prospectivo.
+/// </summary>
+public sealed record QuotationMinimumPurchaseResponse(
+    bool Met,
+    decimal Units,
+    decimal MinimumUnits,
+    decimal MinimumTotal,
+    decimal MissingUnits,
+    decimal MissingTotal);
 
 /// <summary>
 /// La cuenta con la que se factura, ya resuelta para la pantalla: la copia guardada más la razón
