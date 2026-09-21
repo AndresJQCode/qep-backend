@@ -21,8 +21,27 @@
     "",
     "notSeeded son los campos de las listas de origen que el dominio NO tiene. Se conservan como",
     "referencia y no se envían: sourceId (ProductId es Guid v7), image (ImageFileId es un Guid de",
-    "Storage, no una ruta), y packagingUnit/netWeight/grossWeight, que no existen en Product ni",
-    "en ProductDetails. Agregarlos es otro trabajo, con migración."
+    "Storage, no una ruta), y netWeight/grossWeight, que no existen en Product ni en",
+    "ProductDetails. Agregarlos es otro trabajo, con migración. packagingUnit ya no está acá: la",
+    "unidad de empaque vive en PriceScale, por escala, y se siembra dentro de `scales`.",
+    "",
+    "scales son las cinco escalas de precio por cantidad de cada producto (CAT-09). Van explícitas",
+    "en cada producto y no en una plantilla compartida: el dominio reemplaza la colección completa",
+    "y lo que se siembra es lo que tienes que poder leer acá. Los descuentos salen de la hoja",
+    "\"lista usd\" del Excel \"PRECIOS MÓDELO CCIAL 2025 21 marzo\": las celdas son fórmulas",
+    "(=C*0.85, =C*0.8, …) y el 0.6667 de KIT KERATINA se transcribe como 33.33. Los rangos son",
+    "los literales de las cabeceras (6-48, 50-98, 100-299, 300-999, Desde 1.000), así que las",
+    "cantidades 1 a 5, 49 y 99 no caen en ninguna escala y se cotizan a precio base. Ese hueco",
+    "es de la fuente y NO se corrige acá. \"Desde 1.000\" no tiene tope en la fuente y el dominio",
+    "exige uno (ToUnit > FromUnit): el owner eligió 999999 como convención el 2026-09-20.",
+    "",
+    "Los tipos de restricción vienen de la hoja COP (\"múltiplos de 3\", \"de 6 en 6\", \"por unidad",
+    "de empaque\") más la respuesta del owner: 6-48 agrupa cantidades entre líneas de la",
+    "cotización (allowGrouping) y 50-98 no. Las unidades de empaque por SKU las dio el owner el",
+    "2026-09-20 —la hoja sólo traía 7278, 7214, 7077 y 3095— y 7703 quedó confirmado en 150 tras",
+    "aparecer dos veces. Los finales (finalUsd/finalCop) no están en el archivo: los calcula",
+    "CatalogSeeder con PriceScale.FinalFor a partir de priceUsd/priceCop, con el mismo redondeo",
+    "con el que el dominio los valida."
   ],
   "taxRate": {
     "name": "IVA 19%",
@@ -34,11 +53,57 @@
       "name": "BRONCEADOR RITUAL DEL SOL",
       "priceCop": 35900,
       "priceUsd": 9.97,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 108,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 108,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 108,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 16,
         "usdIsTaxable": false,
         "image": "/images/products/7007.jpg",
-        "packagingUnit": null,
         "netWeight": 0.48,
         "grossWeight": 0.53
       }
@@ -48,11 +113,57 @@
       "name": "COMBO JALEA REAL 3",
       "priceCop": 114700,
       "priceUsd": 31.86,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 13,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 13,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 13,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 26,
         "usdIsTaxable": true,
         "image": "/images/products/3013.jpg",
-        "packagingUnit": null,
         "netWeight": 0.096,
         "grossWeight": 0.1
       }
@@ -62,11 +173,57 @@
       "name": "COMBO ROSADO RITUAL DE SEDUCCIÓN",
       "priceCop": 46900,
       "priceUsd": 13.03,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 1,
         "usdIsTaxable": false,
         "image": "/images/products/3001.jpg",
-        "packagingUnit": null,
         "netWeight": 0.31,
         "grossWeight": 0.5
       }
@@ -76,11 +233,57 @@
       "name": "DÚO MINI PERFUME CON PROTECCIÓN TÉRMICA",
       "priceCop": 16900,
       "priceUsd": 4.69,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 150,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 150,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 150,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 14,
         "usdIsTaxable": true,
         "image": "/images/products/3013.jpg",
-        "packagingUnit": null,
         "netWeight": 0.096,
         "grossWeight": 0.1
       }
@@ -90,11 +293,57 @@
       "name": "DÚO ROSADO Y AZUL PERFUME TERMOPROTECTOR",
       "priceCop": 41900,
       "priceUsd": 11.64,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 2,
         "usdIsTaxable": false,
         "image": "/images/products/3005.jpg",
-        "packagingUnit": null,
         "netWeight": 0.32,
         "grossWeight": 0.35
       }
@@ -104,11 +353,57 @@
       "name": "KIT KERATINA 1000ML + BIOSERUM",
       "priceCop": 150000,
       "priceUsd": 39.47,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 25,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 33.33,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 25,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 25,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 37,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 25,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 9,
         "usdIsTaxable": false,
         "image": "/images/products/7701.jpg",
-        "packagingUnit": null,
         "netWeight": 1.47,
         "grossWeight": 1.52
       }
@@ -118,11 +413,57 @@
       "name": "KIT KERATINA 120 ML + BIOSERUM",
       "priceCop": 35000,
       "priceUsd": 9.21,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 25,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 33.33,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 150,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 150,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 37,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 150,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 11,
         "usdIsTaxable": false,
         "image": "/images/products/7703.jpg",
-        "packagingUnit": null,
         "netWeight": 0.21,
         "grossWeight": 0.26
       }
@@ -132,11 +473,57 @@
       "name": "KIT KERATINA 250 ML + BIOSERUM",
       "priceCop": 60000,
       "priceUsd": 15.79,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 25,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 33.33,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 37,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 10,
         "usdIsTaxable": false,
         "image": "/images/products/7702.jpg",
-        "packagingUnit": null,
         "netWeight": 0.39,
         "grossWeight": 0.44
       }
@@ -146,11 +533,57 @@
       "name": "MANTEQUILLA PERFUMADA RITUAL DE SEDUCCIÓN",
       "priceCop": 26900,
       "priceUsd": 7.47,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 6,
         "usdIsTaxable": false,
         "image": "/images/products/7101.jpg",
-        "packagingUnit": null,
         "netWeight": 0.26,
         "grossWeight": 0.28
       }
@@ -160,11 +593,57 @@
       "name": "MASCARILLA BOMBA BOTÁNICA SOS",
       "priceCop": 36900,
       "priceUsd": 10.25,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 70,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 70,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 70,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 8,
         "usdIsTaxable": false,
         "image": "/images/products/7299.jpg",
-        "packagingUnit": null,
         "netWeight": 0.46,
         "grossWeight": 0.51
       }
@@ -174,11 +653,57 @@
       "name": "MASCARILLA JALEA REAL",
       "priceCop": 39900,
       "priceUsd": 11.08,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 70,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 70,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 70,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 23,
         "usdIsTaxable": true,
         "image": "/images/products/3013.jpg",
-        "packagingUnit": null,
         "netWeight": 0.096,
         "grossWeight": 0.1
       }
@@ -188,11 +713,57 @@
       "name": "PERFUME TERMOPROTECTOR AZUL RITUAL DE TENTACIÓN",
       "priceCop": 22900,
       "priceUsd": 6.36,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 13,
         "usdIsTaxable": false,
         "image": "/images/products/7957.jpg",
-        "packagingUnit": null,
         "netWeight": 0.16,
         "grossWeight": 0.18
       }
@@ -202,11 +773,57 @@
       "name": "PERFUME TERMOPROTECTOR ROSADO RITUAL DE SEDUCCIÓN",
       "priceCop": 22900,
       "priceUsd": 6.36,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 100,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 12,
         "usdIsTaxable": false,
         "image": "/images/products/7901.jpg",
-        "packagingUnit": null,
         "netWeight": 0.16,
         "grossWeight": 0.18
       }
@@ -216,11 +833,57 @@
       "name": "SHAMPOO DE AJÍ CONTROL CASPA",
       "priceCop": 34900,
       "priceUsd": 9.69,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 5,
         "usdIsTaxable": false,
         "image": "/images/products/7009.jpg",
-        "packagingUnit": null,
         "netWeight": 0.47,
         "grossWeight": 0.52
       }
@@ -230,11 +893,57 @@
       "name": "SHAMPOO DE CEBOLLA SOS",
       "priceCop": 34900,
       "priceUsd": 9.69,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 3,
         "usdIsTaxable": false,
         "image": "/images/products/7007.jpg",
-        "packagingUnit": null,
         "netWeight": 0.48,
         "grossWeight": 0.53
       }
@@ -244,11 +953,57 @@
       "name": "SHAMPOO DE ROMERO CONTROL GRASA",
       "priceCop": 34900,
       "priceUsd": 9.69,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 4,
         "usdIsTaxable": false,
         "image": "/images/products/7008.jpg",
-        "packagingUnit": null,
         "netWeight": 0.47,
         "grossWeight": 0.52
       }
@@ -258,11 +1013,57 @@
       "name": "SHAMPOO JALEA REAL",
       "priceCop": 37900,
       "priceUsd": 10.53,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 25,
         "usdIsTaxable": true,
         "image": "/images/products/3013.jpg",
-        "packagingUnit": null,
         "netWeight": 0.096,
         "grossWeight": 0.1
       }
@@ -272,11 +1073,57 @@
       "name": "TRATAMIENTO INTENSIVO PLEX DE AGUACATE",
       "priceCop": 34900,
       "priceUsd": 9.69,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 7,
         "usdIsTaxable": false,
         "image": "/images/products/7210.jpg",
-        "packagingUnit": null,
         "netWeight": 0.44,
         "grossWeight": 0.49
       }
@@ -286,11 +1133,57 @@
       "name": "TRATAMIENTO JALEA REAL",
       "priceCop": 36900,
       "priceUsd": 10.25,
+      "scales": [
+        {
+          "fromUnit": 6,
+          "toUnit": 48,
+          "discount": 15,
+          "restriction": "multiple",
+          "multiple": 3,
+          "packagingUnit": null,
+          "allowGrouping": true
+        },
+        {
+          "fromUnit": 50,
+          "toUnit": 98,
+          "discount": 20,
+          "restriction": "multiple",
+          "multiple": 6,
+          "packagingUnit": null,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 100,
+          "toUnit": 299,
+          "discount": 25,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 300,
+          "toUnit": 999,
+          "discount": 30,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        },
+        {
+          "fromUnit": 1000,
+          "toUnit": 999999,
+          "discount": 35,
+          "restriction": "packaging_unit",
+          "multiple": null,
+          "packagingUnit": 50,
+          "allowGrouping": false
+        }
+      ],
       "notSeeded": {
         "sourceId": 24,
         "usdIsTaxable": true,
         "image": "/images/products/3013.jpg",
-        "packagingUnit": null,
         "netWeight": 0.096,
         "grossWeight": 0.1
       }
