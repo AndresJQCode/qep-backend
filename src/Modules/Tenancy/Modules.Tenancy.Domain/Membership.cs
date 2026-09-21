@@ -15,8 +15,8 @@ public sealed class Membership
     public static readonly TimeSpan DefaultInvitationTimeToLive = TimeSpan.FromHours(72);
 
     /// <summary>
-    /// Origen de la membresía que nace con el auto-registro del tenant (ADR 0017). Es la
-    /// única marca que identifica al owner: el tenant no guarda referencia a quién lo creó.
+    /// Origen de la membresía que nace con el auto-registro del tenant (ADR 0017). Es historia,
+    /// no autoridad: quién manda en el tenant lo dice <see cref="Tenant.OwnerMembershipId"/>.
     /// </summary>
     public const string RegistrationOrigin = "registration";
 
@@ -347,9 +347,9 @@ public sealed class Membership
     /// <see cref="Reactivate"/> y no re-invitando: <see cref="Reinvite"/> rechaza una membresía
     /// suspendida (SDD-OD-13).
     /// </summary>
-    public void Suspend(DateTimeOffset occurredAt)
+    public void Suspend(Tenant tenant, DateTimeOffset occurredAt)
     {
-        EnsureNotOwner("The tenant owner membership cannot be suspended.");
+        EnsureNotOwner(tenant, "The tenant owner membership cannot be suspended.");
 
         if (State != MembershipState.Active)
         {
@@ -414,9 +414,9 @@ public sealed class Membership
     /// reutiliza esta fila y la devuelve a <see cref="MembershipState.Invited"/>
     /// (<see cref="Reinvite"/>), así que tiene que aceptar de nuevo.
     /// </summary>
-    public void Remove(DateTimeOffset occurredAt)
+    public void Remove(Tenant tenant, DateTimeOffset occurredAt)
     {
-        EnsureNotOwner("The tenant owner membership cannot be removed.");
+        EnsureNotOwner(tenant, "The tenant owner membership cannot be removed.");
 
         if (State is MembershipState.Removed or MembershipState.Expired)
         {
@@ -436,7 +436,7 @@ public sealed class Membership
             UserId));
     }
 
-    public void ChangeRoles(IEnumerable<string> roles, DateTimeOffset occurredAt)
+    public void ChangeRoles(Tenant tenant, IEnumerable<string> roles, DateTimeOffset occurredAt)
     {
         if (State is MembershipState.Removed or MembershipState.Expired)
         {
@@ -456,7 +456,7 @@ public sealed class Membership
         // El owner es la última autoridad del tenant y nadie puede devolverle el rol si lo
         // pierde: quitárselo dejaría la administración en manos de miembros revocables.
         // Cambiar roles conservando `admin` sí está permitido.
-        if (Origin == RegistrationOrigin &&
+        if (tenant.IsOwner(Id) &&
             !normalizedRoles.Contains(AdminRole, StringComparer.Ordinal))
         {
             throw new TenantDomainException(
@@ -515,14 +515,21 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// La membresía del owner (Origin de registro, ADR 0017) no se suspende ni se quita, por
-    /// nadie: es la última autoridad del tenant y no hay quien pueda restituirla. La guarda
-    /// vive en el agregado —como los chequeos de estado— porque depende sólo de su propia
-    /// marca, no de quién ejecuta la operación.
+    /// La membresía del owner (ADR 0017) no se suspende ni se quita, por nadie: es la última
+    /// autoridad del tenant y no hay quien pueda restituirla.
     /// </summary>
-    private void EnsureNotOwner(string message)
+    /// <remarks>
+    /// Quién es el owner lo dice <see cref="Tenant.OwnerMembershipId"/>, no el
+    /// <see cref="Origin"/> de esta membresía: el origen es su partida de nacimiento y no cambia
+    /// nunca, la autoridad es del tenant y algún día se va a poder transferir.
+    ///
+    /// La guarda sigue en el agregado y el tenant entra por parámetro —no por un <c>bool</c>—
+    /// para que ningún caso de uso nuevo pueda saltársela sin que el compilador lo frene, y para
+    /// que no se pueda pasar la respuesta equivocada por descuido.
+    /// </remarks>
+    private void EnsureNotOwner(Tenant tenant, string message)
     {
-        if (Origin == RegistrationOrigin)
+        if (tenant.IsOwner(Id))
         {
             throw new TenantDomainException("tenancy.membership.owner_protected", message);
         }

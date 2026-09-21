@@ -141,4 +141,72 @@ public sealed class TenantTests
     // explícitamente y lo deja cubierto por el EnsureActive que UpdateSettings ya ejercita
     // (no hay un caso "OnAnInactiveTenant" separado en este archivo para UpdateSettings tampoco;
     // EnsureActive es el mismo guard privado que ambos métodos comparten).
+
+    /// <summary>
+    /// El tenant nombra a su autoridad. Antes el owner se deducía de
+    /// <c>memberships.origin = 'registration'</c>, que responde "cómo nació esta membresía" y no
+    /// "quién manda en este tenant": dos preguntas distintas en una sola columna.
+    /// </summary>
+    [Fact]
+    public void AssignOwnerRecordsTheOwnerMembership()
+    {
+        var tenant = CreateTenant();
+        var ownerMembershipId = MembershipId.New();
+
+        tenant.AssignOwner(ownerMembershipId);
+
+        Assert.Equal(ownerMembershipId, tenant.OwnerMembershipId);
+        Assert.True(tenant.IsOwner(ownerMembershipId));
+    }
+
+    /// <summary>
+    /// Nombrar al owner es parte del nacimiento del tenant, no una operación de cambio: no sube
+    /// la versión ni emite evento. Transferir el ownership será una operación propia cuando
+    /// exista, con su evento y su auditoría.
+    /// </summary>
+    [Fact]
+    public void AssignOwnerDoesNotTouchVersionOrRaiseEvents()
+    {
+        var tenant = CreateTenant();
+
+        tenant.AssignOwner(MembershipId.New());
+
+        Assert.Equal(1, tenant.Version);
+        Assert.Empty(tenant.DomainEvents);
+    }
+
+    [Fact]
+    public void AssignOwnerTwiceThrows()
+    {
+        var tenant = CreateTenant();
+        tenant.AssignOwner(MembershipId.New());
+
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            tenant.AssignOwner(MembershipId.New()));
+
+        Assert.Equal("tenancy.tenant.owner_already_assigned", exception.Code);
+    }
+
+    [Fact]
+    public void IsOwnerIsFalseForAnotherMembership()
+    {
+        var tenant = CreateTenant();
+        tenant.AssignOwner(MembershipId.New());
+
+        Assert.False(tenant.IsOwner(MembershipId.New()));
+    }
+
+    /// <summary>
+    /// Un tenant anterior a esta columna la tiene en <c>NULL</c> hasta que el backfill de la
+    /// migración la llene. Sin owner nadie es owner: la guarda no puede proteger a una membresía
+    /// al azar.
+    /// </summary>
+    [Fact]
+    public void IsOwnerIsFalseWhenNoOwnerIsAssigned()
+    {
+        var tenant = CreateTenant();
+
+        Assert.Null(tenant.OwnerMembershipId);
+        Assert.False(tenant.IsOwner(MembershipId.New()));
+    }
 }

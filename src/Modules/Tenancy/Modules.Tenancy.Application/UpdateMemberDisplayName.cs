@@ -40,6 +40,7 @@ public sealed class UpdateMemberDisplayNameValidator
 /// </summary>
 public sealed class UpdateMemberDisplayNameHandler(
     IMembershipRepository membershipRepository,
+    ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     ITenancyUnitOfWork unitOfWork,
     IExecutionContext executionContext,
@@ -55,6 +56,8 @@ public sealed class UpdateMemberDisplayNameHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         EnsureAuthorized(command.TenantId);
 
+        var tenant = await TenantLoader.LoadAsync(
+            tenantRepository, command.TenantId, cancellationToken);
         var membership = await MembershipLoader.LoadAsync(
             membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
 
@@ -84,7 +87,7 @@ public sealed class UpdateMemberDisplayNameHandler(
         }
 
         var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-        return membership.ToListItemDto(email);
+        return membership.ToListItemDto(email, tenant);
     }
 
     private void EnsureAuthorized(TenantId tenantId)

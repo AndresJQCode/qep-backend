@@ -69,6 +69,16 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.LogoPublicKey)
             .HasColumnName("logo_public_key")
             .HasMaxLength(512);
+        // Sin FK a tenancy.memberships a propósito: memberships.tenant_id ya apunta acá, así que
+        // la restricción cerraría un ciclo y EF no podría ordenar los INSERT del registro (las dos
+        // filas nacen en la misma transacción). La integridad la sostiene el agregado, que es el
+        // único que asigna owner. Nulo en los tenants anteriores a la columna que el backfill no
+        // alcance, y mientras dure la ventana entre Create y AssignOwner.
+        tenant.Property(value => value.OwnerMembershipId)
+            .HasColumnName("owner_membership_id")
+            .HasConversion(
+                id => id!.Value.Value,
+                value => new MembershipId(value));
         tenant.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();

@@ -27,6 +27,7 @@ public sealed record ReactivateMemberCommand(
 /// </remarks>
 public sealed class ReactivateMemberHandler(
     IMembershipRepository membershipRepository,
+    ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     ITenancyUnitOfWork unitOfWork,
     IExecutionContext executionContext,
@@ -41,6 +42,8 @@ public sealed class ReactivateMemberHandler(
     {
         EnsureAuthorized(command.TenantId);
 
+        var tenant = await TenantLoader.LoadAsync(
+            tenantRepository, command.TenantId, cancellationToken);
         var membership = await MembershipLoader.LoadAsync(
             membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
 
@@ -64,7 +67,7 @@ public sealed class ReactivateMemberHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-        return membership.ToListItemDto(email);
+        return membership.ToListItemDto(email, tenant);
     }
 
     private void EnsureAuthorized(TenantId tenantId)

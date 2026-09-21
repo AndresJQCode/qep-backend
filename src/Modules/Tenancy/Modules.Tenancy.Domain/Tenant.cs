@@ -66,6 +66,25 @@ public sealed class Tenant
     /// Storage en cada <c>GET /settings</c>.</summary>
     public string? LogoPublicKey { get; private set; }
 
+    /// <summary>
+    /// La membresía que manda en este tenant: la última autoridad (ADR 0017), la que no se puede
+    /// suspender, quitar ni dejar sin el rol admin.
+    /// </summary>
+    /// <remarks>
+    /// Hasta este cambio el owner se deducía de <c>Membership.Origin == "registration"</c>. Esa
+    /// columna responde **cómo nació** la membresía, no **quién manda**: dos preguntas distintas
+    /// que coincidían sólo porque el owner siempre era el que auto-registró el tenant. El roce ya
+    /// estaba a la vista en <c>TenancySeeder</c>, que reusaba el origen de registro en un tenant
+    /// que nunca se auto-registró, sólo para heredar la protección.
+    ///
+    /// Nulo mientras nadie lo haya nombrado: los tenants anteriores a la columna hasta que el
+    /// backfill de la migración los llene, y la ventana entre <see cref="Create"/> y
+    /// <see cref="AssignOwner"/> dentro de la misma transacción de registro. Sin owner nadie es
+    /// owner — <see cref="IsOwner"/> devuelve <c>false</c> — y no al revés: una guarda que protege
+    /// a una membresía al azar es peor que no tener guarda.
+    /// </remarks>
+    public MembershipId? OwnerMembershipId { get; private set; }
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -83,6 +102,39 @@ public sealed class Tenant
         string dateFormat,
         DateTimeOffset createdAt) =>
         new(id, slug, displayName, defaultCulture, timeZone, dateFormat, createdAt);
+
+    /// <summary>
+    /// Nombra a la membresía que manda en este tenant. Es parte del nacimiento del tenant —el
+    /// registro la llama en la misma transacción que crea la membresía del owner—, así que no sube
+    /// <see cref="Version"/> ni emite evento: no hay un "antes" que auditar.
+    /// </summary>
+    /// <remarks>
+    /// No es <c>Create</c> quien lo recibe porque la membresía se crea después del tenant y
+    /// necesita su <c>TenantId</c>. Su id sí existe antes de persistir
+    /// (<c>MembershipId.New()</c>), así que las dos filas se escriben juntas y ninguna queda
+    /// a medias.
+    ///
+    /// Una sola vez: transferir el ownership es otra operación —con su evento, su auditoría y su
+    /// permiso— y todavía no existe. Que este método la rechace evita que alguien la implemente
+    /// por accidente reasignando en silencio.
+    /// </remarks>
+    public void AssignOwner(MembershipId ownerMembershipId)
+    {
+        if (OwnerMembershipId is not null)
+        {
+            throw new TenantDomainException(
+                "tenancy.tenant.owner_already_assigned",
+                "The tenant already has an owner membership.");
+        }
+
+        OwnerMembershipId = ownerMembershipId;
+    }
+
+    /// <summary>
+    /// Si esa membresía es la autoridad de este tenant. <c>false</c> mientras no haya owner
+    /// nombrado.
+    /// </summary>
+    public bool IsOwner(MembershipId membershipId) => OwnerMembershipId == membershipId;
 
     public bool UpdateSettings(
         string displayName,

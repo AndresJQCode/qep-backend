@@ -27,6 +27,7 @@ public sealed class UpdateMemberRolesValidator : AbstractValidator<UpdateMemberR
 
 public sealed class UpdateMemberRolesHandler(
     IMembershipRepository membershipRepository,
+    ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     IRolePermissionChecker rolePermissionChecker,
     IRoleReferenceValidator roleReferenceValidator,
@@ -68,6 +69,8 @@ public sealed class UpdateMemberRolesHandler(
             }
         }
 
+        var tenant = await TenantLoader.LoadAsync(
+            tenantRepository, command.TenantId, cancellationToken);
         var membership = await MembershipLoader.LoadAsync(
             membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
 
@@ -120,7 +123,7 @@ public sealed class UpdateMemberRolesHandler(
         }
 
         var now = clock.UtcNow;
-        membership.ChangeRoles(requestedRoles, now);
+        membership.ChangeRoles(tenant, requestedRoles, now);
 
         auditRecorder.Record(
             command.TenantId.Value,
@@ -139,7 +142,7 @@ public sealed class UpdateMemberRolesHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-        return membership.ToListItemDto(email);
+        return membership.ToListItemDto(email, tenant);
     }
 
     private void EnsureAuthorized(TenantId tenantId)

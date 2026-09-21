@@ -9,9 +9,10 @@ namespace Modules.Tenancy.Application;
 /// y en el owner hasta que alguien lo cargue: la pantalla muestra entonces sólo el correo.
 /// </param>
 /// <param name="IsOwner">
-/// Marca la membresía del owner (Origin de registro, ADR 0017), la que el dominio protege de
-/// suspender, quitar o perder `admin`. Viaja en el contrato para que el frontend deshabilite
-/// esas acciones en vez de descubrir el 422 al intentarlas.
+/// Marca la membresía del owner (ADR 0017), la que el dominio protege de suspender, quitar o
+/// perder `admin`. Viaja en el contrato para que el frontend deshabilite esas acciones en vez de
+/// descubrir el 422 al intentarlas. Se calcula contra `Tenant.OwnerMembershipId`, no contra el
+/// `Origin` de la membresía: el origen dice cómo nació, la autoridad la nombra el tenant.
 /// </param>
 public sealed record MembershipListItemDto(
     MembershipId Id,
@@ -29,7 +30,10 @@ public sealed record MembershipListItemDto(
 
 public static class MembershipListItemMappings
 {
-    public static MembershipListItemDto ToListItemDto(this Membership membership, string? email) =>
+    public static MembershipListItemDto ToListItemDto(
+        this Membership membership,
+        string? email,
+        Tenant tenant) =>
         new(
             membership.Id,
             membership.UserId,
@@ -42,7 +46,7 @@ public static class MembershipListItemMappings
             membership.AcceptedAt,
             membership.ExpiresAt,
             membership.Version,
-            membership.Origin == Membership.RegistrationOrigin);
+            tenant.IsOwner(membership.Id));
 }
 
 /// <summary>Cuántas membresías caen en cada estado visible, dentro de lo buscado.</summary>
@@ -87,6 +91,7 @@ public sealed record ListMembershipsQuery(
 
 public sealed class ListMembershipsHandler(
     IMembershipRepository membershipRepository,
+    ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -97,6 +102,9 @@ public sealed class ListMembershipsHandler(
         CancellationToken cancellationToken)
     {
         EnsureAuthorized(query.TenantId);
+
+        var tenant = await TenantLoader.LoadAsync(
+            tenantRepository, query.TenantId, cancellationToken);
 
         var memberships = await membershipRepository.ListByTenantAsync(
             query.TenantId,
@@ -130,7 +138,7 @@ public sealed class ListMembershipsHandler(
         foreach (var membership in scoped)
         {
             var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-            items.Add(membership.ToListItemDto(email));
+            items.Add(membership.ToListItemDto(email, tenant));
         }
 
         // Ninguno de los filtros se aplica en SQL, y cada uno por su razón.
