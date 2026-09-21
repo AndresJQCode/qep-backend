@@ -48,4 +48,28 @@ internal static class QuotationMinimumPurchase
     public static bool IsSatisfiedBy(Quotation quotation) =>
         quotation.Items.Sum(item => item.Quantity) >= MinimumUnits
         || quotation.Total >= MinimumTotalFor(quotation.Currency);
+
+    /// <summary>
+    /// El estado de la compra mínima tal como viaja al frontend. Se arma desde la cotización y
+    /// nada más —unidades, total y moneda—, así que sale igual de bien en un recálculo que al leer
+    /// una cotización guardada, sin tocar el catálogo. Ver
+    /// <see cref="QuotationMinimumPurchaseDto"/> para por qué el mensaje es prospectivo.
+    /// </summary>
+    public static QuotationMinimumPurchaseDto DescribeFor(Quotation quotation)
+    {
+        var units = quotation.Items.Sum(item => item.Quantity);
+        var minimumTotal = MinimumTotalFor(quotation.Currency);
+        var met = units >= MinimumUnits || quotation.Total >= minimumTotal;
+
+        return new QuotationMinimumPurchaseDto(
+            met,
+            units,
+            MinimumUnits,
+            minimumTotal,
+            // Con el mínimo alcanzado los dos faltantes son 0, aunque una de las ramas siga corta:
+            // es un OR, y decir "te faltan 4 unidades" en una cotización que ya tiene el descuento
+            // sería pedirle al cliente algo que no necesita.
+            met ? 0m : MinimumUnits - units,
+            met ? 0m : minimumTotal - quotation.Total);
+    }
 }

@@ -39,6 +39,7 @@ internal static class QuotationMapping
         quotation.CanBeSent,
         quotation.HasChangesSinceSent,
         quotation.CanBeConvertedToOrder,
+        QuotationMinimumPurchase.DescribeFor(quotation),
         quotation.Items.Select(ToDto).ToArray());
 
     private static QuotationBillingAccountDto? ToDto(QuotationBillingAccount? account) =>

@@ -80,7 +80,47 @@ public sealed record QuotationDto(
     /// <summary>Si convertir en pedido es posible: enviada, sin cambios desde ese envío, con
     /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
     bool CanBeConvertedToOrder,
+    /// <summary>En qué anda la cotización contra la compra mínima que habilita los descuentos por
+    /// volumen. Viaja **siempre**, alcanzada o no.</summary>
+    QuotationMinimumPurchaseDto MinimumPurchase,
     IReadOnlyCollection<QuotationItemDto> Items);
+
+/// <summary>
+/// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
+///
+/// Existe por el mismo motivo que <c>QuotationDto.CustomerVatSurplus</c>: sin esto el frontend ve
+/// un descuento en cero y tiene que adivinar por qué. Y adivinar no le alcanza — el umbral depende
+/// de la moneda, la regla es un OR de dos ramas, y ninguna de las dos cosas se deduce mirando los
+/// importes.
+///
+/// <b>Es prospectivo, no retrospectivo.</b> Dice "te faltan 4 unidades o $480.000 para acceder a
+/// los descuentos", no "perdiste un descuento". La diferencia importa: una cotización que se lee
+/// de la base ya tiene sus descuentos en cero y **no guarda rastro** de cuál era el candidato que
+/// la compuerta se llevó; reconstruirlo obligaría a consultar el catálogo en cada lectura. Lo que
+/// sí se puede afirmar sin ir a ningún lado —y es lo accionable para quien cotiza— es cuánto falta
+/// para el umbral.
+///
+/// <b>Los faltantes se calculan acá y no en el cliente</b> para que dos pantallas no redondeen
+/// distinto, mismo criterio que <c>/reports/orders/summary</c>.
+/// </summary>
+/// <param name="Met">Si la cotización ya habilita descuentos. Con cualquiera de las dos ramas
+/// cumplida es true, y los dos faltantes son 0.</param>
+/// <param name="Units">Suma de las cantidades de todas las líneas.</param>
+/// <param name="MinimumUnits">Las unidades que habilitan el descuento por sí solas.</param>
+/// <param name="MinimumTotal">El total que habilita el descuento por sí solo, **en la moneda de
+/// la cotización** (<c>Currency</c>). No es una conversión: este módulo no tiene tabla de cambio,
+/// así que el mínimo en dólares es un número propio.</param>
+/// <param name="MissingUnits">Cuántas unidades faltan para <paramref name="MinimumUnits"/>. 0
+/// cuando <paramref name="Met"/>.</param>
+/// <param name="MissingTotal">Cuánta plata falta para <paramref name="MinimumTotal"/>, contra el
+/// total ya descontado y con IVA. 0 cuando <paramref name="Met"/>.</param>
+public sealed record QuotationMinimumPurchaseDto(
+    bool Met,
+    decimal Units,
+    decimal MinimumUnits,
+    decimal MinimumTotal,
+    decimal MissingUnits,
+    decimal MissingTotal);
 
 /// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto
 /// y no el enum del dominio, mismo criterio que Status.</summary>
