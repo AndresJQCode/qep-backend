@@ -267,13 +267,17 @@ public sealed class PriceScale
     /// redondeo con el que <see cref="ValidateFinal"/> decide si acepta el que manda el
     /// cliente.
     ///
-    /// Vive acá y no en quien lo necesita porque hay dos usos y tienen que dar idéntico:
+    /// Vive acá y no en quien lo necesita porque hay tres usos y tienen que dar idéntico:
     /// <see cref="PriceScaleCopy"/> recalcula el final contra el precio base del destino, y
-    /// esa escala pasa después por esta misma validación. Con la cuenta escrita en dos
-    /// lados, un cambio de redondeo en uno dejaría a la copia generando escalas que el otro
-    /// rechaza.
+    /// esa escala pasa después por esta misma validación; y el seeder de catálogo
+    /// (<c>CatalogSeeder</c>, en Infrastructure) hace de cliente y manda los finales que
+    /// <see cref="Create"/> valida. Con la cuenta escrita en dos lados, un cambio de redondeo
+    /// en uno dejaría a la copia —o a la semilla— generando escalas que el otro rechaza.
+    ///
+    /// <c>public</c> y no <c>internal</c> por ese tercer uso: Domain no expone internals a
+    /// Infrastructure, y duplicar la cuenta en el seeder es justo lo que este método evita.
     /// </summary>
-    internal static decimal? FinalFor(decimal? productBase, decimal discount) =>
+    public static decimal? FinalFor(decimal? productBase, decimal discount) =>
         productBase is null
             ? null
             : Math.Round(
