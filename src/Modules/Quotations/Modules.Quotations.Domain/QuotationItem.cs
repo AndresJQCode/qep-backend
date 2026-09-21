@@ -94,6 +94,13 @@ public sealed class QuotationItem
         decimal quantity, decimal discountPercentage, int taxPercentage, DateTimeOffset occurredAt) =>
         Apply(quantity, UnitPrice, discountPercentage, taxPercentage, occurredAt);
 
+    /// <summary>Cambia sólo el descuento y rehace los importes de la línea, conservando cantidad,
+    /// precio y tasa. Lo usa el recálculo global de la cotización
+    /// (<see cref="Quotation.ApplyGroupDiscounts"/>): la agrupación de escalas y la compuerta de
+    /// compra mínima mueven el descuento sin que la línea haya cambiado en nada más.</summary>
+    internal void ApplyDiscount(decimal discountPercentage, DateTimeOffset occurredAt) =>
+        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, occurredAt);
+
     /// <summary>Vuelve a nacer con el precio del producto en otra moneda, sin tocar la
     /// cantidad. El descuento y el impuesto también se rehacen: la escala de cantidad y la
     /// tasa se resuelven contra el catálogo junto con el precio, y conservar los viejos

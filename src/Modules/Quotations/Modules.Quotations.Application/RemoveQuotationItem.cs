@@ -14,6 +14,7 @@ public sealed class RemoveQuotationItemHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
     IQuotationProductLookup productLookup,
+    IQuotationProductPricingLookup pricingLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -96,6 +97,12 @@ public sealed class RemoveQuotationItemHandler(
             order?.Id.ToString() ?? quotation.Id.ToString(),
             "success",
             now);
+
+        // Quitar una línea también mueve el descuento de las que quedan: se va su cantidad del
+        // total del grupo, y puede caerse el mínimo de compra de la cotización entera. Va antes de
+        // mirar el total.
+        await QuotationPricingRecalculation.ApplyAsync(
+            pricingLookup, command.TenantId, quotation, now, cancellationToken);
 
         order?.RecalculatePaymentStatus(quotation.Total, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
