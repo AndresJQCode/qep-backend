@@ -23,7 +23,12 @@ internal static class ProductMapping
         product.TaxRateId?.Value,
         product.PriceBaseUsd,
         product.PriceBaseCop,
-        product.PriceScales.Select(ToResponse).ToArray(),
+        // Ordered here, and not left to whatever order the aggregate or the database hands
+        // over: the grid paints the tiers from the smallest up, and neither the write order
+        // nor the row order the database returns is a contract it can rely on. Same criterion
+        // the Excel export already applies (`ClosedXmlProductExportBuilder`), and doing it in
+        // the mapping covers every product response instead of one query at a time.
+        product.PriceScales.OrderBy(scale => scale.FromUnit).Select(ToResponse).ToArray(),
         product.CreatedAt,
         product.UpdatedAt);
 
