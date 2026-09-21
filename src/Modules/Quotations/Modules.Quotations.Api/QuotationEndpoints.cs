@@ -61,6 +61,33 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Guardar el editor de una vez: el estado deseado completo —encabezado y líneas— con
+        // If-Match de Quotation.Version. Mismo contrato de precondición que PUT /orders/{orderId}:
+        // sin If-Match 428, versión vieja 412, y el ETag de la respuesta trae la nueva.
+        //
+        // No choca con el PATCH de arriba: son verbos distintos sobre la misma ruta, y el PATCH se
+        // queda tal cual mientras el frontend siga usándolo.
+        group.MapPut("/{quotationId:guid}", SaveQuotationAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
+            .Accepts<SaveQuotationRequest>("application/json")
+            .Produces<QuotationResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Cálculo previo: mismo cuerpo que el PUT, sin If-Match y sin persistir. POST y no GET
+        // porque lleva el borrador entero en el cuerpo. "preview" no choca con nada de este grupo:
+        // no es un guid.
+        group.MapPost("/{quotationId:guid}/preview", PreviewQuotationAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
+            .Accepts<SaveQuotationRequest>("application/json")
+            .Produces<QuotationResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPut("/{quotationId:guid}/client", ChangeQuotationClientAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<ChangeQuotationClientRequest>("application/json")
@@ -266,6 +293,89 @@ public static class QuotationEndpoints
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    private static async Task<IResult> SaveQuotationAsync(
+        Guid tenantId,
+        Guid quotationId,
+        SaveQuotationRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion))
+        {
+            throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded quotation version is required.");
+        }
+
+        var quotation = await dispatcher.SendAsync(
+            new SaveQuotationCommand(
+                tenantId,
+                quotationId,
+                expectedVersion,
+                request.ValidUntil,
+                request.PaymentMethod,
+                request.Notes,
+                request.Parties,
+                request.BillingAccount,
+                ToItems(request)),
+            cancellationToken);
+
+        httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    private static async Task<IResult> PreviewQuotationAsync(
+        Guid tenantId,
+        Guid quotationId,
+        SaveQuotationRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var quotation = await dispatcher.QueryAsync(
+            new PreviewQuotationQuery(
+                tenantId,
+                quotationId,
+                request.ValidUntil,
+                request.PaymentMethod,
+                request.Notes,
+                request.Parties,
+                request.BillingAccount,
+                ToItems(request)),
+            cancellationToken);
+
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    // Ausente o null equivale a vacía: así el validador y los handlers nunca ven una colección
+    // null, y "sin productos" se escribe de una sola forma (OrderEndpoints.cs:370).
+    private static QuotationItemAddition[] ToItems(SaveQuotationRequest request) =>
+        (request.Items ?? [])
+            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .ToArray();
+
+    // Copia de RoleEndpoints.TryParseVersion (src/Api), igual que OrderEndpoints.cs:435: este
+    // proyecto no puede referenciar Api. Acepta "3", 3 y W/"3".
+    private static bool TryParseVersion(string? etag, out long version)
+    {
+        version = 0;
+        if (string.IsNullOrWhiteSpace(etag))
+        {
+            return false;
+        }
+
+        var normalized = etag.Trim();
+        if (normalized.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[2..].Trim();
+        }
+
+        normalized = normalized.Trim('"');
+        return long.TryParse(normalized, out version) && version > 0;
     }
 
     // US-2 (revisada): cambiar el cliente arrastra las partes y los totales, asi que va por su

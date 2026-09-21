@@ -335,6 +335,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<BatchUpdateQuotationItemsCommand, QuotationDto>,
             BatchUpdateQuotationItemsHandler>();
+        // El guardado de una vez del editor y su cálculo previo. Los validadores no se registran
+        // acá —los levanta el escaneo de ensamblado—, pero los handlers sí: el dispatcher resuelve
+        // por registro explícito y uno que falte compila, mapea su endpoint y falla recién en
+        // runtime con 500.
+        services.AddScoped<
+            ICommandHandler<SaveQuotationCommand, QuotationDto>,
+            SaveQuotationHandler>();
+        services.AddScoped<
+            IQueryHandler<PreviewQuotationQuery, QuotationDto>,
+            PreviewQuotationHandler>();
         services.AddScoped<
             ICommandHandler<SendQuotationCommand, QuotationDto>,
             SendQuotationHandler>();

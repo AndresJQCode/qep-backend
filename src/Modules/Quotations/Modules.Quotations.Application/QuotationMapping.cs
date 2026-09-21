@@ -40,7 +40,8 @@ internal static class QuotationMapping
         quotation.HasChangesSinceSent,
         quotation.CanBeConvertedToOrder,
         QuotationMinimumPurchase.DescribeFor(quotation),
-        quotation.Items.Select(ToDto).ToArray());
+        quotation.Items.Select(ToDto).ToArray(),
+        quotation.Version);
 
     private static QuotationBillingAccountDto? ToDto(QuotationBillingAccount? account) =>
         account is null

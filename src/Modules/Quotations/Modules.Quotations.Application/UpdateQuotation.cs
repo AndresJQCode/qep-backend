@@ -12,15 +12,16 @@ public sealed record UpdateQuotationCommand(
     string? PaymentMethod,
     string? Notes,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest? BillingAccount) : ICommand<QuotationDto>;
+    QuotationBillingAccountRequest? BillingAccount) : ICommand<QuotationDto>, IQuotationHeaderEdits;
 
 public sealed class UpdateQuotationValidator : AbstractValidator<UpdateQuotationCommand>
 {
     public UpdateQuotationValidator()
     {
-        RuleFor(command => command.PaymentMethod)
-            .MaximumLength(Quotation.PaymentMethodMaxLength)
-            .When(command => command.PaymentMethod is not null);
+        // La regla vive en QuotationHeaderRules y no acá: el guardado de una vez
+        // (SaveQuotationCommand) manda el mismo encabezado, y dos copias de la misma regla se
+        // desincronizan a la primera que alguien toque una sola.
+        QuotationHeaderRules.AddTo(this);
     }
 }
 

@@ -363,5 +363,8 @@ public sealed class QuotationPdfDocumentMapperTests
                 19,
                 186797.14m,
                 2)
-        ]);
+        ],
+        // El PDF tampoco la imprime: viaja porque el contrato la exige, igual que la compra
+        // minima de arriba.
+        3);
 }
