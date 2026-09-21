@@ -269,4 +269,75 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Equal(0m, line.DiscountPercentage);
         Assert.False(line.Restriction!.IsSatisfied);
     }
+
+    // ---- Agrupación para ALCANZAR el tramo (2026-09-21) ----
+    //
+    // Hasta acá la suma sólo servía para cumplir el múltiplo de un tramo que cada línea ya había
+    // alcanzado sola. Ahora también decide en qué tramo cae la línea: 3 + 3 = 6 entra al tramo
+    // 6-48 aunque ninguna de las dos llegue sola.
+
+    private static Dictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> MultiScaleCatalog(
+        params (Guid ProductId, QuotationPriceScaleRef[] Scales)[] entries) =>
+        entries.ToDictionary(
+            entry => entry.ProductId,
+            entry => (IReadOnlyCollection<QuotationPriceScaleRef>)entry.Scales);
+
+    // Los tres tramos del producto tipo: el primero sin descuento, el segundo agrupable, el
+    // tercero para volumen y sin agrupar.
+    private static QuotationPriceScaleRef[] Tiers() =>
+    [
+        new(1, 5, 0m, QuotationPriceScaleRestriction.Multiple, 1, null, false),
+        new(6, 48, 5m, QuotationPriceScaleRestriction.Multiple, 3, null, true),
+        new(49, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+    ];
+
+    // El caso que pidió el owner: dos productos con 3 unidades cada uno, los dos con el mismo
+    // tramo agrupable. Solas caen en 1-5 y no descuentan; sumadas llegan a 6 y las dos toman el
+    // tramo 6-48.
+    [Fact]
+    public void GroupingReachesTheTierThatNoLineReachesAlone()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(a, ProductA, 3m),
+                new QuotationPricingLine(b, ProductB, 3m)
+            ],
+            MultiScaleCatalog((ProductA, Tiers()), (ProductB, Tiers())));
+
+        Assert.Equal(5m, For(result, a).DiscountPercentage);
+        Assert.Equal(5m, For(result, b).DiscountPercentage);
+        Assert.True(For(result, a).Grouped);
+        Assert.Equal(6m, For(result, a).Restriction!.EvaluatedQuantity);
+    }
+
+    // Una línea que ya pasó el techo del tramo no arrastra al grupo: 100 no se suma al total del
+    // tramo 6-48 porque no cabe en él. Si se sumara, 3 + 3 + 100 = 106 se saldría del rango y las
+    // dos líneas chicas perderían el descuento que el grupo les consiguió.
+    //
+    // La de 100 conserva el tramo que alcanzó sola.
+    [Fact]
+    public void ALineAboveTheTierCeilingDoesNotDragTheGroup()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        var c = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(a, ProductA, 3m),
+                new QuotationPricingLine(b, ProductB, 3m),
+                new QuotationPricingLine(c, ProductC, 100m)
+            ],
+            MultiScaleCatalog((ProductA, Tiers()), (ProductB, Tiers()), (ProductC, Tiers())));
+
+        Assert.Equal(5m, For(result, a).DiscountPercentage);
+        Assert.Equal(5m, For(result, b).DiscountPercentage);
+        Assert.Equal(6m, For(result, a).Restriction!.EvaluatedQuantity);
+
+        Assert.Equal(10m, For(result, c).DiscountPercentage);
+        Assert.False(For(result, c).Grouped);
+    }
 }
