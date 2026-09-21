@@ -24,28 +24,31 @@ public sealed class TenantRegistrationService(
     {
         var now = clock.UtcNow;
 
+        // Los dos ids se acuñan antes que cualquiera de los dos objetos: ninguno de los dos
+        // necesita que el otro exista, sólo su id. Eso es lo que deja que el tenant nazca ya
+        // nombrando a su autoridad, en vez de existir un rato sin owner.
+        var tenantId = TenantId.New();
+        var membershipId = MembershipId.New();
+
         var tenant = Tenant.Create(
-            TenantId.New(),
+            tenantId,
             data.Slug,
             data.DisplayName,
             data.DefaultCulture,
             data.TimeZone,
             data.DateFormat,
+            membershipId,
             now);
         tenantRepository.Add(tenant);
 
         var membership = Membership.CreateActive(
-            MembershipId.New(),
+            membershipId,
             ownerUserId,
-            tenant.Id,
+            tenantId,
             AdminRoles,
             Origin,
             now);
         membershipRepository.Add(membership);
-        // El tenant nombra a su autoridad acá, en la misma transacción: el id de la membresía ya
-        // existe antes de persistir (MembershipId.New()), así que las dos filas se escriben
-        // juntas o no se escribe ninguna.
-        tenant.AssignOwner(membership.Id);
 
         auditRecorder.Record(
             tenant.Id.Value,

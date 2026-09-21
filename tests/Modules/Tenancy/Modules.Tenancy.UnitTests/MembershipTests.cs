@@ -874,25 +874,15 @@ public sealed class MembershipTests
     /// <summary>
     /// El tenant que nombra owner a esta membresía: es lo que activa la guarda.
     /// </summary>
-    private static Tenant TenantOwnedBy(Membership membership)
-    {
-        var tenant = NewTenant();
-        tenant.AssignOwner(membership.Id);
-        return tenant;
-    }
+    private static Tenant TenantOwnedBy(Membership membership) => NewTenant(membership.Id);
 
     /// <summary>
     /// Un tenant cuya autoridad es otra membresía. Lo usan todos los casos que no son del owner,
     /// para que la guarda no se active por accidente y la prueba ejercite lo que dice ejercitar.
     /// </summary>
-    private static Tenant TenantOwnedByAnother()
-    {
-        var tenant = NewTenant();
-        tenant.AssignOwner(MembershipId.New());
-        return tenant;
-    }
+    private static Tenant TenantOwnedByAnother() => NewTenant(MembershipId.New());
 
-    private static Tenant NewTenant() =>
+    private static Tenant NewTenant(MembershipId owner) =>
         Tenant.Create(
             TenantId.New(),
             "qcode-demo",
@@ -900,5 +890,6 @@ public sealed class MembershipTests
             "es-CO",
             "America/Bogota",
             "yyyy-MM-dd",
+            owner,
             InvitedAt);
 }

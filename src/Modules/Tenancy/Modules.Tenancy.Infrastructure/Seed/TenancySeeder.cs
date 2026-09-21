@@ -21,31 +21,61 @@ public static class TenancySeeder
     public const string SeedTenantSlug = "origen-botanico";
     public const string SeedTenantDisplayName = "Origen botánico";
 
-    public static Task SeedTenantAsync(
+    public static Task<Guid> SeedTenantWithOwnerAsync(
         this IServiceProvider services,
+        Guid ownerUserId,
         CancellationToken cancellationToken = default) =>
-        services.SeedTenantAsync(SeedTenantId, SeedTenantSlug, SeedTenantDisplayName, cancellationToken);
+        services.SeedTenantWithOwnerAsync(
+            SeedTenantId,
+            SeedTenantSlug,
+            SeedTenantDisplayName,
+            ownerUserId,
+            Membership.RegistrationOrigin,
+            cancellationToken);
 
     /// <summary>
-    /// Crea el tenant por id si no existe, por el dominio: rigen las mismas reglas de slug que en un
-    /// registro. La usan la semilla de arranque y la carga de exportación (spec 2026-09-13), cada una
-    /// con su id.
+    /// Crea el tenant **y su membresía dueña juntos**, por el dominio y en una sola escritura, y
+    /// devuelve el id de esa membresía: es el <c>MemberId</c> al que apuntan <c>advisor_id</c>,
+    /// <c>created_by</c> y <c>converted_by</c>.
+    ///
+    /// Los dos nacen juntos porque no hay tenant sin owner: <c>Tenant.Create</c> lo exige. Antes
+    /// esto eran dos pasos —sembrar el tenant, y después nombrarle owner— y entre uno y otro
+    /// quedaba una fila persistida sin autoridad, que es la que dejaba a la membresía dueña sin la
+    /// protección del agregado.
+    ///
+    /// No hace falta que la membresía exista para que el tenant la nombre, ni al revés: los dos
+    /// ids se acuñan en memoria antes de persistir.
+    ///
+    /// La usan la semilla de arranque y la carga de exportación (spec 2026-09-13), cada una con su
+    /// id y su origen — el origen es la partida de nacimiento de la membresía, no autoridad, así
+    /// que cada quien conserva el suyo.
     /// </summary>
-    public static async Task SeedTenantAsync(
+    /// <remarks>
+    /// Idempotente como el resto del sembrador: si el tenant ya existe devuelve el id de su owner
+    /// sin tocar nada, así que correrlo dos veces no falla.
+    /// </remarks>
+    public static async Task<Guid> SeedTenantWithOwnerAsync(
         this IServiceProvider services,
         Guid tenantId,
         string slug,
         string displayName,
+        Guid ownerUserId,
+        string origin,
         CancellationToken cancellationToken = default)
     {
         await using var scope = services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
 
         var id = new TenantId(tenantId);
-        if (await dbContext.Tenants.AnyAsync(tenant => tenant.Id == id, cancellationToken))
+        var existing = await dbContext.Tenants.SingleOrDefaultAsync(
+            tenant => tenant.Id == id, cancellationToken);
+        if (existing is not null)
         {
-            return;
+            return existing.OwnerMembershipId.Value;
         }
+
+        var now = DateTimeOffset.UtcNow;
+        var ownerMembershipId = MembershipId.New();
 
         dbContext.Tenants.Add(Tenant.Create(
             id,
@@ -54,42 +84,18 @@ public static class TenancySeeder
             "es-CO",
             "America/Bogota",
             "yyyy-MM-dd",
-            DateTimeOffset.UtcNow));
+            ownerMembershipId,
+            now));
+        dbContext.Memberships.Add(Membership.CreateActive(
+            ownerMembershipId,
+            ownerUserId,
+            id,
+            ["admin"],
+            origin,
+            now));
+
         await dbContext.SaveChangesAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// Crea la membresía del owner, ya en <c>Active</c>, y la nombra autoridad del tenant
-    /// sembrado. Nombrarla es lo que le da la protección del agregado —no se puede suspender,
-    /// quitar ni dejar sin el rol admin—; el <see cref="Membership.RegistrationOrigin"/> es sólo
-    /// su partida de nacimiento. Hasta que el owner pasó a vivir en <c>tenants</c>, el origen
-    /// tenía que reusarse acá justamente para heredar esa protección.
-    /// </summary>
-    /// <remarks>
-    /// Idempotente como el resto del sembrador: si el tenant ya tiene owner no lo reasigna, así
-    /// que correrlo dos veces no falla.
-    /// </remarks>
-    public static async Task SeedOwnerMembershipAsync(
-        this IServiceProvider services,
-        Guid ownerUserId,
-        CancellationToken cancellationToken = default)
-    {
-        var membershipId = await services.SeedAdminMembershipAsync(
-            SeedTenantId, ownerUserId, Membership.RegistrationOrigin, cancellationToken);
-
-        await using var scope = services.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
-        var tenantId = new TenantId(SeedTenantId);
-        var tenant = await dbContext.Tenants.SingleOrDefaultAsync(
-            value => value.Id == tenantId,
-            cancellationToken);
-        if (tenant is null || tenant.OwnerMembershipId is not null)
-        {
-            return;
-        }
-
-        tenant.AssignOwner(new MembershipId(membershipId));
-        await dbContext.SaveChangesAsync(cancellationToken);
+        return ownerMembershipId.Value;
     }
 
     /// <summary>

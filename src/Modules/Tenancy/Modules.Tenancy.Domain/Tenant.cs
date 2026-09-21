@@ -25,9 +25,11 @@ public sealed class Tenant
         string defaultCulture,
         string timeZone,
         string dateFormat,
+        MembershipId ownerMembershipId,
         DateTimeOffset createdAt)
     {
         Id = id;
+        OwnerMembershipId = ownerMembershipId;
         Slug = ValidateSlug(slug);
         DisplayName = ValidateDisplayName(displayName);
         DefaultCulture = ValidateCulture(defaultCulture);
@@ -77,13 +79,18 @@ public sealed class Tenant
     /// estaba a la vista en <c>TenancySeeder</c>, que reusaba el origen de registro en un tenant
     /// que nunca se auto-registró, sólo para heredar la protección.
     ///
-    /// Nulo mientras nadie lo haya nombrado: los tenants anteriores a la columna hasta que el
-    /// backfill de la migración los llene, y la ventana entre <see cref="Create"/> y
-    /// <see cref="AssignOwner"/> dentro de la misma transacción de registro. Sin owner nadie es
-    /// owner — <see cref="IsOwner"/> devuelve <c>false</c> — y no al revés: una guarda que protege
-    /// a una membresía al azar es peor que no tener guarda.
+    /// <b>Nunca nulo: lo exige <see cref="Create"/>.</b> Existió como opcional entre
+    /// <c>d4a26b8</c> y el 2026-09-21, con la idea de cubrir la ventana entre crear el tenant y
+    /// nombrar su owner. Esa ventana no hacía falta —<c>MembershipId.New()</c> da el id antes de
+    /// persistir, así que el owner se puede pasar al constructor— y el único que se quedaba
+    /// realmente sin owner era el <c>qcode-demo</c> del inicializador de desarrollo, un tenant sin
+    /// ninguna membresía que además daba 403 en todo. Se eliminó junto con este opcional.
+    ///
+    /// Que no pueda ser nulo es lo que hace que la guarda del agregado valga siempre: con un owner
+    /// nulo <see cref="IsOwner"/> devolvía <c>false</c> para todos, y la membresía dueña se podía
+    /// suspender y eliminar como cualquier otra.
     /// </remarks>
-    public MembershipId? OwnerMembershipId { get; private set; }
+    public MembershipId OwnerMembershipId { get; private set; }
 
     public long Version { get; private set; }
 
@@ -100,40 +107,12 @@ public sealed class Tenant
         string defaultCulture,
         string timeZone,
         string dateFormat,
+        MembershipId ownerMembershipId,
         DateTimeOffset createdAt) =>
-        new(id, slug, displayName, defaultCulture, timeZone, dateFormat, createdAt);
+        new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
+            createdAt);
 
-    /// <summary>
-    /// Nombra a la membresía que manda en este tenant. Es parte del nacimiento del tenant —el
-    /// registro la llama en la misma transacción que crea la membresía del owner—, así que no sube
-    /// <see cref="Version"/> ni emite evento: no hay un "antes" que auditar.
-    /// </summary>
-    /// <remarks>
-    /// No es <c>Create</c> quien lo recibe porque la membresía se crea después del tenant y
-    /// necesita su <c>TenantId</c>. Su id sí existe antes de persistir
-    /// (<c>MembershipId.New()</c>), así que las dos filas se escriben juntas y ninguna queda
-    /// a medias.
-    ///
-    /// Una sola vez: transferir el ownership es otra operación —con su evento, su auditoría y su
-    /// permiso— y todavía no existe. Que este método la rechace evita que alguien la implemente
-    /// por accidente reasignando en silencio.
-    /// </remarks>
-    public void AssignOwner(MembershipId ownerMembershipId)
-    {
-        if (OwnerMembershipId is not null)
-        {
-            throw new TenantDomainException(
-                "tenancy.tenant.owner_already_assigned",
-                "The tenant already has an owner membership.");
-        }
-
-        OwnerMembershipId = ownerMembershipId;
-    }
-
-    /// <summary>
-    /// Si esa membresía es la autoridad de este tenant. <c>false</c> mientras no haya owner
-    /// nombrado.
-    /// </summary>
+    /// <summary>Si esa membresía es la autoridad de este tenant.</summary>
     public bool IsOwner(MembershipId membershipId) => OwnerMembershipId == membershipId;
 
     public bool UpdateSettings(

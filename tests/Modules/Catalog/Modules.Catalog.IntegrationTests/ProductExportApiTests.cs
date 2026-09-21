@@ -196,6 +196,7 @@ public sealed class ProductExportApiTests
             "es-CO",
             "America/Bogota",
             "yyyy-MM-dd",
+            Modules.Tenancy.Domain.MembershipId.New(),
             DateTimeOffset.UtcNow));
         await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
     }

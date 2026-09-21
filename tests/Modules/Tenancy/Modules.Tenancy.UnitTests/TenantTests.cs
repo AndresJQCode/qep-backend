@@ -56,12 +56,15 @@ public sealed class TenantTests
                 "_",
                 "America/Bogota",
                 "yyyy-MM-dd",
+                MembershipId.New(),
                 CreatedAt));
 
         Assert.Equal("tenancy.settings.culture.invalid", exception.Code);
     }
 
-    private static Tenant CreateTenant() =>
+    private static readonly MembershipId OwnerMembershipId = MembershipId.New();
+
+    private static Tenant CreateTenant(MembershipId? owner = null) =>
         Tenant.Create(
             TenantId.New(),
             "qcode-demo",
@@ -69,6 +72,7 @@ public sealed class TenantTests
             "es-CO",
             "America/Bogota",
             "yyyy-MM-dd",
+            owner ?? OwnerMembershipId,
             CreatedAt);
 
     // Decisión 3 del spec 2026-09-19: el mismo agregado guarda el archivo y la clave pública
@@ -143,70 +147,28 @@ public sealed class TenantTests
     // EnsureActive es el mismo guard privado que ambos métodos comparten).
 
     /// <summary>
-    /// El tenant nombra a su autoridad. Antes el owner se deducía de
-    /// <c>memberships.origin = 'registration'</c>, que responde "cómo nació esta membresía" y no
-    /// "quién manda en este tenant": dos preguntas distintas en una sola columna.
+    /// El tenant nombra a su autoridad al nacer. Antes el owner se deducia de
+    /// <c>memberships.origin = 'registration'</c>, que responde "como nacio esta membresia" y no
+    /// "quien manda en este tenant"; despues paso a una columna que admitia <c>NULL</c>, y el
+    /// unico tenant que la dejaba vacia -- el <c>qcode-demo</c> del inicializador -- quedaba sin
+    /// ninguna membresia protegida. Ahora no hay tenant sin owner: lo exige el constructor.
     /// </summary>
     [Fact]
-    public void AssignOwnerRecordsTheOwnerMembership()
+    public void CreateRecordsTheOwnerMembership()
     {
-        var tenant = CreateTenant();
-        var ownerMembershipId = MembershipId.New();
+        var owner = MembershipId.New();
 
-        tenant.AssignOwner(ownerMembershipId);
+        var tenant = CreateTenant(owner);
 
-        Assert.Equal(ownerMembershipId, tenant.OwnerMembershipId);
-        Assert.True(tenant.IsOwner(ownerMembershipId));
-    }
-
-    /// <summary>
-    /// Nombrar al owner es parte del nacimiento del tenant, no una operación de cambio: no sube
-    /// la versión ni emite evento. Transferir el ownership será una operación propia cuando
-    /// exista, con su evento y su auditoría.
-    /// </summary>
-    [Fact]
-    public void AssignOwnerDoesNotTouchVersionOrRaiseEvents()
-    {
-        var tenant = CreateTenant();
-
-        tenant.AssignOwner(MembershipId.New());
-
-        Assert.Equal(1, tenant.Version);
-        Assert.Empty(tenant.DomainEvents);
-    }
-
-    [Fact]
-    public void AssignOwnerTwiceThrows()
-    {
-        var tenant = CreateTenant();
-        tenant.AssignOwner(MembershipId.New());
-
-        var exception = Assert.Throws<TenantDomainException>(() =>
-            tenant.AssignOwner(MembershipId.New()));
-
-        Assert.Equal("tenancy.tenant.owner_already_assigned", exception.Code);
+        Assert.Equal(owner, tenant.OwnerMembershipId);
+        Assert.True(tenant.IsOwner(owner));
     }
 
     [Fact]
     public void IsOwnerIsFalseForAnotherMembership()
     {
         var tenant = CreateTenant();
-        tenant.AssignOwner(MembershipId.New());
 
-        Assert.False(tenant.IsOwner(MembershipId.New()));
-    }
-
-    /// <summary>
-    /// Un tenant anterior a esta columna la tiene en <c>NULL</c> hasta que el backfill de la
-    /// migración la llene. Sin owner nadie es owner: la guarda no puede proteger a una membresía
-    /// al azar.
-    /// </summary>
-    [Fact]
-    public void IsOwnerIsFalseWhenNoOwnerIsAssigned()
-    {
-        var tenant = CreateTenant();
-
-        Assert.Null(tenant.OwnerMembershipId);
         Assert.False(tenant.IsOwner(MembershipId.New()));
     }
 }

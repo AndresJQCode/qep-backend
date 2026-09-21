@@ -58,10 +58,12 @@ public static class ExportLoadSeeder
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quotations);
         var startedAt = Stopwatch.GetTimestamp();
 
-        await services.SeedTenantAsync(TenantId, TenantSlug, TenantDisplayName, cancellationToken);
+        // El usuario antes que el tenant: el tenant nace nombrando a su membresía dueña, y es esa
+        // misma membresía la que después figura como asesora de cada cotización sembrada.
         var ownerUserId = await services.SeedUserAsync(ownerEmail, cancellationToken);
-        var advisorId = await services.SeedAdminMembershipAsync(
-            TenantId, ownerUserId, MembershipOrigin, cancellationToken);
+        var advisorId = await services.SeedTenantWithOwnerAsync(
+            TenantId, TenantSlug, TenantDisplayName, ownerUserId, MembershipOrigin,
+            cancellationToken);
         await services.SeedCatalogAsync(TenantId, cancellationToken);
 
         await using var scope = services.CreateAsyncScope();

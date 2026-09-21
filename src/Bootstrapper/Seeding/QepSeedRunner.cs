@@ -52,12 +52,11 @@ public static class QepSeedRunner
             .CreateLogger(typeof(QepSeedRunner).FullName!);
         LogSeedEnabled(logger, "origen-botanico", options.OwnerEmail!, null);
 
-        await services.SeedTenantAsync(cancellationToken);
-
+        // El usuario va primero porque el tenant nace nombrando a su membresía dueña, y esa
+        // membresía necesita a quién pertenece. Sin ella el tenant queda invisible: los permisos
+        // se resuelven desde la membresía, así que sin admin activo cualquier request daría 403.
         var ownerUserId = await services.SeedUserAsync(options.OwnerEmail!, cancellationToken);
-        // Sin esta membresía el tenant sembrado queda invisible: los permisos se resuelven
-        // desde ella, así que sin admin activo cualquier request devolvería 403.
-        await services.SeedOwnerMembershipAsync(ownerUserId, cancellationToken);
+        await services.SeedTenantWithOwnerAsync(ownerUserId, cancellationToken);
 
         await services.SeedCatalogAsync(TenancySeeder.SeedTenantId, cancellationToken);
 
