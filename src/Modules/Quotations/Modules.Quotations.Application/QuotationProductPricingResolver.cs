@@ -105,15 +105,9 @@ internal static class QuotationProductPricingResolver
 
         var scale = QuotationDiscountResolver.Resolve(product.Scales, quantity);
 
-        // PackagingUnit conserva su 422, y sólo sobre la línea que el comando toca: es el
-        // comportamiento que ya existía y que esta funcionalidad no debe alterar.
-        if (scale is not null)
-        {
-            QuotationScaleRestrictionRule.EnsurePackagingUnit(scale, quantity);
-        }
-
-        // Multiple ya no bloquea: si no cumple, la escala no aplica. Todavía sin agrupar — eso
-        // lo agrega QuotationScaleGroupPricing, que recalcula todas las líneas juntas.
+        // Ninguna restricción bloquea: si no se cumple, la escala no aplica y la línea va sin
+        // descuento. `PackagingUnit` lanzaba un 422 acá hasta el 2026-09-22. Todavía sin
+        // agrupar — eso lo agrega QuotationScaleGroupPricing, que recalcula todas juntas.
         var discount = scale is not null
             && QuotationScaleRestrictionRule.Evaluate(scale, quantity).IsSatisfied
                 ? scale.Discount

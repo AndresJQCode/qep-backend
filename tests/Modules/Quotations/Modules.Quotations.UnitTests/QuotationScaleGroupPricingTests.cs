@@ -25,10 +25,11 @@ public sealed class QuotationScaleGroupPricingTests
     private static QuotationLinePricing For(IReadOnlyList<QuotationLinePricing> result, Guid itemId) =>
         result.Single(line => line.ItemId == itemId);
 
-    // Antes este era "el caso del requisito": 10 + 8 + 12 = 30 era multiplo de 3 y las tres
-    // recibian el descuento. El owner corrigio la regla el 2026-09-21 -- el multiplo es POR
-    // LINEA -- asi que 10 y 8 ya no lo reciben, y el 12, que si cumple solo, lo recibe por su
-    // cuenta y sin quedar marcado como agrupado.
+    // El multiplo es POR LINEA y se cuenta desde el piso del tramo. En 5-48 de a 3 la unica de
+    // las tres que cumple sola es 8 (8 - 5 = 3); 10 y 12 no, aunque 12 sea multiplo crudo de 3 y
+    // hasta el 2026-09-21 se llevara el descuento.
+    //
+    // La que cumple lo recibe por su cuenta y sin quedar marcada como agrupada.
     [Fact]
     public void OnlyTheLineThatMeetsTheMultipleOnItsOwnGetsTheDiscount()
     {
@@ -48,11 +49,11 @@ public sealed class QuotationScaleGroupPricingTests
                 (ProductC, Scale(allowGrouping: true))));
 
         Assert.Equal(0m, For(result, a).DiscountPercentage);
-        Assert.Equal(0m, For(result, b).DiscountPercentage);
+        Assert.Equal(0m, For(result, c).DiscountPercentage);
 
-        Assert.Equal(5m, For(result, c).DiscountPercentage);
-        Assert.False(For(result, c).Grouped);
-        Assert.Equal(12m, For(result, c).Restriction!.EvaluatedQuantity);
+        Assert.Equal(5m, For(result, b).DiscountPercentage);
+        Assert.False(For(result, b).Grouped);
+        Assert.Equal(8m, For(result, b).Restriction!.EvaluatedQuantity);
     }
 
     // 10 % 3 y 13 % 3 fallan las dos, asi que ninguna califica y no hay grupo que armar. Cada
@@ -83,7 +84,8 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Equal(13m, For(result, b).Restriction!.EvaluatedQuantity);
     }
 
-    // Sin el switch, cada linea valida su multiplo sola: 10 % 3 y 8 % 3 fallan las dos.
+    // Sin el switch, cada linea valida su multiplo sola: en 5-48 de a 3, (10 - 5) y (12 - 5)
+    // fallan las dos.
     [Fact]
     public void UngroupedLinesValidateOnTheirOwn()
     {
@@ -93,7 +95,7 @@ public sealed class QuotationScaleGroupPricingTests
         var result = QuotationScaleGroupPricing.Resolve(
             [
                 new QuotationPricingLine(a, ProductA, 10m),
-                new QuotationPricingLine(b, ProductB, 8m)
+                new QuotationPricingLine(b, ProductB, 12m)
             ],
             Catalog(
                 (ProductA, Scale(allowGrouping: false)),
@@ -102,7 +104,7 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.All(result, line => Assert.Equal(0m, line.DiscountPercentage));
         Assert.All(result, line => Assert.False(line.Grouped));
         Assert.Equal(10m, For(result, a).Restriction!.EvaluatedQuantity);
-        Assert.Equal(8m, For(result, b).Restriction!.EvaluatedQuantity);
+        Assert.Equal(12m, For(result, b).Restriction!.EvaluatedQuantity);
     }
 
     // El flag es condicion de pertenencia: dos escalas identicas en Desde/Hasta/Multiplo no
@@ -115,16 +117,16 @@ public sealed class QuotationScaleGroupPricingTests
 
         var result = QuotationScaleGroupPricing.Resolve(
             [
-                new QuotationPricingLine(a, ProductA, 9m),
-                new QuotationPricingLine(b, ProductB, 8m)
+                new QuotationPricingLine(a, ProductA, 8m),
+                new QuotationPricingLine(b, ProductB, 9m)
             ],
             Catalog(
                 (ProductA, Scale(allowGrouping: true)),
                 (ProductB, Scale(allowGrouping: false))));
 
-        Assert.Equal(9m, For(result, a).Restriction!.EvaluatedQuantity);
+        Assert.Equal(8m, For(result, a).Restriction!.EvaluatedQuantity);
         Assert.Equal(5m, For(result, a).DiscountPercentage);
-        Assert.Equal(8m, For(result, b).Restriction!.EvaluatedQuantity);
+        Assert.Equal(9m, For(result, b).Restriction!.EvaluatedQuantity);
         Assert.Equal(0m, For(result, b).DiscountPercentage);
     }
 
@@ -223,9 +225,9 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Null(For(result, a).Restriction);
     }
 
-    // Una linea que no cumple el multiplo no le hace nada a la que si: A=6 cumple (6 % 3) y se
-    // lleva su descuento por su cuenta; B=10 no cumple, se queda en cero, y reporta SU propia
-    // cantidad.
+    // Una linea que no cumple el multiplo no le hace nada a la que si: A=8 cumple desde el piso
+    // (8 - 5 = 3) y se lleva su descuento por su cuenta; B=10 no cumple, se queda en cero, y
+    // reporta SU propia cantidad.
     //
     // Antes B decia 16 -- el total de un grupo del que ahora ni siquiera es parte -- y quedaba
     // marcada como agrupada. Con el multiplo por linea, una linea que no califica no entra en
@@ -238,7 +240,7 @@ public sealed class QuotationScaleGroupPricingTests
 
         var result = QuotationScaleGroupPricing.Resolve(
             [
-                new QuotationPricingLine(a, ProductA, 6m),
+                new QuotationPricingLine(a, ProductA, 8m),
                 new QuotationPricingLine(b, ProductB, 10m)
             ],
             Catalog((ProductA, Scale(allowGrouping: true)), (ProductB, Scale(allowGrouping: true))));
@@ -246,7 +248,7 @@ public sealed class QuotationScaleGroupPricingTests
         var lineA = For(result, a);
         Assert.Equal(5m, lineA.DiscountPercentage);
         Assert.False(lineA.Grouped);
-        Assert.Equal(6m, lineA.Restriction!.EvaluatedQuantity);
+        Assert.Equal(8m, lineA.Restriction!.EvaluatedQuantity);
 
         var lineB = For(result, b);
         Assert.Equal(0m, lineB.DiscountPercentage);
@@ -376,5 +378,70 @@ public sealed class QuotationScaleGroupPricingTests
         var odd = For(result, itemIds[5]);
         Assert.Equal(0m, odd.DiscountPercentage);
         Assert.False(odd.Grouped);
+    }
+
+    // ---- El piso de pertenencia al grupo (2026-09-21) ----
+
+    // Una linea que el tramo ya cubre no entra al grupo, ni siquiera cuando cumple el multiplo
+    // crudo. Sin este piso, 54 en una escala 50-98 de a 6 armaba un "grupo" de una sola linea:
+    // su total de 54 caia en el rango y se llevaba el descuento que el multiplo desde el piso le
+    // niega, marcada ademas como agrupada sin nadie con quien agrupar. Por esa puerta el criterio
+    // crudo volvia a gobernar toda escala agrupable.
+    [Fact]
+    public void ALineTheTierAlreadyCoversNeverJoinsTheGroup()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 54m)],
+            Catalog((ProductA, Scale(allowGrouping: true, multiple: 6, fromUnit: 50, toUnit: 98))));
+
+        var line = For(result, a);
+        Assert.Equal(0m, line.DiscountPercentage);
+        Assert.False(line.Grouped);
+        Assert.Equal("quotation.item.quantity_not_multiple", line.Restriction!.Code);
+    }
+
+    // La contracara: la misma escala con 56 unidades, que si cumple desde el piso. Se lo gana
+    // sola y no queda marcada como agrupada.
+    [Fact]
+    public void ALineThatMeetsTheFloorMultipleEarnsItsTierAlone()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 56m)],
+            Catalog((ProductA, Scale(allowGrouping: true, multiple: 6, fromUnit: 50, toUnit: 98))));
+
+        var line = For(result, a);
+        Assert.Equal(5m, line.DiscountPercentage);
+        Assert.False(line.Grouped);
+        Assert.Equal(56m, line.Restriction!.EvaluatedQuantity);
+    }
+
+    // Y el grupo sigue haciendo su trabajo con las que NO llegan al piso: ahi el multiplo se
+    // cuenta crudo -- por debajo del piso no hay contra que anclar un offset -- y la cantidad
+    // minima del tramo se exige sobre la suma. 24 + 30 = 54 entra en 50-98 y las dos cobran.
+    //
+    // Que el total sea justamente el 54 que una linea sola no puede cobrar es deliberado: el piso
+    // se valida sobre la suma, el multiplo por miembro.
+    [Fact]
+    public void LinesBelowTheFloorStillGroupWithTheRawMultiple()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(a, ProductA, 24m),
+                new QuotationPricingLine(b, ProductB, 30m)
+            ],
+            Catalog(
+                (ProductA, Scale(allowGrouping: true, multiple: 6, fromUnit: 50, toUnit: 98)),
+                (ProductB, Scale(allowGrouping: true, multiple: 6, fromUnit: 50, toUnit: 98))));
+
+        Assert.All(result, line => Assert.Equal(5m, line.DiscountPercentage));
+        Assert.All(result, line => Assert.True(line.Grouped));
+        Assert.All(result, line => Assert.Equal(54m, line.Restriction!.EvaluatedQuantity));
     }
 }
