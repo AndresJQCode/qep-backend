@@ -39,10 +39,10 @@ public sealed class OrderApiTests
         [.. ManagerPermissions, OrdersPermissions.OrderCancel];
 
     // Bug real, 2026-09-12: el editor de cotizaciones dejo de pedir la forma de pago hace
-    // rato (ver `UpdateQuotationRequest` en el frontend), asi que toda cotizacion nueva la
-    // tiene en null -- pero `EnsureConvertibleToOrder` seguia exigiendola, y con eso "Convertir
-    // en pedido" no aparecia nunca para nadie. La cobertura vieja probaba lo contrario (que
-    // rechazara sin forma de pago); esta prueba el arreglo.
+    // rato (el formulario del frontend ya no tiene campo que la escriba), asi que toda
+    // cotizacion nueva la tiene en null -- pero `EnsureConvertibleToOrder` seguia exigiendola,
+    // y con eso "Convertir en pedido" no aparecia nunca para nadie. La cobertura vieja probaba
+    // lo contrario (que rechazara sin forma de pago); esta prueba el arreglo.
     [Fact]
     public async Task ConvertWithoutAPaymentMethodSucceeds()
     {

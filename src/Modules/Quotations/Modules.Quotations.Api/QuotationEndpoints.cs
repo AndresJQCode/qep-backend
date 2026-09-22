@@ -53,20 +53,9 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        group.MapPatch("/{quotationId:guid}", UpdateQuotationAsync)
-            .RequireAuthorization(QuotationsPermissions.QuotationManage)
-            .Accepts<UpdateQuotationRequest>("application/json")
-            .Produces<QuotationResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         // Guardar el editor de una vez: el estado deseado completo —encabezado y líneas— con
         // If-Match de Quotation.Version. Mismo contrato de precondición que PUT /orders/{orderId}:
         // sin If-Match 428, versión vieja 412, y el ETag de la respuesta trae la nueva.
-        //
-        // No choca con el PATCH de arriba: son verbos distintos sobre la misma ruta, y el PATCH se
-        // queda tal cual mientras el frontend siga usándolo.
         group.MapPut("/{quotationId:guid}", SaveQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Accepts<SaveQuotationRequest>("application/json")
@@ -273,28 +262,6 @@ public static class QuotationEndpoints
             await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
-    private static async Task<IResult> UpdateQuotationAsync(
-        Guid tenantId,
-        Guid quotationId,
-        UpdateQuotationRequest request,
-        IRequestDispatcher dispatcher,
-        IQuotationResponseComposer composer,
-        CancellationToken cancellationToken)
-    {
-        var quotation = await dispatcher.SendAsync(
-            new UpdateQuotationCommand(
-                tenantId,
-                quotationId,
-                request.ValidUntil,
-                request.PaymentMethod,
-                request.Notes,
-                request.Parties,
-                request.BillingAccount),
-            cancellationToken);
-
-        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
-    }
-
     private static async Task<IResult> SaveQuotationAsync(
         Guid tenantId,
         Guid quotationId,
@@ -379,7 +346,7 @@ public static class QuotationEndpoints
     }
 
     // US-2 (revisada): cambiar el cliente arrastra las partes y los totales, asi que va por su
-    // propia ruta y no como un campo mas del PATCH. Ver ChangeQuotationClientHandler.
+    // propia ruta y no como un campo mas del guardado del encabezado. Ver ChangeQuotationClientHandler.
     private static async Task<IResult> ChangeQuotationClientAsync(
         Guid tenantId,
         Guid quotationId,

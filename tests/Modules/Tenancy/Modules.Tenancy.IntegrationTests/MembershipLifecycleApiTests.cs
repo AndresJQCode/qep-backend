@@ -733,7 +733,7 @@ public sealed class MembershipLifecycleApiTests
         long? expectedVersion = 1)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/roles")
         {
             Content = JsonContent.Create(new { roles })
@@ -754,7 +754,7 @@ public sealed class MembershipLifecycleApiTests
         long? expectedVersion = 1)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name")
         {
             Content = JsonContent.Create(new { displayName })

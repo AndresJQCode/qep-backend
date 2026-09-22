@@ -34,8 +34,8 @@ public static class RoleEndpoints
         // Con If-Match, a diferencia de suspender o remover un miembro: acá sí hay una versión
         // que el backend comprueba, porque dos personas editando los permisos de un mismo rol
         // es una carrera real y perderla en silencio significa conceder o quitar accesos que
-        // nadie decidió. Mismo contrato que `PATCH /memberships/{id}/roles`.
-        group.MapPatch("/{roleId:guid}", UpdateAsync)
+        // nadie decidió. Mismo contrato que `PUT /memberships/{id}/roles`.
+        group.MapPut("/{roleId:guid}", UpdateAsync)
             .RequireAuthorization(TenancyPermissions.AdvisorshipRolesManage)
             .Accepts<RoleWriteRequest>("application/json")
             .Produces<RoleResponse>()

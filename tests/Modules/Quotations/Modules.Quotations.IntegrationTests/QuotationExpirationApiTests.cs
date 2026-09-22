@@ -26,16 +26,12 @@ public sealed class QuotationExpirationApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var yesterday = TodayInBogota().AddDays(-1);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId, validUntil: yesterday);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
             new SendQuotationRequest(pdfFileId),
-            TestContext.Current.CancellationToken);
-        var yesterday = TodayInBogota().AddDays(-1);
-        await client.PatchAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(yesterday, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         var expiredCount = await RunExpirationSweepAsync(factory);
@@ -55,16 +51,12 @@ public sealed class QuotationExpirationApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var tomorrow = TodayInBogota().AddDays(1);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId, validUntil: tomorrow);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
             new SendQuotationRequest(pdfFileId),
-            TestContext.Current.CancellationToken);
-        var tomorrow = TodayInBogota().AddDays(1);
-        await client.PatchAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(tomorrow, null, null, null, null),
             TestContext.Current.CancellationToken);
 
         await RunExpirationSweepAsync(factory);
@@ -85,12 +77,8 @@ public sealed class QuotationExpirationApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
         var yesterday = TodayInBogota().AddDays(-1);
-        await client.PatchAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(yesterday, null, null, null, null),
-            TestContext.Current.CancellationToken);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId, validUntil: yesterday);
 
         await RunExpirationSweepAsync(factory);
 

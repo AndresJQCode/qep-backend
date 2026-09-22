@@ -693,8 +693,8 @@ public sealed class Quotation
         // el pedido se crea desde este agregado y estos datos son los que hereda.
         //
         // La forma de pago NO esta en esta lista a proposito: el editor de cotizaciones dejo de
-        // pedirla (queda `null` en todo lo creado desde entonces -- ver `UpdateQuotationRequest`
-        // en el frontend, que ya no tiene campo que la escriba), asi que exigirla aca dejaba
+        // pedirla (queda `null` en todo lo creado desde entonces -- el formulario del frontend ya
+        // no tiene campo que la escriba), asi que exigirla aca dejaba
         // inconvertible a cualquier cotizacion nueva sin que hubiera forma de arreglarlo desde la
         // pantalla. `Order` tampoco la usa para nada al crearse.
         if (_items.Count == 0)

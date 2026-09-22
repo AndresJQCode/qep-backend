@@ -229,6 +229,176 @@ public sealed class QuotationEditsApiTests
         Assert.Equal("quotation.quotation.not_found", (await ReadProblemAsync(save)).Code);
     }
 
+    // US-6/US-10: el guardado reemplaza el encabezado entero, incluidas las sobrescrituras de
+    // facturacion/entrega, y sube la version (concurrencia optimista).
+    [Fact]
+    public async Task UpdateReplacesTheEditableHeaderFields()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var validUntil = TodayInBogota().AddDays(30);
+        var response = await PutEditsAsync(
+            client, tenantId, created.Id, created.Version,
+            RequestFor(
+                created,
+                validUntil: validUntil,
+                paymentMethod: "Efectivo",
+                notes: "Nota de prueba",
+                parties: new QuotationPartiesRequest(
+                    new QuotationPartyRequest("Nombre alterno", null, null, null, null, null),
+                    Shipping: null)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadQuotationAsync(response);
+        Assert.Equal(validUntil, updated.ValidUntil);
+        Assert.Equal("Efectivo", updated.PaymentMethod);
+        Assert.Equal("Nota de prueba", updated.Notes);
+        var billing = Assert.Single(updated.Parties);
+        Assert.Equal("Billing", billing.Role);
+        Assert.Equal("Nombre alterno", billing.Name);
+        Assert.NotEqual(created.UpdatedAt, updated.UpdatedAt);
+        Assert.False(updated.IsStorePickup);
+    }
+
+    // Recoger en tienda gana sobre una parte de entrega que venga en el mismo guardado, borra la
+    // que ya estaba guardada, no toca la facturacion, y sobrevive a la ida y vuelta por la base.
+    [Fact]
+    public async Task UpdateWithStorePickupDropsTheShippingPartyAndPersists()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        Assert.False(created.IsStorePickup);
+
+        var billing = new QuotationPartyRequest("Sede administrativa", null, null, null, null, null);
+        var shipping = new QuotationPartyRequest("Bodega Fontibon", null, null, "Zona Franca", null, null);
+
+        var withShippingResponse = await PutEditsAsync(
+            client, tenantId, created.Id, created.Version,
+            RequestFor(
+                created, paymentMethod: "Efectivo",
+                parties: new QuotationPartiesRequest(billing, shipping)));
+        Assert.Equal(HttpStatusCode.OK, withShippingResponse.StatusCode);
+        var withShipping = await ReadQuotationAsync(withShippingResponse);
+
+        var response = await PutEditsAsync(
+            client, tenantId, created.Id, withShipping.Version,
+            RequestFor(
+                created, paymentMethod: "Efectivo",
+                parties: new QuotationPartiesRequest(billing, shipping, IsStorePickup: true)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadQuotationAsync(response);
+        Assert.True(updated.IsStorePickup);
+        var onlyBilling = Assert.Single(updated.Parties);
+        Assert.Equal("Billing", onlyBilling.Role);
+
+        var fetched = await GetQuotationAsync(client, tenantId, created.Id);
+        Assert.True(fetched.IsStorePickup);
+        Assert.DoesNotContain(fetched.Parties, party => party.Role == "Shipping");
+    }
+
+    // Facturar a consumidor final: sin parte propia, con el IVA cobrado y sin retencion aunque el
+    // cliente tenga las dos cosas. Sobrevive a la ida y vuelta por la base, y desmarcarlo en el
+    // siguiente guardado devuelve la retencion y el excedente del cliente sin volver a crearlo.
+    [Fact]
+    public async Task UpdateBillingToTheFinalConsumerDropsRetentionAndVatSurplusAndPersists()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(
+            client, tenantId, withRetention: true, vatSurplus: true);
+        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
+        // 119_000 con el IVA del 19% ya adentro: base 100_000 e IVA 19_000 redondos.
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        var added = await client.PostAsJsonAsync(
+            $"{QuotationUrl(tenantId, created.Id)}/items",
+            new AddQuotationItemRequest(productId, 1m),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, added.StatusCode);
+        var withItem = await ReadQuotationAsync(added);
+
+        var response = await PutEditsAsync(
+            client, tenantId, created.Id, withItem.Version,
+            RequestFor(
+                withItem,
+                paymentMethod: "Efectivo",
+                parties: new QuotationPartiesRequest(null, null, BillsToFinalConsumer: true),
+                items: [new QuotationEditItemRequest(productId, 1m)]));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadQuotationAsync(response);
+        Assert.True(updated.BillsToFinalConsumer);
+        Assert.False(updated.IsStorePickup);
+        Assert.Empty(updated.Parties);
+        Assert.False(updated.CustomerVatSurplus);
+        Assert.Equal(19_000m, updated.TaxAmount);
+        Assert.Equal(119_000m, updated.Total);
+        Assert.Equal(0m, updated.RetentionAmount);
+        Assert.Equal(119_000m, updated.NetTotal);
+
+        var fetched = await GetQuotationAsync(client, tenantId, created.Id);
+        Assert.True(fetched.BillsToFinalConsumer);
+        Assert.Equal(0m, fetched.RetentionAmount);
+        Assert.Equal(19_000m, fetched.TaxAmount);
+
+        var unmarked = await PutEditsAsync(
+            client, tenantId, created.Id, updated.Version,
+            RequestFor(
+                updated,
+                paymentMethod: "Efectivo",
+                parties: new QuotationPartiesRequest(null, null),
+                items: [new QuotationEditItemRequest(productId, 1m)]));
+
+        Assert.Equal(HttpStatusCode.OK, unmarked.StatusCode);
+        var restored = await ReadQuotationAsync(unmarked);
+        Assert.False(restored.BillsToFinalConsumer);
+        Assert.True(restored.CustomerVatSurplus);
+        Assert.Equal(0m, restored.TaxAmount);
+        Assert.Equal(100_000m, restored.Total);
+        Assert.Equal(2_500m, restored.RetentionAmount);
+        Assert.Equal(97_500m, restored.NetTotal);
+    }
+
+    // Consumidor final con datos propios de facturacion son dos nombres para la misma factura: el
+    // dominio lo rechaza con su codigo, no elige uno.
+    [Fact]
+    public async Task UpdateBillingToTheFinalConsumerWithABillingPartyIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, created.Id, created.Version,
+            RequestFor(
+                created,
+                paymentMethod: "Efectivo",
+                parties: new QuotationPartiesRequest(
+                    new QuotationPartyRequest("Sede administrativa", null, null, null, null, null),
+                    Shipping: null,
+                    BillsToFinalConsumer: true)));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(
+            "quotation.billing.final_consumer_conflict", (await ReadProblemAsync(response)).Code);
+    }
+
     /// <summary>Una cotización enviada —todavía editable— con un producto de 100.000 COP sin
     /// impuesto y cantidad 1: el total es 100.000.</summary>
     private static async Task<(QuotationResponse Quotation, Guid ProductId)> CreateEditableQuotationAsync(
@@ -252,18 +422,21 @@ public sealed class QuotationEditsApiTests
     }
 
     // El PUT reemplaza el encabezado entero, así que lo que no se está probando viaja igual a como
-    // está guardado — incluida la cuenta de cobro, que si se omite se borra.
+    // está guardado — incluida la cuenta de cobro, que si se omite se borra. `Parties` es la
+    // excepción: null es el caso normal ("factura/entrega a los datos del cliente"), así que un
+    // caller que no lo pasa está pidiendo justo eso, no "no tocar lo guardado".
     private static SaveQuotationRequest RequestFor(
         QuotationResponse quotation,
         DateOnly? validUntil = null,
         string? paymentMethod = null,
         string? notes = null,
+        QuotationPartiesRequest? parties = null,
         IReadOnlyList<QuotationEditItemRequest>? items = null) =>
         new(
             validUntil ?? quotation.ValidUntil,
             paymentMethod ?? quotation.PaymentMethod,
             notes,
-            null,
+            parties,
             quotation.BillingAccount is { } billing
                 ? new QuotationBillingAccountRequest(
                     billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency)

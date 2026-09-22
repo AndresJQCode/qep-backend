@@ -318,9 +318,6 @@ public static class QepServiceCollectionExtensions
             PurgeRequestFailuresHandler>();
 
         services.AddScoped<
-            ICommandHandler<UpdateQuotationCommand, QuotationDto>,
-            UpdateQuotationHandler>();
-        services.AddScoped<
             ICommandHandler<ChangeQuotationClientCommand, QuotationDto>,
             ChangeQuotationClientHandler>();
         services.AddScoped<
@@ -554,7 +551,7 @@ public static class QepServiceCollectionExtensions
         // El catalogo del codigo sigue siendo singleton: son constantes del build.
         services.AddSingleton<IRoleCatalog, RoleCatalog>();
         // La vista por tenant NO puede serlo: fusiona los roles que el tenant definio, y esos
-        // cambian con un PATCH y no con un deploy. Scoped, ademas, es lo que hace que memoizar
+        // cambian con un PUT y no con un deploy. Scoped, ademas, es lo que hace que memoizar
         // por request sea correcto — el scope dura lo que el request.
         services.AddScoped<ITenantRoleCatalog, TenantRoleCatalog>();
         services.AddAuthorizationInfrastructure(configuration);

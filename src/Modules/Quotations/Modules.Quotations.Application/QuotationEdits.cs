@@ -3,7 +3,7 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>Lo del encabezado que el <c>PATCH</c> y el guardado de una vez tienen en común. Existe
+/// <summary>Lo del encabezado que comparten el guardado de una vez y su cálculo previo. Existe
 /// para que la regla se escriba una sola vez — ver <see cref="QuotationHeaderRules"/>.</summary>
 public interface IQuotationHeaderEdits
 {
@@ -33,12 +33,12 @@ public interface IQuotationEdits : IQuotationHeaderEdits
 }
 
 /// <summary>
-/// Las reglas del encabezado, compartidas por <see cref="UpdateQuotationValidator"/> y por
-/// <see cref="QuotationEditsValidator{TEdits}"/>: el <c>PUT</c> es el <c>PATCH</c> más las líneas,
-/// y dos copias de la misma regla se desincronizan a la primera que alguien toque.
+/// Las reglas del encabezado, compartidas por el guardado de una vez y su cálculo previo a través
+/// de <see cref="QuotationEditsValidator{TEdits}"/>: dos copias de la misma regla se
+/// desincronizan a la primera que alguien toque.
 ///
 /// Es un método genérico y no un validador base porque FluentValidation sólo sabe hacer
-/// <c>Include</c> de un validador del **mismo** tipo, y acá los tipos son tres.
+/// <c>Include</c> de un validador del **mismo** tipo, y acá los tipos son dos.
 /// </summary>
 internal static class QuotationHeaderRules
 {
