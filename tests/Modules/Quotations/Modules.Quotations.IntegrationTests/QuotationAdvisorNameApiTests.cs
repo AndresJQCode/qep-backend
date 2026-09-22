@@ -134,7 +134,7 @@ public sealed class QuotationAdvisorNameApiTests
     {
         var version = await MembershipVersionAsync(client, tenantId, membershipId);
         using var rename = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name")
         {
             Content = JsonContent.Create(new { displayName })

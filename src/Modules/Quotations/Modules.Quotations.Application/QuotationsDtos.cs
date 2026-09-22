@@ -176,7 +176,7 @@ public sealed record QuotationPartyRequest(
 
 /// <summary>Las dos partes de la cotización en el request. <b>Null es el caso normal</b>: "factura
 /// (o entrega) a los datos del cliente" — el switch prendido de la UI. Como
-/// <c>UpdateQuotationRequest</c> reemplaza el recurso entero, mandar null en una parte que tenía
+/// <c>SaveQuotationRequest</c> reemplaza el recurso entero, mandar null en una parte que tenía
 /// datos propios los borra y vuelve a los del cliente.</summary>
 public sealed record QuotationPartiesRequest(
     QuotationPartyRequest? Billing,
@@ -194,7 +194,7 @@ public sealed record QuotationPartiesRequest(
     /// <c>Billing</c> (false, el default: un frontend que todavia no manda el campo sigue
     /// facturando como antes). Con true, <c>Billing</c> tiene que venir null y
     /// <c>BillingUsesBusinessName</c> false; si no, 422
-    /// <c>quotation.billing.final_consumer_conflict</c>. Como el PATCH reemplaza el encabezado
+    /// <c>quotation.billing.final_consumer_conflict</c>. Como el guardado reemplaza el encabezado
     /// entero, omitirlo lo apaga.</summary>
     bool BillsToFinalConsumer = false,
     /// <summary>Sólo tiene sentido cuando <c>Billing</c> trae datos propios: si esa facturación
@@ -214,18 +214,11 @@ public sealed record CreateQuotationRequest(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount);
 
-public sealed record UpdateQuotationRequest(
-    DateOnly? ValidUntil,
-    string? PaymentMethod,
-    string? Notes,
-    QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest? BillingAccount);
-
 /// <summary>
 /// US-2 (revisada): cambiar el cliente de una cotización editable. Endpoint propio y no un campo
-/// más del PATCH porque arrastra consecuencias que el resto de la edición no tiene —las partes de
-/// facturación y envío se borran, los totales se recalculan— y merece su propia entrada de
-/// auditoría.
+/// más del guardado del encabezado porque arrastra consecuencias que el resto de la edición no
+/// tiene —las partes de facturación y envío se borran, los totales se recalculan— y merece su
+/// propia entrada de auditoría.
 /// </summary>
 public sealed record ChangeQuotationClientRequest(Guid ClientId);
 
@@ -252,7 +245,7 @@ public sealed record QuotationEditItemRequest(Guid ProductId, decimal Quantity);
 /// El estado deseado completo de una cotización editable: mismo cuerpo para
 /// <c>PUT /quotations/{quotationId}</c> y <c>POST /quotations/{quotationId}/preview</c>.
 ///
-/// El encabezado se reemplaza entero, igual que en <see cref="UpdateQuotationRequest"/>: lo que no
+/// El encabezado se reemplaza entero: lo que no
 /// viene se limpia. <c>Items</c> es la lista **completa** de líneas deseadas, no un delta —
 /// ausente o null equivale a vacía, o sea "sin productos".
 /// </summary>

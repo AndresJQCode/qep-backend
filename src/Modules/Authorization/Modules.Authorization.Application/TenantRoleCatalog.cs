@@ -80,7 +80,7 @@ public sealed class TenantRoleCatalog(
                 definition.RiskLevel,
                 definition.Permissions,
                 IsSystem: true,
-                // Los de sistema no versionan: cambian con un deploy, no con un PATCH, asi que
+                // Los de sistema no versionan: cambian con un deploy, no con un PUT, asi que
                 // no hay concurrencia optimista que sostener sobre ellos.
                 Version: 0);
         }

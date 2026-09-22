@@ -5,7 +5,7 @@ namespace Modules.Quotations.Application;
 
 /// <summary>Lo que quedó cambiado, para que el guardado sepa qué historial y qué auditoría
 /// escribir. <paramref name="HeaderSummary"/> es null cuando el encabezado llegó igual a como
-/// estaba — mismo criterio que <c>UpdateQuotationHandler</c>: apretar Guardar sin cambiar nada no
+/// estaba — mismo criterio que <c>SaveQuotationHandler</c>: apretar Guardar sin cambiar nada no
 /// es un evento del historial.</summary>
 internal sealed record QuotationEditsOutcome(
     string? HeaderSummary,

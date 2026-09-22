@@ -238,10 +238,10 @@ public sealed class RealAuthenticationApiTests
         Assert.NotNull(invited);
 
         // Se invita como advisor y se promueve después por traspaso explícito: lo que se
-        // ejercita acá es el PATCH de roles con auth real, no la invitación (que hoy admite
+        // ejercita acá es el PUT de roles con auth real, no la invitación (que hoy admite
         // cualquier rol del catálogo).
         using var promoteRequest = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/memberships/{invited!.Id}/roles")
         {
             Content = JsonContent.Create(new { roles = AdminRoles }),
@@ -285,7 +285,7 @@ public sealed class RealAuthenticationApiTests
 
         var activeSecondOwner = await FindMembershipAsync(owner, tenantId, invited!.Id);
         using var downgradeRequest = new HttpRequestMessage(
-            HttpMethod.Patch,
+            HttpMethod.Put,
             $"/api/v1/tenants/{tenantId}/memberships/{invited.Id}/roles")
         {
             Content = JsonContent.Create(new { roles = AdvisorRoles }),

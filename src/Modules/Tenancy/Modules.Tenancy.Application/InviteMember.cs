@@ -129,7 +129,7 @@ public sealed class InviteMemberHandler(
         // Una invitación viva y una membresía activa son las dos no-ops. Renovar una invitación
         // viva movería un plazo con el que alguien cuenta e invalidaría el link que ya está en
         // su bandeja. El nombre del cuerpo se ignora igual que los roles: para renombrar a un
-        // miembro está PATCH .../display-name (spec 2026-09-11, D5).
+        // miembro está PUT .../display-name (spec 2026-09-11, D5).
         var invitationIsLive =
             existing.State == MembershipState.Invited && now <= existing.ExpiresAt;
         if (invitationIsLive || existing.State == MembershipState.Active)

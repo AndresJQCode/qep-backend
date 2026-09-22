@@ -822,7 +822,7 @@ public sealed class MembershipApiTests
     }
 
     // D5: una invitación viva es una no-op, y el nombre del cuerpo se ignora igual que los roles.
-    // Para renombrar a alguien está PATCH .../display-name.
+    // Para renombrar a alguien está PUT .../display-name.
     [Fact]
     public async Task InvitingAgainWhileTheInvitationIsLiveKeepsTheFirstName()
     {

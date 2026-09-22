@@ -32,7 +32,7 @@ public sealed class UpdateMemberDisplayNameValidator
 
 /// <summary>
 /// Renombra a un miembro del roster (spec 2026-09-11, D4). Endpoint propio y no parte de
-/// <c>PATCH .../roles</c>: son dos permisos distintos, y un PATCH mezclado obligaría a elegir la
+/// <c>PUT .../roles</c>: son dos permisos distintos, y un PUT mezclado obligaría a elegir la
 /// autorización según los campos que vinieron.
 ///
 /// Se permite en cualquier estado —el nombre es presentación y no cambia el acceso— y también

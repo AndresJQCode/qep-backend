@@ -59,7 +59,7 @@ public static class MembershipEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        group.MapPatch("/{membershipId:guid}/roles", UpdateRolesAsync)
+        group.MapPut("/{membershipId:guid}/roles", UpdateRolesAsync)
             .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
             .Accepts<MembershipRolesUpdateRequest>("application/json")
             .Produces<MembershipListItemResponse>()
@@ -71,7 +71,7 @@ public static class MembershipEndpoints
 
         // Con If-Match, igual que `/roles`: dos administradores renombrando a la misma persona es
         // una carrera real, y el nombre termina impreso en un PDF que se le manda al cliente.
-        group.MapPatch("/{membershipId:guid}/display-name", UpdateDisplayNameAsync)
+        group.MapPut("/{membershipId:guid}/display-name", UpdateDisplayNameAsync)
             .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
             .Accepts<MembershipDisplayNameUpdateRequest>("application/json")
             .Produces<MembershipListItemResponse>()

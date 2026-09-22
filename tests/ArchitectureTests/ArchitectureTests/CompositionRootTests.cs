@@ -85,7 +85,7 @@ public sealed class CompositionRootTests
 
     /// <summary>
     /// La vista por tenant NO puede ser singleton: fusiona los roles que el tenant definio, y
-    /// esos cambian con un PATCH, no con un deploy. Registrada como singleton, el primer
+    /// esos cambian con un PUT, no con un deploy. Registrada como singleton, el primer
     /// tenant en preguntar dejaria su catalogo cacheado para todo el proceso — y para todos
     /// los demas tenants.
     /// </summary>
