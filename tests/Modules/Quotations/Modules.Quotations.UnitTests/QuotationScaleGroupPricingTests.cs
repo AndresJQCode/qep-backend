@@ -1,4 +1,5 @@
 ﻿using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -16,11 +17,22 @@ public sealed class QuotationScaleGroupPricingTests
     private static QuotationPriceScaleRef Packages(int packagingUnit = 12) =>
         new(1, 999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, packagingUnit);
 
+    // El tramo "de mil": de a 1 por defecto, asi que ninguna cantidad falla el multiplo salvo
+    // que la prueba lo pida explicitamente.
+    private static QuotationPriceScaleRef Thousand(
+        int multiple = 1, decimal discount = 12m, int fromUnit = 1000, int toUnit = 5000) =>
+        new(fromUnit, toUnit, discount, QuotationPriceScaleRestriction.Multiple, multiple, null);
+
+    // Agrupa por producto: el piso global necesita productos con mas de una escala, y la version
+    // anterior de este helper tiraba con la clave repetida.
     private static Dictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> Catalog(
         params (Guid ProductId, QuotationPriceScaleRef Scale)[] entries) =>
-        entries.ToDictionary(
-            entry => entry.ProductId,
-            entry => (IReadOnlyCollection<QuotationPriceScaleRef>)[entry.Scale]);
+        entries
+            .GroupBy(entry => entry.ProductId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyCollection<QuotationPriceScaleRef>)
+                    group.Select(entry => entry.Scale).ToArray());
 
     private static QuotationLinePricing For(IReadOnlyList<QuotationLinePricing> result, Guid itemId) =>
         result.Single(line => line.ItemId == itemId);
@@ -52,7 +64,7 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Equal(0m, For(result, c).DiscountPercentage);
 
         Assert.Equal(5m, For(result, b).DiscountPercentage);
-        Assert.False(For(result, b).Grouped);
+        Assert.NotEqual(QuotationDiscountOrigin.Group, For(result, b).Origin);
         Assert.Equal(8m, For(result, b).Restriction!.EvaluatedQuantity);
     }
 
@@ -75,7 +87,7 @@ public sealed class QuotationScaleGroupPricingTests
                 (ProductB, Scale(allowGrouping: true))));
 
         Assert.All(result, line => Assert.Equal(0m, line.DiscountPercentage));
-        Assert.All(result, line => Assert.False(line.Grouped));
+        Assert.All(result, line => Assert.NotEqual(QuotationDiscountOrigin.Group, line.Origin));
         Assert.All(
             result,
             line => Assert.Equal("quotation.item.quantity_not_multiple", line.Restriction!.Code));
@@ -102,7 +114,7 @@ public sealed class QuotationScaleGroupPricingTests
                 (ProductB, Scale(allowGrouping: false))));
 
         Assert.All(result, line => Assert.Equal(0m, line.DiscountPercentage));
-        Assert.All(result, line => Assert.False(line.Grouped));
+        Assert.All(result, line => Assert.NotEqual(QuotationDiscountOrigin.Group, line.Origin));
         Assert.Equal(10m, For(result, a).Restriction!.EvaluatedQuantity);
         Assert.Equal(12m, For(result, b).Restriction!.EvaluatedQuantity);
     }
@@ -172,7 +184,7 @@ public sealed class QuotationScaleGroupPricingTests
 
         Assert.Equal(10m, For(result, a).DiscountPercentage);
         Assert.Equal(15m, For(result, b).DiscountPercentage);
-        Assert.All(result, line => Assert.True(line.Grouped));
+        Assert.All(result, line => Assert.Equal(QuotationDiscountOrigin.Group, line.Origin));
     }
 
     // La unidad de empaque nunca agrupa y nunca lanza desde aca: 6 no es empaque entero de 12,
@@ -190,7 +202,7 @@ public sealed class QuotationScaleGroupPricingTests
             ],
             Catalog((ProductA, Packages()), (ProductB, Packages())));
 
-        Assert.All(result, line => Assert.False(line.Grouped));
+        Assert.All(result, line => Assert.NotEqual(QuotationDiscountOrigin.Group, line.Origin));
         Assert.All(result, line => Assert.Equal(0m, line.DiscountPercentage));
         Assert.All(result, line => Assert.Equal(6m, line.Restriction!.EvaluatedQuantity));
     }
@@ -247,12 +259,12 @@ public sealed class QuotationScaleGroupPricingTests
 
         var lineA = For(result, a);
         Assert.Equal(5m, lineA.DiscountPercentage);
-        Assert.False(lineA.Grouped);
+        Assert.NotEqual(QuotationDiscountOrigin.Group, lineA.Origin);
         Assert.Equal(8m, lineA.Restriction!.EvaluatedQuantity);
 
         var lineB = For(result, b);
         Assert.Equal(0m, lineB.DiscountPercentage);
-        Assert.False(lineB.Grouped);
+        Assert.NotEqual(QuotationDiscountOrigin.Group, lineB.Origin);
         Assert.Equal("quotation.item.quantity_not_multiple", lineB.Restriction!.Code);
         Assert.Equal(10m, lineB.Restriction.EvaluatedQuantity);
     }
@@ -312,7 +324,7 @@ public sealed class QuotationScaleGroupPricingTests
 
         Assert.Equal(5m, For(result, a).DiscountPercentage);
         Assert.Equal(5m, For(result, b).DiscountPercentage);
-        Assert.True(For(result, a).Grouped);
+        Assert.Equal(QuotationDiscountOrigin.Group, For(result, a).Origin);
         Assert.Equal(6m, For(result, a).Restriction!.EvaluatedQuantity);
     }
 
@@ -341,7 +353,7 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Equal(6m, For(result, a).Restriction!.EvaluatedQuantity);
 
         Assert.Equal(10m, For(result, c).DiscountPercentage);
-        Assert.False(For(result, c).Grouped);
+        Assert.NotEqual(QuotationDiscountOrigin.Group, For(result, c).Origin);
     }
 
     // El caso reportado por el owner el 2026-09-21, con la escala real del catalogo sembrado:
@@ -371,13 +383,13 @@ public sealed class QuotationScaleGroupPricingTests
         foreach (var itemId in itemIds.Take(5))
         {
             Assert.Equal(15m, For(result, itemId).DiscountPercentage);
-            Assert.True(For(result, itemId).Grouped);
+            Assert.Equal(QuotationDiscountOrigin.Group, For(result, itemId).Origin);
             Assert.Equal(15m, For(result, itemId).Restriction!.EvaluatedQuantity);
         }
 
         var odd = For(result, itemIds[5]);
         Assert.Equal(0m, odd.DiscountPercentage);
-        Assert.False(odd.Grouped);
+        Assert.NotEqual(QuotationDiscountOrigin.Group, odd.Origin);
     }
 
     // ---- El piso de pertenencia al grupo (2026-09-21) ----
@@ -398,7 +410,7 @@ public sealed class QuotationScaleGroupPricingTests
 
         var line = For(result, a);
         Assert.Equal(0m, line.DiscountPercentage);
-        Assert.False(line.Grouped);
+        Assert.NotEqual(QuotationDiscountOrigin.Group, line.Origin);
         Assert.Equal("quotation.item.quantity_not_multiple", line.Restriction!.Code);
     }
 
@@ -415,7 +427,7 @@ public sealed class QuotationScaleGroupPricingTests
 
         var line = For(result, a);
         Assert.Equal(5m, line.DiscountPercentage);
-        Assert.False(line.Grouped);
+        Assert.NotEqual(QuotationDiscountOrigin.Group, line.Origin);
         Assert.Equal(56m, line.Restriction!.EvaluatedQuantity);
     }
 
@@ -441,7 +453,201 @@ public sealed class QuotationScaleGroupPricingTests
                 (ProductB, Scale(allowGrouping: true, multiple: 6, fromUnit: 50, toUnit: 98))));
 
         Assert.All(result, line => Assert.Equal(5m, line.DiscountPercentage));
-        Assert.All(result, line => Assert.True(line.Grouped));
+        Assert.All(result, line => Assert.Equal(QuotationDiscountOrigin.Group, line.Origin));
         Assert.All(result, line => Assert.Equal(54m, line.Restriction!.EvaluatedQuantity));
+    }
+
+    // El caso para el que existe el feature: tres unidades no llegan solas a ningun lado, y el
+    // asesor eligio el tramo que arranca en 1000.
+    [Fact]
+    public void TheGlobalFloorGivesItsDiscountToALineThatCannotReachItAlone()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 3m)],
+            Catalog((ProductA, Thousand())),
+            globalFloor: 1000);
+
+        Assert.Equal(12m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.GlobalFloor, For(result, a).Origin);
+    }
+
+    // El global no le saca a nadie lo que ya tenia: la linea de 2000 cae sola en el tramo de mil
+    // al 12%, y el piso 100 solo ofrece 5%.
+    [Fact]
+    public void TheGlobalFloorNeverLowersADiscountTheLineAlreadyEarned()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 2000m)],
+            Catalog(
+                (ProductA, Thousand()),
+                (ProductA, Thousand(fromUnit: 100, toUnit: 999, discount: 5m))),
+            globalFloor: 100);
+
+        Assert.Equal(12m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.Own, For(result, a).Origin);
+    }
+
+    // Empate: el global ofrece exactamente lo que la linea ya tenia. Gana lo propio, asi que no
+    // queda marcada con un origen que no le cambio nada.
+    [Fact]
+    public void ATieKeepsTheOriginTheLineAlreadyHad()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 2000m)],
+            Catalog(
+                (ProductA, Thousand()),
+                (ProductA, Thousand(fromUnit: 100, toUnit: 999))),
+            globalFloor: 100);
+
+        Assert.Equal(12m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.Own, For(result, a).Origin);
+    }
+
+    // Un producto sin ese piso no participa y resuelve como siempre.
+    [Fact]
+    public void AProductWithoutThatFloorIsUntouchedByTheGlobalDiscount()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 8m)],
+            Catalog((ProductA, Scale(allowGrouping: false))),
+            globalFloor: 1000);
+
+        Assert.Equal(5m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.Own, For(result, a).Origin);
+    }
+
+    // El multiplo se sigue exigiendo: 25 no es multiplo de 10.
+    [Fact]
+    public void TheGlobalFloorStillRequiresTheMultiple()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 25m)],
+            Catalog((ProductA, Thousand(multiple: 10))),
+            globalFloor: 1000);
+
+        Assert.Equal(0m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.Own, For(result, a).Origin);
+    }
+
+    // ...y se cuenta crudo por debajo del piso. Con la cuenta desde FromUnit, 30 - 1000 da
+    // negativo y ninguna linea chica cobraria nunca el global.
+    [Fact]
+    public void BelowTheFloorTheMultipleIsCountedFromZero()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 30m)],
+            Catalog((ProductA, Thousand(multiple: 10))),
+            globalFloor: 1000);
+
+        Assert.Equal(12m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.GlobalFloor, For(result, a).Origin);
+    }
+
+    // Por encima del piso manda la cuenta desde FromUnit: (1002 - 1000) % 3 = 2, asi que no
+    // descuenta, aunque 1002 % 3 si de 0. El global no afloja lo que la linea ya alcanzaba.
+    [Fact]
+    public void AboveTheFloorTheMultipleIsStillCountedFromTheFloor()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 1002m)],
+            Catalog((ProductA, Thousand(multiple: 3))),
+            globalFloor: 1000);
+
+        Assert.Equal(0m, For(result, a).DiscountPercentage);
+    }
+
+    // PackagingUnit bloquea igual: 25 no son paquetes enteros de 12.
+    [Fact]
+    public void TheGlobalFloorStillRequiresThePackagingUnit()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 25m)],
+            Catalog((ProductA, new QuotationPriceScaleRef(
+                1000, 5000, 12m, QuotationPriceScaleRestriction.PackagingUnit, null, 12))),
+            globalFloor: 1000);
+
+        Assert.Equal(0m, For(result, a).DiscountPercentage);
+    }
+
+    // Una escala incompleta --la que deja la copia de escalas en Catalog, con rango y descuento
+    // pero sin restriccion-- nunca se cumple, tampoco como piso global. Si pasara, el global
+    // regalaria el descuento de un tramo que nadie termino de configurar.
+    [Fact]
+    public void AnIncompleteScaleNeverBecomesTheGlobalDiscount()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 3m)],
+            Catalog((ProductA, new QuotationPriceScaleRef(
+                1000, 5000, 12m, Restriction: null, Multiple: null, PackagingUnit: null))),
+            globalFloor: 1000);
+
+        Assert.Equal(0m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.Own, For(result, a).Origin);
+    }
+
+    // Quantity es decimal(10,2). Una cantidad fraccionaria contra un tramo de a 3 no es multiplo
+    // y no descuenta: el resto decimal no se redondea a favor de nadie.
+    [Fact]
+    public void AFractionalQuantityDoesNotSatisfyTheMultiple()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 2.5m)],
+            Catalog((ProductA, Thousand(multiple: 3))),
+            globalFloor: 1000);
+
+        Assert.Equal(0m, For(result, a).DiscountPercentage);
+    }
+
+    // Dos tramos del mismo producto arrancando en el mismo piso. Gana el de mayor descuento y no
+    // el primero que EF haya materializado: el orden de esa coleccion no esta garantizado, y sin
+    // criterio la misma cotizacion se valorizaria distinto entre dos lecturas.
+    [Fact]
+    public void WithTwoScalesOnTheSameFloorTheBestDiscountWins()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 3m)],
+            Catalog(
+                (ProductA, Thousand(discount: 8m)),
+                (ProductA, Thousand(discount: 15m))),
+            globalFloor: 1000);
+
+        Assert.Equal(15m, For(result, a).DiscountPercentage);
+    }
+
+    // Sin piso global el resultado es identico al de siempre: la regresion que protege a las
+    // cotizaciones que ya existen.
+    [Fact]
+    public void WithoutAGlobalFloorNothingChanges()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 3m)],
+            Catalog((ProductA, Thousand())));
+
+        Assert.Equal(0m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.Own, For(result, a).Origin);
     }
 }

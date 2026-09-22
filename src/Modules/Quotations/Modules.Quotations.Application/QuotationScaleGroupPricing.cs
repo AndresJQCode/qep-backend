@@ -1,17 +1,20 @@
+using Modules.Quotations.Domain;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>Una línea tal como queda después de la mutación, con la cantidad que el recálculo
 /// debe considerar.</summary>
 public sealed record QuotationPricingLine(Guid ItemId, Guid ProductId, decimal Quantity);
 
-/// <param name="Grouped">Si el tramo se lo dio la suma del grupo y no su propia cantidad. Viaja a
-/// la respuesta: "te lo dieron entre todas" y "te lo ganaste sola" no son lo mismo en pantalla.</param>
+/// <param name="Origin">De dónde salió el descuento. Viaja a la respuesta: "te lo ganaste
+/// sola", "te lo dieron entre todas" y "te lo dio el piso global" no son lo mismo en pantalla.
+/// </param>
 public sealed record QuotationLinePricing(
     Guid ItemId,
     decimal DiscountPercentage,
     QuotationPriceScaleRef? Scale,
     QuotationScaleRestrictionResult? Restriction,
-    bool Grouped);
+    QuotationDiscountOrigin Origin);
 
 /// <summary>
 /// Resuelve el descuento de **todas** las líneas de una cotización a la vez, porque desde que
@@ -53,12 +56,14 @@ internal static class QuotationScaleGroupPricing
 {
     public static IReadOnlyList<QuotationLinePricing> Resolve(
         IReadOnlyCollection<QuotationPricingLine> lines,
-        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct)
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct,
+        int? globalFloor = null)
     {
         var groupTotals = GroupTotals(lines, scalesByProduct);
 
         return lines
-            .Select(line => ToPricing(line, ScalesOf(scalesByProduct, line.ProductId), groupTotals))
+            .Select(line => ToPricing(
+                line, ScalesOf(scalesByProduct, line.ProductId), groupTotals, globalFloor))
             .ToArray();
     }
 
@@ -126,11 +131,13 @@ internal static class QuotationScaleGroupPricing
     private static QuotationLinePricing ToPricing(
         QuotationPricingLine line,
         IReadOnlyCollection<QuotationPriceScaleRef> scales,
-        Dictionary<(int, int, int), decimal> groupTotals)
+        Dictionary<(int, int, int), decimal> groupTotals,
+        int? globalFloor)
     {
         var own = OwnPricing(line, QuotationDiscountResolver.Resolve(scales, line.Quantity));
+        var best = Upgrade(line, scales, groupTotals, own) ?? own;
 
-        return Upgrade(line, scales, groupTotals, own) ?? own;
+        return GlobalPricing(line, scales, globalFloor, best) ?? best;
     }
 
     /// <summary>
@@ -142,7 +149,8 @@ internal static class QuotationScaleGroupPricing
     {
         if (scale is null)
         {
-            return new QuotationLinePricing(line.ItemId, 0m, null, null, false);
+            return new QuotationLinePricing(
+                line.ItemId, 0m, null, null, QuotationDiscountOrigin.Own);
         }
 
         var individual = QuotationScaleRestrictionRule.Evaluate(scale, line.Quantity);
@@ -152,7 +160,7 @@ internal static class QuotationScaleGroupPricing
             individual.IsSatisfied ? scale.Discount : 0m,
             scale,
             individual,
-            false);
+            QuotationDiscountOrigin.Own);
     }
 
     /// <summary>
@@ -195,10 +203,62 @@ internal static class QuotationScaleGroupPricing
                 scale.Discount,
                 scale,
                 QuotationScaleRestrictionResult.Satisfied(total),
-                true);
+                QuotationDiscountOrigin.Group);
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// El tramo que el asesor eligió para toda la cotización, identificado por su piso
+    /// (<c>FromUnit</c>). Las escalas son por producto, así que cada línea busca el tramo con
+    /// ese piso **en su propio producto**: uno que no lo tenga simplemente no participa.
+    ///
+    /// Sólo reemplaza con un descuento **estrictamente** mayor, igual que <see cref="Upgrade"/>:
+    /// el global es un piso y no un techo, y nadie pierde descuento por activarlo.
+    ///
+    /// La restricción se sigue exigiendo — el global decide qué tramo se usa, no afloja el
+    /// múltiplo ni el empaque. Lo que sí cambia es desde dónde se cuenta: por debajo del piso
+    /// no hay contra qué anclar un offset, así que ahí se cuenta crudo. Ver
+    /// <see cref="QuotationScaleRestrictionRule.EvaluateFromZero"/>.
+    ///
+    /// Con dos tramos del mismo producto empatados en el piso gana el de mayor descuento, y no
+    /// el primero que haya materializado EF: el orden de esa colección no está garantizado, y
+    /// sin este criterio la misma cotización podría valorizarse distinto entre dos lecturas.
+    /// </summary>
+    private static QuotationLinePricing? GlobalPricing(
+        QuotationPricingLine line,
+        IReadOnlyCollection<QuotationPriceScaleRef> scales,
+        int? globalFloor,
+        QuotationLinePricing best)
+    {
+        if (globalFloor is not { } floor)
+        {
+            return null;
+        }
+
+        var scale = scales
+            .Where(candidate => candidate.FromUnit == floor)
+            .OrderByDescending(candidate => candidate.Discount)
+            .FirstOrDefault();
+
+        if (scale is null || scale.Discount <= best.DiscountPercentage)
+        {
+            return null;
+        }
+
+        var restriction = line.Quantity < scale.FromUnit
+            ? QuotationScaleRestrictionRule.EvaluateFromZero(scale, line.Quantity)
+            : QuotationScaleRestrictionRule.Evaluate(scale, line.Quantity);
+
+        return restriction.IsSatisfied
+            ? new QuotationLinePricing(
+                line.ItemId,
+                scale.Discount,
+                scale,
+                restriction,
+                QuotationDiscountOrigin.GlobalFloor)
+            : null;
     }
 
     // El paso > 0 es invariante de Catalog; exigirlo acá evita dividir por cero al validar el
