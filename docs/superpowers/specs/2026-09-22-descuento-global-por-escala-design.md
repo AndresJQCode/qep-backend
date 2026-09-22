@@ -61,7 +61,7 @@ Los dos suben `Version`, `UpdatedAt` y `UpdatedBy`: es una edición del encabeza
 `ApplyGroupDiscounts`, que a propósito no toca la versión porque es recálculo y no edición.
 
 Historial: entrada `QuotationHistoryEventType.Edited` con un resumen nuevo,
-`QuotationChangeSummary.GlobalScaleFloorChanged(int? from, int? to)`.
+`QuotationChangeSummary.GlobalScaleFloorChanged(int? floor)`.
 
 Auditoría: `quotation.quotation.global_scale_changed`, publicada por
 `IQuotationAuditPublisher` en la misma unidad de trabajo, como el resto.
@@ -99,10 +99,45 @@ Por línea, un tercer candidato después del propio y del de grupo:
 ```
 scale := la escala del producto de la línea cuyo FromUnit == globalFloor
   si no existe   -> el producto no participa del global
-  restricción    -> QuotationScaleRestrictionRule.Evaluate(scale, cantidad PROPIA de la línea)
+  restricción    -> se evalúa sobre la cantidad PROPIA de la línea (ver abajo)
                     no satisfecha -> no participa
   gana si scale.Discount > el mejor descuento hasta ahora  (estrictamente)
 ```
+
+### El múltiplo se cuenta crudo cuando la línea no llega al piso
+
+`QuotationScaleRestrictionRule.Evaluate` cuenta el múltiplo **desde `FromUnit`**. Contra el
+tramo global eso lo rompe todo: una línea de 3 unidades contra un tramo 1000-5000 da
+`offset = 3 - 1000 = -997`, y el guard `offset < 0` la devuelve no satisfecha. Con esa regla
+tal cual, ninguna línea por debajo del piso podría cobrar nunca el descuento global — que es
+exactamente el caso para el que existe este feature.
+
+El código ya resolvió esto para la agrupación: `Qualifies` valida `quantity % Multiple == 0`
+crudo, y su propio comentario dice por qué — "por debajo de `FromUnit` no hay contra qué anclar
+un offset". El global está en la misma situación.
+
+Regla:
+
+```
+si line.Quantity < scale.FromUnit  -> múltiplo crudo, contado desde 0
+si no                              -> Evaluate normal, contado desde FromUnit
+```
+
+La condición importa: sin ella una línea de 1002 contra un tramo 1000-5000 de a 3 quedaría sin
+descuento propio —`(1002 - 1000) % 3 = 2`— y el global se lo daría igual contando crudo
+(`1002 % 3 = 0`), o sea el global aflojaría una restricción que la línea ya alcanzaba sola.
+Con la condición, la cuenta cruda sólo corre donde no hay piso contra el cual anclar.
+
+`PackagingUnit` ya contaba crudo siempre, así que para esa restricción no cambia nada.
+
+Esto se implementa como un método hermano en `QuotationScaleRestrictionRule`:
+
+```csharp
+public static QuotationScaleRestrictionResult EvaluateFromZero(
+    QuotationPriceScaleRef scale, decimal quantity)
+```
+
+idéntico a `Evaluate` salvo que le pasa piso `0` también al caso `Multiple`.
 
 La comparación estricta es la misma regla que ya usa `Upgrade`: con empate gana lo que la
 línea consiguió antes, así no queda marcada con un origen que no le cambió nada.
@@ -115,10 +150,14 @@ queda el grupo.
 `QuotationLinePricing.Grouped` (bool) pasa a
 `QuotationDiscountOrigin { Own, Group, GlobalFloor }`.
 
-Su documentación dice que `Grouped` "viaja a la respuesta", pero hoy es falso: `grep -rn
-"Grouped" src/` no da ningún uso fuera de `QuotationScaleGroupPricing.cs`. Es un campo muerto,
-así que cambiarle la forma no rompe ningún contrato. Tres estados mutuamente excluyentes no
-son dos bools.
+Su documentación dice que `Grouped` "viaja a la respuesta", pero hoy es falso: no tiene un solo
+uso en `src/` fuera de `QuotationScaleGroupPricing.cs`. No llega a ningún DTO, así que cambiarle
+la forma no rompe ningún contrato HTTP. Tres estados mutuamente excluyentes no son dos bools.
+
+Sí lo usan las pruebas: **14 asserts** en `QuotationScaleGroupPricingTests.cs`
+(`Assert.False(...Grouped)` y `Assert.True(...Grouped)`). Pasan a comparar contra
+`QuotationDiscountOrigin`, y es trabajo mecánico pero hay que hacerlo en la misma tarea o la
+suite no compila.
 
 El origen sí se expone ahora: `QuotationItemDto.DiscountOrigin` (string, el nombre del enum —
 los enums viajan con su nombre porque el diccionario lo tiene el frontend). Sin esto la
@@ -143,31 +182,39 @@ Prefijos reales: `/api/v1/tenants/{tenantId:guid}/quotations` y
 | --- | --- | --- |
 | `PUT` | `/quotations/{quotationId:guid}/global-scale` | `SetQuotationGlobalScaleHandler` |
 | `PUT` | `/orders/{orderId:guid}/global-scale` | `SetOrderGlobalScaleHandler` |
-| `GET` | `/quotations/{quotationId:guid}/global-scale-floors` | `GetQuotationGlobalScaleFloorsHandler` |
 
 `PUT` y no `PATCH`: Vercel no soporta `PATCH` en el rewrite (`d3aff26`).
 
 Cuerpo del `PUT`: `{ "floor": 1000 }`. `{ "floor": null }` lo quita.
 
-Respuesta del `PUT`: la cotización completa ya recalculada (`QuotationDto`), y en el caso del
-pedido el par `OrderDto` + `QuotationDto` que ya devuelve `AddOrderItems`. Una colección que
-se edita vuelve entera y en orden, que es lo que el formulario repinta.
+Respuesta: la cotización completa ya recalculada, compuesta por `IQuotationResponseComposer`,
+igual que toda otra respuesta de cotización. Una colección que se edita vuelve entera y en
+orden, que es lo que el formulario repinta.
 
-Respuesta del `GET`: `{ "floors": [100, 500, 1000] }`, ordenado ascendente, **completo incluso
-vacío**. Sale de los `FromUnit` distintos de las escalas de los productos que la cotización
-tiene cargados, vía `IQuotationProductPricingLookup.FindManyAsync`.
+### Los pisos disponibles van en el composer, no en un endpoint aparte
 
-### Por qué los pisos van en un endpoint propio y no en `QuotationDto`
+`QuotationResponseComposer` es el borde de presentación de **todas** las respuestas de
+cotización, del `GET` y de cada mutación, y lo comparten los endpoints de pedido
+(`GetOrderByIdAsync`, `SaveOrderEditsAsync`, `AddOrderItemsAsync`, `PreviewOrderEditsAsync` lo
+llaman). Ya carga los productos de la cotización con
+`IQuotationProductLookup.FindManyAsync` y ya devuelve las escalas por línea en
+`QuotationItemResponse.PriceScales`.
 
-`QuotationMapping.ToDto` es una extensión pura sobre el agregado con alrededor de diez
-llamadores, y la mitad de ellos —`SaveQuotation`, `ChangeQuotationClient`, `SendQuotation`,
-`VoidQuotation`— no tiene el lookup del catálogo. Meter el arreglo ahí obliga a cablear el
-lookup en handlers que no lo necesitan, o a devolver un arreglo vacío que miente: "no hay
-pisos disponibles" cuando en realidad nadie los buscó. El select lo abre el asesor
-deliberadamente, así que un `GET` en ese momento es barato.
+O sea que los pisos disponibles **ya están en la respuesta de hoy**, desparramados en
+`items[].priceScales[].fromUnit`. Un endpoint aparte sería una tercera fuente del mismo dato y
+un viaje de red extra por algo que ya viajó. Se agregan dos campos al `QuotationResponse`, los
+dos armados en el composer sin una sola consulta nueva:
 
-`QuotationDto.GlobalScaleFloor` (`int?`) sí va en el DTO: es estado del agregado y `ToDto` ya
-lo tiene a mano, sin llamadores nuevos que tocar.
+- `GlobalScaleFloor` (`int?`) — viene del agregado por `QuotationDto`
+- `AvailableGlobalScaleFloors` (`IReadOnlyCollection<int>`) — los `FromUnit` distintos de las
+  escalas de los productos que el composer ya tiene cargados, ordenados ascendente y
+  **completo incluso vacío**
+
+`QuotationDto.GlobalScaleFloor` (`int?`) va en el DTO: es estado del agregado y
+`QuotationMapping.ToDto` lo tiene a mano, sin llamadores nuevos que tocar.
+
+`QuotationItemResponse.DiscountOrigin` (string) sale del mismo composer, leyendo
+`QuotationItemDto.DiscountOrigin`.
 
 ### Permisos
 
@@ -213,10 +260,15 @@ TDD: RED antes que GREEN, con evidencia literal de las dos corridas.
 3. El propio gana: línea de 2000 que cae sola en 1000-5000 al 12%, global en el tramo 100 al
    5% → 12%.
 4. Empate: el origen queda en `Own`, no en `GlobalFloor`.
-5. El múltiplo bloquea: tramo global con `Multiple = 10` y línea de 25 → sin descuento global.
-6. `PackagingUnit` bloquea igual.
-7. Global y grupo conviviendo: el mayor gana; con empate queda `Group`.
-8. `globalFloor = null`: resultado idéntico al de hoy (prueba de no regresión).
+5. El múltiplo bloquea: tramo global 1000-5000 con `Multiple = 10` y línea de 25 → sin
+   descuento global (25 % 10 ≠ 0).
+6. El múltiplo se cuenta crudo por debajo del piso: mismo tramo, línea de 30 → sí cobra.
+   Sin esto el feature no funciona para ninguna línea pequeña, que son todas.
+7. `PackagingUnit` bloquea igual.
+8. Por encima del piso manda la cuenta desde `FromUnit`: tramo 1000-5000 de a 3, línea de 1002
+   → sin descuento, aunque `1002 % 3 = 0`. El global no afloja lo que la línea ya alcanzaba.
+9. Global y grupo conviviendo: el mayor gana; con empate queda `Group`.
+10. `globalFloor = null`: resultado idéntico al de hoy (prueba de no regresión).
 
 ### Integración
 
@@ -225,8 +277,10 @@ TDD: RED antes que GREEN, con evidencia literal de las dos corridas.
 3. El `PUT` del pedido lo cambia estando `Pending`, y lo rechaza en cualquier otro estado.
 4. El `PUT` de cotización lo rechaza en `Converted`.
 5. `422 quotation.global_scale.floor_not_available` con un piso inexistente.
-6. El `GET` de pisos devuelve los `FromUnit` distintos, ordenados y sin repetir.
-7. El `GET` de pisos devuelve `[]` en una cotización sin líneas.
+6. El composer devuelve `availableGlobalScaleFloors` con los `FromUnit` distintos, ordenados y
+   sin repetir, y `[]` en una cotización sin líneas.
+7. El composer devuelve `discountOrigin` por línea, y vale `GlobalFloor` en la que se llevó el
+   descuento por el piso elegido.
 8. El historial anota la entrada `Edited` con su resumen.
 
 Cuidado conocido: agregar un campo requerido o una precondición rompe las pruebas de
@@ -240,8 +294,9 @@ permiso faltante y no de lo que creen estar probando.
 
 ## 7. Fuera de alcance
 
-- El `<select>` en la SPA, que vive en `qep-frontend` y necesita su propio trabajo: consumir
-  el `GET` de pisos, mandar el `PUT` y mostrar `DiscountOrigin` por línea.
+- El `<select>` en la SPA, que vive en `qep-frontend` y necesita su propio trabajo: leer
+  `availableGlobalScaleFloors` de la respuesta que ya recibe, mandar el `PUT` y mostrar
+  `discountOrigin` por línea.
 - Cualquier noción de piso global a nivel tenant o catálogo. Las opciones salen de los
   productos de la cotización y de ningún otro lado.
 - Tocar `QuotationDiscountResolver`, que sigue resolviendo por cantidad y no sabe del global.
