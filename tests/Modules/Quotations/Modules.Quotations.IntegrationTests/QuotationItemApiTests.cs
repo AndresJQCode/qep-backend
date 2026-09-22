@@ -235,8 +235,8 @@ public sealed class QuotationItemApiTests
     }
 
     // CAT-09: Multiple ya no bloquea la linea -- si la cantidad no cae en el multiplo, la escala
-    // no aplica y la linea se guarda sin descuento. El multiplo se cuenta sobre la cantidad
-    // cruda: una escala 5-48 de a 3 admite 3, 6, 9..., y 7 no.
+    // no aplica y la linea se guarda sin descuento. El multiplo se cuenta DESDE FromUnit
+    // (2026-09-21): una escala 5-48 de a 3 admite 5, 8, 11..., y 7 no.
     [Fact]
     public async Task AddItemOffTheScaleMultipleIsAcceptedWithoutDiscount()
     {
@@ -261,7 +261,8 @@ public sealed class QuotationItemApiTests
         Assert.Equal(0m, Assert.Single(created.Items).DiscountPercentage);
     }
 
-    // El multiplo se cuenta sobre la cantidad cruda, no desde FromUnit: 9 = 3 x 3 cumple.
+    // El multiplo se cuenta desde FromUnit, no sobre la cantidad cruda: en 5-48 de a 3 cumple 8
+    // (8 - 5 = 3), y 9 -- que es multiplo crudo de 3 y hasta el 2026-09-21 descontaba -- no.
     [Fact]
     public async Task AddItemOnTheScaleMultipleIsAccepted()
     {
@@ -276,7 +277,7 @@ public sealed class QuotationItemApiTests
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 9m),
+            new AddQuotationItemRequest(productId, 8m),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -284,7 +285,7 @@ public sealed class QuotationItemApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(created);
         var item = Assert.Single(created.Items);
-        Assert.Equal(9m, item.Quantity);
+        Assert.Equal(8m, item.Quantity);
         Assert.Equal(5m, item.DiscountPercentage);
     }
 
@@ -315,7 +316,8 @@ public sealed class QuotationItemApiTests
     }
 
     // Multiple ya no bloquea la edicion: la cantidad nueva se guarda igual, sin descuento,
-    // cuando cae fuera del multiplo de la escala.
+    // cuando cae fuera del multiplo de la escala. Arranca en 8, que si cumple desde el piso, para
+    // que se vea que el descuento se pierde al editar y no que nunca estuvo.
     [Fact]
     public async Task UpdateItemOffTheScaleMultipleIsAcceptedWithoutDiscount()
     {
@@ -329,9 +331,10 @@ public sealed class QuotationItemApiTests
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
         var withItem = await ReadQuotationAsync(await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 9m),
+            new AddQuotationItemRequest(productId, 8m),
             TestContext.Current.CancellationToken));
         var itemId = Assert.Single(withItem.Items).Id;
+        Assert.Equal(5m, Assert.Single(withItem.Items).DiscountPercentage);
 
         var response = await client.PutAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
@@ -347,9 +350,11 @@ public sealed class QuotationItemApiTests
         Assert.Equal(0m, item.DiscountPercentage);
     }
 
-    // La otra restriccion se cuenta sobre la cantidad cruda: empaques enteros de 12.
+    // La otra restriccion se cuenta sobre la cantidad cruda: empaques enteros de 12. Desde el
+    // 2026-09-22 tampoco bloquea -- 20 unidades no son paquetes enteros de 12, asi que la linea
+    // se guarda con la cantidad nueva y pierde el 15% que tenia con 24.
     [Fact]
-    public async Task UpdateItemWithAPartialPackageIsUnprocessable()
+    public async Task UpdateItemWithAPartialPackageIsAcceptedWithoutDiscount()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -357,24 +362,28 @@ public sealed class QuotationItemApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(
-            client, tenantId, baseCop: 100_000m, scales: PackagesOfTwelve(100_000m));
+            client, tenantId, baseCop: 100_000m,
+            scales: PackagesOfTwelve(100_000m, discount: 15m));
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
         var withItem = await ReadQuotationAsync(await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
             new AddQuotationItemRequest(productId, 24m),
             TestContext.Current.CancellationToken));
         var itemId = Assert.Single(withItem.Items).Id;
+        Assert.Equal(15m, Assert.Single(withItem.Items).DiscountPercentage);
 
         var response = await client.PutAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
             new UpdateQuotationItemRequest(20m),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<QuotationResponse>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(problem);
-        Assert.Equal("quotation.item.quantity_not_packaging_unit", problem.Code);
+        Assert.NotNull(updated);
+        var item = Assert.Single(updated.Items);
+        Assert.Equal(20m, item.Quantity);
+        Assert.Equal(0m, item.DiscountPercentage);
     }
 
     // BFF: sin la restriccion en la respuesta, la pantalla no tiene con que evitar el 422 antes
@@ -537,13 +546,18 @@ public sealed class QuotationItemApiTests
         }
     ];
 
-    /// <summary>Una sola escala 1-999 sin descuento, solo por empaques de 12.</summary>
-    private static object[] PackagesOfTwelve(decimal baseCop) =>
+    /// <summary>
+    /// Una sola escala 1-999 por empaques de 12. Sin descuento salvo que se pida uno: los casos
+    /// que solo ejercen la restriccion no lo necesitan, y el que verifica que una cantidad
+    /// incompleta se guarda SIN descuento necesita que antes hubiera uno que perder.
+    /// </summary>
+    private static object[] PackagesOfTwelve(decimal baseCop, decimal discount = 0m) =>
     [
         new
         {
-            fromUnit = 1, toUnit = 999, discount = 0m,
-            restriction = "packaging_unit", packagingUnit = 12, finalCop = baseCop
+            fromUnit = 1, toUnit = 999, discount,
+            restriction = "packaging_unit", packagingUnit = 12,
+            finalCop = baseCop * (1m - discount / 100m)
         }
     ];
 
