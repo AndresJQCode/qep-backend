@@ -33,9 +33,9 @@ public sealed class SaveQuotationValidator : QuotationEditsValidator<SaveQuotati
 /// contra otra pestaña.
 ///
 /// El historial y la auditoría son los mismos que emiten los endpoints que esto reemplaza
-/// (<c>UpdateQuotationHandler</c>, <c>AddQuotationItemHandler</c>,
-/// <c>UpdateQuotationItemHandler</c>, <c>RemoveQuotationItemHandler</c>): la línea de tiempo de una
-/// cotización no puede depender de por qué endpoint entró el cambio.
+/// (<c>AddQuotationItemHandler</c>, <c>UpdateQuotationItemHandler</c>,
+/// <c>RemoveQuotationItemHandler</c>): la línea de tiempo de una cotización no puede depender de
+/// por qué endpoint entró el cambio.
 /// </summary>
 public sealed class SaveQuotationHandler(
     IQuotationRepository repository,
@@ -83,8 +83,8 @@ public sealed class SaveQuotationHandler(
             quotation, command, command.TenantId, customerLookup, companyLookup, pricingLookup,
             updatedBy, now, cancellationToken);
 
-        // Guardar sin cambiar el encabezado no deja fila, igual que en UpdateQuotationHandler: una
-        // lista de "editó" vacíos esconde las ediciones que sí importan.
+        // Guardar sin cambiar el encabezado no deja fila: una lista de "editó" vacíos esconde las
+        // ediciones que sí importan.
         if (outcome.HeaderSummary is not null)
         {
             repository.AddHistoryEntry(QuotationHistoryEntry.Create(

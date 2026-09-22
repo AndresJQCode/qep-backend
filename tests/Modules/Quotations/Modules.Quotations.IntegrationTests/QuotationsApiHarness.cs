@@ -576,9 +576,9 @@ internal static class QuotationsApiHarness
 
     /// <summary>Nace con vigencia porque <c>Quotation.Send</c> la exige: sin
     /// <c>ValidUntil</c> la cotización nunca vencería y quedaría convertible a pedido para
-    /// siempre. Las pruebas que necesitan otra fecha (el barrido de vencimiento) la
-    /// sobrescriben después con <c>UpdateQuotationRequest</c>, que sigue disponible en
-    /// <c>Sent</c>.</summary>
+    /// siempre. Las pruebas que necesitan otra fecha (el barrido de vencimiento) la pasan acá
+    /// mismo por el parámetro <c>validUntil</c>, en vez de sobrescribirla después con
+    /// <c>PUT /quotations/{quotationId}</c>, que sigue disponible en <c>Sent</c>.</summary>
     public static async Task<QuotationResponse> CreateQuotationAsync(
         HttpClient client,
         Guid tenantId,

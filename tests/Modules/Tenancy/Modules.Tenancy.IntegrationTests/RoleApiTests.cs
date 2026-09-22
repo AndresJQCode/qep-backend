@@ -169,7 +169,7 @@ public sealed class RoleApiTests
         var role = await CreatedRoleAsync(client, "ventas-junior");
 
         using var request = new HttpRequestMessage(
-            HttpMethod.Patch, $"{RolesUrl()}/{role.Id}")
+            HttpMethod.Put, $"{RolesUrl()}/{role.Id}")
         {
             Content = JsonContent.Create(new
             {
@@ -215,7 +215,7 @@ public sealed class RoleApiTests
         Assert.Equal("Ventas senior", updated!.DisplayName);
         Assert.Equal(ManageProducts, updated.Permissions);
         Assert.True(updated.Version > role.Version);
-        // El ETag viaja para que el próximo PATCH tenga qué mandar en If-Match sin releer.
+        // El ETag viaja para que el próximo PUT tenga qué mandar en If-Match sin releer.
         Assert.Equal($"\"{updated.Version}\"", response.Headers.ETag?.ToString());
     }
 
@@ -319,7 +319,7 @@ public sealed class RoleApiTests
         params string[] permissions)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Patch, $"{RolesUrl()}/{roleId}")
+            HttpMethod.Put, $"{RolesUrl()}/{roleId}")
         {
             Content = JsonContent.Create(new
             {

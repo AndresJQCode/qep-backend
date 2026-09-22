@@ -22,7 +22,7 @@ public sealed class ChangeQuotationClientValidator
 /// <summary>
 /// US-2 (revisada): cambia el cliente de una cotización editable.
 ///
-/// Caso de uso propio y no un campo más de <see cref="UpdateQuotationHandler"/>: el cliente nuevo
+/// Caso de uso propio y no un campo más de <see cref="SaveQuotationHandler"/>: el cliente nuevo
 /// pasa por la misma puerta que al crear —existe, tiene CUC y está activo
 /// (<see cref="QuotationCustomerEligibility"/>)— y el cambio arrastra las partes y los totales,
 /// que <c>UpdateDetails</c> no toca. Además deja su propia entrada de historial y de auditoría:

@@ -96,8 +96,8 @@ public sealed class SaveQuotationValidatorTests
         AssertFailsOn(_preview.Validate(Query(items: items)), "Items[0].Quantity");
     }
 
-    // La regla del encabezado es la misma que ya aplicaba el PATCH (UpdateQuotationValidator): no
-    // se reescribe, se comparte.
+    // La regla del encabezado la comparten el guardado de una vez y su calculo previo
+    // (QuotationHeaderRules): no se reescribe dos veces.
     [Fact]
     public void RejectsAPaymentMethodLongerThanTheLimit()
     {
@@ -105,10 +105,5 @@ public sealed class SaveQuotationValidatorTests
 
         AssertFailsOn(_save.Validate(Command(paymentMethod: tooLong)), "PaymentMethod");
         AssertFailsOn(_preview.Validate(Query(paymentMethod: tooLong)), "PaymentMethod");
-        AssertFailsOn(
-            new UpdateQuotationValidator().Validate(
-                new UpdateQuotationCommand(
-                    Guid.CreateVersion7(), Guid.CreateVersion7(), null, tooLong, null, null, null)),
-            "PaymentMethod");
     }
 }

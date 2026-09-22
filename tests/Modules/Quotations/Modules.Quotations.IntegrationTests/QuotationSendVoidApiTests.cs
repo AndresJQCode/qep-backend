@@ -224,10 +224,15 @@ public sealed class QuotationSendVoidApiTests
             content: null,
             TestContext.Current.CancellationToken);
 
-        var response = await client.PatchAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{quotation.Id}",
-            new UpdateQuotationRequest(null, "Efectivo", null, null, null),
-            TestContext.Current.CancellationToken);
+        // Version arbitraria: QuotationEditable.Ensure corre antes que el chequeo de
+        // concurrencia, asi que una cotizacion anulada se rechaza sin llegar a mirar el If-Match.
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, $"{QuotationsUrl(tenantId)}/{quotation.Id}")
+        {
+            Content = JsonContent.Create(new SaveQuotationRequest(null, "Efectivo", null, null, null, [])),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{quotation.Version}\"");
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
