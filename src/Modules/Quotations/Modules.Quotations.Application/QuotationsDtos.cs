@@ -233,6 +233,13 @@ public sealed record ChangeQuotationClientRequest(Guid ClientId);
 
 public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
+/// <summary>
+/// El piso de escala global que el asesor eligio, o <c>null</c> para quitarlo. Es el
+/// <c>FromUnit</c> de un tramo, no un porcentaje: los valores validos son los que la propia
+/// respuesta trae en <c>AvailableGlobalScaleFloors</c>.
+/// </summary>
+public sealed record SetGlobalScaleRequest(int? Floor);
+
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
 /// <summary>Una línea a agregar, tal como viaja en el request de la tanda — mismo par que

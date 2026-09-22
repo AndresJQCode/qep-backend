@@ -81,6 +81,15 @@ public static class QuotationChangeSummary
         _ => "falló por un motivo no previsto."
     };
 
+    /// <summary>
+    /// Sin el valor anterior, a diferencia de ClientChanged o ItemQuantityChanged: un piso de
+    /// escala anterior no le dice nada a quien lee el historial, y la entrada previa ya esta
+    /// ahi arriba.
+    /// </summary>
+    public static string GlobalScaleFloorChanged(int? floor) => floor is { } value
+        ? $"Aplico el descuento global de la escala desde {value} unidades."
+        : "Quito el descuento global de escala.";
+
     public static string Voided() => "Anulada.";
 
     public static string Expired() => "Vencida automáticamente al pasar su vigencia.";
