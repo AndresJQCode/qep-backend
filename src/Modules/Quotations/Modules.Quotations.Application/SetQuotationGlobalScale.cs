@@ -96,11 +96,16 @@ public sealed class SetQuotationGlobalScaleHandler(
             updatedBy,
             QuotationChangeSummary.GlobalScaleFloorChanged(command.Floor),
             now));
+        // Accion y target distintos segun por donde se entro, igual que UpdateQuotationItemHandler:
+        // la auditoria se lee por recurso, y quien busque que le paso a un pedido no encontraria
+        // este cambio si quedara archivado bajo el id de su cotizacion.
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
-            "quotation.quotation.global_scale_changed",
-            quotation.Id.ToString(),
+            order is not null
+                ? "quotation.order.global_scale_changed"
+                : "quotation.quotation.global_scale_changed",
+            order?.Id.ToString() ?? quotation.Id.ToString(),
             "success",
             now);
 

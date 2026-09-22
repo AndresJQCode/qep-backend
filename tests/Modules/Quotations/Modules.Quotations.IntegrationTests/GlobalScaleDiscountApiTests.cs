@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -310,6 +311,129 @@ public sealed class GlobalScaleDiscountApiTests
         var item = Assert.Single(updated.Items);
         Assert.Equal(0m, item.DiscountPercentage);
         Assert.Equal("Own", item.DiscountOrigin);
+    }
+
+    // El pedido que ya no esta Pending no admite cambiar el piso. Es la rama que nacio de colapsar
+    // los dos endpoints en uno, y hasta la revision no la ejercia ninguna prueba.
+    [Fact]
+    public async Task AnOrderThatIsNoLongerPendingRejectsTheChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId, paymentMethod: null);
+        var converted = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        converted.EnsureSuccessStatusCode();
+        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+
+        var cancelled = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/orders/{order.Id}/cancel",
+            new { reason = "El cliente se arrepintio" },
+            TestContext.Current.CancellationToken);
+        cancelled.EnsureSuccessStatusCode();
+
+        var response = await client.PutAsJsonAsync(
+            GlobalScaleUrl(tenantId, quotation.Id),
+            new SetGlobalScaleRequest(20),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("order.order.not_pending", problem.Code);
+    }
+
+    // Una cotizacion anulada no es editable y no tiene pedido que la rescate: la otra rama de
+    // rechazo, tambien sin cobertura hasta la revision.
+    [Fact]
+    public async Task AVoidedQuotationRejectsTheChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var added = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 6m),
+            TestContext.Current.CancellationToken);
+        added.EnsureSuccessStatusCode();
+        var voided = await client.PostAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/void",
+            content: null,
+            TestContext.Current.CancellationToken);
+        voided.EnsureSuccessStatusCode();
+
+        var response = await client.PutAsJsonAsync(
+            GlobalScaleUrl(tenantId, quotation.Id),
+            new SetGlobalScaleRequest(20),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("quotation.quotation.not_editable", problem.Code);
+    }
+
+    // El rastro: entrada de historial legible y evento de auditoria en la misma unidad de trabajo.
+    // Una prueba que solo mira el status HTTP deja pasar el efecto que importa.
+    [Fact]
+    public async Task TheChangeLeavesHistoryAndAudit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var added = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 6m),
+            TestContext.Current.CancellationToken);
+        added.EnsureSuccessStatusCode();
+
+        var applied = await client.PutAsJsonAsync(
+            GlobalScaleUrl(tenantId, quotation.Id),
+            new SetGlobalScaleRequest(20),
+            TestContext.Current.CancellationToken);
+        applied.EnsureSuccessStatusCode();
+
+        var history = await client.GetFromJsonAsync<QuotationHistoryResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/history",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(history);
+        var entry = Assert.Single(
+            history.Items,
+            item => item.Details is not null
+                && item.Details.Contains("descuento global", StringComparison.Ordinal));
+        Assert.Equal("Edited", entry.EventType);
+        Assert.Equal("Aplicó el descuento global de la escala desde 20 unidades.", entry.Details);
+
+        // El EventName del outbox es el del sobre de auditoria; la accion va adentro del payload.
+        var audits = await OutboxMessagesAsync(factory, "platform.audit.recorded.v1");
+        Assert.Contains(audits, audit =>
+        {
+            using var entry = JsonDocument.Parse(audit.PayloadJson);
+            return entry.RootElement.GetProperty("action").GetString()
+                    == "quotation.quotation.global_scale_changed"
+                && entry.RootElement.GetProperty("resourceId").GetString()
+                    == quotation.Id.ToString();
+        });
     }
 
     private sealed record ProblemPayload(string Code);

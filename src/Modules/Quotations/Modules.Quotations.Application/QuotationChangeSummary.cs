@@ -87,8 +87,8 @@ public static class QuotationChangeSummary
     /// ahi arriba.
     /// </summary>
     public static string GlobalScaleFloorChanged(int? floor) => floor is { } value
-        ? $"Aplico el descuento global de la escala desde {value} unidades."
-        : "Quito el descuento global de escala.";
+        ? $"Aplicó el descuento global de la escala desde {value} unidades."
+        : "Quitó el descuento global de escala.";
 
     public static string Voided() => "Anulada.";
 

@@ -52,19 +52,13 @@ internal static class QuotationPricingRecalculation
                     ? product.Scales
                     : []);
 
-        var resolved = QuotationScaleGroupPricing.Resolve(
-            quotation.Items
-                .Select(item => new QuotationPricingLine(
-                    item.Id.Value, item.ProductId, item.Quantity))
-                .ToArray(),
-            scalesByProduct,
-            quotation.GlobalScaleFloor);
+        var lines = quotation.Items
+            .Select(item => new QuotationPricingLine(
+                item.Id.Value, item.ProductId, item.Quantity))
+            .ToArray();
 
-        var discounts = resolved.ToDictionary(
-            line => new QuotationItemId(line.ItemId),
-            line => new QuotationItemDiscount(line.DiscountPercentage, line.Origin));
-
-        quotation.ApplyGroupDiscounts(discounts, occurredAt);
+        var discounts = Apply(
+            quotation, lines, scalesByProduct, quotation.GlobalScaleFloor, occurredAt);
 
         // La compuerta se evalúa sobre el total que dejaron esos descuentos, y una sola vez: si no
         // alcanza, se quitan todos y se termina. Ver QuotationMinimumPurchase para por qué no se
@@ -72,6 +66,25 @@ internal static class QuotationPricingRecalculation
         if (QuotationMinimumPurchase.IsSatisfiedBy(quotation))
         {
             return;
+        }
+
+        // El piso global no puede dejar a la cotización **peor** que no haberlo elegido, que es lo
+        // que el spec promete: es un piso, no un techo. Y puede: la compuerta mide sobre el total
+        // ya descontado, así que un descuento más grande puede tirar el total por debajo del
+        // mínimo y disparar el barrido. Cinco unidades a 110.000 con su 5% propio dan 522.500 y
+        // pasan; con el 10% del piso global dan 495.000 y no, con lo que la línea termina en 0% y
+        // el cliente pagando 550.000 — más caro que antes de pedir el descuento.
+        //
+        // Antes de barrer se prueba sin el piso. Es una segunda resolución en memoria sobre los
+        // productos que ya están cargados: ni una consulta más.
+        if (quotation.GlobalScaleFloor is not null)
+        {
+            discounts = Apply(quotation, lines, scalesByProduct, globalFloor: null, occurredAt);
+
+            if (QuotationMinimumPurchase.IsSatisfiedBy(quotation))
+            {
+                return;
+            }
         }
 
         // Vuelven todas a Own y no sólo a 0%: una línea que conservara GlobalFloor con cero por
@@ -82,4 +95,27 @@ internal static class QuotationPricingRecalculation
                 _ => new QuotationItemDiscount(0m, QuotationDiscountOrigin.Own)),
             occurredAt);
     }
+    /// <summary>
+    /// Resuelve y baja los descuentos al agregado, con o sin piso global, y devuelve lo que
+    /// aplicó. Separado porque el recálculo lo hace hasta dos veces: la segunda para comprobar
+    /// que el piso global no empeoró el resultado.
+    /// </summary>
+    private static Dictionary<QuotationItemId, QuotationItemDiscount> Apply(
+        Quotation quotation,
+        IReadOnlyCollection<QuotationPricingLine> lines,
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct,
+        int? globalFloor,
+        DateTimeOffset occurredAt)
+    {
+        var discounts = QuotationScaleGroupPricing
+            .Resolve(lines, scalesByProduct, globalFloor)
+            .ToDictionary(
+                line => new QuotationItemId(line.ItemId),
+                line => new QuotationItemDiscount(line.DiscountPercentage, line.Origin));
+
+        quotation.ApplyGroupDiscounts(discounts, occurredAt);
+
+        return discounts;
+    }
+
 }

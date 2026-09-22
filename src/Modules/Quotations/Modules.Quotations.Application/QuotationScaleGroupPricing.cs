@@ -237,28 +237,37 @@ internal static class QuotationScaleGroupPricing
             return null;
         }
 
-        var scale = scales
+        // De mayor a menor descuento, y se toma la primera que **cumple** su restricción, no la
+        // primera a secas: dos tramos pueden arrancar en el mismo piso con restricciones
+        // distintas, y quedarse con la mejor sin mirar si aplica le hacía perder a la línea el
+        // piso entero cuando el otro tramo del mismo piso sí se lo daba.
+        foreach (var scale in scales
             .Where(candidate => candidate.FromUnit == floor)
-            .OrderByDescending(candidate => candidate.Discount)
-            .FirstOrDefault();
-
-        if (scale is null || scale.Discount <= best.DiscountPercentage)
+            .OrderByDescending(candidate => candidate.Discount))
         {
-            return null;
+            if (scale.Discount <= best.DiscountPercentage)
+            {
+                // Ordenadas de mayor a menor: si ésta ya no mejora, ninguna de las que siguen lo
+                // va a hacer.
+                return null;
+            }
+
+            var restriction = line.Quantity < scale.FromUnit
+                ? QuotationScaleRestrictionRule.EvaluateFromZero(scale, line.Quantity)
+                : QuotationScaleRestrictionRule.Evaluate(scale, line.Quantity);
+
+            if (restriction.IsSatisfied)
+            {
+                return new QuotationLinePricing(
+                    line.ItemId,
+                    scale.Discount,
+                    scale,
+                    restriction,
+                    QuotationDiscountOrigin.GlobalFloor);
+            }
         }
 
-        var restriction = line.Quantity < scale.FromUnit
-            ? QuotationScaleRestrictionRule.EvaluateFromZero(scale, line.Quantity)
-            : QuotationScaleRestrictionRule.Evaluate(scale, line.Quantity);
-
-        return restriction.IsSatisfied
-            ? new QuotationLinePricing(
-                line.ItemId,
-                scale.Discount,
-                scale,
-                restriction,
-                QuotationDiscountOrigin.GlobalFloor)
-            : null;
+        return null;
     }
 
     // El paso > 0 es invariante de Catalog; exigirlo acá evita dividir por cero al validar el
