@@ -61,7 +61,7 @@ internal static class QuotationPricingRecalculation
 
         var discounts = resolved.ToDictionary(
             line => new QuotationItemId(line.ItemId),
-            line => line.DiscountPercentage);
+            line => new QuotationItemDiscount(line.DiscountPercentage, line.Origin));
 
         quotation.ApplyGroupDiscounts(discounts, occurredAt);
 
@@ -73,7 +73,12 @@ internal static class QuotationPricingRecalculation
             return;
         }
 
+        // Vuelven todas a Own y no sólo a 0%: una línea que conservara GlobalFloor con cero por
+        // ciento le haría decir a la pantalla "descuento global aplicado" sobre nada.
         quotation.ApplyGroupDiscounts(
-            discounts.ToDictionary(discount => discount.Key, _ => 0m), occurredAt);
+            discounts.ToDictionary(
+                discount => discount.Key,
+                _ => new QuotationItemDiscount(0m, QuotationDiscountOrigin.Own)),
+            occurredAt);
     }
 }
