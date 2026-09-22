@@ -89,7 +89,9 @@ public sealed class QuotationResponseComposer(
             quotation.CanBeConvertedToOrder,
             ToMinimumPurchaseResponse(quotation.MinimumPurchase),
             quotation.Items.Select(item => ToItemResponse(item, products)).ToArray(),
-            quotation.Version);
+            quotation.Version,
+            quotation.GlobalScaleFloor,
+            AvailableFloors(quotation, products));
     }
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
@@ -159,8 +161,31 @@ public sealed class QuotationResponseComposer(
             item.Subtotal,
             item.TaxPercentage,
             item.TaxAmount,
-            item.Position);
+            item.Position,
+            item.DiscountOrigin);
     }
+
+    /// <summary>
+    /// Los pisos que el select del descuento global puede ofrecer. Sale de los productos que el
+    /// composer ya cargó para poner nombre y escalas a cada línea, así que no cuesta una
+    /// consulta más — y por eso no hay endpoint aparte: el dato ya viajaba, desparramado en las
+    /// escalas de cada línea.
+    ///
+    /// No se ofrece un piso que ningún producto de esta cotización tiene: elegirlo no
+    /// descontaría nada y no habría forma de explicar por qué.
+    /// </summary>
+    private static int[] AvailableFloors(
+        QuotationDto quotation,
+        IReadOnlyDictionary<Guid, QuotationProductRef> products) =>
+        quotation.Items
+            .Select(item => item.ProductId)
+            .Distinct()
+            .SelectMany(productId => products.TryGetValue(productId, out var product)
+                ? product.Scales.Select(scale => scale.FromUnit)
+                : Enumerable.Empty<int>())
+            .Distinct()
+            .OrderBy(floor => floor)
+            .ToArray();
 
     // La empresa que no resuelve deja el bloque con la cuenta guardada y sin razón social, por
     // el mismo motivo que el cliente: la cotización es histórica y tiene que poder leerse aunque

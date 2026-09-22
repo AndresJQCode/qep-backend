@@ -15,7 +15,12 @@ public sealed record QuotationItemDto(
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,
-    int Position);
+    int Position,
+    /// <summary>El nombre de <c>QuotationDiscountOrigin</c>: <c>Own</c>, <c>Group</c> o
+    /// <c>GlobalFloor</c>. Los enums viajan con su nombre porque el diccionario lo tiene el
+    /// frontend. Sin esto la pantalla no puede explicar por que una linea de 3 unidades
+    /// descuenta 12%.</summary>
+    string DiscountOrigin);
 
 public sealed record QuotationDto(
     Guid Id,
@@ -93,7 +98,11 @@ public sealed record QuotationDto(
     /// guardar de una vez (<c>PUT /quotations/{quotationId}</c>). Ya existía en el dominio
     /// (<c>Quotation.Version</c>) y no salía de la aplicación: sin ella la pantalla no tiene con
     /// qué probar que está guardando sobre lo que leyó. Va al final por ser aditiva.</summary>
-    long Version);
+    long Version,
+    /// <summary>El piso de escala global elegido, o null. Ver
+    /// <c>Quotation.GlobalScaleFloor</c>. Con default para no tocar las construcciones que ya
+    /// existen: solo QuotationMapping.ToDto lo llena.</summary>
+    int? GlobalScaleFloor = null);
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
@@ -395,7 +404,14 @@ public sealed record QuotationResponse(
     /// no sólo en el GET: el frontend cachea lo que devuelve cada mutación, y una respuesta sin
     /// versión dejaría el próximo guardado sin con qué probar sobre qué está escribiendo. El
     /// mismo valor va además en el header <c>ETag</c> de la respuesta del PUT.</summary>
-    long Version);
+    long Version,
+    /// <summary>El piso de escala global elegido para esta cotizacion, o null.</summary>
+    int? GlobalScaleFloor,
+    /// <summary>Los pisos entre los que el asesor puede elegir: los <c>FromUnit</c> distintos de
+    /// las escalas de los productos que esta cotizacion tiene cargados, ordenados ascendente.
+    /// **Completo incluso vacio** — una coleccion que desaparece obliga a la pantalla a
+    /// reconstruirla desde las escalas linea por linea.</summary>
+    IReadOnlyCollection<int> AvailableGlobalScaleFloors);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de
@@ -502,7 +518,11 @@ public sealed record QuotationItemResponse(
     decimal Subtotal,
     int TaxPercentage,
     decimal TaxAmount,
-    int Position);
+    int Position,
+    /// <summary>El nombre de <c>QuotationDiscountOrigin</c>: <c>Own</c>, <c>Group</c> o
+    /// <c>GlobalFloor</c>. Mismo criterio que el resto de los enums, que viajan con su nombre
+    /// porque el diccionario lo tiene el frontend.</summary>
+    string DiscountOrigin);
 
 /// <summary>
 /// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No

@@ -57,7 +57,8 @@ internal static class QuotationPricingRecalculation
                 .Select(item => new QuotationPricingLine(
                     item.Id.Value, item.ProductId, item.Quantity))
                 .ToArray(),
-            scalesByProduct);
+            scalesByProduct,
+            quotation.GlobalScaleFloor);
 
         var discounts = resolved.ToDictionary(
             line => new QuotationItemId(line.ItemId),
