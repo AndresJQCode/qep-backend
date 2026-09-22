@@ -29,8 +29,16 @@ public sealed record QuotationLinePricing(
 /// arrastrar al resto — que era justamente el defecto reportado: una línea de 5 dejaba a cinco
 /// líneas de 3 sin descuento porque 3×5 + 5 = 20 no es múltiplo de 3.
 ///
-/// Que el múltiplo sea por línea vuelve innecesario revalidarlo sobre el total: una suma de
-/// múltiplos de 3 es múltiplo de 3. El total sólo se compara contra el rango.
+/// <b>El total sólo se compara contra el rango</b>, nunca contra el múltiplo. Desde que el
+/// múltiplo se cuenta desde <c>FromUnit</c> (2026-09-21) ya no es cierto que una suma de
+/// miembros válidos sea válida —tres líneas de 5 en un tramo 5-48 de a 3 suman 15, y 15 − 5 = 10
+/// no es múltiplo de 3—, y así se decidió que quede: el piso se exige sobre la suma y el
+/// múltiplo por miembro. Revalidar el total volvería frágil la construcción de a poco, que es
+/// para lo que existe el grupo.
+///
+/// Los miembros del grupo son por definición líneas que **no llegan al piso** del tramo, y ahí
+/// el múltiplo se cuenta crudo: por debajo de <c>FromUnit</c> no hay contra qué anclar un
+/// offset. Ver <see cref="Qualifies"/>.
 ///
 /// La clave del grupo es <c>FromUnit</c> + <c>ToUnit</c> + <c>Multiple</c>, tomada de los tramos
 /// que el **catálogo** del producto declara agrupables y no del tramo que la línea alcanzó sola:
@@ -58,9 +66,9 @@ internal static class QuotationScaleGroupPricing
     /// Cuánto suma cada tramo agrupable, contando **sólo las líneas que califican solas**.
     ///
     /// Una línea que no cumple el múltiplo del tramo no entra: si entrara, su cantidad movería el
-    /// total de las demás sin que ella pueda recibir nada a cambio. Y una que ya pasó el techo del
-    /// tramo tampoco, porque no lo necesita —alcanzó sola uno igual o mejor— y sumarla sacaría al
-    /// grupo del rango.
+    /// total de las demás sin que ella pueda recibir nada a cambio. Y una que ya llega al piso
+    /// tampoco, porque no necesita al grupo —el tramo ya la cubre— y sumarla sacaría del rango a
+    /// las que sí lo necesitan.
     /// </summary>
     private static Dictionary<(int, int, int), decimal> GroupTotals(
         IReadOnlyCollection<QuotationPricingLine> lines,
@@ -87,11 +95,22 @@ internal static class QuotationScaleGroupPricing
 
     /// <summary>
     /// Si esta línea puede sumar a este tramo y beneficiarse de él: el tramo agrupa, la cantidad
-    /// cumple su múltiplo **por sí sola**, y cabe bajo su techo.
+    /// **no alcanza el piso sola** —es lo único que el grupo puede darle— y cumple su múltiplo
+    /// crudo por sí sola.
+    ///
+    /// El piso reemplazó al techo que había acá hasta el 2026-09-21, y lo subsume: una cantidad
+    /// por debajo de <c>FromUnit</c> está por debajo de <c>ToUnit</c>. Sin él, una línea que el
+    /// tramo ya cubre armaba un grupo de una sola línea cuyo total era ella misma, caía en el
+    /// rango y cobraba el descuento que el múltiplo desde <c>FromUnit</c> le niega —marcada
+    /// además como agrupada, sin nadie con quien agrupar—. Por esa puerta el conteo crudo volvía
+    /// a gobernar toda escala agrupable y el cambio de criterio quedaba sin efecto.
+    ///
+    /// Adentro del rango manda <c>QuotationScaleRestrictionRule</c> y nada más: la línea cumple
+    /// el múltiplo desde el piso o no descuenta.
     /// </summary>
     private static bool Qualifies(QuotationPriceScaleRef scale, decimal quantity) =>
         IsGroupable(scale)
-        && quantity <= scale.ToUnit
+        && quantity < scale.FromUnit
         && quantity % scale.Multiple!.Value == 0;
 
     private static IReadOnlyCollection<QuotationPriceScaleRef> ScalesOf(

@@ -11,14 +11,18 @@ public sealed class QuotationScaleRestrictionRuleTests
     private static QuotationPriceScaleRef PackagesOf(int packagingUnit) =>
         new(1, 999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, packagingUnit);
 
-    // El multiplo se cuenta sobre la cantidad cruda, no desde FromUnit. Revierte el criterio de
-    // 5a76b07: en una escala 5-48 de a 3, 8 unidades ya no cumple (8 - 5 = 3 daba valido).
+    // El multiplo se cuenta DESDE FromUnit: en una escala 5-48 de a 3 las cantidades validas son
+    // 5, 8, 11 ... 47. Decision del developer el 2026-09-21, que revierte el criterio crudo del
+    // 2026-09-06 y vuelve al que traia el CRM.
+    //
+    // El piso del tramo siempre cumple, que es lo que motivo el cambio: una escala que arranca en
+    // 5 y no descuenta con 5 unidades no tiene explicacion para el vendedor.
     [Theory]
-    [InlineData(3)]
-    [InlineData(6)]
-    [InlineData(9)]
-    [InlineData(48)]
-    public void MultipleAcceptsRawMultiples(decimal quantity)
+    [InlineData(5)]
+    [InlineData(8)]
+    [InlineData(11)]
+    [InlineData(47)]
+    public void MultipleCountsFromTheStartOfTheRange(decimal quantity)
     {
         var result = QuotationScaleRestrictionRule.Evaluate(MultipleOf(3), quantity);
 
@@ -27,10 +31,57 @@ public sealed class QuotationScaleRestrictionRuleTests
         Assert.Equal(0m, result.Shortfall);
     }
 
+    // Y el multiplo crudo dejo de alcanzar: en 5-48 de a 3, 6 y 9 descontaban y ya no. Los dos
+    // conjuntos son disjuntos siempre que FromUnit no sea multiplo del paso.
     [Theory]
-    [InlineData(5, 1)]
-    [InlineData(7, 2)]
-    [InlineData(8, 1)]
+    [InlineData(6)]
+    [InlineData(9)]
+    [InlineData(48)]
+    public void MultipleRejectsARawMultipleThatDoesNotStartAtTheFloor(decimal quantity)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(MultipleOf(3), quantity);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal("quotation.item.quantity_not_multiple", result.Code);
+    }
+
+    // El ejemplo con el que el developer fijo el criterio: 50-98 de a 6 descuenta en 50, 56, 62
+    // ... 98, y no en 54, 60 ni 96, que son justamente los que descontaban antes.
+    [Theory]
+    [InlineData(50, true)]
+    [InlineData(54, false)]
+    [InlineData(56, true)]
+    [InlineData(96, false)]
+    [InlineData(98, true)]
+    public void MultipleFollowsTheFloorOfTheScale(decimal quantity, bool satisfied)
+    {
+        var scale = new QuotationPriceScaleRef(
+            50, 98, 5m, QuotationPriceScaleRestriction.Multiple, 6, null);
+
+        Assert.Equal(satisfied, QuotationScaleRestrictionRule.Evaluate(scale, quantity).IsSatisfied);
+    }
+
+    // Cuando el piso ya es multiplo del paso las dos lecturas coinciden, y es el caso de la
+    // escala sembrada (6-48 de a 3): este cambio no la toca. Vale para todo par donde
+    // FromUnit % Multiple == 0.
+    [Theory]
+    [InlineData(6)]
+    [InlineData(9)]
+    [InlineData(48)]
+    public void AFloorThatIsAlreadyAMultipleBehavesTheSame(decimal quantity)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(MultipleOf(3, fromUnit: 6), quantity);
+
+        Assert.True(result.IsSatisfied);
+    }
+
+    // El faltante tambien se cuenta desde el piso: en 5-48 de a 3, a 7 le falta 1 para llegar a
+    // 8, no 2 para llegar a 9. Es el numero que la pantalla le muestra al vendedor.
+    [Theory]
+    [InlineData(6, 2)]
+    [InlineData(7, 1)]
+    [InlineData(9, 2)]
+    [InlineData(10, 1)]
     public void MultipleReportsHowManyUnitsAreMissing(decimal quantity, decimal shortfall)
     {
         var result = QuotationScaleRestrictionRule.Evaluate(MultipleOf(3), quantity);
@@ -68,31 +119,45 @@ public sealed class QuotationScaleRestrictionRuleTests
     public void PackagingUnitAcceptsWholePackages(decimal quantity)
     {
         Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(12), quantity).IsSatisfied);
-        QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(12), quantity);
     }
 
-    // Y sigue siendo un 422: su comportamiento no lo toca esta funcionalidad.
+    // La unidad de empaque NO se corrio al piso del tramo: sigue contando crudo. Discrimina
+    // porque esta escala arranca en 1, asi que con offset 13 y 25 serian validos -- y no forman
+    // paquetes enteros de 12.
+    [Theory]
+    [InlineData(13)]
+    [InlineData(25)]
+    public void PackagingUnitIsNotCountedFromTheStartOfTheRange(decimal quantity)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(12), quantity);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal("quotation.item.quantity_not_packaging_unit", result.Code);
+    }
+
+    // Y dejo de ser un 422 el 2026-09-22: ninguna restriccion de escala bloquea la linea. La
+    // cantidad se guarda igual y lo unico que pierde es el descuento de esa escala, que es lo
+    // que `Multiple` ya hacia. Queda el codigo, que viaja en la respuesta para que la pantalla
+    // pueda explicar por que no descuenta.
     [Theory]
     [InlineData(11)]
     [InlineData(13)]
-    public void PackagingUnitStillThrows(decimal quantity)
+    public void PackagingUnitNoLongerBlocksTheLine(decimal quantity)
     {
-        var exception = Assert.Throws<QuotationsDomainException>(
-            () => QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(12), quantity));
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(12), quantity);
 
-        Assert.Equal("quotation.item.quantity_not_packaging_unit", exception.Code);
+        Assert.False(result.IsSatisfied);
+        Assert.Equal("quotation.item.quantity_not_packaging_unit", result.Code);
     }
 
-    // Catalog exige un empaque > 0, pero si una fila lo desmiente el guard tiene que sostener el
-    // caso desde EnsurePackagingUnit, que es el unico camino que la produccion llama: el % de
-    // decimal por cero lanza, y una linea no se bloquea con un dato que nadie corrige desde la
-    // cotizacion.
+    // Catalog exige un empaque > 0, pero si una fila lo desmiente la linea no pierde su
+    // descuento por un dato que nadie corrige desde la cotizacion, y el % de decimal por cero
+    // lanza.
     [Theory]
     [InlineData(0)]
     [InlineData(-12)]
     public void PackagingUnitWithoutAUsableSizeDoesNotBlock(int packagingUnit)
     {
-        QuotationScaleRestrictionRule.EnsurePackagingUnit(PackagesOf(packagingUnit), 7m);
         Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(packagingUnit), 7m).IsSatisfied);
     }
 

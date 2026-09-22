@@ -95,4 +95,67 @@ public sealed class QuotationProductPricingResolverTests
                     ? new Dictionary<Guid, QuotationProductPricingRef> { [product.Id] = product }
                     : new Dictionary<Guid, QuotationProductPricingRef>());
     }
+
+    // ---- Ninguna restriccion de escala bloquea la linea (2026-09-22) ----
+    //
+    // Decision del developer: una cantidad que no cumple la regla de su escala NO impide guardar
+    // la linea; lo unico que pasa es que esa escala no aplica y la linea va sin descuento. Hasta
+    // hoy `Multiple` ya se comportaba asi y `PackagingUnit` conservaba un 422, que se quito.
+    private static QuotationProductPricingRef ProductSoldInPackagesOfTwelve(Guid productId) =>
+        new(
+            productId,
+            TenantId,
+            "Vela de soja",
+            IsActive: true,
+            UnitPriceCop: 100_000m,
+            UnitPriceUsd: 25m,
+            Scales:
+            [
+                new QuotationPriceScaleRef(
+                    1, 999, 15m, QuotationPriceScaleRestriction.PackagingUnit, null, 12)
+            ],
+            TaxPercentage: null);
+
+    [Fact]
+    public async Task AQuantityThatIsNotAWholePackageIsPricedWithoutDiscount()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
+
+        var priced = await QuotationProductPricingResolver.ResolveAsync(
+            lookup, TenantId, productId, 13m, QuotationCurrency.Cop,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(0m, priced.Pricing.DiscountPercentage);
+        Assert.Equal(100_000m, priced.Pricing.UnitPrice);
+    }
+
+    // Y la que si forma paquetes enteros conserva su descuento: quitar el bloqueo no es apagar
+    // la restriccion, es cambiar que hace cuando no se cumple.
+    [Fact]
+    public async Task AWholeNumberOfPackagesStillEarnsTheDiscount()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
+
+        var priced = await QuotationProductPricingResolver.ResolveAsync(
+            lookup, TenantId, productId, 24m, QuotationCurrency.Cop,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(15m, priced.Pricing.DiscountPercentage);
+    }
+
+    // El cambio de moneda revaloriza todas las lineas y pasa por el mismo camino: tampoco lanza.
+    [Fact]
+    public async Task RepricingLinesThatMissTheirPackagingDoesNotThrow()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
+
+        var priced = await QuotationProductPricingResolver.ResolveManyAsync(
+            lookup, TenantId, [(productId, 13m)], QuotationCurrency.Usd,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(0m, priced[productId].DiscountPercentage);
+    }
 }

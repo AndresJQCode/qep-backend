@@ -5,7 +5,9 @@ namespace Modules.Quotations.Application;
 /// <param name="EvaluatedQuantity">La cantidad contra la que se evaluó: la de la línea, o la
 /// suma del grupo cuando la escala agrupa. Viaja a la respuesta porque un total que la pantalla
 /// no puede reconstruir sola es lo único que explica un precio sin descuento.</param>
-/// <param name="Shortfall">Cuántas unidades faltan para el siguiente múltiplo. 0 cuando cumple.</param>
+/// <param name="Shortfall">Cuántas unidades faltan para el siguiente valor que la restricción
+/// acepta. 0 cuando cumple. Con <c>Multiple</c> se cuenta desde <c>FromUnit</c>, así que en una
+/// escala 5-48 de a 3 a 7 unidades le falta 1 para llegar a 8, no 2 para llegar a 9.</param>
 public sealed record QuotationScaleRestrictionResult(
     bool IsSatisfied,
     string? Code,
@@ -19,16 +21,33 @@ public sealed record QuotationScaleRestrictionResult(
 /// <summary>
 /// Decide si la escala que cubre una cantidad aplica sobre ella (CAT-09 + US-4).
 ///
-/// **Dos modelos de falla, a propósito.** <c>Multiple</c> no bloquea: si no se cumple, la escala
-/// no aplica y la línea va con descuento 0 y precio base — lo mismo que ya le pasa a una
-/// cantidad que no cae en ninguna escala. Es lo único que hace construible un grupo de a poco:
-/// con 422 por línea, un total válido como 10+8+12 no tiene ningún camino de estados
-/// intermedios que lo alcance. <c>PackagingUnit</c>, en cambio, conserva intacto su 422 — el
-/// requisito exige compatibilidad total con su comportamiento actual.
+/// **Ninguna restricción bloquea la línea.** Si no se cumple, la escala no aplica y la línea va
+/// con descuento 0 y precio base — lo mismo que ya le pasa a una cantidad que no cae en ninguna
+/// escala. La cantidad se guarda igual; lo único que pierde es el descuento de ese tramo.
 ///
-/// **El múltiplo se cuenta sobre la cantidad cruda**, no desde <c>FromUnit</c>. Revierte el
-/// criterio de <c>5a76b07</c>, que lo heredaba del CRM: en una escala 5-48 de a 3, 8 unidades
-/// era válida (8 − 5 = 3) y ya no lo es. Fue decisión explícita del developer el 2026-09-06.
+/// <c>Multiple</c> es así desde el 2026-09-06, porque es lo único que hace construible un grupo
+/// de a poco: con 422 por línea, un total válido como 10+8+12 no tiene ningún camino de estados
+/// intermedios que lo alcance. <c>PackagingUnit</c> conservaba un 422 por compatibilidad, y el
+/// developer lo quitó el 2026-09-22: una regla de escala decide descuento, no si la línea se
+/// puede guardar. El código de restricción no desapareció — viaja en la respuesta para que la
+/// pantalla pueda decir por qué esa cantidad no descuenta.
+///
+/// **El múltiplo se cuenta desde <c>FromUnit</c>**, no sobre la cantidad cruda: en una escala
+/// 5-48 de a 3 las cantidades válidas son 5, 8, 11 … 47, y el piso del tramo siempre cumple.
+/// Restituye el criterio de <c>5a76b07</c>, heredado del CRM, que el 2026-09-06 se había
+/// cambiado al conteo crudo. El developer lo volvió a fijar el 2026-09-21: una escala que
+/// arranca en 50 y no descuenta con 50 unidades no tiene explicación para el vendedor.
+///
+/// Los dos criterios son **disjuntos** siempre que <c>FromUnit</c> no sea múltiplo del paso —en
+/// 50-98 de a 6 antes descontaban 54, 60 … 96 y ahora 50, 56 … 98, sin una sola cantidad en
+/// común— e **idénticos** cuando sí lo es, que es el caso de la escala 6-48 de a 3 del catálogo
+/// sembrado. De ahí que el alcance real del cambio dependa de qué pares
+/// <c>FromUnit</c>/<c>Multiple</c> tenga cargado cada tenant.
+///
+/// **<c>PackagingUnit</c> sigue contando crudo**, y no por omisión: un paquete de 12 son 12
+/// unidades enteras empiece donde empiece el tramo, así que correrlo al piso daría por bueno un
+/// sobrante. Es el motivo por el que <c>EvaluateStep</c> recibe el piso en vez de leerlo de la
+/// escala.
 /// </summary>
 internal static class QuotationScaleRestrictionRule
 {
@@ -48,9 +67,12 @@ internal static class QuotationScaleRestrictionRule
         scale.Restriction switch
         {
             QuotationPriceScaleRestriction.Multiple => EvaluateStep(
-                scale.Multiple, quantity, "quotation.item.quantity_not_multiple"),
+                scale.Multiple, quantity, scale.FromUnit,
+                "quotation.item.quantity_not_multiple"),
+            // Piso 0: el empaque se cuenta crudo. Ver el resumen del tipo.
             QuotationPriceScaleRestriction.PackagingUnit => EvaluateStep(
-                scale.PackagingUnit, quantity, "quotation.item.quantity_not_packaging_unit"),
+                scale.PackagingUnit, quantity, 0,
+                "quotation.item.quantity_not_packaging_unit"),
             null => new QuotationScaleRestrictionResult(false, IncompleteScalesCode, quantity, 0m),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(scale), scale.Restriction, "Unknown price scale restriction.")
@@ -75,43 +97,32 @@ internal static class QuotationScaleRestrictionRule
             "Complete them in the catalog before quoting it.");
     }
 
-    /// <summary>
-    /// El 422 de la unidad de empaque, sobre la línea que el comando toca. No lo llama el
-    /// recalculador: si una línea vieja incumpliera el empaque —sólo posible si la escala cambió
-    /// en el catálogo después de agregarla—, lanzar desde ahí haría que quitar una línea sana
-    /// fallara con el error de otra, y ese error no lo puede corregir nadie desde la cotización.
-    /// </summary>
-    public static void EnsurePackagingUnit(QuotationPriceScaleRef scale, decimal quantity)
-    {
-        if (scale.Restriction != QuotationPriceScaleRestriction.PackagingUnit)
-        {
-            return;
-        }
-
-        var result = Evaluate(scale, quantity);
-        if (result.IsSatisfied)
-        {
-            return;
-        }
-
-        throw new QuotationsDomainException(
-            result.Code!,
-            $"The quantity must be a whole number of packages of {scale.PackagingUnit} units " +
-            $"while it falls in the {scale.FromUnit}-{scale.ToUnit} price scale.");
-    }
-
     // Catalog exige un paso > 0 al crear la escala. Si una fila lo desmiente, la línea no se
     // castiga con un dato que nadie puede corregir desde la cotización — y sobre todo no se
     // divide por cero.
+    //
+    // <paramref name="floor"/> es el origen del conteo: <c>FromUnit</c> para el múltiplo, 0 para
+    // el empaque. Se pasa y no se deduce de la escala porque la diferencia entre las dos
+    // restricciones es justamente esa.
     private static QuotationScaleRestrictionResult EvaluateStep(
-        int? step, decimal quantity, string code)
+        int? step, decimal quantity, int floor, string code)
     {
         if (step is not { } value || value <= 0)
         {
             return QuotationScaleRestrictionResult.Satisfied(quantity);
         }
 
-        var remainder = quantity % value;
+        var offset = quantity - floor;
+
+        // Defensivo: todo llamador pasa la escala que **cubre** la cantidad, así que el piso
+        // nunca queda por encima de ella. Si alguna vez dejara de ser así, el resto de un
+        // negativo daría un faltante que nadie puede corregir desde la cotización.
+        if (offset < 0)
+        {
+            return new QuotationScaleRestrictionResult(false, code, quantity, 0m);
+        }
+
+        var remainder = offset % value;
         return remainder == 0
             ? QuotationScaleRestrictionResult.Satisfied(quantity)
             : new QuotationScaleRestrictionResult(false, code, quantity, value - remainder);
