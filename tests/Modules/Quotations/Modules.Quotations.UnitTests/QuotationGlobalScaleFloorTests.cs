@@ -154,4 +154,94 @@ public sealed class QuotationGlobalScaleFloorTests
 
         Assert.Equal(QuotationDiscountOrigin.Own, quotation.Items.Single().DiscountOrigin);
     }
+    // El piso global pasa a ser parte del encabezado que el guardado manda entero, y no una
+    // escritura aparte: el asesor lo elige y se persiste al presionar "Guardar cambios", como
+    // todo lo demas de esa pantalla. Decision del owner, 2026-09-23.
+    [Fact]
+    public void UpdateDetailsCarriesTheGlobalScaleFloor()
+    {
+        var quotation = NewQuotation();
+        var editor = new MemberId(Guid.CreateVersion7());
+        var editedAt = Now.AddHours(1);
+
+        quotation.UpdateDetails(
+            validUntil: ValidUntil,
+            paymentMethod: "Transferencia bancaria",
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: null,
+            repricing: null,
+            globalScaleFloor: 1000,
+            editor,
+            editedAt);
+
+        Assert.Equal(1000, quotation.GlobalScaleFloor);
+    }
+
+    // Y lo quita con null, que es lo que manda el cuerpo cuando el select vuelve a "sin descuento
+    // global". El guardado reemplaza el encabezado entero: un campo ausente no es "no lo toques".
+    [Fact]
+    public void UpdateDetailsClearsTheGlobalScaleFloorWithNull()
+    {
+        var quotation = NewQuotation();
+        quotation.SetGlobalScaleFloor(1000, AdvisorId, Now.AddHours(1));
+
+        quotation.UpdateDetails(
+            validUntil: ValidUntil,
+            paymentMethod: "Transferencia bancaria",
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: null,
+            repricing: null,
+            globalScaleFloor: null,
+            AdvisorId,
+            Now.AddHours(2));
+
+        Assert.Null(quotation.GlobalScaleFloor);
+    }
+
+    // El guardado no puede ser una puerta trasera a la exclusion con detal: SetGlobalScaleFloor
+    // ya rechaza un piso en una cotizacion detal, y UpdateDetails tiene que decir lo mismo con el
+    // mismo codigo. Si no, bastaria con mandar el piso en el cuerpo del guardado.
+    [Fact]
+    public void UpdateDetailsRejectsAFloorOnARetailQuotation()
+    {
+        var quotation = NewQuotation();
+        quotation.SetIsRetail(true, AdvisorId, Now.AddHours(1));
+
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.UpdateDetails(
+            validUntil: ValidUntil,
+            paymentMethod: "Transferencia bancaria",
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: null,
+            repricing: null,
+            globalScaleFloor: 1000,
+            AdvisorId,
+            Now.AddHours(2)));
+
+        Assert.Equal("quotation.retail.floor_not_allowed", error.Code);
+    }
+
+    // Quitarlo si se puede: null no pide descuento, y la pantalla lo manda en cada guardado.
+    [Fact]
+    public void UpdateDetailsAcceptsNoFloorOnARetailQuotation()
+    {
+        var quotation = NewQuotation();
+        quotation.SetIsRetail(true, AdvisorId, Now.AddHours(1));
+
+        quotation.UpdateDetails(
+            validUntil: ValidUntil,
+            paymentMethod: "Transferencia bancaria",
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: null,
+            repricing: null,
+            globalScaleFloor: null,
+            AdvisorId,
+            Now.AddHours(2));
+
+        Assert.Null(quotation.GlobalScaleFloor);
+    }
+
 }

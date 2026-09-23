@@ -237,12 +237,6 @@ public sealed record ChangeQuotationClientRequest(Guid ClientId);
 
 public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
-/// <summary>
-/// El piso de escala global que el asesor eligio, o <c>null</c> para quitarlo. Es el
-/// <c>FromUnit</c> de un tramo, no un porcentaje: los valores validos son los que la propia
-/// respuesta trae en <c>AvailableGlobalScaleFloors</c>.
-/// </summary>
-public sealed record SetGlobalScaleRequest(int? Floor);
 
 /// <summary>
 /// Prende o apaga la cotizacion detal. Ver <see cref="SetQuotationRetailCommand"/>: con el
@@ -281,7 +275,10 @@ public sealed record SaveQuotationRequest(
     string? Notes,
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
-    IReadOnlyList<QuotationEditItemRequest>? Items);
+    IReadOnlyList<QuotationEditItemRequest>? Items,
+    /// <summary>El piso de escala global, o null para quitarlo. Ausente se lee como null: el
+    /// guardado reemplaza el encabezado entero.</summary>
+    int? GlobalScaleFloor = null);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
@@ -522,6 +519,15 @@ public sealed record QuotationsPageResponse(
     int Page,
     int PageSize);
 
+/// <summary>
+/// Por qué el piso global no le dio su descuento a esta línea. <c>Reason</c> es un código y no
+/// un texto: <c>packaging_unit</c> (no es un número entero de paquetes; <c>Step</c> es el tamaño
+/// del paquete), <c>multiple</c> (no es múltiplo; <c>Step</c> es el paso) o <c>no_tier</c> (el
+/// producto no tiene un tramo que arranque en ese piso). La frase la arma el frontend, que es
+/// el que tiene el diccionario. Ver <see cref="QuotationGlobalScaleFloorMiss"/>.
+/// </summary>
+public sealed record GlobalScaleFloorMissResponse(string Reason, int? Step);
+
 public sealed record QuotationItemResponse(
     Guid Id,
     Guid ProductId,
@@ -547,7 +553,10 @@ public sealed record QuotationItemResponse(
     /// <summary>El nombre de <c>QuotationDiscountOrigin</c>: <c>Own</c>, <c>Group</c> o
     /// <c>GlobalFloor</c>. Mismo criterio que el resto de los enums, que viajan con su nombre
     /// porque el diccionario lo tiene el frontend.</summary>
-    string DiscountOrigin);
+    string DiscountOrigin,
+    /// <summary>Por qué el piso global no le dio su descuento a esta línea, o null si no hay nada
+    /// que explicar. Con default para no tocar las construcciones que ya existen.</summary>
+    GlobalScaleFloorMissResponse? GlobalScaleFloorMiss = null);
 
 /// <summary>
 /// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No

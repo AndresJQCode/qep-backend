@@ -26,6 +26,13 @@ public interface IOrderEdits
     OrderEditProofs Proofs { get; }
 
     string? Notes { get; }
+
+    /// <summary>
+    /// El piso de escala global de la cotización del pedido, o <c>null</c> para quitarlo. Viaja
+    /// con el resto de la edición y se persiste al guardar: cambiarlo en la pantalla recalcula
+    /// contra la vista previa, igual que cambiar una cantidad.
+    /// </summary>
+    int? GlobalScaleFloor { get; }
 }
 
 /// <summary>

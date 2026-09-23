@@ -138,6 +138,15 @@ public static class QuotationChangeSummary
             changes.Add(after.Notes is null ? "nota (borrada)" : "nota");
         }
 
+        // Desde que el piso viaja con el encabezado y se persiste con "Guardar cambios", es la
+        // única forma de que un guardado que sólo cambia el piso deje rastro.
+        if (before.GlobalScaleFloor != after.GlobalScaleFloor)
+        {
+            changes.Add(after.GlobalScaleFloor is { } floor
+                ? $"descuento global (escala desde {floor} unidades)"
+                : "quitó el descuento global");
+        }
+
         // "Propios" y "los del cliente" es la distinción que hace la pantalla (el switch), así que
         // es la que entiende quien lee esto — más que "se creó/borró una fila en parties".
         //
@@ -252,7 +261,8 @@ public sealed record QuotationHeaderSnapshot(
     bool IsStorePickup,
     bool BillsToFinalConsumer,
     bool? BillingWithRetention,
-    bool? BillingVatSurplus)
+    bool? BillingVatSurplus,
+    int? GlobalScaleFloor = null)
 {
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
@@ -268,7 +278,8 @@ public sealed record QuotationHeaderSnapshot(
         quotation.IsStorePickup,
         quotation.BillsToFinalConsumer,
         quotation.PartyWithRetention,
-        quotation.PartyVatSurplus);
+        quotation.PartyVatSurplus,
+        quotation.GlobalScaleFloor);
 
     private static string? Describe(QuotationParty? party) =>
         party is null

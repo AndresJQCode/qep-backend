@@ -14,7 +14,8 @@ public sealed record PreviewOrderEditsQuery(
     Guid OrderId,
     IReadOnlyList<OrderItemAddition> Items,
     OrderEditProofs Proofs,
-    string? Notes) : IQuery<OrderDetailDto>, IOrderEdits;
+    string? Notes,
+    int? GlobalScaleFloor) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -100,6 +101,13 @@ public sealed class PreviewOrderEditsHandler(
             updatedBy,
             now);
         order.UpdateNotes(query.Notes, now);
+
+        // El piso del borrador, en memoria: es lo que hace que cambiar el select recalcule al
+        // vuelo sin escribir nada, igual que cambiar una cantidad.
+        if (quotation.GlobalScaleFloor != query.GlobalScaleFloor)
+        {
+            quotation.SetGlobalScaleFloorAfterConversion(query.GlobalScaleFloor, updatedBy, now);
+        }
 
         // La misma pasada que corre SaveOrderEditsHandler, y por el mismo motivo: si el preview no
         // la hace, muestra un total y un descuento distintos de los que va a dejar el guardado.

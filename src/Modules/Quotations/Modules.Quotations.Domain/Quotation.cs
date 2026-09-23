@@ -431,28 +431,7 @@ public sealed class Quotation
     private void SetGlobalScaleFloorCore(
         int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
     {
-        // En detal ninguna línea recibe descuento, así que un piso guardado no describiría nada
-        // de lo que la cotización está aplicando: se rechaza en vez de guardarse dormido. Va
-        // antes de la validación de forma porque es la razón real del rechazo — decirle
-        // "floor_invalid" a un piso perfectamente válido mandaría a mirar el select en vez del
-        // interruptor de detal. Quitarlo (null) sigue permitido: no pide descuento, y
-        // rechazarlo obligaría a apagar el detal para limpiar un piso que el detal ya limpió.
-        if (IsRetail && floor is not null)
-        {
-            throw new QuotationsDomainException(
-                "quotation.retail.floor_not_allowed",
-                "A retail quotation cannot use a global scale floor.");
-        }
-
-        // Catalog no deja crear una escala que arranque por debajo de 1, así que un piso de cero
-        // o negativo no puede coincidir con ninguna: se corta acá y no llega al recálculo.
-        if (floor is { } value && value < 1)
-        {
-            throw new QuotationsDomainException(
-                "quotation.global_scale.floor_invalid",
-                "The global scale floor must be a positive unit count.");
-        }
-
+        EnsureGlobalScaleFloorAllowed(floor);
         GlobalScaleFloor = floor;
         Touch(updatedBy, occurredAt);
     }
@@ -491,6 +470,41 @@ public sealed class Quotation
         }
 
         Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Las dos condiciones de un piso global, en un solo lugar: lo usan el mutador suelto y el
+    /// guardado del encabezado (<see cref="UpdateDetails"/>), y si divergieran el guardado sería
+    /// una puerta trasera a la exclusión con detal.
+    /// </summary>
+    private void EnsureGlobalScaleFloorAllowed(int? floor)
+    {
+        // En detal ninguna línea recibe descuento, así que un piso guardado no describiría nada
+        // de lo que la cotización está aplicando: se rechaza en vez de guardarse dormido. Va
+        // antes de la validación de forma porque es la razón real del rechazo — decirle
+        // "floor_invalid" a un piso perfectamente válido mandaría a mirar el select en vez del
+        // interruptor de detal. Quitarlo (null) sigue permitido: no pide descuento, y
+        // rechazarlo obligaría a apagar el detal para limpiar un piso que el detal ya limpió.
+        if (IsRetail && floor is not null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.retail.floor_not_allowed",
+                "A retail quotation cannot use a global scale floor.");
+        }
+
+        EnsureGlobalScaleFloorIsPossible(floor);
+    }
+
+    // Catalog no deja crear una escala que arranque por debajo de 1, así que un piso de cero o
+    // negativo no puede coincidir con ninguna: se corta acá y no llega al recálculo.
+    private static void EnsureGlobalScaleFloorIsPossible(int? floor)
+    {
+        if (floor is { } value && value < 1)
+        {
+            throw new QuotationsDomainException(
+                "quotation.global_scale.floor_invalid",
+                "The global scale floor must be a positive unit count.");
+        }
     }
 
     private void AddItemCore(
@@ -598,14 +612,19 @@ public sealed class Quotation
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
         IReadOnlyDictionary<Guid, QuotationItemPricing>? repricing,
+        int? globalScaleFloor,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
         EnsureEditable();
+        EnsureGlobalScaleFloorAllowed(globalScaleFloor);
         // Antes de asignar nada: un encabezado rechazado no puede quedar aplicado a medias.
         EnsureBillingIsConsistent(parties);
 
         ValidUntil = validUntil;
+        // El guardado manda el encabezado entero, así que un piso ausente es "quitalo" y no "no
+        // lo toques" — mismo criterio que ValidUntil o Notes.
+        GlobalScaleFloor = globalScaleFloor;
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);
         Assign(parties);

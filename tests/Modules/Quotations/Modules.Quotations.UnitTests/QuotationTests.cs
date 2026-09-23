@@ -365,7 +365,7 @@ public sealed class QuotationTests
         var parties = new QuotationParties(
             new QuotationPartyDetails { Name = "Nombre alterno" }, Shipping: null);
 
-        quotation.UpdateDetails(validUntil, "Efectivo", null, parties, null, null, AdvisorId, Now);
+        quotation.UpdateDetails(validUntil, "Efectivo", null, parties, null, null, globalScaleFloor: null, AdvisorId, Now);
 
         Assert.Equal(validUntil, quotation.ValidUntil);
         Assert.Equal("Efectivo", quotation.PaymentMethod);
@@ -415,7 +415,7 @@ public sealed class QuotationTests
                 Billing: null,
                 new QuotationPartyDetails { Name = "Bodega Fontibon" },
                 IsStorePickup: true),
-            null, null, AdvisorId, Now);
+            null, null, globalScaleFloor: null, AdvisorId, Now);
 
         Assert.True(quotation.IsStorePickup);
         Assert.Null(quotation.Shipping);
@@ -430,7 +430,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation(parties: QuotationParties.Empty with { IsStorePickup = true });
 
         quotation.UpdateDetails(
-            ValidUntil, "Efectivo", null, QuotationParties.Empty, null, null, AdvisorId, Now);
+            ValidUntil, "Efectivo", null, QuotationParties.Empty, null, null, globalScaleFloor: null, AdvisorId, Now);
 
         Assert.False(quotation.IsStorePickup);
     }
@@ -499,7 +499,7 @@ public sealed class QuotationTests
         quotation.UpdateDetails(
             ValidUntil, "Efectivo", null,
             QuotationParties.Empty with { BillsToFinalConsumer = true },
-            null, null, AdvisorId, Now);
+            null, null, globalScaleFloor: null, AdvisorId, Now);
 
         Assert.True(quotation.BillsToFinalConsumer);
         Assert.Equal(19_000m, quotation.TaxAmount);
@@ -522,7 +522,7 @@ public sealed class QuotationTests
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         quotation.UpdateDetails(
-            ValidUntil, "Efectivo", null, QuotationParties.Empty, null, null, AdvisorId, Now);
+            ValidUntil, "Efectivo", null, QuotationParties.Empty, null, null, globalScaleFloor: null, AdvisorId, Now);
 
         Assert.False(quotation.BillsToFinalConsumer);
         Assert.Equal(0m, quotation.TaxAmount);
@@ -651,7 +651,7 @@ public sealed class QuotationTests
                     new QuotationPartyDetails { Name = "Sede administrativa" },
                     Shipping: null,
                     BillsToFinalConsumer: true),
-                null, null, AdvisorId, Now));
+                null, null, globalScaleFloor: null, AdvisorId, Now));
 
         Assert.Equal("quotation.billing.final_consumer_conflict", error.Code);
         Assert.Equal("nota original", quotation.Notes);
@@ -673,7 +673,7 @@ public sealed class QuotationTests
                     BillingUsesBusinessName = true,
                     BillsToFinalConsumer = true,
                 },
-                null, null, AdvisorId, Now));
+                null, null, globalScaleFloor: null, AdvisorId, Now));
 
         Assert.Equal("quotation.billing.final_consumer_conflict", error.Code);
     }
@@ -838,7 +838,7 @@ public sealed class QuotationTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
 
         var updateError = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.UpdateDetails(null, null, null, QuotationParties.Empty, null, null, AdvisorId, Now));
+            quotation.UpdateDetails(null, null, null, QuotationParties.Empty, null, null, globalScaleFloor: null, AdvisorId, Now));
         Assert.Equal("quotation.quotation.not_editable", updateError.Code);
     }
 
@@ -1038,7 +1038,7 @@ public sealed class QuotationTests
         Assert.Equal("quotation.quotation.not_editable", addError.Code);
 
         var updateError = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.UpdateDetails(null, null, null, QuotationParties.Empty, null, null, AdvisorId, Now));
+            quotation.UpdateDetails(null, null, null, QuotationParties.Empty, null, null, globalScaleFloor: null, AdvisorId, Now));
         Assert.Equal("quotation.quotation.not_editable", updateError.Code);
     }
 

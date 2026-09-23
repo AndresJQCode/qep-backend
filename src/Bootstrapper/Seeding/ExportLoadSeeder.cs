@@ -182,12 +182,15 @@ public static class ExportLoadSeeder
         )
         INSERT INTO customers.customers (
             id, tenant_id, cuc, name, business_name, identification_type, identification_number, is_active,
-            phone, email, address, city_id, classification_id, with_retention, vat_surplus, version,
+            phone, email, address, country, city_id, classification_id, with_retention, vat_surplus, version,
             created_at, updated_at)
         SELECT gen_random_uuid(), @tenant,
                'CLI' || city.department || lpad(n::text, greatest(6, length(n::text)), '0'),
                'Cliente de carga ' || n, NULL, 'Nit', (800000000 + n)::text, true,
-               NULL, NULL, 'Calle ' || lpad(n::text, greatest(6, length(n::text)), '0') || ' # 10-20', city.id,
+               NULL, NULL, 'Calle ' || lpad(n::text, greatest(6, length(n::text)), '0') || ' # 10-20',
+               -- El pais es obligatorio y sin DEFAULT a proposito (AddCustomerCountry): un alta tiene
+               -- que decir de donde es. CO porque la ciudad sale de geography.cities, que es DIVIPOLA.
+               'CO', city.id,
                @classification, false, false, 1, @now, @now
         FROM generate_series(1, @customers) AS n
         CROSS JOIN city

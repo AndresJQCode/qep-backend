@@ -16,7 +16,8 @@ public sealed record SaveOrderEditsCommand(
     long ExpectedVersion,
     IReadOnlyList<OrderItemAddition> Items,
     OrderEditProofs Proofs,
-    string? Notes) : ICommand<OrderDetailDto>, IOrderEdits;
+    string? Notes,
+    int? GlobalScaleFloor) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -161,16 +162,39 @@ public sealed class SaveOrderEditsHandler(
             order.AttachPaymentProofs(attachedInputs, updatedBy, now);
 
             var notesChanged = order.UpdateNotes(command.Notes, now);
+
+            // El cuerpo manda el piso entero en cada guardado; sólo se toca si cambió, porque el
+            // mutador sube la versión de la cotización.
+            var floorChanged = quotation.GlobalScaleFloor != command.GlobalScaleFloor;
+            if (floorChanged)
+            {
+                quotation.SetGlobalScaleFloorAfterConversion(command.GlobalScaleFloor, updatedBy, now);
+            }
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
 
             // Paso 9: sin cambio real no hay historial, auditoría, recálculo ni escritura, y la
-            // versión queda igual (RecalculatePaymentStatus siempre la sube).
-            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged)
+            // versión queda igual (RecalculatePaymentStatus siempre la sube). Un cambio que es
+            // sólo de piso global es real: sin contarlo, se descartaría en silencio.
+            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged)
             {
                 return new OrderDetailDto(order.ToDto(), quotation.ToDto());
             }
 
             await RecordItemEditsAsync(command.TenantId, quotation, order, itemEdits, updatedBy, now, cancellationToken);
+
+            if (floorChanged)
+            {
+                quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
+                    QuotationHistoryEntryId.New(),
+                    quotation.Id,
+                    QuotationHistoryEventType.Edited,
+                    updatedBy,
+                    QuotationChangeSummary.GlobalScaleFloorChanged(command.GlobalScaleFloor),
+                    now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.global_scale_changed",
+                    order.Id.ToString(), "success", now);
+            }
 
             for (var index = 0; index < removedProofIds.Length; index++)
             {
