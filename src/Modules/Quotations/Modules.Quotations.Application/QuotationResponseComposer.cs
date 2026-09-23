@@ -145,7 +145,12 @@ public sealed class QuotationResponseComposer(
             product?.Name ?? string.Empty,
             product?.Code ?? string.Empty,
             product?.ImageUrl,
+            // Ordenadas acá y no en el adaptador: el orden es parte del contrato de esta
+            // respuesta —la pantalla pinta la tabla de descuentos tal como llega— y Catalog no
+            // promete ninguno, así que confiar en el que traiga la consulta deja el orden atado
+            // a un detalle de almacenamiento.
             (product?.Scales ?? [])
+                .OrderBy(scale => scale.FromUnit)
                 .Select(scale => new QuotationItemPriceScaleResponse(
                     scale.FromUnit,
                     scale.ToUnit,
