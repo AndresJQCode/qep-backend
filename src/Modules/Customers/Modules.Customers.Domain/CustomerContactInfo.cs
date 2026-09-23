@@ -24,7 +24,31 @@ public sealed record CustomerContactInfo
 
     public required string Address { get; init; }
 
-    public required Guid CityId { get; init; }
+    /// <summary>
+    /// El pais del cliente, ISO-3166-1 alpha-2 (<c>CO</c>, <c>ES</c>). Decide cual de los dos
+    /// carriles de ciudad aplica — ver <see cref="CityId"/> y <see cref="CityName"/>.
+    ///
+    /// Se guarda el codigo y no el nombre: el nombre depende del idioma en el que se pinte la
+    /// ficha, el codigo no. El catalogo de paises vive en el frontend
+    /// (<c>features/customers/utils/countries.ts</c>); aca solo se exige que sean dos letras,
+    /// porque no existe un modulo de geografia mundial contra el cual validarlo.
+    /// </summary>
+    public required string Country { get; init; }
+
+    /// <summary>
+    /// La ciudad DIVIPOLA del domicilio, FK blanda a <c>geography.cities</c>. **Solo para
+    /// Colombia**: DIVIPOLA es el estandar colombiano y no describe ninguna ciudad de afuera.
+    /// Nula en un cliente extranjero, que usa <see cref="CityName"/>.
+    /// </summary>
+    public Guid? CityId { get; init; }
+
+    /// <summary>
+    /// La ciudad escrita a mano, **solo para un cliente que no es de Colombia**. Es texto libre a
+    /// proposito: no hay catalogo mundial de ciudades que este producto pueda mantener, y pedir
+    /// uno para poder facturarle a un cliente de Madrid seria cambiar el problema por otro mas
+    /// grande.
+    /// </summary>
+    public string? CityName { get; init; }
 
     // Espejan los anchos de columna. Salen del schema del formulario que ya existe
     // (customer-form.schema.ts); el del correo no esta ahi: 254 es el maximo de una direccion por
@@ -35,9 +59,16 @@ public sealed record CustomerContactInfo
 
     public const int AddressMaxLength = 200;
 
-    // La ciudad no se valida acá sino en Customer.EnsureValidCityId, que es donde vive
-    // customers.customer.city_required desde antes de la libreta; Update la comprueba antes de
-    // asignar nada para conservar el todo-o-nada.
+    public const int CountryLength = 2;
+
+    // El mismo ancho que el nombre de una ciudad DIVIPOLA en geography.cities, para que las dos
+    // ciudades quepan en la misma celda de cualquier listado.
+    public const int CityNameMaxLength = 120;
+
+    // La coherencia entre el pais y los dos carriles de ciudad no se decide acá sino en
+    // Customer.EnsureValidLocation, que es donde vive customers.customer.city_required desde antes
+    // de la libreta; Update la comprueba antes de asignar nada para conservar el todo-o-nada. Acá
+    // sólo se normaliza cada campo por separado.
     internal CustomerContactInfo Normalized() => new()
     {
         Phone = NormalizeRequired(
@@ -55,8 +86,48 @@ public sealed record CustomerContactInfo
             "The customer address is required.",
             "customers.customer.address_too_long",
             $"The customer address cannot exceed {AddressMaxLength} characters."),
-        CityId = CityId
+        Country = NormalizeCountry(Country),
+        CityId = CityId,
+        CityName = NormalizeCityName(CityName)
     };
+
+    // A mayusculas por la misma razon que el correo va a minusculas: "co" y "CO" son el mismo
+    // pais, y dejar las dos formas en base rompe en silencio la comparacion con
+    // Customer.ColombiaCountryCode — el cliente quedaria tratado como extranjero.
+    private static string NormalizeCountry(string? country)
+    {
+        if (string.IsNullOrWhiteSpace(country))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.country_required",
+                "The customer country is required.");
+        }
+
+        var trimmed = country.Trim();
+        return trimmed.Length == CountryLength && trimmed.All(char.IsAsciiLetter)
+            ? trimmed.ToUpperInvariant()
+            : throw new CustomersDomainException(
+                "customers.customer.country_invalid",
+                $"The customer country must be an ISO-3166-1 alpha-2 code ({CountryLength} letters).");
+    }
+
+    // Vacio y ausente son lo mismo, igual que con la razon social: un formulario que manda la
+    // ciudad en blanco no esta guardando una cadena vacia. Que haga falta o no lo decide
+    // Customer.EnsureValidLocation segun el pais.
+    private static string? NormalizeCityName(string? cityName)
+    {
+        if (string.IsNullOrWhiteSpace(cityName))
+        {
+            return null;
+        }
+
+        var trimmed = cityName.Trim();
+        return trimmed.Length > CityNameMaxLength
+            ? throw new CustomersDomainException(
+                "customers.customer.city_name_too_long",
+                $"The customer city cannot exceed {CityNameMaxLength} characters.")
+            : trimmed;
+    }
 
     // Telefono y correo son obligatorios al crear y al editar. Las propiedades siguen siendo
     // string? a proposito: las filas anteriores a la regla pueden tener null en base (las columnas

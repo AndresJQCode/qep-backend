@@ -50,8 +50,17 @@ public sealed record CustomerDto(
     /// como domicilio. Las direcciones de envio van en `Addresses`, y marcar otra como principal
     /// no cambia este campo (spec 2026-09-18).</summary>
     string? Address,
-    CustomerCityDto City,
-    CustomerDepartmentDto Department,
+    /// <summary>El pais del cliente, ISO-3166-1 alpha-2 (<c>CO</c>, <c>ES</c>). Decide cual de los
+    /// dos carriles de ciudad viene lleno.</summary>
+    string Country,
+    /// <summary>La ciudad DIVIPOLA resuelta. **Null cuando el cliente no es de Colombia**: su
+    /// ciudad viaja en <c>CityName</c>.</summary>
+    CustomerCityDto? City,
+    /// <summary>El departamento DIVIPOLA resuelto. Null por lo mismo que <c>City</c>.</summary>
+    CustomerDepartmentDto? Department,
+    /// <summary>La ciudad escrita a mano de un cliente de afuera. Null para uno colombiano, que
+    /// usa <c>City</c>. Quien pinta la ficha usa <c>City?.Name ?? CityName</c>.</summary>
+    string? CityName,
     ClientClassificationDto Classification,
     IReadOnlyCollection<CustomerAddressDto> Addresses,
     bool WithRetention,
@@ -70,8 +79,10 @@ public sealed record CustomerResponse(
     string? Phone,
     string? Email,
     string? Address,
-    CustomerCityDto City,
-    CustomerDepartmentDto Department,
+    string Country,
+    CustomerCityDto? City,
+    CustomerDepartmentDto? Department,
+    string? CityName,
     ClientClassificationDto Classification,
     IReadOnlyCollection<CustomerAddressDto> Addresses,
     bool WithRetention,
@@ -100,8 +111,10 @@ public sealed record CustomerListItemResponse(
     string IdentificationNumber,
     string? Phone,
     string? Email,
-    CustomerCityDto City,
-    CustomerDepartmentDto Department,
+    string Country,
+    CustomerCityDto? City,
+    CustomerDepartmentDto? Department,
+    string? CityName,
     ClientClassificationDto Classification,
     bool IsActive);
 
@@ -126,8 +139,11 @@ public sealed record CustomersResponse(
 // lectura — `CLI-01` lo dice explicito; su prefijo puede cambiar en un Update, pero por el lado
 // del servidor, al resolver la clasificacion, nunca porque el cliente lo haya mandado.
 //
-// CityId y ClassificationId son obligatorios: la Fase 3 hizo la ciudad y la clasificacion FKs de
-// primer nivel, ya no texto libre opcional.
+// ClassificationId es obligatorio: la Fase 3 hizo la clasificacion una FK de primer nivel, ya no
+// texto libre opcional. CityId lo era tambien hasta que llego el pais: ahora es obligatorio **solo
+// para Colombia**, y un cliente de afuera manda CityName en su lugar. Cual de los dos hace falta
+// lo decide CustomerWriteRules segun Country, y el dominio lo vuelve a exigir en
+// Customer.EnsureValidLocation.
 public sealed record CreateCustomerRequest(
     string Name,
     /// <summary>Opcional: solo los clientes que son empresas la tienen. Vacio y ausente son lo
@@ -138,7 +154,14 @@ public sealed record CreateCustomerRequest(
     string? Phone,
     string? Email,
     string? Address,
-    Guid CityId,
+    /// <summary>ISO-3166-1 alpha-2. Obligatorio.</summary>
+    string Country,
+    /// <summary>La ciudad DIVIPOLA. Obligatoria si <c>Country</c> es <c>CO</c>, ignorada si
+    /// no.</summary>
+    Guid? CityId,
+    /// <summary>La ciudad escrita a mano. Obligatoria si <c>Country</c> **no** es <c>CO</c>,
+    /// ignorada si lo es.</summary>
+    string? CityName,
     Guid ClassificationId,
     bool WithRetention,
     bool VatSurplus);
@@ -151,7 +174,9 @@ public sealed record UpdateCustomerRequest(
     string? Phone,
     string? Email,
     string? Address,
-    Guid CityId,
+    string Country,
+    Guid? CityId,
+    string? CityName,
     Guid ClassificationId,
     bool WithRetention,
     bool VatSurplus);

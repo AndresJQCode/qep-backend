@@ -102,7 +102,11 @@ public sealed record QuotationDto(
     /// <summary>El piso de escala global elegido, o null. Ver
     /// <c>Quotation.GlobalScaleFloor</c>. Con default para no tocar las construcciones que ya
     /// existen: solo QuotationMapping.ToDto lo llena.</summary>
-    int? GlobalScaleFloor = null);
+    int? GlobalScaleFloor = null,
+    /// <summary>Cotización detal: ninguna línea recibe descuento, cualesquiera sean las escalas
+    /// de su producto. Ver <c>Quotation.IsRetail</c>. Con default por el mismo motivo que
+    /// <see cref="GlobalScaleFloor"/>.</summary>
+    bool IsRetail = false);
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
@@ -239,6 +243,12 @@ public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 /// respuesta trae en <c>AvailableGlobalScaleFloors</c>.
 /// </summary>
 public sealed record SetGlobalScaleRequest(int? Floor);
+
+/// <summary>
+/// Prende o apaga la cotizacion detal. Ver <see cref="SetQuotationRetailCommand"/>: con el
+/// prendido ninguna linea recibe descuento y el piso de escala global queda en null.
+/// </summary>
+public sealed record SetRetailRequest(bool IsRetail);
 
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
@@ -414,6 +424,14 @@ public sealed record QuotationResponse(
     long Version,
     /// <summary>El piso de escala global elegido para esta cotizacion, o null.</summary>
     int? GlobalScaleFloor,
+    /// <summary>Cotizacion detal: ninguna linea recibe descuento, cualesquiera sean las escalas
+    /// de su producto y la cantidad pedida. Es excluyente con <see cref="GlobalScaleFloor"/> —
+    /// prenderlo lo deja en null, y con el prendido el endpoint de escala global rechaza
+    /// cualquier piso no nulo. Viaja al lado suyo para que la pantalla lea los dos juntos.
+    ///
+    /// Llega solo a la pantalla de pedido: <c>OrderDetailResponse</c> devuelve este
+    /// <see cref="QuotationResponse"/> entero.</summary>
+    bool IsRetail,
     /// <summary>Los pisos entre los que el asesor puede elegir: los <c>FromUnit</c> distintos de
     /// las escalas de los productos que esta cotizacion tiene cargados, ordenados ascendente.
     /// **Completo incluso vacio** — una coleccion que desaparece obliga a la pantalla a

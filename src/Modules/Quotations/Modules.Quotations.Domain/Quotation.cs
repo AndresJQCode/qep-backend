@@ -110,6 +110,21 @@ public sealed class Quotation
     /// </summary>
     public int? GlobalScaleFloor { get; private set; }
 
+    /// <summary>
+    /// Cotización detal: ninguna línea recibe descuento, cualesquiera sean las escalas de su
+    /// producto y la cantidad pedida. No es un cero por ciento elegido a mano línea por línea
+    /// —eso lo pisaría el primer recálculo—; es el corte de arriba del recálculo, en
+    /// <c>QuotationPricingRecalculation.ApplyAsync</c>.
+    ///
+    /// Vive en la cotización y no en el pedido por el mismo motivo que
+    /// <see cref="GlobalScaleFloor"/>: el pedido no tiene líneas propias, las suyas son éstas, y
+    /// las dos pantallas muestran el mismo interruptor.
+    ///
+    /// Es excluyente con <see cref="GlobalScaleFloor"/> — ver <see cref="SetIsRetailCore"/> y
+    /// <see cref="SetGlobalScaleFloorCore"/>.
+    /// </summary>
+    public bool IsRetail { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateOnly? ValidUntil { get; private set; }
@@ -416,6 +431,19 @@ public sealed class Quotation
     private void SetGlobalScaleFloorCore(
         int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
     {
+        // En detal ninguna línea recibe descuento, así que un piso guardado no describiría nada
+        // de lo que la cotización está aplicando: se rechaza en vez de guardarse dormido. Va
+        // antes de la validación de forma porque es la razón real del rechazo — decirle
+        // "floor_invalid" a un piso perfectamente válido mandaría a mirar el select en vez del
+        // interruptor de detal. Quitarlo (null) sigue permitido: no pide descuento, y
+        // rechazarlo obligaría a apagar el detal para limpiar un piso que el detal ya limpió.
+        if (IsRetail && floor is not null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.retail.floor_not_allowed",
+                "A retail quotation cannot use a global scale floor.");
+        }
+
         // Catalog no deja crear una escala que arranque por debajo de 1, así que un piso de cero
         // o negativo no puede coincidir con ninguna: se corta acá y no llega al recálculo.
         if (floor is { } value && value < 1)
@@ -426,6 +454,42 @@ public sealed class Quotation
         }
 
         GlobalScaleFloor = floor;
+        Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Prende o apaga la cotización detal. Es una edición del encabezado, igual que
+    /// <see cref="SetGlobalScaleFloor"/>: sube la versión y deja rastro de quién la hizo.
+    /// </summary>
+    public void SetIsRetail(bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        EnsureEditable();
+        SetIsRetailCore(isRetail, updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// El mismo cambio sobre la cotización de un pedido que sigue <c>OrderStatus.Pending</c>, sin
+    /// exigir que la cotización sea editable. Mismo motivo que
+    /// <see cref="SetGlobalScaleFloorAfterConversion"/>: el estado del pedido lo comprueba su
+    /// caso de uso.
+    /// </summary>
+    public void SetIsRetailAfterConversion(
+        bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt) =>
+        SetIsRetailCore(isRetail, updatedBy, occurredAt);
+
+    private void SetIsRetailCore(bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        IsRetail = isRetail;
+
+        // Prender detal limpia el piso y apagarlo no lo restaura: el piso es una elección del
+        // asesor, no un estado derivado que el agregado pueda reconstruir. Guardarlo dormido
+        // haría que apagar el detal aplicara sola una escala que nadie volvió a pedir, y dejaría
+        // la respuesta publicando un piso que el recálculo está ignorando.
+        if (isRetail)
+        {
+            GlobalScaleFloor = null;
+        }
+
         Touch(updatedBy, occurredAt);
     }
 

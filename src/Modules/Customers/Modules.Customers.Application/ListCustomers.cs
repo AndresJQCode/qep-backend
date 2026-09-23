@@ -133,10 +133,12 @@ public sealed class ListCustomersHandler(
         }
 
         // La ciudad del domicilio y las de la libreta, de una vez: el domicilio arma los campos
-        // planos y el resto acompaña a cada direccion de envio del DTO.
+        // planos y el resto acompaña a cada direccion de envio del DTO. Un cliente de afuera no
+        // aporta ciudad de domicilio — ver CustomerCityIds.
         var cityIds = customers
-            .SelectMany(customer =>
-                customer.Addresses.Select(address => address.CityId).Append(customer.CityId))
+            .SelectMany(customer => customer.Addresses
+                .Select(address => address.CityId)
+                .Concat(CustomerCityIds.OfDomicile(customer)))
             .Distinct()
             .ToArray();
         var classificationIds = customers
@@ -153,11 +155,7 @@ public sealed class ListCustomersHandler(
         var items = new List<CustomerDto>(customers.Count);
         foreach (var customer in customers)
         {
-            var city = citiesById.TryGetValue(customer.CityId, out var cityRef)
-                ? cityRef
-                : throw new InvalidOperationException(
-                    $"City '{customer.CityId}' referenced by customer '{customer.Id}' " +
-                    "was not found.");
+            var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
             var classification = classificationsById.TryGetValue(
                 customer.ClassificationId, out var classificationValue)
                 ? classificationValue

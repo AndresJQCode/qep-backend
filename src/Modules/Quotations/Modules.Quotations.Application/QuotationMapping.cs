@@ -42,7 +42,8 @@ internal static class QuotationMapping
         QuotationMinimumPurchase.DescribeFor(quotation),
         quotation.Items.Select(ToDto).ToArray(),
         quotation.Version,
-        quotation.GlobalScaleFloor);
+        quotation.GlobalScaleFloor,
+        quotation.IsRetail);
 
     private static QuotationBillingAccountDto? ToDto(QuotationBillingAccount? account) =>
         account is null

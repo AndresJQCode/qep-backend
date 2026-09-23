@@ -216,6 +216,55 @@ public sealed class QuotationPricingRecalculationTests
         Assert.Equal(100m, quotation.Total);
     }
 
+    // Detal: ninguna línea recibe descuento aunque las escalas lo darían. 60 unidades caen en el
+    // tramo 49-200 con su 10%, y la compra mínima pasa de sobra — el único motivo por el que la
+    // línea queda en cero es el interruptor.
+    //
+    // Y queda en Own, no en GlobalFloor: una línea con origen de escala y cero por ciento le haría
+    // decir a la pantalla "descuento de escala aplicado" sobre nada. Mismo criterio que el barrido
+    // de compra mínima.
+    [Fact]
+    public async Task RetailLeavesEveryLineWithoutDiscount()
+    {
+        var product = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        var item = AddItem(quotation, product, 60m, 10_000m);
+        quotation.SetIsRetail(true, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(product, 10_000m, null, Tiers())),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        var line = quotation.Items.Single(candidate => candidate.Id == item);
+        Assert.Equal(0m, line.DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.Own, line.DiscountOrigin);
+        // El total y no el subtotal: el precio unitario trae el IVA adentro, asi que el subtotal
+        // es el neto (600.000 / 1,19). Sin descuento el cliente paga las 60 unidades a lista.
+        Assert.Equal(600_000m, quotation.Total);
+        Assert.Equal(0m, quotation.DiscountAmount);
+    }
+
+    // El corte está arriba del todo: en detal no hay nada que resolver, así que consultar el
+    // catálogo sería una lectura por cada guardado del editor sin ningún efecto sobre el
+    // resultado.
+    [Fact]
+    public async Task RetailDoesNotHitTheCatalog()
+    {
+        var product = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        AddItem(quotation, product, 60m, 10_000m);
+        quotation.SetIsRetail(true, AdvisorId, Now);
+        var lookup = new StubPricingLookup(Product(product, 10_000m, null, Tiers()));
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            lookup, TenantId, quotation, Now, CancellationToken.None);
+
+        Assert.Equal(0, lookup.ManyCalls);
+    }
+
     // Una cotización sin líneas no tiene nada que resolver y no debe ir al catálogo.
     [Fact]
     public async Task AnEmptyQuotationDoesNotHitTheCatalog()

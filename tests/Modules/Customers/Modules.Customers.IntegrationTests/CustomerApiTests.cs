@@ -66,6 +66,9 @@ public sealed class CustomerApiTests
         var page = await ListAsync(client, string.Empty);
 
         var item = Assert.Single(page.Items);
+        // Resuelta porque el cliente es colombiano; uno de afuera la trae nula y su ciudad en
+        // `CityName` (ver los tests de pais en CustomerWriteApiTests).
+        Assert.NotNull(item.City);
         Assert.Equal(city.CityId, item.City.Id);
         Assert.Equal(classification.Id, item.Classification.Id);
         Assert.Equal(classification.Prefix, item.Classification.Prefix);
@@ -87,6 +90,7 @@ public sealed class CustomerApiTests
         var page = await ListAsync(client, string.Empty);
 
         var item = Assert.Single(page.Items);
+        Assert.NotNull(item.Department);
         Assert.Equal(city.DepartmentId, item.Department.Id);
         Assert.Equal(city.DepartmentName, item.Department.Name);
     }
@@ -176,6 +180,8 @@ public sealed class CustomerApiTests
         var byPrincipalCity = await ListAsync(client, $"?cityIds={cities[1].CityId}");
 
         var item = Assert.Single(page.Items);
+        Assert.NotNull(item.City);
+        Assert.NotNull(item.Department);
         Assert.Equal(cities[0].CityId, item.City.Id);
         Assert.Equal(cities[0].DepartmentId, item.Department.Id);
         Assert.Equal(created.Id, Assert.Single(byContactCity.Items).Id);
@@ -413,6 +419,8 @@ public sealed class CustomerApiTests
             TestContext.Current.CancellationToken);
 
         Assert.NotNull(customer);
+        Assert.NotNull(customer.City);
+        Assert.NotNull(customer.Department);
         Assert.Equal(city.CityId, customer.City.Id);
         Assert.Equal(city.DepartmentDivipolaCode, customer.Department.DivipolaCode);
         Assert.Equal(classification.Id, customer.Classification.Id);

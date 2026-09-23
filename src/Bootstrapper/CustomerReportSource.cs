@@ -196,13 +196,19 @@ internal sealed class CustomerReportSource(
             return [];
         }
 
+        // Los clientes de afuera caen en el grupo de CityId nulo y quedan fuera del reparto por la
+        // misma razon que una ciudad que no resuelve: el ranking es de departamentos DIVIPOLA, y
+        // Madrid no esta en ninguno.
         var cities = await geographyLookup.FindCitiesAsync(
-            byCity.Select(row => row.CityId).ToArray(), cancellationToken);
+            byCity.Where(row => row.CityId.HasValue)
+                .Select(row => row.CityId!.Value)
+                .ToArray(),
+            cancellationToken);
 
         var byDepartment = byCity
             .Select(row => new
             {
-                City = cities.GetValueOrDefault(row.CityId),
+                City = row.CityId is { } cityId ? cities.GetValueOrDefault(cityId) : null,
                 row.Count,
             })
             .Where(row => row.City is not null)
@@ -291,7 +297,10 @@ internal sealed class CustomerReportSource(
             // Contains no matchee nada, que es la respuesta correcta y no "todos".
             // La ciudad del cliente es la de su domicilio (spec 2026-09-18), no la de cada bodega
             // de su libreta: el reporte agrupa y filtra por donde esta el cliente.
-            query = query.Where(customer => cityIds.Contains(customer.CityId));
+            // Un cliente de afuera no tiene ciudad DIVIPOLA, asi que nunca cae en un filtro por
+            // departamento colombiano.
+            query = query.Where(customer =>
+                customer.CityId.HasValue && cityIds.Contains(customer.CityId.Value));
         }
 
         return query;
@@ -325,6 +334,7 @@ internal sealed class CustomerReportSource(
                 row.customer.ClassificationId,
                 row.classification == null ? null : row.classification.Name,
                 row.customer.CityId,
+                row.customer.CityName,
                 row.customer.IsActive,
                 row.customer.CreatedAt));
     }
@@ -339,12 +349,20 @@ internal sealed class CustomerReportSource(
         }
 
         var cities = await geographyLookup.FindCitiesAsync(
-            rows.Select(row => row.CityId).ToArray(), cancellationToken);
+            rows.Where(row => row.CityId.HasValue)
+                .Select(row => row.CityId!.Value)
+                .ToArray(),
+            cancellationToken);
 
         return rows
             .Select(row =>
             {
-                cities.TryGetValue(row.CityId, out var city);
+                CustomerCityRef? city = null;
+                if (row.CityId is { } cityId)
+                {
+                    cities.TryGetValue(cityId, out city);
+                }
+
                 return new CustomerReportItemDto(
                     row.CustomerId.Value,
                     row.Cuc,
@@ -358,7 +376,8 @@ internal sealed class CustomerReportSource(
                     city?.DepartmentId,
                     city?.DepartmentName,
                     row.CityId,
-                    city?.CityName,
+                    // La DIVIPOLA si es colombiano, la escrita a mano si no.
+                    city?.CityName ?? row.CityName,
                     row.IsActive,
                     row.CreatedAt);
             })
@@ -373,7 +392,11 @@ internal sealed class CustomerReportSource(
         string IdentificationNumber,
         ClientClassificationId ClassificationId,
         string? ClassificationName,
-        Guid CityId,
+        /// <summary>Nula para un cliente que no es de Colombia: no tiene ciudad DIVIPOLA.</summary>
+        Guid? CityId,
+        /// <summary>La ciudad escrita a mano de ese cliente de afuera. Viaja hasta el DTO para
+        /// que el reporte muestre su ciudad en vez de una celda vacia.</summary>
+        string? CityName,
         bool IsActive,
         DateTimeOffset CreatedAt);
 }

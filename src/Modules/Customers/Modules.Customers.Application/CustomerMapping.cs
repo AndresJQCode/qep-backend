@@ -11,7 +11,7 @@ internal static class CustomerMapping
     /// </summary>
     public static CustomerDto ToDto(
         this Customer customer,
-        CustomerCityRef city,
+        CustomerCityRef? city,
         ClientClassification classification,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById) => new(
         customer.Id.Value,
@@ -26,9 +26,18 @@ internal static class CustomerMapping
         // donde esta, lo que la ficha muestra arriba. Las direcciones de envio van en `addresses`,
         // y marcar otra como principal no mueve estos tres campos.
         customer.Address,
-        new CustomerCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
-        new CustomerDepartmentDto(
-            city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+        customer.Country,
+        // `city`/`department` viajan resueltos **solo** para un cliente colombiano. Uno de afuera
+        // no tiene fila en geography.cities: su ciudad es `cityName`, texto libre. Quien pinte la
+        // ficha usa `city?.Name ?? cityName`.
+        city is null
+            ? null
+            : new CustomerCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
+        city is null
+            ? null
+            : new CustomerDepartmentDto(
+                city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+        customer.CityName,
         classification.ToDto(),
         customer.Addresses
             .OrderByDescending(address => address.IsPrincipal)
@@ -79,15 +88,16 @@ internal static class CustomerMapping
         CancellationToken cancellationToken)
     {
         // Las ciudades del domicilio y de todas las direcciones de envio de una vez: el domicilio
-        // arma los campos planos del DTO y el resto acompaña a cada fila de la libreta.
+        // arma los campos planos del DTO y el resto acompaña a cada fila de la libreta. Un cliente
+        // de afuera no aporta ciudad de domicilio: la suya es texto libre.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses.Select(address => address.CityId).Append(customer.CityId).Distinct().ToArray(),
+            customer.Addresses
+                .Select(address => address.CityId)
+                .Concat(CustomerCityIds.OfDomicile(customer))
+                .Distinct()
+                .ToArray(),
             cancellationToken);
-        var city = citiesById.TryGetValue(customer.CityId, out var contactCity)
-            ? contactCity
-            : throw new InvalidOperationException(
-                $"City '{customer.CityId}' referenced by customer '{customer.Id}' " +
-                "was not found.");
+        var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
         var classification = await classificationRepository.FindAsync(
             customer.TenantId, customer.ClassificationId, cancellationToken)
             ?? throw new InvalidOperationException(

@@ -33,7 +33,11 @@ internal sealed class QuotationCustomerLookup(
         // Las ciudades del domicilio y de toda la libreta de una vez: la cotizacion muestra la
         // libreta completa en su selector de envio, y cada fila necesita el nombre de su ciudad.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses.Select(address => address.CityId).Append(customer.CityId).Distinct().ToArray(),
+            customer.Addresses
+                .Select(address => address.CityId)
+                .Concat(DomicileCityIds(customer))
+                .Distinct()
+                .ToArray(),
             cancellationToken);
 
         return ToRef(customer, citiesById);
@@ -55,7 +59,9 @@ internal sealed class QuotationCustomerLookup(
         // sola vez — mismo motivo que FindAsync, pero por lote y no por cliente.
         var citiesById = await geographyLookup.FindCitiesAsync(
             customers.Values
-                .SelectMany(customer => customer.Addresses.Select(address => address.CityId).Append(customer.CityId))
+                .SelectMany(customer => customer.Addresses
+                    .Select(address => address.CityId)
+                    .Concat(DomicileCityIds(customer)))
                 .Distinct()
                 .ToArray(),
             cancellationToken);
@@ -64,10 +70,19 @@ internal sealed class QuotationCustomerLookup(
             customer => customer.Id.Value, customer => ToRef(customer, citiesById));
     }
 
+    // La ciudad del domicilio a resolver, o nada: un cliente que no es de Colombia no tiene
+    // ciudad DIVIPOLA, la suya es el texto de Customer.CityName.
+    private static IEnumerable<Guid> DomicileCityIds(Customer customer) =>
+        customer.CityId is { } cityId ? [cityId] : [];
+
     private static QuotationCustomerRef ToRef(
         Customer customer, IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
     {
-        citiesById.TryGetValue(customer.CityId, out var contactCity);
+        CustomerCityRef? contactCity = null;
+        if (customer.CityId is { } domicileCityId)
+        {
+            citiesById.TryGetValue(domicileCityId, out contactCity);
+        }
 
         return new QuotationCustomerRef(
             customer.Id.Value,
@@ -85,7 +100,11 @@ internal sealed class QuotationCustomerLookup(
             customer.VatSurplus,
             customer.Email,
             contactCity?.CityId,
-            contactCity?.CityName,
+            // La ciudad del cliente para la cotizacion y el PDF: la DIVIPOLA si es colombiano, y
+            // si no la que tiene escrita. Sin este `??` el cliente de afuera aparece sin ciudad en
+            // la cotizacion aunque su ficha la muestre — QuotationCustomerRef.CityName es texto y
+            // no distingue de donde salio.
+            contactCity?.CityName ?? customer.CityName,
             contactCity?.DepartmentId,
             contactCity?.DepartmentName,
             customer.Addresses

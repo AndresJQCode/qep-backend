@@ -26,7 +26,11 @@ public interface ICustomerWriteCommand
 
     string? Address { get; }
 
-    Guid CityId { get; }
+    string Country { get; }
+
+    Guid? CityId { get; }
+
+    string? CityName { get; }
 
     Guid ClassificationId { get; }
 }
@@ -84,10 +88,36 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
 
-        // La ciudad y la clasificacion son obligatorias: la Fase 3 las convirtio en FKs de primer
-        // nivel, ya no texto libre opcional.
-        RuleFor(command => command.CityId).NotEmpty();
+        // La clasificacion es obligatoria: la Fase 3 la convirtio en una FK de primer nivel, ya no
+        // texto libre opcional.
         RuleFor(command => command.ClassificationId).NotEmpty();
+
+        // El pais es obligatorio y son dos letras (ISO-3166-1 alpha-2). Dos RuleFor por la misma
+        // razon que el correo: el When() gobierna toda la cadena que lo precede, asi que un
+        // NotEmpty() delante del Length quedaria apagado justo cuando el pais viene vacio.
+        RuleFor(command => command.Country).NotEmpty();
+        RuleFor(command => command.Country)
+            .Length(CustomerContactInfo.CountryLength)
+            .Must(country => country.All(char.IsAsciiLetter))
+            .WithMessage(
+                $"The country must be an ISO-3166-1 alpha-2 code ({CustomerContactInfo.CountryLength} letters).")
+            .When(command => !string.IsNullOrWhiteSpace(command.Country));
+
+        // Cual de los dos carriles de ciudad hace falta lo decide el pais. DIVIPOLA solo describe
+        // Colombia, asi que un cliente de afuera no tiene CityId que mandar y escribe su ciudad.
+        // Marcar el campo correcto importa: el formulario pinta un combobox o un input de texto
+        // segun el pais, y un error apuntando al campo que no esta en pantalla no se ve.
+        RuleFor(command => command.CityId)
+            .NotEmpty()
+            .WithMessage("The city is required.")
+            .When(IsColombian);
+        RuleFor(command => command.CityName)
+            .NotEmpty()
+            .WithMessage("The city is required.")
+            .When(command => !IsColombian(command));
+        RuleFor(command => command.CityName)
+            .MaximumLength(CustomerContactInfo.CityNameMaxLength)
+            .When(command => !string.IsNullOrWhiteSpace(command.CityName));
 
         // Dos RuleFor y no uno encadenado: el When() gobierna toda la cadena que lo precede
         // (ApplyConditionTo.AllValidators), asi que un NotEmpty() delante quedaria apagado
@@ -100,6 +130,18 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .EmailAddress()
             .When(command => !string.IsNullOrWhiteSpace(command.Email));
     }
+
+    // Un pais ausente cuenta como Colombia a los efectos de **cual** ciudad exigir. No es
+    // adivinar: el pais tiene su propia regla NotEmpty que ya marca el campo, y dejar los dos
+    // carriles apagados haria que un cuerpo sin pais tampoco reporte la ciudad — el formulario
+    // marcaria un solo campo por vez y el usuario corregiria de a uno. Ademas conserva el
+    // comportamiento anterior al pais para cualquier llamador que todavia no lo mande.
+    private static bool IsColombian(ICustomerWriteCommand command) =>
+        string.IsNullOrWhiteSpace(command.Country)
+        || string.Equals(
+            command.Country.Trim(),
+            Customer.ColombiaCountryCode,
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSupportedIdentificationType(string? value)
     {
