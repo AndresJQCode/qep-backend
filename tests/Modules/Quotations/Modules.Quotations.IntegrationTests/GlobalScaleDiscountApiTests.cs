@@ -321,6 +321,55 @@ public sealed class GlobalScaleDiscountApiTests
         Assert.Equal("Own", line.DiscountOrigin);
     }
 
+    // El reporte del 2026-09-23: el asesor elige el piso, el porcentaje no se mueve, y la pantalla
+    // no dice por que. Con un tramo que exige paquetes de 50, una linea de 6 no lo cumple, y la
+    // respuesta tiene que decirlo con el codigo y el tamano del paquete.
+    [Fact]
+    public async Task TheResponseSaysWhyTheFloorDidNotApplyToALine()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client,
+            tenantId,
+            baseCop: 100_000m,
+            scales:
+            [
+                new
+                {
+                    fromUnit = 1, toUnit = 99, discount = 0m,
+                    restriction = "multiple", multiple = 1, finalCop = 100_000m
+                },
+                new
+                {
+                    fromUnit = 100, toUnit = 999_999, discount = 25m,
+                    restriction = "packaging_unit", packagingUnit = 50, finalCop = 75_000m
+                }
+            ]);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        var added = await client.PostAsJsonAsync(
+            $"{QuotationUrl(tenantId, created.Id)}/items",
+            new AddQuotationItemRequest(productId, 6m),
+            TestContext.Current.CancellationToken);
+        added.EnsureSuccessStatusCode();
+        var quotation = await ReadQuotationAsync(added);
+
+        var preview = await client.PostAsJsonAsync(
+            $"{QuotationUrl(tenantId, quotation.Id)}/preview",
+            RequestFor(quotation, globalScaleFloor: 100),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var line = Assert.Single((await ReadQuotationAsync(preview)).Items);
+        Assert.Equal(0m, line.DiscountPercentage);
+        Assert.NotNull(line.GlobalScaleFloorMiss);
+        Assert.Equal("packaging_unit", line.GlobalScaleFloorMiss.Reason);
+        Assert.Equal(50, line.GlobalScaleFloorMiss.Step);
+    }
+
     // 6 unidades caen en el tramo 1-9 (0%) y no llegan solas al que arranca en 20. Seis y no
     // tres: la compuerta de compra minima pide 6 unidades o 500.000, y por debajo barre todo.
     private static async Task<QuotationResponse> DraftWithSixUnitsAsync(

@@ -88,7 +88,9 @@ public sealed class QuotationResponseComposer(
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
             ToMinimumPurchaseResponse(quotation.MinimumPurchase),
-            quotation.Items.Select(item => ToItemResponse(item, products)).ToArray(),
+            quotation.Items
+                .Select(item => ToItemResponse(item, products, quotation.GlobalScaleFloor))
+                .ToArray(),
             quotation.Version,
             quotation.GlobalScaleFloor,
             quotation.IsRetail,
@@ -135,7 +137,8 @@ public sealed class QuotationResponseComposer(
     // que este lado no puede reconstruir.
     private static QuotationItemResponse ToItemResponse(
         QuotationItemDto item,
-        IReadOnlyDictionary<Guid, QuotationProductRef> products)
+        IReadOnlyDictionary<Guid, QuotationProductRef> products,
+        int? globalScaleFloor)
     {
         products.TryGetValue(item.ProductId, out var product);
 
@@ -168,7 +171,17 @@ public sealed class QuotationResponseComposer(
             item.TaxPercentage,
             item.TaxAmount,
             item.Position,
-            item.DiscountOrigin);
+            item.DiscountOrigin,
+            // Con el producto borrado no hay escalas contra las que explicar nada: decir
+            // "no tiene ese tramo" sería inventar.
+            product is null
+                ? null
+                : QuotationGlobalScaleFloorMiss.Explain(
+                    item.Quantity,
+                    item.DiscountPercentage,
+                    item.DiscountOrigin,
+                    product.Scales,
+                    globalScaleFloor));
     }
 
     /// <summary>
