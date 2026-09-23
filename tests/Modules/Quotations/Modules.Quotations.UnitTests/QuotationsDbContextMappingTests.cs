@@ -31,6 +31,24 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// Mismo riesgo que arriba: por convencion EF llamaria "IsRetail" a la columna, y el mapeo a
+    /// mano es lo unico que la deja en snake_case. NOT NULL ademas — una cotizacion anterior al
+    /// campo es "no detal", no "no se sabe".
+    /// </summary>
+    [Fact]
+    public void IsRetailMapsToItsSnakeCaseColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var property = model.FindEntityType(typeof(Quotation))!
+            .FindProperty(nameof(Quotation.IsRetail))!;
+
+        Assert.Equal("is_retail", property.GetColumnName());
+        Assert.False(property.IsNullable);
+    }
+
+    /// <summary>
     /// El unitario con descuento se deriva de cantidad, precio y descuento cada vez que se lee:
     /// no hay columna, no hay migracion, y una linea guardada antes de que el campo existiera lo
     /// reporta igual. Convertirlo en una propiedad con setter lo volveria persistido sin que el

@@ -541,11 +541,16 @@ public sealed class ImportCustomersHandler(
                     candidate.Name,
                     candidate.BusinessName,
                     new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                    // La importacion masiva es **solo colombiana**: sus columnas son Departamento y
+                    // Ciudad, resueltas contra DIVIPOLA por FindCityByNameAsync, y la plantilla
+                    // valida la ciudad con una lista cerrada que depende del departamento elegido.
+                    // Un cliente de afuera se da de alta por el formulario, no por Excel.
                     new CustomerContactInfo
                     {
                         Phone = candidate.Phone,
                         Email = candidate.Email,
                         Address = candidate.Address ?? string.Empty,
+                        Country = Customer.ColombiaCountryCode,
                         CityId = candidate.City.CityId
                     },
                     new CustomerCommercialInfo
@@ -581,11 +586,13 @@ public sealed class ImportCustomersHandler(
                     Phone = candidate.Phone
                 },
                 new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                // Solo colombiana, por lo mismo que la rama de actualizacion de arriba.
                 new CustomerContactInfo
                 {
                     Phone = candidate.Phone,
                     Email = candidate.Email,
                     Address = candidate.Address ?? string.Empty,
+                    Country = Customer.ColombiaCountryCode,
                     CityId = candidate.City.CityId
                 },
                 new CustomerCommercialInfo

@@ -14,7 +14,9 @@ public sealed record CreateCustomerCommand(
     string? Phone,
     string? Email,
     string? Address,
-    Guid CityId,
+    string Country,
+    Guid? CityId,
+    string? CityName,
     Guid ClassificationId,
     bool WithRetention,
     bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
@@ -59,17 +61,32 @@ public sealed class CreateCustomerHandler(
             ?? throw new CustomersDomainException(
                 "customers.customer.classification_not_found",
                 "The client classification was not found in this tenant.");
-        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
-            ?? throw new CustomersDomainException(
-                "customers.customer.city_not_found",
-                "The city was not found.");
+        // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver. El validador ya se
+        // aseguro de que venga la que corresponde al pais; aca se comprueba que exista.
+        // Sin `?.`: el validador de arriba ya exigio el pais NotEmpty, asi que a esta altura no es
+        // nulo — y tratarlo como si pudiera serlo contagia el nulo a Country mas abajo.
+        var isColombian = string.Equals(
+            command.Country.Trim(),
+            Customer.ColombiaCountryCode,
+            StringComparison.OrdinalIgnoreCase);
+        var city = isColombian
+            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+                ?? throw new CustomersDomainException(
+                    "customers.customer.city_not_found",
+                    "The city was not found.")
+            : null;
 
         // El CUC se pide **despues** de resolver clasificacion y ciudad: cada llamada consume un
         // numero del consecutivo del tenant, y pedirlo antes quemaria uno por cada referencia mal
         // escrita. Un consecutivo con huecos no rompe nada, pero nadie tiene una buena respuesta
         // para el cliente que pregunta por que su primer codigo salto un numero.
         var sequence = await cucGenerator.NextAsync(command.TenantId, cancellationToken);
-        var cuc = CucFormatter.Build(classification.Prefix, city.DepartmentDivipolaCode, sequence);
+        // Un cliente de afuera no tiene departamento DIVIPOLA, y el CUC lleva dos digitos en ese
+        // lugar: van los de CucFormatter.ForeignDepartmentCode. Ver alla por que no se omiten.
+        var cuc = CucFormatter.Build(
+            classification.Prefix,
+            city?.DepartmentDivipolaCode ?? CucFormatter.ForeignDepartmentCode,
+            sequence);
         var now = clock.UtcNow;
 
         var customer = Customer.Create(
@@ -82,13 +99,18 @@ public sealed class CreateCustomerHandler(
             // domicilio de abajo (spec 2026-09-18, decision 3): su ciudad es la que acaba de
             // emitir el CUC, y sin ella la cotizacion no tendria nada que preseleccionar. Desde
             // aca son dos datos distintos: editar la ficha no la toca.
-            new CustomerAddressDetails
-            {
-                Name = command.Name,
-                Address = command.Address ?? string.Empty,
-                CityId = command.CityId,
-                Phone = command.Phone
-            },
+            //
+            // `null` para un cliente de afuera: CustomerAddress.CityId es una FK a
+            // geography.cities y no hay ciudad colombiana que ponerle. Nace sin libreta.
+            city is null
+                ? null
+                : new CustomerAddressDetails
+                {
+                    Name = command.Name,
+                    Address = command.Address ?? string.Empty,
+                    CityId = city.CityId,
+                    Phone = command.Phone
+                },
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
             new CustomerContactInfo
@@ -96,7 +118,9 @@ public sealed class CreateCustomerHandler(
                 Phone = command.Phone,
                 Email = command.Email,
                 Address = command.Address ?? string.Empty,
-                CityId = command.CityId
+                Country = command.Country,
+                CityId = command.CityId,
+                CityName = command.CityName
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),

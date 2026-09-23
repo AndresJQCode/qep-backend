@@ -90,6 +90,17 @@ public static class QuotationChangeSummary
         ? $"Aplicó el descuento global de la escala desde {value} unidades."
         : "Quitó el descuento global de escala.";
 
+    /// <summary>
+    /// Sin el valor anterior, mismo criterio que <see cref="GlobalScaleFloorChanged"/>: un
+    /// booleano anterior no le dice nada a quien lee el historial, y la entrada previa ya esta
+    /// ahi arriba. Al prender se nombra el efecto —"ninguna linea recibe descuento"— porque la
+    /// palabra "detal" sola no dice que esto borra los descuentos que la cotizacion ya tenia
+    /// resueltos, ni que se lleva por delante el piso de escala global.
+    /// </summary>
+    public static string RetailChanged(bool isRetail) => isRetail
+        ? "Marcó la cotización como detal: ninguna línea recibe descuento."
+        : "Quitó el detal: las líneas vuelven a su descuento por escala.";
+
     public static string Voided() => "Anulada.";
 
     public static string Expired() => "Vencida automáticamente al pasar su vigencia.";

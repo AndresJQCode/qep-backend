@@ -24,6 +24,13 @@ public sealed class Customer
     // consecutivo (6). 28 como maximo, y 32 deja margen sin tener que tocar esta constante.
     public const int CucMaxLength = 32;
 
+    /// <summary>
+    /// Colombia en ISO-3166-1 alpha-2. Es una bifurcacion de negocio y no un string suelto: con
+    /// este pais el domicilio se ubica con la ciudad DIVIPOLA (<see cref="CityId"/>) y con
+    /// cualquier otro con la ciudad escrita a mano (<see cref="CityName"/>).
+    /// </summary>
+    public const string ColombiaCountryCode = "CO";
+
     // EF Core materializa por aca. El codigo nunca construye el agregado asi: Create es el unico
     // punto de entrada, y es el que hace cumplir los invariantes.
     private Customer()
@@ -32,6 +39,7 @@ public sealed class Customer
         Name = string.Empty;
         IdentificationNumber = string.Empty;
         Address = string.Empty;
+        Country = string.Empty;
     }
 
     private Customer(
@@ -40,7 +48,7 @@ public sealed class Customer
         string cuc,
         string name,
         string? businessName,
-        CustomerAddressDetails principalAddress,
+        CustomerAddressDetails? principalAddress,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -53,16 +61,25 @@ public sealed class Customer
         BusinessName = businessName;
         // La primera direccion nace principal: un cliente sin direccion principal deja a la
         // cotizacion sin saber a donde entregar, y su ciudad es la que ya emitio el CUC.
-        var first = CustomerAddress.Create(id, principalAddress, occurredAt);
-        first.MarkPrincipal(true, occurredAt);
-        _addresses.Add(first);
+        //
+        // Un cliente de afuera nace **sin** libreta: CustomerAddress.CityId es una FK a
+        // geography.cities, que es DIVIPOLA, y no hay ciudad colombiana que ponerle. Una fila con
+        // una ciudad inventada seria peor que no tenerla.
+        if (principalAddress is not null)
+        {
+            var first = CustomerAddress.Create(id, principalAddress, occurredAt);
+            first.MarkPrincipal(true, occurredAt);
+            _addresses.Add(first);
+        }
+
         // Directo y no por Assign: el analisis de flujo del compilador no atraviesa metodos, asi
         // que asignar IdentificationNumber alla deja el constructor con un CS8618. Address tiene
         // el mismo problema desde que dejo de ser opcional: se inicializa aca por lo mismo, y
-        // Assign(contact) la pisa enseguida con el valor normalizado real.
+        // Assign(contact) la pisa enseguida con el valor normalizado real. Country igual.
         IdentificationType = identification.Type;
         IdentificationNumber = identification.Number;
         Address = string.Empty;
+        Country = string.Empty;
         Assign(contact);
         Assign(commercial);
         IsActive = true;
@@ -167,12 +184,30 @@ public sealed class Customer
     public string Address { get; private set; }
 
     /// <summary>
+    /// El pais del cliente, ISO-3166-1 alpha-2. Ver <see cref="CustomerContactInfo.Country"/>.
+    ///
+    /// Es el discriminante del domicilio: <c>CO</c> ⇒ <see cref="CityId"/>; cualquier otro ⇒
+    /// <see cref="CityName"/>. Nunca los dos.
+    /// </summary>
+    public string Country { get; private set; }
+
+    /// <summary>
     /// FK blanda a <c>Modules.Geography</c>: <see cref="Guid"/> y no un id fuertemente tipado de
     /// otro dominio, mismo criterio que <see cref="CustomerAddress.CityId"/>. La FK real
     /// (<c>FK_customers_cities_city_id</c>) la escribe a mano la migración, porque City vive en
     /// otro DbContext.
+    ///
+    /// **Nula en un cliente que no es de Colombia**: DIVIPOLA es el estandar colombiano, y no hay
+    /// fila de <c>geography.cities</c> que describa Madrid. Ese cliente usa
+    /// <see cref="CityName"/>.
     /// </summary>
-    public Guid CityId { get; private set; }
+    public Guid? CityId { get; private set; }
+
+    /// <summary>
+    /// La ciudad escrita a mano de un cliente de afuera. Nula en un cliente colombiano, que usa
+    /// <see cref="CityId"/>. Ver <see cref="CustomerContactInfo.CityName"/>.
+    /// </summary>
+    public string? CityName { get; private set; }
 
     /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
@@ -208,7 +243,7 @@ public sealed class Customer
         string cuc,
         string name,
         string? businessName,
-        CustomerAddressDetails principalAddress,
+        CustomerAddressDetails? principalAddress,
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -351,9 +386,9 @@ public sealed class Customer
         var normalizedBusinessName = NormalizeBusinessName(businessName);
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
-        // La ciudad se comprueba acá y no sólo en Assign: hace falta **antes** de asignar el
-        // nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
-        EnsureValidCityId(normalizedContact.CityId);
+        // El pais y la ciudad se comprueban acá y no sólo en Assign: hacen falta **antes** de
+        // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
+        EnsureValidLocation(normalizedContact);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         var normalizedClassificationPrefix = NormalizeClassificationPrefix(classificationPrefix);
 
@@ -380,18 +415,21 @@ public sealed class Customer
         IdentificationNumber = identification.Number;
     }
 
-    // Asigna los cuatro siempre. Telefono y correo se pueden **limpiar**, no solo setear: una
+    // Asigna todo siempre. Telefono y correo se pueden **limpiar**, no solo setear: una
     // implementacion que ignore los null "para no pisar" deja campos imborrables y pasa todas las
-    // demas pruebas. La direccion llega validada por Normalized; la ciudad vacia se rechaza aca
-    // con el codigo que este agregado emitia antes de la libreta.
+    // demas pruebas. La direccion llega validada por Normalized; el par pais/ciudad se resuelve
+    // aca con el codigo que este agregado emitia antes de la libreta.
     private void Assign(CustomerContactInfo contact)
     {
         var normalized = contact.Normalized();
+        var location = EnsureValidLocation(normalized);
 
         Phone = normalized.Phone;
         Email = normalized.Email;
         Address = normalized.Address;
-        CityId = EnsureValidCityId(normalized.CityId);
+        Country = location.Country;
+        CityId = location.CityId;
+        CityName = location.CityName;
     }
 
     private void Assign(CustomerCommercialInfo commercial)
@@ -527,17 +565,40 @@ public sealed class Customer
             "customers.customer.classification_prefix_too_long",
             $"The classification prefix cannot exceed {ClientClassification.PrefixMaxLength} characters.");
 
-    // La FK de base (customers.customers.city_id -> geography.cities.id) garantiza que la ciudad
-    // exista, pero no corre hasta el SaveChanges. Este chequeo estructural minimo —no vacia— es lo
-    // unico que el dominio puede afirmar por si mismo, mismo criterio que el resto de los
-    // required de este agregado: fallar rapido con un codigo de dominio en vez de dejar que un
-    // Guid.Empty viaje hasta Postgres y vuelva como una violacion de FK que no dice nada util.
-    private static Guid EnsureValidCityId(Guid cityId) =>
-        cityId == Guid.Empty
+    /// <summary>
+    /// Resuelve el domicilio contra el pais y devuelve el trio ya coherente.
+    ///
+    /// Los dos carriles son excluyentes y este metodo los **limpia**, no solo los valida: un
+    /// cliente colombiano se queda sin <c>CityName</c> y uno de afuera sin <c>CityId</c>. Guardar
+    /// los dos dejaria dos respuestas a "donde esta el cliente" sin nada que diga cual gana al
+    /// pintar la ficha — y la que sobra envejece sola, porque el formulario ya no la muestra.
+    ///
+    /// Para Colombia el chequeo es estructural y minimo (no vacia): la FK de base
+    /// (<c>customers.customers.city_id -> geography.cities.id</c>) garantiza que la ciudad exista,
+    /// pero no corre hasta el SaveChanges, y fallar rapido con un codigo de dominio es mejor que
+    /// dejar que un Guid.Empty vuelva como una violacion de FK que no dice nada util.
+    /// </summary>
+    private static (string Country, Guid? CityId, string? CityName) EnsureValidLocation(
+        CustomerContactInfo normalized)
+    {
+        // Normalized() ya rechazo un pais ausente o que no sean dos letras.
+        var country = normalized.Country;
+
+        if (country == ColombiaCountryCode)
+        {
+            return normalized.CityId is { } cityId && cityId != Guid.Empty
+                ? (country, cityId, null)
+                : throw new CustomersDomainException(
+                    "customers.customer.city_required",
+                    "The customer city is required.");
+        }
+
+        return string.IsNullOrWhiteSpace(normalized.CityName)
             ? throw new CustomersDomainException(
-                "customers.customer.city_required",
-                "The customer city is required.")
-            : cityId;
+                "customers.customer.city_name_required",
+                "The customer city is required for a customer outside Colombia.")
+            : (country, null, normalized.CityName);
+    }
 
     private static ClientClassificationId EnsureValidClassificationId(
         ClientClassificationId classificationId) =>

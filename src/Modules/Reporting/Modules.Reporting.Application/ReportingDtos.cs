@@ -96,7 +96,9 @@ public sealed record CustomerReportItemDto(
     string? ClassificationName,
     Guid? DepartmentId,
     string? DepartmentName,
-    Guid CityId,
+    /// <summary>Nulo para un cliente que no es de Colombia: no tiene ciudad DIVIPOLA. Su ciudad
+    /// viaja igual en <c>CityName</c>, escrita a mano.</summary>
+    Guid? CityId,
     string? CityName,
     bool IsActive,
     DateTimeOffset CreatedAt);

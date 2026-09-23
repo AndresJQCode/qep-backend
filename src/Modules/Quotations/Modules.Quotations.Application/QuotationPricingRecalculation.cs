@@ -33,6 +33,29 @@ internal static class QuotationPricingRecalculation
             return;
         }
 
+        // Cotización detal: ninguna línea recibe descuento, así que no hay nada que resolver y el
+        // corte va acá arriba, junto al de la cotización vacía — consultar el catálogo sería una
+        // lectura por cada guardado del editor sin ningún efecto sobre el resultado.
+        //
+        // Se baja 0% explícito en vez de dejar la línea como está: el descuento con el que el
+        // handler la agregó es provisional (ver el resumen de arriba), y prender el detal sobre
+        // una cotización que ya tenía descuentos resueltos tiene que borrarlos.
+        //
+        // Origen Own y no uno propio: 0% con un origen de escala le haría decir a la pantalla
+        // "descuento de escala aplicado" sobre nada. Mismo criterio y mismo shape que el barrido
+        // de compra mínima de más abajo. Va por ApplyGroupDiscounts, que no es una edición y por
+        // eso no toca Version ni Updated* — ver Quotation.ApplyGroupDiscounts.
+        if (quotation.IsRetail)
+        {
+            quotation.ApplyGroupDiscounts(
+                quotation.Items.ToDictionary(
+                    item => item.Id,
+                    _ => new QuotationItemDiscount(0m, QuotationDiscountOrigin.Own)),
+                occurredAt);
+
+            return;
+        }
+
         // Una sola consulta al catálogo para toda la cotización: una por línea convertiría un
         // cambio de cantidad en veinte lecturas, mismo criterio que ResolveManyAsync.
         var products = await lookup.FindManyAsync(

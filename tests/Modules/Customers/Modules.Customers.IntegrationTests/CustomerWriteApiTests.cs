@@ -39,6 +39,11 @@ public sealed class CustomerWriteApiTests
         Assert.True(customer.IsActive);
         Assert.True(customer.WithRetention);
         Assert.Equal(classification.Id, customer.Classification.Id);
+        // `City`/`Department` son nulos para un cliente de afuera (ver los tests de pais al final
+        // de este archivo). Este es colombiano, asi que tenerlos resueltos es parte de lo que se
+        // afirma: si llegaran nulos, la asercion falla, que es lo correcto.
+        Assert.NotNull(customer.City);
+        Assert.NotNull(customer.Department);
         Assert.Equal(city.CityId, customer.City.Id);
         Assert.Equal(city.DepartmentDivipolaCode, customer.Department.DivipolaCode);
         // Normalizado por el dominio: el correo baja a minusculas.
@@ -636,6 +641,7 @@ public sealed class CustomerWriteApiTests
         Assert.NotNull(updated);
         Assert.Equal(newClassification.Id, updated.Classification.Id);
         // La ciudad nueva es la del domicilio; el CUC conserva el departamento de alta.
+        Assert.NotNull(updated.City);
         Assert.Equal(cities[1].CityId, updated.City.Id);
         Assert.Equal($"GRA{originalSuffix}", updated.Cuc);
     }
@@ -662,6 +668,10 @@ public sealed class CustomerWriteApiTests
         foreach (var customer in new[] { response, after })
         {
             Assert.Equal(created.Address, customer.Address);
+            Assert.NotNull(created.City);
+            Assert.NotNull(created.Department);
+            Assert.NotNull(customer.City);
+            Assert.NotNull(customer.Department);
             Assert.Equal(created.City.Id, customer.City.Id);
             Assert.Equal(created.Department.Id, customer.Department.Id);
             Assert.Equal(2, customer.Addresses.Count);
@@ -693,6 +703,8 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(updated);
         Assert.Equal("Carrera 7 # 71-21", updated.Address);
+        Assert.NotNull(updated.City);
+        Assert.NotNull(updated.Department);
         Assert.Equal(cities[1].CityId, updated.City.Id);
         Assert.Equal(cities[1].DepartmentId, updated.Department.Id);
         var stillPrincipal = Assert.Single(updated.Addresses);
@@ -722,5 +734,194 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // ---- Pais ---------------------------------------------------------------------------------
+    //
+    // El pais decide como se ubica al cliente: con Colombia la ciudad DIVIPOLA (city_id, FK a
+    // geography.cities), con cualquier otro la ciudad escrita a mano. DIVIPOLA es el estandar
+    // colombiano y no describe ninguna ciudad de afuera.
+
+    [Fact]
+    public async Task CreateAForeignCustomerStoresTheHandwrittenCityAndNoDivipolaCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        // La ciudad existe igual: el punto es que un cliente de afuera no la usa.
+        await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewForeignCustomerBody(classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var customer = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        Assert.Equal("ES", customer.Country);
+        Assert.Equal("Madrid", customer.CityName);
+        Assert.Null(customer.City);
+        Assert.Null(customer.Department);
+    }
+
+    /// <summary>
+    /// El CUC es <c>{prefijo}{depto}{consecutivo}</c> y un cliente de afuera no tiene departamento
+    /// DIVIPOLA. Van <c>00</c> en ese lugar y **no** se omiten: los ultimos ocho caracteres son la
+    /// parte estable con la que <c>Customer.Update</c> reescribe el prefijo al cambiar la
+    /// clasificacion y con la que la importacion masiva matchea un cliente existente. Un CUC mas
+    /// corto haria que esos ocho se comieran parte del prefijo.
+    /// </summary>
+    [Fact]
+    public async Task AForeignCustomerGetsAZeroedDepartmentInItsCuc()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewForeignCustomerBody(classification.Id),
+            TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        var customer = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        Assert.Equal($"{classification.Prefix}00000001", customer.Cuc);
+    }
+
+    /// <summary>
+    /// La libreta de envios es DIVIPOLA (<c>CustomerAddress.CityId</c> es una FK a
+    /// <c>geography.cities</c>), asi que un cliente de afuera nace sin fila. No es una perdida
+    /// silenciosa: no hay ciudad colombiana que ponerle, y una inventada seria peor.
+    /// </summary>
+    [Fact]
+    public async Task AForeignCustomerIsCreatedWithoutAnAddressBookRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewForeignCustomerBody(classification.Id),
+            TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        var customer = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        Assert.Empty(customer.Addresses);
+    }
+
+    /// <summary>
+    /// El 422 tiene que marcar **el campo que esta en pantalla**: el formulario muestra el
+    /// combobox de Ciudad o el input de texto segun el pais, y un error apuntado al otro no lo ve
+    /// nadie. Es lo unico que <c>customerFieldErrors</c> sabe leer para marcar un input.
+    /// </summary>
+    [Fact]
+    public async Task AForeignCustomerWithoutACityNameMarksThatField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewForeignCustomerBody(classification.Id, cityName: null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("CityName", fields);
+        // El carril que no aplica no se reclama: pedirle un `cityId` a un cliente de Madrid
+        // seria pedirle un dato que no existe.
+        Assert.DoesNotContain("CityId", fields);
+    }
+
+    [Fact]
+    public async Task AColombianCustomerWithoutACityIdMarksThatField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Verde Esencial S.A.S.",
+                identificationType = "NIT",
+                identificationNumber = "900.123.456-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("CityId", fields);
+        Assert.DoesNotContain("CityName", fields);
+    }
+
+    [Fact]
+    public async Task ACountryThatIsNotTwoLettersIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewForeignCustomerBody(classification.Id, country: "ESP"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("Country", await ValidationFieldsAsync(response));
+    }
+
+    /// <summary>
+    /// Los dos carriles son excluyentes y el agregado limpia el que no aplica
+    /// (<c>Customer.EnsureValidLocation</c>). Un cuerpo que manda los dos no guarda los dos: eso
+    /// dejaria dos respuestas a "donde esta el cliente" sin nada que diga cual gana al pintar la
+    /// ficha.
+    /// </summary>
+    [Fact]
+    public async Task UpdateMovingACustomerAbroadDropsItsDivipolaCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewForeignCustomerBody(classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(updated);
+        Assert.Equal("ES", updated.Country);
+        Assert.Equal("Madrid", updated.CityName);
+        Assert.Null(updated.City);
+        // El CUC no se rehace en un Update: conserva el departamento con el que nacio.
+        Assert.Equal(created.Cuc, updated.Cuc);
     }
 }

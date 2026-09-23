@@ -228,7 +228,10 @@ public sealed class CustomerStatusAndImportApiTests
 
         var page = await ListAsync(client, string.Empty);
         Assert.Equal(2, page.Items.Count);
-        Assert.Contains(page.Items, item => item.Cuc == expectedFirstCuc && item.City.Name == city.CityName);
+        // `City?.Name` y no `City.Name`: la importacion masiva sólo da de alta clientes
+        // colombianos (sus columnas son Departamento y Ciudad, resueltas contra DIVIPOLA), asi
+        // que nunca es nula acá — pero el tipo lo admite desde que existe el pais.
+        Assert.Contains(page.Items, item => item.Cuc == expectedFirstCuc && item.City?.Name == city.CityName);
         Assert.Contains(page.Items, item =>
             item.Cuc == expectedSecondCuc && item.Classification.Name == classification.Name);
     }

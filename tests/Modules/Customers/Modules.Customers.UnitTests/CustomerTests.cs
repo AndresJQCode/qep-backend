@@ -45,13 +45,29 @@ public sealed class CustomerTests
     private static readonly Guid OtherCityId =
         Guid.Parse("01900000-0000-7000-8000-000000000011");
 
+    private const string Spain = "ES";
+
     private static CustomerContactInfo ValidContact(Guid? cityId = null) =>
         new()
         {
             Phone = "310 935 2187",
             Email = "compras@verde.co",
             Address = "Calle 10 # 45-12",
+            Country = Customer.ColombiaCountryCode,
             CityId = cityId ?? CityId
+        };
+
+    // Un cliente de afuera: sin ciudad DIVIPOLA, con el nombre de la ciudad escrito a mano.
+    private static CustomerContactInfo ForeignContact(
+        string country = Spain,
+        string? cityName = "Madrid") =>
+        new()
+        {
+            Phone = "+34 910 000 000",
+            Email = "compras@verde.es",
+            Address = "Calle Gran Via 28",
+            Country = country,
+            CityName = cityName
         };
 
     // Una direccion de envio distinta del domicilio, para probar que la libreta y el contacto
@@ -75,23 +91,37 @@ public sealed class CustomerTests
         Guid? cityId = null,
         CustomerIdentification? identification = null,
         CustomerContactInfo? contact = null,
-        CustomerCommercialInfo? commercial = null) =>
+        CustomerCommercialInfo? commercial = null,
+        bool seedAddressBook = true) =>
         Customer.Create(
             CustomerId.New(),
             TenantId,
             cuc,
             name,
             businessName,
-            new CustomerAddressDetails
-            {
-                Name = name,
-                Address = "Calle 10 # 45-12",
-                CityId = cityId ?? CityId
-            },
+            seedAddressBook
+                ? new CustomerAddressDetails
+                {
+                    Name = name,
+                    Address = "Calle 10 # 45-12",
+                    CityId = cityId ?? CityId
+                }
+                : null,
             identification ?? Identification(),
             contact ?? ValidContact(cityId),
             commercial ?? Commercial(),
             Now);
+
+    // La libreta de envios es DIVIPOLA, asi que un cliente de afuera nace sin fila: no hay ciudad
+    // colombiana que ponerle. Ver Customer.Create.
+    private static Customer CreateForeign(
+        string cuc = "CLI00000142",
+        string country = Spain,
+        string? cityName = "Madrid") =>
+        Create(
+            cuc: cuc,
+            contact: ForeignContact(country, cityName),
+            seedAddressBook: false);
 
     [Fact]
     public void CreateStartsActiveAtVersionOne()
@@ -373,6 +403,184 @@ public sealed class CustomerTests
             () => Create(contact: ValidContact() with { CityId = Guid.Empty }));
 
         Assert.Equal("customers.customer.city_required", exception.Code);
+    }
+
+    // ---- Pais (CLI-PAIS-01) -------------------------------------------------------------------
+    //
+    // El pais decide como se ubica al cliente: con Colombia va la ciudad DIVIPOLA (city_id, la FK
+    // a geography.cities); con cualquier otro pais DIVIPOLA no existe y la ciudad es texto libre.
+    // Los dos no pueden convivir — un cliente con ciudad DIVIPOLA *y* ciudad escrita a mano tiene
+    // dos respuestas a la misma pregunta, y nada dice cual gana al pintar la ficha.
+
+    [Fact]
+    public void CreateStoresTheCountry()
+    {
+        var customer = Create();
+
+        Assert.Equal("CO", customer.Country);
+    }
+
+    // El codigo es la clave con la que el frontend resuelve el nombre del pais y con la que este
+    // agregado decide si la ciudad es DIVIPOLA. "co" y "CO" tienen que ser el mismo pais.
+    [Fact]
+    public void CreateUppercasesTheCountry()
+    {
+        var customer = Create(contact: ValidContact() with { Country = "co" });
+
+        Assert.Equal("CO", customer.Country);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CreateRejectsACountryThatIsMissing(string? country)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { Country = country! }));
+
+        Assert.Equal("customers.customer.country_required", exception.Code);
+    }
+
+    // ISO-3166-1 alpha-2, siempre dos letras. Guardar "Colombia" o "COL" rompe la comparacion con
+    // ColombiaCountryCode en silencio: el cliente quedaria tratado como extranjero.
+    [Theory]
+    [InlineData("COL")]
+    [InlineData("C")]
+    [InlineData("C0")]
+    [InlineData("12")]
+    public void CreateRejectsACountryThatIsNotTwoLetters(string country)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { Country = country }));
+
+        Assert.Equal("customers.customer.country_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void AForeignCustomerKeepsTheCityNameAndHasNoCityId()
+    {
+        var customer = CreateForeign();
+
+        Assert.Equal("ES", customer.Country);
+        Assert.Equal("Madrid", customer.CityName);
+        Assert.Null(customer.CityId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AForeignCustomerRequiresTheCityInWriting(string? cityName)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => CreateForeign(cityName: cityName));
+
+        Assert.Equal("customers.customer.city_name_required", exception.Code);
+    }
+
+    // Sin ciudad DIVIPOLA no hay departamento, y sin departamento no hay los dos digitos que el
+    // CUC lleva en el medio. El alta resuelve eso con CucFormatter.ForeignDepartmentCode; el
+    // agregado solo se asegura de que la ciudad no viaje por el carril equivocado.
+    [Fact]
+    public void AForeignCustomerDropsAStrayCityId()
+    {
+        var customer = Create(
+            contact: ForeignContact() with { CityId = CityId },
+            seedAddressBook: false);
+
+        Assert.Null(customer.CityId);
+        Assert.Equal("Madrid", customer.CityName);
+    }
+
+    [Fact]
+    public void AColombianCustomerDropsAFreeTextCity()
+    {
+        var customer = Create(contact: ValidContact() with { CityName = "Madrid" });
+
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Null(customer.CityName);
+    }
+
+    [Fact]
+    public void AColombianCustomerStillRequiresItsCityId()
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { CityId = null }));
+
+        Assert.Equal("customers.customer.city_required", exception.Code);
+    }
+
+    // La libreta de envios es DIVIPOLA (CustomerAddress.CityId es una FK a geography.cities), asi
+    // que un cliente de afuera nace sin fila. No es una perdida silenciosa: es que no hay ciudad
+    // colombiana que ponerle, y una fila con una ciudad inventada seria peor.
+    [Fact]
+    public void AForeignCustomerIsBornWithoutAnAddressBookRow()
+    {
+        var customer = CreateForeign();
+
+        Assert.Empty(customer.Addresses);
+        Assert.Null(customer.PrincipalAddress);
+    }
+
+    [Fact]
+    public void UpdateCanMoveACustomerAbroad()
+    {
+        var customer = Create();
+
+        customer.Update(
+            "Verde Esencial",
+            businessName: null,
+            Identification(),
+            ForeignContact(),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Equal("ES", customer.Country);
+        Assert.Equal("Madrid", customer.CityName);
+        Assert.Null(customer.CityId);
+    }
+
+    [Fact]
+    public void UpdateCanBringACustomerBackToColombia()
+    {
+        var customer = CreateForeign();
+
+        customer.Update(
+            "Verde Esencial",
+            businessName: null,
+            Identification(),
+            ValidContact(OtherCityId),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Equal("CO", customer.Country);
+        Assert.Equal(OtherCityId, customer.CityId);
+        Assert.Null(customer.CityName);
+    }
+
+    // Misma garantia de todo-o-nada que UpdateLeavesTheCustomerUntouchedWhenTheCityIsRejected: el
+    // pais se comprueba antes de asignar nada.
+    [Fact]
+    public void UpdateLeavesTheCustomerUntouchedWhenTheCountryIsRejected()
+    {
+        var customer = Create(name: "Verde Esencial");
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            "Nombre nuevo",
+            businessName: null,
+            Identification(),
+            ValidContact() with { Country = "COL" },
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("customers.customer.country_invalid", exception.Code);
+        Assert.Equal("Verde Esencial", customer.Name);
+        Assert.Equal("CO", customer.Country);
+        Assert.Equal(1, customer.Version);
     }
 
     // Misma garantia de todo-o-nada que UpdateLeavesTheCustomerUntouchedWhenALaterFieldIsRejected,

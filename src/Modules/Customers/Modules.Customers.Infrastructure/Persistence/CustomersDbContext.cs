@@ -77,8 +77,21 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.Address)
             .HasColumnName("address")
             .HasMaxLength(CustomerContactInfo.AddressMaxLength);
+        // El pais, ISO-3166-1 alpha-2. Obligatorio: todo cliente esta en algun lado, y es el
+        // discriminante de cual de los dos carriles de ciudad de abajo viene lleno.
+        customer.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(CustomerContactInfo.CountryLength)
+            .IsRequired();
+        // city_id es nulo para un cliente que no es de Colombia: DIVIPOLA no describe ninguna
+        // ciudad de afuera. La FK real sigue valiendo — Postgres admite NULL bajo una FK.
         customer.Property(value => value.CityId).HasColumnName("city_id");
         customer.HasIndex(value => value.CityId).HasDatabaseName("IX_customers_city");
+        // Y city_name es el carril contrario: la ciudad escrita a mano de ese cliente de afuera.
+        // Nulo para uno colombiano. Los dos nunca vienen juntos (Customer.EnsureValidLocation).
+        customer.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
         // La clasificacion, FK compuesta (tenant_id, classification_id) a
         // customers.client_classifications(tenant_id, id) — compuesta y no simple sobre id, para
         // que un cliente no pueda referenciar la clasificacion de otro tenant. A diferencia de la

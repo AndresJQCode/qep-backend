@@ -91,6 +91,7 @@ public sealed class QuotationResponseComposer(
             quotation.Items.Select(item => ToItemResponse(item, products)).ToArray(),
             quotation.Version,
             quotation.GlobalScaleFloor,
+            quotation.IsRetail,
             AvailableFloors(quotation, products));
     }
 

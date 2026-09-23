@@ -599,6 +599,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             [],
             quotation.Version,
             quotation.GlobalScaleFloor,
+            quotation.IsRetail,
             // El stub no mira el catalogo, asi que no puede resolver los pisos disponibles. El
             // composer real los llena; esto solo ejerce que el PDF se regenere.
             []));

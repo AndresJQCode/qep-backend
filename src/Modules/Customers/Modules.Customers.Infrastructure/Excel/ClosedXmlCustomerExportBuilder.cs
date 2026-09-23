@@ -80,8 +80,13 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         sheet.Cell(excelRow, 4).Value = customer.Phone ?? string.Empty;
         sheet.Cell(excelRow, 5).Value = customer.Email ?? string.Empty;
         sheet.Cell(excelRow, 6).Value = customer.Address ?? string.Empty;
-        sheet.Cell(excelRow, 7).Value = customer.Department.Name;
-        sheet.Cell(excelRow, 8).Value = customer.City.Name;
+        // Un cliente de afuera no tiene departamento DIVIPOLA —la columna queda vacia— y su ciudad
+        // es la escrita a mano. Se exporta igual que uno colombiano a proposito: el archivo es
+        // para leerlo, y una fila con la ciudad en blanco esconderia al cliente. Que el importador
+        // no pueda volver a subir esa fila es otro asunto, y esta dicho en ImportCustomers: el
+        // alta de un cliente de afuera es por formulario.
+        sheet.Cell(excelRow, 7).Value = customer.Department?.Name ?? string.Empty;
+        sheet.Cell(excelRow, 8).Value = customer.City?.Name ?? customer.CityName ?? string.Empty;
         sheet.Cell(excelRow, 9).Value = customer.Classification.Name;
         // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
         // que abre el archivo.

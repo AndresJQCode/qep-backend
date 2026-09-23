@@ -256,7 +256,13 @@ internal static class CustomersApiHarness
         return classification;
     }
 
-    /// <summary>El cuerpo minimo de un alta, con lo obligatorio y nada mas.</summary>
+    /// <summary>
+    /// El cuerpo minimo de un alta, con lo obligatorio y nada mas.
+    ///
+    /// Colombiano por defecto, que es el caso normal del padron: manda <c>cityId</c> (DIVIPOLA) y
+    /// deja <c>cityName</c> en nulo. Para un cliente de afuera esta
+    /// <see cref="NewForeignCustomerBody"/>, que hace exactamente lo contrario.
+    /// </summary>
     public static object NewCustomerBody(
         Guid cityId,
         Guid classificationId,
@@ -276,10 +282,40 @@ internal static class CustomersApiHarness
             phone,
             email,
             address,
+            country = "CO",
             cityId,
             classificationId,
             withRetention,
             vatSurplus
+        };
+
+    /// <summary>
+    /// El cuerpo de un alta de un cliente que **no** es de Colombia: sin <c>cityId</c> —DIVIPOLA
+    /// no describe ninguna ciudad de afuera— y con la ciudad escrita a mano.
+    /// </summary>
+    public static object NewForeignCustomerBody(
+        Guid classificationId,
+        string country = "ES",
+        string? cityName = "Madrid",
+        string name = "Verde Esencial S.L.",
+        string identificationType = "NIT",
+        string identificationNumber = "B-12345678",
+        string address = "Calle Gran Via 28",
+        string phone = "+34 910 000 000",
+        string email = "compras@verde.es") =>
+        new
+        {
+            name,
+            identificationType,
+            identificationNumber,
+            phone,
+            email,
+            address,
+            country,
+            cityName,
+            classificationId,
+            withRetention = false,
+            vatSurplus = false
         };
 
     /// <summary>Da de alta un cliente y devuelve la respuesta ya deserializada.</summary>

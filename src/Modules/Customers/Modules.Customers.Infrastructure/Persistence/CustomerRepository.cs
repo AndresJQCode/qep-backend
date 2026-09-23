@@ -124,7 +124,11 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // muestra, y filtrar por una columna y mostrar otra deja filas que no parecen coincidir.
         if (cityIds is not null)
         {
-            query = query.Where(customer => cityIds.Contains(customer.CityId));
+            // `customer.CityId.Value` detras del HasValue: un cliente de afuera no tiene ciudad
+            // DIVIPOLA, asi que nunca coincide con un filtro de ciudad — lo correcto, porque el
+            // filtro se arma desde el catalogo de departamentos y ciudades colombianas.
+            query = query.Where(customer =>
+                customer.CityId.HasValue && cityIds.Contains(customer.CityId.Value));
         }
 
         // El total se cuenta sobre la consulta **ya filtrada** y antes de paginar: es cuantos

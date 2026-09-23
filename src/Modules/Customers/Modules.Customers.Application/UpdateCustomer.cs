@@ -15,7 +15,9 @@ public sealed record UpdateCustomerCommand(
     string? Phone,
     string? Email,
     string? Address,
-    Guid CityId,
+    string Country,
+    Guid? CityId,
+    string? CityName,
     Guid ClassificationId,
     bool WithRetention,
     bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
@@ -61,10 +63,22 @@ public sealed class UpdateCustomerHandler(
             ?? throw new CustomersDomainException(
                 "customers.customer.classification_not_found",
                 "The client classification was not found in this tenant.");
-        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
-            ?? throw new CustomersDomainException(
-                "customers.customer.city_not_found",
-                "The city was not found.");
+        // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver; uno de afuera escribe la
+        // suya. El validador ya exigio la que corresponde al pais. A diferencia del alta, aca el
+        // resultado no se usa para nada mas: el CUC no se reconstruye en un Update (el
+        // departamento de su codigo es el del alta, no el vigente), asi que esto es puro chequeo
+        // de existencia antes de guardar.
+        // Sin `?.`: el validador ya exigio el pais NotEmpty. Ver la misma nota en CreateCustomer.
+        if (string.Equals(
+                command.Country.Trim(),
+                Customer.ColombiaCountryCode,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            _ = await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+                ?? throw new CustomersDomainException(
+                    "customers.customer.city_not_found",
+                    "The city was not found.");
+        }
 
         var now = clock.UtcNow;
 
@@ -86,7 +100,9 @@ public sealed class UpdateCustomerHandler(
                 Phone = command.Phone,
                 Email = command.Email,
                 Address = command.Address ?? string.Empty,
-                CityId = command.CityId
+                Country = command.Country,
+                CityId = command.CityId,
+                CityName = command.CityName
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),

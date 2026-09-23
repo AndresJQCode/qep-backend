@@ -20,6 +20,22 @@ public static class CucFormatter
     public const int SequenceDigits = 6;
 
     /// <summary>
+    /// Los dos digitos que ocupan el lugar del departamento cuando el cliente **no es de
+    /// Colombia** y por lo tanto no tiene uno: DIVIPOLA es el estandar colombiano.
+    ///
+    /// <c>00</c> y no omitirlos. El CUC tiene que conservar su largo porque sus ultimos ocho
+    /// caracteres son la parte estable
+    /// (<see cref="Modules.Customers.Domain.Customer.StableSuffixOf"/>): con ellos
+    /// <c>Customer.Update</c> reescribe el prefijo al cambiar la clasificacion y la importacion
+    /// masiva matchea un cliente existente. Un CUC mas corto haria que esos ocho caracteres se
+    /// comieran parte del prefijo, y las dos cosas se romperian en silencio.
+    ///
+    /// No choca con ningun departamento real: los codigos DIVIPOLA de departamento van de
+    /// <c>05</c> a <c>99</c>, y <c>00</c> no es ninguno.
+    /// </summary>
+    public const string ForeignDepartmentCode = "00";
+
+    /// <summary>
     /// El prefijo de una clasificacion mide hasta 20 (<c>ClientClassification.PrefixMaxLength</c>,
     /// en <c>Modules.Customers.Domain</c>) y el codigo de departamento DIVIPOLA siempre son 2
     /// digitos (invariante del modulo Geography): 20 + 2 + <see cref="SequenceDigits"/> (6) = 28,
