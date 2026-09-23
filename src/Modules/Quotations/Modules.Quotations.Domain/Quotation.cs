@@ -100,6 +100,16 @@ public sealed class Quotation
 
     public QuotationStatus Status { get; private set; }
 
+    /// <summary>
+    /// El piso de escala que el asesor eligió para toda la cotización, o <c>null</c> si no
+    /// eligió ninguno. No es un porcentaje: es el <c>FromUnit</c> de un tramo, y cada línea
+    /// resuelve contra el tramo de **su** producto que arranca ahí.
+    ///
+    /// Vive en la cotización y no en el pedido porque el pedido no tiene líneas propias: las
+    /// suyas son éstas.
+    /// </summary>
+    public int? GlobalScaleFloor { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateOnly? ValidUntil { get; private set; }
@@ -379,6 +389,44 @@ public sealed class Quotation
         AddItemCore(
             itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Elige el piso de escala global, o lo quita con <c>null</c>. Es una edición del
+    /// encabezado: sube la versión y deja rastro de quién la hizo.
+    ///
+    /// Que el piso exista en algún producto lo comprueba el caso de uso, que es quien puede
+    /// mirar el catálogo. Acá sólo se exige que sea un piso posible.
+    /// </summary>
+    public void SetGlobalScaleFloor(int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        EnsureEditable();
+        SetGlobalScaleFloorCore(floor, updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// El mismo cambio sobre la cotización de un pedido que sigue <c>OrderStatus.Pending</c>,
+    /// sin exigir que la cotización sea editable. Misma excepción y mismo motivo que
+    /// <see cref="AddItemAfterConversion"/>: el estado del pedido lo comprueba su caso de uso.
+    /// </summary>
+    public void SetGlobalScaleFloorAfterConversion(
+        int? floor, MemberId updatedBy, DateTimeOffset occurredAt) =>
+        SetGlobalScaleFloorCore(floor, updatedBy, occurredAt);
+
+    private void SetGlobalScaleFloorCore(
+        int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        // Catalog no deja crear una escala que arranque por debajo de 1, así que un piso de cero
+        // o negativo no puede coincidir con ninguna: se corta acá y no llega al recálculo.
+        if (floor is { } value && value < 1)
+        {
+            throw new QuotationsDomainException(
+                "quotation.global_scale.floor_invalid",
+                "The global scale floor must be a positive unit count.");
+        }
+
+        GlobalScaleFloor = floor;
+        Touch(updatedBy, occurredAt);
     }
 
     private void AddItemCore(
@@ -813,13 +861,14 @@ public sealed class Quotation
     /// parte de las líneas no le borra el descuento al resto.
     /// </summary>
     public void ApplyGroupDiscounts(
-        IReadOnlyDictionary<QuotationItemId, decimal> discounts, DateTimeOffset occurredAt)
+        IReadOnlyDictionary<QuotationItemId, QuotationItemDiscount> discounts,
+        DateTimeOffset occurredAt)
     {
         foreach (var item in _items)
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
-                item.ApplyDiscount(discount, occurredAt);
+                item.ApplyDiscount(discount.Percentage, discount.Origin, occurredAt);
             }
         }
 

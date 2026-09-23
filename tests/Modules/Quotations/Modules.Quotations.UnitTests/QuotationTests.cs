@@ -1413,7 +1413,12 @@ public sealed class QuotationTests
         var versionBefore = quotation.Version;
 
         quotation.ApplyGroupDiscounts(
-            new Dictionary<QuotationItemId, decimal> { [first] = 5m, [second] = 5m }, Now);
+            new Dictionary<QuotationItemId, QuotationItemDiscount>
+            {
+                [first] = new(5m, QuotationDiscountOrigin.Group),
+                [second] = new(5m, QuotationDiscountOrigin.Group)
+            },
+            Now);
 
         Assert.Equal(5m, quotation.Items.Single(item => item.Id == first).DiscountPercentage);
         Assert.Equal(5m, quotation.Items.Single(item => item.Id == second).DiscountPercentage);
@@ -1436,7 +1441,11 @@ public sealed class QuotationTests
         Assert.Equal(1_500m, quotation.DiscountAmount);
 
         quotation.ApplyGroupDiscounts(
-            new Dictionary<QuotationItemId, decimal> { [item] = 0m }, Now);
+            new Dictionary<QuotationItemId, QuotationItemDiscount>
+            {
+                [item] = new(0m, QuotationDiscountOrigin.Own)
+            },
+            Now);
 
         Assert.Equal(0m, quotation.Items.Single().DiscountPercentage);
         Assert.Equal(0m, quotation.DiscountAmount);
@@ -1456,7 +1465,11 @@ public sealed class QuotationTests
         quotation.AddItem(untouched, Guid.NewGuid(), 3m, 10_000m, 7m, 19, AdvisorId, Now);
 
         quotation.ApplyGroupDiscounts(
-            new Dictionary<QuotationItemId, decimal> { [mentioned] = 5m }, Now);
+            new Dictionary<QuotationItemId, QuotationItemDiscount>
+            {
+                [mentioned] = new(5m, QuotationDiscountOrigin.Group)
+            },
+            Now);
 
         Assert.Equal(5m, quotation.Items.Single(item => item.Id == mentioned).DiscountPercentage);
         Assert.Equal(7m, quotation.Items.Single(item => item.Id == untouched).DiscountPercentage);

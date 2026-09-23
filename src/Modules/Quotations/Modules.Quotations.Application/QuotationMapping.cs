@@ -41,7 +41,8 @@ internal static class QuotationMapping
         quotation.CanBeConvertedToOrder,
         QuotationMinimumPurchase.DescribeFor(quotation),
         quotation.Items.Select(ToDto).ToArray(),
-        quotation.Version);
+        quotation.Version,
+        quotation.GlobalScaleFloor);
 
     private static QuotationBillingAccountDto? ToDto(QuotationBillingAccount? account) =>
         account is null
@@ -97,7 +98,8 @@ internal static class QuotationMapping
         item.Subtotal,
         item.TaxPercentage,
         item.TaxAmount,
-        item.Position);
+        item.Position,
+        item.DiscountOrigin.ToString());
 
     public static QuotationParties ToDomain(this QuotationPartiesRequest? request) =>
         request is null

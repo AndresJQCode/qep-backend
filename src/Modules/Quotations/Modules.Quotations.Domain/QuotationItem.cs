@@ -52,6 +52,14 @@ public sealed class QuotationItem
     /// <see cref="Quantity"/> — nunca editable a mano (decisión confirmada).</summary>
     public decimal DiscountPercentage { get; private set; }
 
+    /// <summary>
+    /// De dónde salió <see cref="DiscountPercentage"/>. Se persiste porque la respuesta se arma
+    /// leyendo la línea guardada y no el resultado del recálculo: sin columna, la pantalla no
+    /// tiene cómo saber si el descuento se lo ganó la línea sola, se lo dio el grupo o se lo dio
+    /// el piso global que eligió el asesor.
+    /// </summary>
+    public QuotationDiscountOrigin DiscountOrigin { get; private set; }
+
     public decimal DiscountAmount { get; private set; }
 
     /// <summary>La base sin IVA de la línea: lo cobrado (Quantity × UnitPrice − DiscountAmount,
@@ -111,10 +119,15 @@ public sealed class QuotationItem
 
     /// <summary>Cambia sólo el descuento y rehace los importes de la línea, conservando cantidad,
     /// precio y tasa. Lo usa el recálculo global de la cotización
-    /// (<see cref="Quotation.ApplyGroupDiscounts"/>): la agrupación de escalas y la compuerta de
-    /// compra mínima mueven el descuento sin que la línea haya cambiado en nada más.</summary>
-    internal void ApplyDiscount(decimal discountPercentage, DateTimeOffset occurredAt) =>
+    /// (<see cref="Quotation.ApplyGroupDiscounts"/>): la agrupación de escalas, el piso global y
+    /// la compuerta de compra mínima mueven el descuento sin que la línea haya cambiado en nada
+    /// más.</summary>
+    internal void ApplyDiscount(
+        decimal discountPercentage, QuotationDiscountOrigin origin, DateTimeOffset occurredAt)
+    {
+        DiscountOrigin = origin;
         Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, occurredAt);
+    }
 
     /// <summary>Vuelve a nacer con el precio del producto en otra moneda, sin tocar la
     /// cantidad. El descuento y el impuesto también se rehacen: la escala de cantidad y la

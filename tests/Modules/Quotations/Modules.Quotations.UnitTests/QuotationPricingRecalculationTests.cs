@@ -253,4 +253,63 @@ public sealed class QuotationPricingRecalculationTests
                     .ToDictionary(id => id, id => _products[id]));
         }
     }
+    // Important 1 de la revision: activar el piso global NUNCA puede dejar a la linea peor que
+    // antes de activarlo. El spec lo promete explicitamente -- "el global es un piso, no un
+    // techo: nadie pierde descuento por activarlo".
+    //
+    // Sin el arreglo pasaba esto: 5 unidades a 110.000 con su 5% propio dan 522.500, que pasa la
+    // compuerta por monto. El piso global de 10% baja el total a 495.000, la compuerta falla, y
+    // el barrido deja la linea en 0% -- o sea que pedir el descuento le sube el precio al
+    // cliente de 522.500 a 550.000.
+    [Fact]
+    public async Task TheGlobalFloorNeverLeavesTheLineWorseThanNotUsingItAtAll()
+    {
+        var product = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        var itemId = AddItem(quotation, product, 5m, 110_000m);
+        quotation.SetGlobalScaleFloor(20, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(product, 110_000m, null,
+            [
+                new(5, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, null, false),
+                new(20, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+            ])),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        // Cae al 5% propio, no al 0%: es lo que la cotizacion valia sin el piso global.
+        Assert.Equal(5m, DiscountOf(quotation, itemId));
+        Assert.Equal(522_500m, quotation.Total);
+    }
+
+    // Important 2 de la revision: dos tramos arrancando en el mismo piso, y el de mayor descuento
+    // no cumple su restriccion. La linea tiene que caer al otro del mismo piso, no perder el
+    // global entero.
+    [Fact]
+    public async Task TheGlobalFloorFallsBackToAnotherScaleOnTheSameFloorWhenTheBestOneIsBlocked()
+    {
+        var product = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        var itemId = AddItem(quotation, product, 30m, 10_000m);
+        quotation.SetGlobalScaleFloor(1000, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(product, 10_000m, null,
+            [
+                // 30 % 7 != 0 -> bloqueada, aunque sea la de mayor descuento.
+                new(1000, 5000, 15m, QuotationPriceScaleRestriction.Multiple, 7, null, false),
+                // 30 % 1 == 0 -> esta si aplica, y es el mismo piso que eligio el asesor.
+                new(1000, 5000, 12m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+            ])),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(12m, DiscountOf(quotation, itemId));
+    }
+
 }
