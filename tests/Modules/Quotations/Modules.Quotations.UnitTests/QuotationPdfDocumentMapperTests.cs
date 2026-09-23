@@ -370,7 +370,9 @@ public sealed class QuotationPdfDocumentMapperTests
         // El PDF tampoco la imprime: viaja porque el contrato la exige, igual que la compra
         // minima de arriba.
         3,
-        // Ni el piso global ni sus opciones: son de la pantalla de edicion, no del documento.
+        // Ni el piso global ni sus opciones ni la bandera de detal: son de la pantalla de
+        // edicion, no del documento.
         null,
+        false,
         []);
 }

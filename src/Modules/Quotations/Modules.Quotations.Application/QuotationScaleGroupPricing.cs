@@ -217,10 +217,15 @@ internal static class QuotationScaleGroupPricing
     /// Sólo reemplaza con un descuento **estrictamente** mayor, igual que <see cref="Upgrade"/>:
     /// el global es un piso y no un techo, y nadie pierde descuento por activarlo.
     ///
-    /// La restricción se sigue exigiendo — el global decide qué tramo se usa, no afloja el
-    /// múltiplo ni el empaque. Lo que sí cambia es desde dónde se cuenta: por debajo del piso
-    /// no hay contra qué anclar un offset, así que ahí se cuenta crudo. Ver
-    /// <see cref="QuotationScaleRestrictionRule.EvaluateFromZero"/>.
+    /// **Con el piso global elegido, lo único que se valida es la restricción del tramo**: ser
+    /// múltiplo, o empaque entero. Nada más — ni el rango, ni el offset desde <c>FromUnit</c>.
+    /// Decisión del owner, 2026-09-23.
+    ///
+    /// Por eso el múltiplo se cuenta **crudo** (<see cref="QuotationScaleRestrictionRule.EvaluateFromZero"/>)
+    /// y no desde el piso. La regla anterior contaba desde <c>FromUnit</c> en cuanto la línea lo
+    /// alcanzaba, y daba resultados que nadie podía explicarle a un vendedor: en un tramo
+    /// 1000-5000 de a 3, 999 unidades cobraban el 12%, 1002 no —porque (1002−1000) % 3 = 2— y
+    /// 1003 sí. Subir la cantidad hacía perder el descuento.
     ///
     /// Con dos tramos del mismo producto empatados en el piso gana el de mayor descuento, y no
     /// el primero que haya materializado EF: el orden de esa colección no está garantizado, y
@@ -252,9 +257,8 @@ internal static class QuotationScaleGroupPricing
                 return null;
             }
 
-            var restriction = line.Quantity < scale.FromUnit
-                ? QuotationScaleRestrictionRule.EvaluateFromZero(scale, line.Quantity)
-                : QuotationScaleRestrictionRule.Evaluate(scale, line.Quantity);
+            var restriction = QuotationScaleRestrictionRule.EvaluateFromZero(
+                scale, line.Quantity);
 
             if (restriction.IsSatisfied)
             {
