@@ -69,6 +69,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("status")
             .HasConversion<string>()
             .HasMaxLength(20);
+        quotation.Property(value => value.GlobalScaleFloor)
+            .HasColumnName("global_scale_floor");
         quotation.Property(value => value.CreatedAt).HasColumnName("created_at");
         quotation.Property(value => value.ValidUntil).HasColumnName("valid_until");
         // El codigo ISO y no el nombre del miembro del enum: la columna dice COP/USD, que es lo
@@ -183,6 +185,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.ProductId).HasColumnName("product_id");
         item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
         item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
+        // Texto y no entero, igual que QuotationHistoryEventType: sumar un valor al enum no va a
+        // necesitar migración.
+        item.Property(value => value.DiscountOrigin)
+            .HasColumnName("discount_origin")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired();
         item.Property(value => value.DiscountPercentage)
             .HasColumnName("discount_percentage")
             .HasPrecision(5, 2);

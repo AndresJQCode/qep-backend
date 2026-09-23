@@ -79,6 +79,39 @@ internal static class QuotationScaleRestrictionRule
         };
 
     /// <summary>
+    /// La misma restricción, contada **desde cero** en vez de desde <c>FromUnit</c>.
+    ///
+    /// Existe por el piso global: una línea que no alcanza el tramo por su cuenta está por
+    /// debajo de <c>FromUnit</c>, y ahí el offset da negativo y <see cref="EvaluateStep"/> la
+    /// rechaza siempre. Sin esto, ninguna línea chica podría cobrar nunca el descuento global —
+    /// que es exactamente para lo que el global existe.
+    ///
+    /// No es criterio nuevo: <c>QuotationScaleGroupPricing.Qualifies</c> ya cuenta crudo por el
+    /// mismo motivo, y su comentario lo dice — por debajo del piso no hay contra qué anclar un
+    /// offset.
+    ///
+    /// Quien llama decide cuándo usarla: sólo cuando la cantidad está por debajo del piso del
+    /// tramo. Por encima manda <see cref="Evaluate"/>, o el global terminaría aflojando una
+    /// restricción que la línea ya alcanzaba sola.
+    ///
+    /// Para <c>PackagingUnit</c> es idéntica a <see cref="Evaluate"/>: el empaque ya contaba
+    /// crudo.
+    /// </summary>
+    public static QuotationScaleRestrictionResult EvaluateFromZero(
+        QuotationPriceScaleRef scale, decimal quantity) =>
+        scale.Restriction switch
+        {
+            QuotationPriceScaleRestriction.Multiple => EvaluateStep(
+                scale.Multiple, quantity, 0, "quotation.item.quantity_not_multiple"),
+            QuotationPriceScaleRestriction.PackagingUnit => EvaluateStep(
+                scale.PackagingUnit, quantity, 0,
+                "quotation.item.quantity_not_packaging_unit"),
+            null => new QuotationScaleRestrictionResult(false, IncompleteScalesCode, quantity, 0m),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(scale), scale.Restriction, "Unknown price scale restriction.")
+        };
+
+    /// <summary>
     /// El 422 del producto con escalas incompletas. Mira **todas** las escalas y no sólo la que
     /// cubre la cantidad: una línea de 3 unidades que hoy cae en un tramo completo pasaría a otro
     /// incompleto con cambiarle la cantidad, y el producto a medio configurar no se cotiza en

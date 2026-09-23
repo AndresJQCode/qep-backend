@@ -1,4 +1,5 @@
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.UnitTests;
@@ -344,7 +345,8 @@ public sealed class QuotationPdfDocumentMapperTests
                 307714.29m,
                 19,
                 58465.71m,
-                1),
+                1,
+                nameof(QuotationDiscountOrigin.Own)),
             // 12 x 114.700 = 1.376.400; 15% = 206.460; linea = 1.169.940.
             // IVA contenido = 186.797,14; base = 983.142,86.
             new QuotationItemResponse(
@@ -362,9 +364,13 @@ public sealed class QuotationPdfDocumentMapperTests
                 983142.86m,
                 19,
                 186797.14m,
-                2)
+                2,
+                nameof(QuotationDiscountOrigin.Own))
         ],
         // El PDF tampoco la imprime: viaja porque el contrato la exige, igual que la compra
         // minima de arriba.
-        3);
+        3,
+        // Ni el piso global ni sus opciones: son de la pantalla de edicion, no del documento.
+        null,
+        []);
 }
