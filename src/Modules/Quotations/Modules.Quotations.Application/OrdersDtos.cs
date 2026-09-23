@@ -106,7 +106,11 @@ public sealed record OrderEditProofsRequest(
 public sealed record SaveOrderEditsRequest(
     IReadOnlyList<OrderEditItemRequest>? Items,
     OrderEditProofsRequest? Proofs,
-    string? Notes);
+    string? Notes,
+    /// <summary>El piso de escala global de la cotización del pedido, o null para quitarlo. Viaja
+    /// con el resto de la edición: cambiarlo recalcula contra la vista previa, igual que una
+    /// cantidad, y se persiste al guardar.</summary>
+    int? GlobalScaleFloor = null);
 
 public sealed record OrderPaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 

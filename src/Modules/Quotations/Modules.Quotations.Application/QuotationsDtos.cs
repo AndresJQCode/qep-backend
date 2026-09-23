@@ -237,12 +237,6 @@ public sealed record ChangeQuotationClientRequest(Guid ClientId);
 
 public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
-/// <summary>
-/// El piso de escala global que el asesor eligio, o <c>null</c> para quitarlo. Es el
-/// <c>FromUnit</c> de un tramo, no un porcentaje: los valores validos son los que la propia
-/// respuesta trae en <c>AvailableGlobalScaleFloors</c>.
-/// </summary>
-public sealed record SetGlobalScaleRequest(int? Floor);
 
 /// <summary>
 /// Prende o apaga la cotizacion detal. Ver <see cref="SetQuotationRetailCommand"/>: con el
@@ -281,7 +275,10 @@ public sealed record SaveQuotationRequest(
     string? Notes,
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
-    IReadOnlyList<QuotationEditItemRequest>? Items);
+    IReadOnlyList<QuotationEditItemRequest>? Items,
+    /// <summary>El piso de escala global, o null para quitarlo. Ausente se lee como null: el
+    /// guardado reemplaza el encabezado entero.</summary>
+    int? GlobalScaleFloor = null);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>

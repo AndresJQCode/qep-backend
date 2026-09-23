@@ -339,7 +339,7 @@ public static class OrderEndpoints
 
         var (items, proofs) = ToEdits(request);
         var detail = await dispatcher.SendAsync(
-            new SaveOrderEditsCommand(tenantId, orderId, expectedVersion, items, proofs, request.Notes),
+            new SaveOrderEditsCommand(tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
@@ -358,7 +358,7 @@ public static class OrderEndpoints
     {
         var (items, proofs) = ToEdits(request);
         var detail = await dispatcher.QueryAsync(
-            new PreviewOrderEditsQuery(tenantId, orderId, items, proofs, request.Notes),
+            new PreviewOrderEditsQuery(tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor),
             cancellationToken);
 
         return Results.Ok(new OrderDetailResponse(

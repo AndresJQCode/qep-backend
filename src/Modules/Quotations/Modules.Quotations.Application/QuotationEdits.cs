@@ -30,6 +30,16 @@ public interface IQuotationEdits : IQuotationHeaderEdits
     QuotationBillingAccountRequest? BillingAccount { get; }
 
     IReadOnlyList<QuotationItemAddition> Items { get; }
+
+    /// <summary>
+    /// El piso de escala global, o <c>null</c> para quitarlo. Viaja con el resto del encabezado y
+    /// se persiste con "Guardar cambios", no en una escritura aparte: es una decisión del asesor
+    /// sobre el documento, igual que la vigencia o la cuenta de cobro.
+    ///
+    /// La vista previa manda exactamente este mismo cuerpo, así que la pantalla ve el efecto del
+    /// piso sobre cada línea antes de guardar.
+    /// </summary>
+    int? GlobalScaleFloor { get; }
 }
 
 /// <summary>

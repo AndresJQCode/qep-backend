@@ -330,9 +330,6 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<RemoveQuotationItemCommand, QuotationDto>,
             RemoveQuotationItemHandler>();
         services.AddScoped<
-            ICommandHandler<SetQuotationGlobalScaleCommand, QuotationDto>,
-            SetQuotationGlobalScaleHandler>();
-        services.AddScoped<
             ICommandHandler<BatchUpdateQuotationItemsCommand, QuotationDto>,
             BatchUpdateQuotationItemsHandler>();
         // El guardado de una vez del editor y su cálculo previo. Los validadores no se registran

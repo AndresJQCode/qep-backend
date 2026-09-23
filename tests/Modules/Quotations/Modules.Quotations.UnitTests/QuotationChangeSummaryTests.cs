@@ -130,4 +130,31 @@ public sealed class QuotationChangeSummaryTests
         Assert.Equal(
             "Convertida en el pedido PED-2026-0001.",
             QuotationChangeSummary.ConvertedToOrder("PED-2026-0001"));
+    // El piso global viaja con el encabezado desde que se persiste con "Guardar cambios". Si el
+    // historial no lo cuenta, un guardado que solo cambia el piso no deja rastro -- y el endpoint
+    // que se borro si lo dejaba.
+    [Fact]
+    public void ChoosingAGlobalScaleFloorIsReported()
+    {
+        var before = Snapshot(null, isStorePickup: false);
+        var after = before with { GlobalScaleFloor = 1000 };
+
+        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+
+        Assert.NotNull(summary);
+        Assert.Contains("descuento global (escala desde 1000 unidades)", summary);
+    }
+
+    [Fact]
+    public void ClearingTheGlobalScaleFloorIsReported()
+    {
+        var before = Snapshot(null, isStorePickup: false) with { GlobalScaleFloor = 1000 };
+        var after = before with { GlobalScaleFloor = null };
+
+        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+
+        Assert.NotNull(summary);
+        Assert.Contains("quitó el descuento global", summary);
+    }
+
 }

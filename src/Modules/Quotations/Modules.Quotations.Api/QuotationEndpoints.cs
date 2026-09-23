@@ -85,17 +85,6 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // El descuento global por escala: el asesor elige un piso y todas las lineas resuelven
-        // contra el tramo de su producto que arranca ahi. Un solo endpoint para las dos
-        // pantallas, igual que el editor de lineas: el pedido pendiente entra por el id de su
-        // cotizacion. PUT y no PATCH -- Vercel no soporta PATCH en el rewrite.
-        group.MapPut("/{quotationId:guid}/global-scale", SetQuotationGlobalScaleAsync)
-            .RequireAuthorization(QuotationsPermissions.QuotationManage)
-            .Accepts<SetGlobalScaleRequest>("application/json")
-            .Produces<QuotationResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/{quotationId:guid}/items", AddQuotationItemAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
@@ -300,7 +289,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request)),
+                ToItems(request), request.GlobalScaleFloor),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
@@ -324,7 +313,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request)),
+                ToItems(request), request.GlobalScaleFloor),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -369,21 +358,6 @@ public static class QuotationEndpoints
     {
         var quotation = await dispatcher.SendAsync(
             new ChangeQuotationClientCommand(tenantId, quotationId, request.ClientId),
-            cancellationToken);
-
-        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
-    }
-
-    private static async Task<IResult> SetQuotationGlobalScaleAsync(
-        Guid tenantId,
-        Guid quotationId,
-        SetGlobalScaleRequest request,
-        IRequestDispatcher dispatcher,
-        IQuotationResponseComposer composer,
-        CancellationToken cancellationToken)
-    {
-        var quotation = await dispatcher.SendAsync(
-            new SetQuotationGlobalScaleCommand(tenantId, quotationId, request.Floor),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
