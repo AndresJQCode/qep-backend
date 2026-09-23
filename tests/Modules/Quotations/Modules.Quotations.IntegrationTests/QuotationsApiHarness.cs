@@ -287,6 +287,10 @@ internal static class QuotationsApiHarness
                 phone = "310 935 2187",
                 email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
+                // Desde ff107a7 el pais es obligatorio en el alta y en el PUT, que reemplaza el
+                // recurso entero. CO porque el cityId de arriba es DIVIPOLA, que solo describe
+                // Colombia: con otro pais la regla pediria cityName y no cityId.
+                country = "CO",
                 cityId,
                 classificationId,
                 withRetention,
@@ -325,6 +329,10 @@ internal static class QuotationsApiHarness
                 phone = "310 935 2187",
                 email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
+                // Desde ff107a7 el pais es obligatorio en el alta y en el PUT, que reemplaza el
+                // recurso entero. CO porque el cityId de arriba es DIVIPOLA, que solo describe
+                // Colombia: con otro pais la regla pediria cityName y no cityId.
+                country = "CO",
                 cityId,
                 classificationId,
                 withRetention,
