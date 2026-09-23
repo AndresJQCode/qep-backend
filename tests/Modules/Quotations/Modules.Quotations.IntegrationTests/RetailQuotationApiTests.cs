@@ -20,8 +20,6 @@ public sealed class RetailQuotationApiTests
     private static string RetailUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/retail";
 
-    private static string GlobalScaleUrl(Guid tenantId, Guid quotationId) =>
-        $"{QuotationsUrl(tenantId)}/{quotationId}/global-scale";
 
     [Fact]
     public async Task TurningRetailOnLeavesEveryLineWithoutDiscount()
@@ -86,10 +84,7 @@ public sealed class RetailQuotationApiTests
             new AddQuotationItemRequest(productId, 10m),
             TestContext.Current.CancellationToken);
         added.EnsureSuccessStatusCode();
-        var applied = await client.PutAsJsonAsync(
-            GlobalScaleUrl(tenantId, quotation.Id),
-            new SetGlobalScaleRequest(20),
-            TestContext.Current.CancellationToken);
+        var applied = await SaveFloorAsync(client, tenantId, quotation.Id, 20);
         applied.EnsureSuccessStatusCode();
 
         var response = await client.PutAsJsonAsync(
@@ -141,10 +136,7 @@ public sealed class RetailQuotationApiTests
             TestContext.Current.CancellationToken);
         retail.EnsureSuccessStatusCode();
 
-        var response = await client.PutAsJsonAsync(
-            GlobalScaleUrl(tenantId, quotation.Id),
-            new SetGlobalScaleRequest(20),
-            TestContext.Current.CancellationToken);
+        var response = await SaveFloorAsync(client, tenantId, quotation.Id, 20);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
@@ -154,10 +146,7 @@ public sealed class RetailQuotationApiTests
 
         // Quitarlo si: null no pide descuento, y rechazarlo obligaria a apagar el detal para
         // limpiar un piso que el propio detal ya dejo en null.
-        var cleared = await client.PutAsJsonAsync(
-            GlobalScaleUrl(tenantId, quotation.Id),
-            new SetGlobalScaleRequest(null),
-            TestContext.Current.CancellationToken);
+        var cleared = await SaveFloorAsync(client, tenantId, quotation.Id, null);
         Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
     }
 
@@ -322,4 +311,35 @@ public sealed class RetailQuotationApiTests
     }
 
     private sealed record ProblemPayload(string Code);
+
+    // Desde el 2026-09-23 el piso no tiene endpoint propio: viaja en el cuerpo del guardado de la
+    // cotizacion, que manda el encabezado entero. Se relee la cotizacion para mandar su version en
+    // If-Match y sus lineas tal cual, asi el guardado solo cambia el piso.
+    private static async Task<HttpResponseMessage> SaveFloorAsync(
+        HttpClient client, Guid tenantId, Guid quotationId, int? floor)
+    {
+        var current = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotationId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, $"{QuotationsUrl(tenantId)}/{quotationId}")
+        {
+            Content = JsonContent.Create(new SaveQuotationRequest(
+                current.ValidUntil,
+                current.PaymentMethod,
+                current.Notes,
+                Parties: null,
+                current.BillingAccount is { } billing
+                    ? new QuotationBillingAccountRequest(
+                        billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency)
+                    : null,
+                current.Items
+                    .Select(item => new QuotationEditItemRequest(item.ProductId, item.Quantity))
+                    .ToArray(),
+                floor)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{current.Version}\"");
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
 }

@@ -73,6 +73,7 @@ internal static class QuotationEditsApplication
             edits.Parties.ToDomain(),
             billingAccount,
             repricing,
+            edits.GlobalScaleFloor,
             updatedBy,
             now);
         var headerSummary = QuotationChangeSummary.HeaderChanged(

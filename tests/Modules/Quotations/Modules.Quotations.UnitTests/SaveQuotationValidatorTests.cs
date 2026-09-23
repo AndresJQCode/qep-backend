@@ -29,7 +29,8 @@ public sealed class SaveQuotationValidatorTests
             null,
             null,
             null,
-            items ?? [new QuotationItemAddition(ProductId, 1m)]);
+            items ?? [new QuotationItemAddition(ProductId, 1m)],
+            null);
 
     private static PreviewQuotationQuery Query(
         IReadOnlyList<QuotationItemAddition>? items = null,
@@ -42,7 +43,8 @@ public sealed class SaveQuotationValidatorTests
             null,
             null,
             null,
-            items ?? [new QuotationItemAddition(ProductId, 1m)]);
+            items ?? [new QuotationItemAddition(ProductId, 1m)],
+            null);
 
     private static void AssertFailsOn(FluentValidation.Results.ValidationResult result, string propertyName)
     {

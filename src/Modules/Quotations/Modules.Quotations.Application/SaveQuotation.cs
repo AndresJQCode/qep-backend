@@ -22,7 +22,8 @@ public sealed record SaveQuotationCommand(
     string? Notes,
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
-    IReadOnlyList<QuotationItemAddition> Items) : ICommand<QuotationDto>, IQuotationEdits;
+    IReadOnlyList<QuotationItemAddition> Items,
+    int? GlobalScaleFloor) : ICommand<QuotationDto>, IQuotationEdits;
 
 public sealed class SaveQuotationValidator : QuotationEditsValidator<SaveQuotationCommand>;
 

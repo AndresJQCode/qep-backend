@@ -18,7 +18,8 @@ public sealed record PreviewQuotationQuery(
     string? Notes,
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
-    IReadOnlyList<QuotationItemAddition> Items) : IQuery<QuotationDto>, IQuotationEdits;
+    IReadOnlyList<QuotationItemAddition> Items,
+    int? GlobalScaleFloor) : IQuery<QuotationDto>, IQuotationEdits;
 
 public sealed class PreviewQuotationValidator : QuotationEditsValidator<PreviewQuotationQuery>;
 
