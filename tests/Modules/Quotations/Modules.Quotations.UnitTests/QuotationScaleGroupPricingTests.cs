@@ -555,15 +555,40 @@ public sealed class QuotationScaleGroupPricingTests
         Assert.Equal(QuotationDiscountOrigin.GlobalFloor, For(result, a).Origin);
     }
 
-    // Por encima del piso manda la cuenta desde FromUnit: (1002 - 1000) % 3 = 2, asi que no
-    // descuenta, aunque 1002 % 3 si de 0. El global no afloja lo que la linea ya alcanzaba.
+    // Con el piso global elegido, la unica condicion es la restriccion del tramo: ser multiplo, o
+    // empaque entero. Nada mas. 1002 % 3 = 0, asi que descuenta -- y no importa que contado desde
+    // FromUnit diera 2.
+    //
+    // Es decision del owner (2026-09-23) y cambia el criterio con el que nacio: hasta hoy, por
+    // encima del piso se contaba desde FromUnit, y eso hacia que 999 unidades cobraran el 12% y
+    // 1002 no. Un vendedor que sube la cantidad y pierde el descuento reporta eso como defecto,
+    // con razon.
     [Fact]
-    public void AboveTheFloorTheMultipleIsStillCountedFromTheFloor()
+    public void TheGlobalFloorOnlyChecksTheMultipleCountedRaw()
     {
         var a = Guid.NewGuid();
 
         var result = QuotationScaleGroupPricing.Resolve(
             [new QuotationPricingLine(a, ProductA, 1002m)],
+            Catalog((ProductA, Thousand(multiple: 3))),
+            globalFloor: 1000);
+
+        Assert.Equal(12m, For(result, a).DiscountPercentage);
+        Assert.Equal(QuotationDiscountOrigin.GlobalFloor, For(result, a).Origin);
+    }
+
+    // Y sigue exigiendola: 50 % 3 = 2, asi que no descuenta. "Solo valida el multiplo" no es
+    // "no valida nada".
+    //
+    // La cantidad va por DEBAJO del piso a proposito: una de 1003 cae dentro del tramo 1000-5000
+    // y se gana el 12% por su cuenta, sin que el global tenga nada que ver.
+    [Fact]
+    public void TheGlobalFloorStillRejectsAQuantityThatIsNotAMultiple()
+    {
+        var a = Guid.NewGuid();
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [new QuotationPricingLine(a, ProductA, 50m)],
             Catalog((ProductA, Thousand(multiple: 3))),
             globalFloor: 1000);
 
