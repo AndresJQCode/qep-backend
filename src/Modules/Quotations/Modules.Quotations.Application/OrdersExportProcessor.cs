@@ -64,7 +64,6 @@ public sealed class OrdersExportProcessor(
     [
         new("EMPRESA", 30),
         new("Cod. Producto", 18),
-        new("U.Medida", 22),
         new("Cantidad", 12),
         new("Valor Unit", 16),
         new("IVA", 14),
@@ -284,7 +283,6 @@ public sealed class OrdersExportProcessor(
             [
                 ExportCell.OfText(empresa),
                 ExportCell.OfText(product?.Code ?? string.Empty),
-                ExportCell.OfText(UnitOfMeasureFor(product, item.Quantity)),
                 ExportCell.OfNumber(item.Quantity),
                 ExportCell.OfNumber(item.UnitPrice),
                 ExportCell.OfNumber(item.TaxAmount),
@@ -326,28 +324,6 @@ public sealed class OrdersExportProcessor(
             customer?.Address ?? string.Empty,
             customer?.Phone ?? string.Empty,
             customer?.Email ?? string.Empty);
-    }
-
-    // U.Medida (ajuste 2026-09-20): la restricción de la escala de precios del producto que cubre
-    // la cantidad de esta línea — Múltiplo o Empaque, según cómo esté configurada esa escala. Se
-    // recalcula contra el catálogo de HOY: la línea nunca guardó a qué escala respondió al
-    // cotizarse, así que un pedido viejo puede mostrar algo distinto si las escalas del producto
-    // cambiaron después (decisión confirmada, ajuste 2026-09-20). Sin escala que cubra la
-    // cantidad, o sin restricción configurada en la que sí cubre, la celda queda vacía.
-    private static string UnitOfMeasureFor(QuotationProductRef? product, decimal quantity)
-    {
-        if (product is null)
-        {
-            return string.Empty;
-        }
-
-        var scale = QuotationDiscountResolver.Resolve(product.Scales, quantity);
-        return scale?.Restriction switch
-        {
-            QuotationPriceScaleRestriction.Multiple => $"Múltiplo de {scale.Multiple}",
-            QuotationPriceScaleRestriction.PackagingUnit => $"Empaque de {scale.PackagingUnit}",
-            _ => string.Empty,
-        };
     }
 
     // "Cod. Asesor" (D9): numérica, para que el ERP la lea como el número que es. Vacía si la
