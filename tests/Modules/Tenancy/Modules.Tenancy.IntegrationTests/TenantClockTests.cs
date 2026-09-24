@@ -17,7 +17,7 @@ namespace Modules.Tenancy.IntegrationTests;
 /// </summary>
 public sealed class TenantClockTests
 {
-    // El tenant que TenancyDatabaseInitializer siembra en Development, con America/Bogota.
+    // El tenant que la prueba siembra con America/Bogota, usando el helper SeedDevelopmentTenantAsync.
     private static readonly Guid DevelopmentTenantId = Guid.Parse("01900000-0000-7000-8000-000000000001");
 
     private static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
