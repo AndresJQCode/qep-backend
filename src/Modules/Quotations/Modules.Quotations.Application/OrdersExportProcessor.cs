@@ -8,8 +8,8 @@ namespace Modules.Quotations.Application;
 /// Arma el Excel de pedidos para el ERP contable del tenant (ajuste 2026-09-20): una fila por
 /// línea de producto, no por pedido — el ERP necesita Cod. Producto, Cantidad, Valor Unit, IVA y
 /// Descuento por línea, y esos datos no existen a nivel pedido. Los campos que sí son del pedido
-/// entero (EMPRESA, Forma de pago, la cuenta a consignar, Pedido, Documento, dirección de entrega,
-/// Observaciones) se repiten en cada una de sus líneas.
+/// entero (EMPRESA, Pedido, Documento, dirección de entrega, Observaciones) se repiten en cada una
+/// de sus líneas.
 ///
 /// Mismo esquema de lote que <see cref="QuotationsExportProcessor"/>: keyset de a mil y streaming
 /// (<see cref="ExportBatchLoop"/>). Lo que cambia es que <c>toRows</c> ya no devuelve una fila por
@@ -63,8 +63,6 @@ public sealed class OrdersExportProcessor(
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
         new("EMPRESA", 30),
-        new("Forma de pago 1", 24),
-        new("V. Consignacion 1", 18),
         new("Cod. Producto", 18),
         new("U.Medida", 22),
         new("Cantidad", 12),
@@ -269,7 +267,6 @@ public sealed class OrdersExportProcessor(
             : null;
         var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
 
-        var pago = quotation.PaymentMethod ?? string.Empty;
         var observaciones = quotation.Notes ?? string.Empty;
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
         var banco = quotation.BillingAccount?.BankName ?? string.Empty;
@@ -286,8 +283,6 @@ public sealed class OrdersExportProcessor(
             yield return
             [
                 ExportCell.OfText(empresa),
-                ExportCell.OfText(pago),
-                ExportCell.OfNumber(quotation.Total),
                 ExportCell.OfText(product?.Code ?? string.Empty),
                 ExportCell.OfText(UnitOfMeasureFor(product, item.Quantity)),
                 ExportCell.OfNumber(item.Quantity),
