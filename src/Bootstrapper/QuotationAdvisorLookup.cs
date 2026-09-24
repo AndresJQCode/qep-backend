@@ -39,14 +39,15 @@ internal sealed class QuotationAdvisorLookup(
 
         // El correo sí es una búsqueda por usuario: IUserDirectory sólo resuelve por id único,
         // igual que en ListMembershipsHandler. Acá el conteo es la cantidad de asesoras
-        // **distintas** de la página —una o dos en la práctica—, no una por fila. El nombre sale
-        // de la membresía que ya se trajo, sin sumar consultas.
+        // **distintas** de la página —una o dos en la práctica—, no una por fila. El nombre y el
+        // código de asesor salen de la membresía que ya se trajo, sin sumar consultas.
         var advisors = new Dictionary<Guid, QuotationAdvisor>(scoped.Count);
         foreach (var membership in scoped)
         {
             advisors[membership.Id.Value] = new QuotationAdvisor(
                 await users.GetEmailAsync(membership.UserId, cancellationToken),
-                membership.DisplayName);
+                membership.DisplayName,
+                membership.AdvisorCode);
         }
 
         return advisors;

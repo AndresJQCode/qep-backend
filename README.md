@@ -801,6 +801,11 @@ tiene otra membresía del tenant —incluida una quitada, que conserva el suyo�
 `tenancy.membership.renamed`) sigue disponible mientras el frontend migra a `profile`; cambia sólo
 el nombre y conserva el código. Se retira en un slice posterior.
 
+El código de asesor llega al sistema externo por el Excel de pedidos: la columna `Cod. Asesor`,
+la última, numérica y repetida en cada línea del pedido. Se resuelve al exportar desde la
+membresía asesora de la cotización con el código **de hoy** —si se lo cambian, los pedidos viejos
+salen con el nuevo— y queda vacía si la membresía no tiene código.
+
 ### Aceptación de la invitación
 
 El email lleva `{Notifications:InvitationUrl}/{token}`. La pantalla que abre ese

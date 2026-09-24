@@ -22,6 +22,7 @@ public sealed class OrdersExportProcessor(
     IQuotationProductLookup productLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationGeographyLookup geographyLookup,
+    IQuotationAdvisorLookup advisorLookup,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
     ITenantClock tenantClock)
@@ -41,6 +42,10 @@ public sealed class OrdersExportProcessor(
     /// sale siempre vacía: no existe una nota por línea, sólo <c>Quotation.Notes</c> a nivel
     /// pedido, que ya es la columna "Observaciones". "Vencimiento" no está: no hay lote ni
     /// caducidad de producto en ningún lado del sistema todavía.
+    ///
+    /// "Cod. Asesor" (spec 2026-09-24, D9) va al final a propósito: el ERP lee por encabezado, y
+    /// al final no mueve nada de lo que ya importa. Es el nombre por defecto que la homologación de
+    /// columnas por tenant (D10, otro spec) podrá renombrar.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
@@ -62,6 +67,7 @@ public sealed class OrdersExportProcessor(
         new("Observaciones", 40),
         new("Telefono", 16),
         new("Email", 30),
+        new("Cod. Asesor", 14),
     ];
 
     public ExportJobKind Kind => ExportJobKind.Orders;
@@ -138,9 +144,10 @@ public sealed class OrdersExportProcessor(
 
     /// <summary>Todo lo que un lote necesita resuelto de una sola vez, para que <see cref="RowsFor"/>
     /// no pida nada por fila: líneas y partes por cotización, comprobantes por pedido, productos y
-    /// empresas por id, ciudades de las partes de entrega, y la ficha de cada cliente del lote —
+    /// empresas por id, ciudades de las partes de entrega, la ficha de cada cliente del lote —
     /// la necesitan tanto "Documento" (siempre) como el respaldo de "los mismos datos del cliente"
-    /// cuando el pedido no tiene una parte de entrega propia.</summary>
+    /// cuando el pedido no tiene una parte de entrega propia— y la asesora de cada cotización, por
+    /// su código.</summary>
     private readonly record struct BatchContext(
         IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>> ItemsByQuotation,
         IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>> PartiesByQuotation,
@@ -148,7 +155,8 @@ public sealed class OrdersExportProcessor(
         IReadOnlyDictionary<Guid, QuotationProductRef> Products,
         IReadOnlyDictionary<Guid, QuotationCompanyRef> Companies,
         IReadOnlyDictionary<Guid, string> CityNames,
-        IReadOnlyDictionary<Guid, QuotationCustomerRef> Customers);
+        IReadOnlyDictionary<Guid, QuotationCustomerRef> Customers,
+        IReadOnlyDictionary<Guid, QuotationAdvisor> Advisors);
 
     private async Task<BatchContext> LoadBatchContextAsync(
         Guid tenantId, IReadOnlyList<OrderWithQuotation> batch, CancellationToken cancellationToken)
@@ -200,8 +208,14 @@ public sealed class OrdersExportProcessor(
         var clientIds = batch.Select(row => row.Quotation.ClientId).Distinct().ToArray();
         var customers = await customerLookup.FindManyAsync(tenantId, clientIds, cancellationToken);
 
+        // "Cod. Asesor" (D9): Quotation.AdvisorId → membresía → código de hoy, en una consulta
+        // por lote con las asesoras distintas, que en un lote son una o dos.
+        var advisorIds = batch.Select(row => row.Quotation.AdvisorId.Value).Distinct().ToArray();
+        var advisors = await advisorLookup.FindAsync(tenantId, advisorIds, cancellationToken);
+
         return new BatchContext(
-            itemsByQuotation, partiesByQuotation, proofsByOrder, products, companies, cityNames, customers);
+            itemsByQuotation, partiesByQuotation, proofsByOrder, products, companies, cityNames, customers,
+            advisors);
     }
 
     private static IEnumerable<ExportCell[]> RowsFor(
@@ -237,6 +251,7 @@ public sealed class OrdersExportProcessor(
 
         var pago = quotation.PaymentMethod ?? string.Empty;
         var observaciones = quotation.Notes ?? string.Empty;
+        var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
 
         foreach (var item in items)
         {
@@ -262,6 +277,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(observaciones),
                 ExportCell.OfText(telefono),
                 ExportCell.OfText(email),
+                codAsesor,
             ];
         }
     }
@@ -309,6 +325,16 @@ public sealed class OrdersExportProcessor(
             _ => string.Empty,
         };
     }
+
+    // "Cod. Asesor" (D9): numérica, para que el ERP la lea como el número que es. Vacía si la
+    // membresía no tiene código o si el lookup no la devuelve —otro tenant, una fila que ya no
+    // está—: un pedido sin código no es una razón para frenar el archivo.
+    private static ExportCell AdvisorCodeCell(
+        Quotation quotation, IReadOnlyDictionary<Guid, QuotationAdvisor> advisors) =>
+        advisors.TryGetValue(quotation.AdvisorId.Value, out var advisor)
+            && advisor.AdvisorCode is { } code
+                ? ExportCell.OfNumber(code)
+                : ExportCell.OfText(string.Empty);
 
     private static ExportCell PaymentDateCell(
         IReadOnlyList<OrderExportPaymentProof> proofs, int index, TenantCalendar calendar) =>
