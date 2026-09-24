@@ -50,7 +50,10 @@ public sealed class OrdersExportProcessorTests
                 "Cantidad", "Valor Unit", "IVA", "Descuento", "Nota Detalle",
                 "Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5",
                 "Ciudad", "Documento", "Pedido", "Direccion", "Observaciones", "Telefono", "Email",
-                "Cod. Asesor",
+                "Cod. Asesor", "Banco", "Cuenta",
+                "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
+                "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
+                "V. Comprobante 5", "URL Comprobante 5",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -406,19 +409,140 @@ public sealed class OrdersExportProcessorTests
                 .ProcessAsync(job, TestContext.Current.CancellationToken));
     }
 
-    // Spec 2026-09-24, D9: la columna nueva va al final, después de Email, para no mover nada de
-    // lo que el ERP ya importa.
+    // Spec 2026-09-24, D9: la columna nueva va después de Email, para no mover nada de lo que el
+    // ERP ya importa. Banco, Cuenta y los comprobantes (2026-09-24) van después de ella.
     [Fact]
-    public async Task CodAsesorIsTheLastColumn()
+    public async Task CodAsesorFollowsEmailAndEveryRowFillsEveryColumn()
     {
         var writer = new RecordingExportWorkbookWriter();
 
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Cod. Asesor", writer.Columns[^1].Header);
+        Assert.Equal("Email", writer.Columns[21].Header);
+        Assert.Equal("Cod. Asesor", writer.Columns[22].Header);
         Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
     }
+
+    // 2026-09-24: Banco y Cuenta salen de la cuenta de facturación congelada en la cotización, la
+    // misma para todos los comprobantes del pedido, y se repiten en cada línea.
+    [Fact]
+    public async Task BancoAndCuentaComeFromTheBillingAccountOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var billingAccount = new QuotationBillingAccount
+        {
+            CompanyId = CompanyId,
+            BankName = "Bancolombia",
+            AccountNumber = "123456789",
+            Currency = "COP",
+        };
+        var row = NewRow(
+            "PED-2026-0001",
+            billingAccount: billingAccount,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, writer.Rows.Count);
+        foreach (var cells in writer.Rows)
+        {
+            Assert.Equal("Bancolombia", cells[BancoIndex].Text);
+            Assert.Equal("123456789", cells[BancoIndex + 1].Text);
+        }
+    }
+
+    [Fact]
+    public async Task BancoAndCuentaAreEmptyWithoutABillingAccount()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: null)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(string.Empty, row[BancoIndex].Text);
+        Assert.Equal(string.Empty, row[BancoIndex + 1].Text);
+    }
+
+    // 2026-09-24: por comprobante, su monto como número y su enlace público clicable, con la URL
+    // misma como texto para que se lea sin abrirla. Mismo orden que "Fecha Pago N".
+    [Fact]
+    public async Task EachProofWritesItsAmountAndItsPublicLink()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", proofs: [(60_000m, "payment-proofs/a.pdf"), (40_000m, "payment-proofs/b.png")]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(60_000m, cells[ProofIndex(1)].Number);
+        Assert.Null(cells[ProofIndex(1)].Text);
+        var firstUrl = $"{RecordingPaymentProofPublisher.BaseUrl}/payment-proofs/a.pdf";
+        Assert.Equal(ExportCell.OfLink(firstUrl, firstUrl), cells[ProofIndex(1) + 1]);
+        Assert.Equal(40_000m, cells[ProofIndex(2)].Number);
+        var secondUrl = $"{RecordingPaymentProofPublisher.BaseUrl}/payment-proofs/b.png";
+        Assert.Equal(ExportCell.OfLink(secondUrl, secondUrl), cells[ProofIndex(2) + 1]);
+    }
+
+    // Un comprobante privado (sin copia pública) sí existe: su monto sale igual, y el enlace dice
+    // «Sin enlace» para no confundirse con la celda vacía de un comprobante que no hay.
+    [Fact]
+    public async Task APrivateProofKeepsItsAmountAndSaysSinEnlace()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", proofs: [(25_000m, null)]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(25_000m, cells[ProofIndex(1)].Number);
+        Assert.Equal(ExportCell.OfText("Sin enlace"), cells[ProofIndex(1) + 1]);
+    }
+
+    // Con la opción de enlaces públicos apagada, UrlFor no da URL aunque la clave exista.
+    [Fact]
+    public async Task APublicProofSaysSinEnlaceWhenPublicLinksAreOff()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", proofs: [(25_000m, "payment-proofs/a.pdf")]);
+
+        await NewProcessor(
+                new StubOrderListRepository(row), writer, publisher: new RecordingPaymentProofPublisher(enabled: false))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Sin enlace"), Assert.Single(writer.Rows)[ProofIndex(1) + 1]);
+    }
+
+    [Fact]
+    public async Task ProofColumnsBeyondTheProofCountAreEmpty()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", proofs: [(10_000m, "payment-proofs/a.pdf")]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        foreach (var number in Enumerable.Range(2, OrdersExportProcessor.PaymentDateColumns - 1))
+        {
+            Assert.Equal(ExportCell.OfText(string.Empty), cells[ProofIndex(number)]);
+            Assert.Equal(ExportCell.OfText(string.Empty), cells[ProofIndex(number) + 1]);
+        }
+    }
+
+    // Banco va justo después de "Cod. Asesor"; Cuenta, después de Banco.
+    private const int BancoIndex = 23;
+
+    // "V. Comprobante N" (desde 1); su "URL Comprobante N" es la columna siguiente.
+    private static int ProofIndex(int number) => BancoIndex + 2 + ((number - 1) * 2);
 
     // D9: celda numérica, repetida en cada línea del pedido como el resto de sus campos.
     [Fact]
@@ -520,7 +644,8 @@ public sealed class OrdersExportProcessorTests
         QuotationParties? parties = null,
         QuotationBillingAccount? billingAccount = null,
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
-        string? notes = null)
+        string? notes = null,
+        IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null)
     {
         var occurredAt = at ?? Now;
         var quotation = Quotation.Create(
@@ -535,12 +660,12 @@ public sealed class OrdersExportProcessorTests
                 item.DiscountPercentage, item.TaxPercentage, AdvisorId, occurredAt);
         }
 
-        var proofs = (publicKeys ?? [])
-            .Select(publicKey => new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m, publicKey))
+        var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
+            .Select(proof => new OrderPaymentProofInput(Guid.CreateVersion7(), proof.Amount, proof.PublicKey))
             .ToArray();
         var order = Order.Create(
             OrderId.New(), TenantId, orderNumber, quotation.Id, OrderPaymentStatus.PaymentPending,
-            notes: null, AdvisorId, proofs, occurredAt);
+            notes: null, AdvisorId, proofInputs, occurredAt);
         return new OrderWithQuotation(order, quotation);
     }
 
@@ -553,7 +678,8 @@ public sealed class OrdersExportProcessorTests
         StubQuotationProductLookup? products = null,
         StubQuotationCompanyLookup? companies = null,
         StubQuotationGeographyLookup? geography = null,
-        StubQuotationAdvisorLookup? advisors = null) =>
+        StubQuotationAdvisorLookup? advisors = null,
+        RecordingPaymentProofPublisher? publisher = null) =>
         new(repository,
             customers ?? new StubQuotationCustomerLookup(DefaultCustomer),
             products ?? new StubQuotationProductLookup(
@@ -565,6 +691,7 @@ public sealed class OrdersExportProcessorTests
             companies ?? new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             geography ?? new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
             advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            publisher ?? new RecordingPaymentProofPublisher(),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
             tenantClock ?? new FixedTenantClock(Now));

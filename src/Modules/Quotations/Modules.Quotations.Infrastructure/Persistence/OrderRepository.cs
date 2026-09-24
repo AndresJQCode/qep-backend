@@ -263,7 +263,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 join order in dbContext.Orders.AsNoTracking() on proof.OrderId equals order.Id
                 where order.TenantId == tenantId && ids.Contains(order.Id)
                 orderby proof.UploadedAt, proof.Id
-                select new { proof.OrderId, proof.Id, proof.PublicStorageKey, proof.UploadedAt })
+                select new { proof.OrderId, proof.Id, proof.PublicStorageKey, proof.UploadedAt, proof.Amount })
             .ToListAsync(cancellationToken);
 
         return rows
@@ -271,7 +271,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .ToDictionary(
                 group => group.Key,
                 group => (IReadOnlyList<OrderExportPaymentProof>)group
-                    .Select(row => new OrderExportPaymentProof(row.Id, row.PublicStorageKey, row.UploadedAt))
+                    .Select(row => new OrderExportPaymentProof(row.Id, row.PublicStorageKey, row.UploadedAt, row.Amount))
                     .ToArray());
     }
 

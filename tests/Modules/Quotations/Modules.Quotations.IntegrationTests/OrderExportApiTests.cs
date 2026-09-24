@@ -168,7 +168,10 @@ public sealed class OrderExportApiTests
                 "Cantidad", "Valor Unit", "IVA", "Descuento", "Nota Detalle",
                 "Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5",
                 "Ciudad", "Documento", "Pedido", "Direccion", "Observaciones", "Telefono", "Email",
-                "Cod. Asesor",
+                "Cod. Asesor", "Banco", "Cuenta",
+                "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
+                "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
+                "V. Comprobante 5", "URL Comprobante 5",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[17]));
@@ -204,6 +207,12 @@ public sealed class OrderExportApiTests
         Assert.Equal("compras@verde.co", first[21]);
         // El owner nace sin código (CreateActive): la celda sale vacía.
         Assert.Equal(string.Empty, first[22]);
+        // Banco y Cuenta: la cuenta de facturación de CreateCompanyWithBankAccountAsync, siempre en
+        // Bancolombia y con un número al azar.
+        Assert.Equal("Bancolombia", first[23]);
+        Assert.NotEqual(string.Empty, first[24]);
+        // Sin comprobantes: los cinco pares de monto y enlace quedan vacíos.
+        Assert.All(first.Skip(25).Take(10), cell => Assert.Equal(string.Empty, cell));
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -344,10 +353,10 @@ public sealed class OrderExportApiTests
         date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     // Spec 2026-09-24, D9, de punta a punta: el código se carga por PUT .../profile en Tenancy, el
-    // adaptador de Bootstrapper lo resuelve desde la membresía, y sale como número en la última
-    // columna. Ninguna prueba unitaria ve ese cruce.
+    // adaptador de Bootstrapper lo resuelve desde la membresía, y sale como número en "Cod.
+    // Asesor", después de Email. Ninguna prueba unitaria ve ese cruce.
     [Fact]
-    public async Task TheOrdersWorkbookCarriesTheAdvisorsCodeInTheLastColumn()
+    public async Task TheOrdersWorkbookCarriesTheAdvisorsCodeAfterEmail()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -367,7 +376,7 @@ public sealed class OrderExportApiTests
 
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
-        Assert.Equal("Cod. Asesor", sheet.Rows[0][^1]);
+        Assert.Equal("Cod. Asesor", sheet.Rows[0][22]);
         Assert.Equal("7", sheet.Rows[1][22]);
         Assert.True(sheet.NumericCells[1][22]);
     }
@@ -409,8 +418,8 @@ public sealed class OrderExportApiTests
 
     // De punta a punta (ajuste 2026-09-20): dos comprobantes de un mismo pedido llenan "Fecha Pago
     // 1" y "Fecha Pago 2" en el orden en que se subieron, y las tres columnas restantes quedan
-    // vacías. Reemplaza a la prueba de los enlaces «Ver»/«Sin enlace»: esas columnas de
-    // comprobante ya no existen, el ERP contable pide la fecha y no el archivo.
+    // vacías. Desde el 2026-09-24 también llenan "V. Comprobante N" y "URL Comprobante N", al final
+    // de la hoja, en el mismo orden.
     [Fact]
     public async Task TheOrdersWorkbookFillsAPaymentDatePerProofInUploadOrder()
     {
@@ -441,6 +450,17 @@ public sealed class OrderExportApiTests
         // primero. Comparables como texto porque el formato es "yyyy-MM-dd HH:mm".
         Assert.True(string.CompareOrdinal(row[10], row[11]) <= 0);
         Assert.NotEmpty(withSecond.PaymentProofs);
+        // 2026-09-24: el monto de cada comprobante, en el mismo orden, como número. Con los enlaces
+        // públicos apagados (el default de la factoría) los dos dicen «Sin enlace».
+        Assert.Equal(
+            ["V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2"],
+            sheet.Rows[0].Skip(25).Take(4));
+        Assert.Equal(10_000m, decimal.Parse(row[25], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][25]);
+        Assert.Equal(OrdersExportProcessor.PrivateProofText, row[26]);
+        Assert.Equal(5_000m, decimal.Parse(row[27], CultureInfo.InvariantCulture));
+        Assert.Equal(OrdersExportProcessor.PrivateProofText, row[28]);
+        Assert.All(row.Skip(29).Take(6), cell => Assert.Equal(string.Empty, cell));
     }
 
     // E6 contra Postgres: una sola lectura por lote, por pedido y en el orden de las columnas —fecha de
