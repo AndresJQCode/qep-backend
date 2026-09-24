@@ -23,6 +23,7 @@ public sealed class OrdersExportProcessor(
     IQuotationCompanyLookup companyLookup,
     IQuotationGeographyLookup geographyLookup,
     IQuotationAdvisorLookup advisorLookup,
+    IPaymentProofPublisher paymentProofPublisher,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
     ITenantClock tenantClock)
@@ -37,6 +38,11 @@ public sealed class OrdersExportProcessor(
     /// </summary>
     public const int PaymentDateColumns = 5;
 
+    /// <summary>La celda "URL Comprobante N" de un comprobante privado, o con los enlaces públicos
+    /// apagados: que no haya enlace no es lo mismo que no haya comprobante, y una celda vacía no
+    /// puede significar las dos cosas.</summary>
+    public const string PrivateProofText = "Sin enlace";
+
     /// <summary>
     /// Las columnas que el ERP contable espera, en su orden (ajuste 2026-09-20). "Nota Detalle"
     /// sale siempre vacía: no existe una nota por línea, sólo <c>Quotation.Notes</c> a nivel
@@ -46,6 +52,13 @@ public sealed class OrdersExportProcessor(
     /// "Cod. Asesor" (spec 2026-09-24, D9) va al final a propósito: el ERP lee por encabezado, y
     /// al final no mueve nada de lo que ya importa. Es el nombre por defecto que la homologación de
     /// columnas por tenant (D10, otro spec) podrá renombrar.
+    ///
+    /// Después van "Banco" y "Cuenta" (2026-09-24), una vez por fila: la cuenta de facturación
+    /// congelada en la cotización, la misma para todos los comprobantes del pedido. Y por cada
+    /// comprobante, en el orden de "Fecha Pago N", "V. Comprobante N" con su monto y "URL
+    /// Comprobante N" con el enlace clicable a su copia pública —la URL misma como texto, para que
+    /// se lea sin abrirla—, o «Sin enlace» si es privado. También al final, por la misma razón que
+    /// "Cod. Asesor".
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
@@ -68,6 +81,13 @@ public sealed class OrdersExportProcessor(
         new("Telefono", 16),
         new("Email", 30),
         new("Cod. Asesor", 14),
+        new("Banco", 24),
+        new("Cuenta", 20),
+        .. Enumerable.Range(1, PaymentDateColumns).SelectMany(number => new ExportColumn[]
+        {
+            new($"V. Comprobante {number}", 18),
+            new($"URL Comprobante {number}", 60),
+        }),
     ];
 
     public ExportJobKind Kind => ExportJobKind.Orders;
@@ -109,7 +129,7 @@ public sealed class OrdersExportProcessor(
             async (batch, ct) =>
             {
                 var context = await LoadBatchContextAsync(job.TenantId, batch, ct);
-                var rows = batch.SelectMany(row => RowsFor(row, context, calendar)).ToArray();
+                var rows = batch.SelectMany(row => RowsFor(row, context, calendar, paymentProofPublisher)).ToArray();
                 exportedRows += rows.Length;
                 return rows;
             },
@@ -219,7 +239,7 @@ public sealed class OrdersExportProcessor(
     }
 
     private static IEnumerable<ExportCell[]> RowsFor(
-        OrderWithQuotation row, BatchContext context, TenantCalendar calendar)
+        OrderWithQuotation row, BatchContext context, TenantCalendar calendar, IPaymentProofPublisher publisher)
     {
         var quotation = row.Quotation;
         var order = row.Order;
@@ -252,6 +272,12 @@ public sealed class OrdersExportProcessor(
         var pago = quotation.PaymentMethod ?? string.Empty;
         var observaciones = quotation.Notes ?? string.Empty;
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
+        var banco = quotation.BillingAccount?.BankName ?? string.Empty;
+        var cuenta = quotation.BillingAccount?.AccountNumber ?? string.Empty;
+        // Iguales en todas las líneas del pedido: se arman una vez, no por línea.
+        var proofCells = Enumerable.Range(0, PaymentDateColumns)
+            .SelectMany(index => ProofCells(proofs, index, publisher))
+            .ToArray();
 
         foreach (var item in items)
         {
@@ -278,6 +304,9 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(telefono),
                 ExportCell.OfText(email),
                 codAsesor,
+                ExportCell.OfText(banco),
+                ExportCell.OfText(cuenta),
+                .. proofCells,
             ];
         }
     }
@@ -342,4 +371,24 @@ public sealed class OrdersExportProcessor(
             ? ExportCell.OfText(string.Empty)
             : ExportCell.OfText(calendar.ToLocal(proofs[index].UploadedAt)
                 .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+
+    // "V. Comprobante N" y "URL Comprobante N" (2026-09-24): el monto como número, porque el ERP lo
+    // suma, y el enlace con la URL como texto. Sin copia pública, o con la opción apagada —UrlFor
+    // da null—, «Sin enlace»; sin comprobante en ese índice, las dos celdas vacías.
+    private static ExportCell[] ProofCells(
+        IReadOnlyList<OrderExportPaymentProof> proofs, int index, IPaymentProofPublisher publisher)
+    {
+        if (index >= proofs.Count)
+        {
+            return [ExportCell.OfText(string.Empty), ExportCell.OfText(string.Empty)];
+        }
+
+        var proof = proofs[index];
+        var url = proof.PublicStorageKey is { } publicKey ? publisher.UrlFor(publicKey) : null;
+        return
+        [
+            ExportCell.OfNumber(proof.Amount),
+            url is null ? ExportCell.OfText(PrivateProofText) : ExportCell.OfLink(url, url),
+        ];
+    }
 }
