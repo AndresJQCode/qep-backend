@@ -131,8 +131,11 @@ La unicidad (D3) no vive en el agregado: una membresía no ve a las demás.
 
 - `InviteMemberCommand` y su request: `int? AdvisorCode`. `InviteMemberValidator`:
   `RuleFor(AdvisorCode).GreaterThan(0).When(not null)` → `errors.AdvisorCode`.
-  En la re-invitación de una membresía vencida o quitada, el código del cuerpo se aplica igual
-  que el nombre; en una invitación viva o una membresía activa se ignora (no-op, como hoy).
+  En la re-invitación de una membresía vencida o quitada, un código en el cuerpo reemplaza al
+  que tenía; **un cuerpo sin código conserva el anterior** (decisión del developer, 2026-09-24):
+  olvidar un campo opcional no debe liberar un código que el ERP tiene atado a esa persona (D4).
+  Para borrarlo está `PUT .../profile`. En una invitación viva o una membresía activa el código
+  se ignora (no-op, como hoy).
 - `UpdateMemberProfileCommand(TenantId, MembershipId, DisplayName, AdvisorCode, ExpectedVersion,
   CorrelationId)` con validador (nombre como hoy, código como arriba, `ExpectedVersion > 0`) y
   handler calcado de `UpdateMemberDisplayNameHandler`: permiso `AdvisorshipManage`, revalida
