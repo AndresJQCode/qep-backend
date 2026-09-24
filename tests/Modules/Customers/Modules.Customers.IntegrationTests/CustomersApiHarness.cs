@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Customers.IntegrationTests;
@@ -39,6 +40,34 @@ internal static class CustomersApiHarness
             .Build();
         await database.StartAsync(TestContext.Current.CancellationToken);
         return database;
+    }
+
+    // Este harness usa un tenant que no pasa por el registro. ExportCustomersHandler nombra el
+    // archivo con la hora del tenant (spec 2026-09-17, punto 8a), y sin su fila en
+    // tenancy.tenants TenantClock responde tenancy.tenant.not_found. Idempotente: una prueba que
+    // ya sembro el tenant (o que reusa la misma base) no lo duplica.
+    public static async Task SeedTenantAsync(QepApiFactory factory, string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId));
+        var existing = await tenancy.Tenants.FindAsync(
+            [id], TestContext.Current.CancellationToken);
+        if (existing is not null)
+        {
+            return;
+        }
+
+        tenancy.Tenants.Add(Modules.Tenancy.Domain.Tenant.Create(
+            id,
+            "customers-export-tests",
+            "Customers Export Tests",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            Modules.Tenancy.Domain.MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     // El stub de desarrollo concede solo los defaults de tenancy cuando X-Permissions no esta

@@ -31,6 +31,7 @@ public sealed class CustomerExportApiTests
         var storage = new CapturingExportStorage();
         using var factory = Factory(database, storage);
         using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
 
         var city = await EnsureCityAsync(client);
         var classification = await CreateClassificationAsync(client);
@@ -84,6 +85,7 @@ public sealed class CustomerExportApiTests
         var storage = new CapturingExportStorage();
         using var factory = FactoryAt(database, storage, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero));
         using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
         var city = await EnsureCityAsync(client);
         var classification = await CreateClassificationAsync(client);
         await CreateCustomerAsync(
