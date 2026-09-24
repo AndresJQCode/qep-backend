@@ -71,7 +71,11 @@ public sealed class UpdateMemberDisplayNameHandler(
         var now = clock.UtcNow;
         // Sólo se audita y se guarda lo que cambió: renombrar al mismo nombre es una no-op del
         // agregado, y registrarla dejaría en la auditoría un cambio que no ocurrió.
-        if (membership.Rename(command.DisplayName, now))
+        //
+        // Este endpoint no conoce el código de asesor, así que le pasa al agregado el que ya
+        // tiene: renombrar por acá no lo borra. Se retira en un slice posterior (spec 2026-09-24,
+        // D7), cuando el frontend ya use PUT .../profile.
+        if (membership.UpdateProfile(command.DisplayName, membership.AdvisorCode, now))
         {
             auditRecorder.Record(
                 command.TenantId.Value,

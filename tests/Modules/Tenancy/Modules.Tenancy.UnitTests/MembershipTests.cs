@@ -648,112 +648,164 @@ public sealed class MembershipTests
     }
 
     /// <summary>
-    /// El nombre es presentación del tenant: vive en la membresía, se normaliza en el agregado y
-    /// renombrar cuenta como cambio —sube la versión— porque el roster lo edita con If-Match.
+    /// El perfil —nombre y código de asesor— es presentación del tenant: vive en la membresía, se
+    /// normaliza en el agregado y cambiarlo cuenta como cambio —sube la versión— porque el roster
+    /// lo edita con If-Match.
     /// </summary>
     [Fact]
-    public void RenameTrimsTheNameAndBumpsTheVersion()
+    public void UpdateProfileTrimsTheNameAndBumpsTheVersion()
     {
         var membership = Invite(Guid.CreateVersion7());
         var version = membership.Version;
-        var renamedAt = InvitedAt.AddHours(1);
+        var updatedAt = InvitedAt.AddHours(1);
 
-        var changed = membership.Rename("  Ana María Pérez  ", renamedAt);
+        var changed = membership.UpdateProfile("  Ana María Pérez  ", null, updatedAt);
 
         Assert.True(changed);
         Assert.Equal("Ana María Pérez", membership.DisplayName);
         Assert.Equal(version + 1, membership.Version);
-        Assert.Equal(renamedAt, membership.UpdatedAt);
+        Assert.Equal(updatedAt, membership.UpdatedAt);
     }
 
     // Guardar dos veces lo mismo no es un cambio: subir la versión invalidaría el If-Match de
     // otra pestaña por nada.
     [Fact]
-    public void RenameWithTheSameNormalizedNameIsANoOp()
+    public void UpdateProfileWithTheSameNormalizedValuesIsANoOp()
     {
-        var membership = Invite(Guid.CreateVersion7());
-        membership.Rename("Ana María Pérez", InvitedAt.AddHours(1));
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        membership.UpdateProfile("Ana María Pérez", 12, InvitedAt.AddHours(1));
         var version = membership.Version;
         var updatedAt = membership.UpdatedAt;
 
-        var changed = membership.Rename("  Ana María Pérez ", InvitedAt.AddHours(2));
+        var changed = membership.UpdateProfile("  Ana María Pérez ", 12, InvitedAt.AddHours(2));
 
         Assert.False(changed);
         Assert.Equal(version, membership.Version);
         Assert.Equal(updatedAt, membership.UpdatedAt);
     }
 
+    // Spec 2026-09-24: cambiar sólo el código es un cambio de perfil como cualquier otro.
+    [Fact]
+    public void ChangingOnlyTheAdvisorCodeBumpsTheVersion()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+        var version = membership.Version;
+
+        var changed = membership.UpdateProfile(InvitedName, 12, InvitedAt.AddHours(1));
+
+        Assert.True(changed);
+        Assert.Equal(12, membership.AdvisorCode);
+        Assert.Equal(InvitedName, membership.DisplayName);
+        Assert.Equal(version + 1, membership.Version);
+    }
+
+    // D1: el código es opcional también al editar; mandarlo nulo lo borra.
+    [Fact]
+    public void UpdateProfileWithANullCodeClearsIt()
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        var version = membership.Version;
+
+        var changed = membership.UpdateProfile(InvitedName, null, InvitedAt.AddHours(1));
+
+        Assert.True(changed);
+        Assert.Null(membership.AdvisorCode);
+        Assert.Equal(version + 1, membership.Version);
+    }
+
+    // D2: entero >= 1. Un rechazo no deja nada a medias: ni el nombre nuevo ni la versión.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    public void UpdateProfileRejectsANonPositiveCodeAndLeavesTheMembershipUntouched(int advisorCode)
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        var version = membership.Version;
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.UpdateProfile("Ana María Pérez", advisorCode, InvitedAt.AddHours(1)));
+
+        Assert.Equal("tenancy.membership.advisor_code_invalid", error.Code);
+        Assert.Equal(InvitedName, membership.DisplayName);
+        Assert.Equal(12, membership.AdvisorCode);
+        Assert.Equal(version, membership.Version);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public void RenameRejectsABlankNameAndLeavesTheMembershipUntouched(string displayName)
+    public void UpdateProfileRejectsABlankNameAndLeavesTheMembershipUntouched(string displayName)
     {
         var membership = Invite(Guid.CreateVersion7());
         var before = membership.DisplayName;
         var version = membership.Version;
 
         var error = Assert.Throws<TenantDomainException>(
-            () => membership.Rename(displayName, InvitedAt.AddHours(1)));
+            () => membership.UpdateProfile(displayName, 12, InvitedAt.AddHours(1)));
 
         Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
         Assert.Equal(before, membership.DisplayName);
+        Assert.Null(membership.AdvisorCode);
         Assert.Equal(version, membership.Version);
     }
 
     [Fact]
-    public void RenameRejectsANameLongerThanTheColumn()
+    public void UpdateProfileRejectsANameLongerThanTheColumn()
     {
         var membership = Invite(Guid.CreateVersion7());
 
-        var error = Assert.Throws<TenantDomainException>(() => membership.Rename(
-            new string('a', Membership.DisplayNameMaxLength + 1), InvitedAt.AddHours(1)));
+        var error = Assert.Throws<TenantDomainException>(() => membership.UpdateProfile(
+            new string('a', Membership.DisplayNameMaxLength + 1), null, InvitedAt.AddHours(1)));
 
         Assert.Equal("tenancy.membership.display_name_invalid", error.Code);
     }
 
     [Fact]
-    public void RenameAcceptsANameExactlyAsLongAsTheColumn()
+    public void UpdateProfileAcceptsANameExactlyAsLongAsTheColumn()
     {
         var membership = Invite(Guid.CreateVersion7());
         var name = new string('a', Membership.DisplayNameMaxLength);
 
-        membership.Rename(name, InvitedAt.AddHours(1));
+        membership.UpdateProfile(name, null, InvitedAt.AddHours(1));
 
         Assert.Equal(name, membership.DisplayName);
     }
 
-    // El nombre no cambia el acceso, así que se puede cargar en cualquier estado.
+    // El perfil no cambia el acceso, así que se puede cargar en cualquier estado.
     [Fact]
-    public void RenameWorksOnASuspendedMembership()
+    public void UpdateProfileWorksOnASuspendedMembership()
     {
         var membership = Invite(Guid.CreateVersion7());
         membership.Accept(InvitedAt.AddHours(1));
         membership.Suspend(TenantOwnedByAnother(), InvitedAt.AddHours(2));
 
-        Assert.True(membership.Rename("Ana María Pérez", InvitedAt.AddHours(3)));
+        Assert.True(membership.UpdateProfile("Ana María Pérez", 12, InvitedAt.AddHours(3)));
         Assert.Equal(MembershipState.Suspended, membership.State);
     }
 
-    // D3: el owner entra por register-tenant, no por invitación, así que nace sin nombre y lo
-    // carga desde el roster. La protección de owner no alcanza al nombre.
+    // El owner entra por register-tenant, no por invitación: nace sin nombre ni código y los
+    // carga desde el roster. La protección de owner no alcanza al perfil.
     [Fact]
-    public void TheOwnerStartsWithoutANameAndCanBeNamedLater()
+    public void TheOwnerStartsWithoutANameOrCodeAndCanGetThemLater()
     {
         var owner = CreateOwner();
 
         Assert.Null(owner.DisplayName);
-        Assert.True(owner.Rename("Laura Gómez", InvitedAt.AddHours(1)));
+        Assert.Null(owner.AdvisorCode);
+        Assert.True(owner.UpdateProfile("Laura Gómez", 7, InvitedAt.AddHours(1)));
         Assert.Equal("Laura Gómez", owner.DisplayName);
+        Assert.Equal(7, owner.AdvisorCode);
     }
 
-    // Nadie consume un renombre fuera de Tenancy: el PDF lee el nombre cuando se genera.
+    // Nadie consume un cambio de perfil fuera de Tenancy: el PDF y el Excel lo leen al generarse.
     [Fact]
-    public void RenameRaisesNoDomainEvent()
+    public void UpdateProfileRaisesNoDomainEvent()
     {
         var membership = Invite(Guid.CreateVersion7());
         membership.PullDomainEvents();
 
-        membership.Rename("Ana María Pérez", InvitedAt.AddHours(1));
+        membership.UpdateProfile("Ana María Pérez", 12, InvitedAt.AddHours(1));
 
         Assert.Empty(membership.DomainEvents);
     }
@@ -849,7 +901,108 @@ public sealed class MembershipTests
         Assert.Equal(version, membership.Version);
     }
 
-    private static Membership Invite(Guid userId) =>
+    [Fact]
+    public void InviteStoresTheAdvisorCode()
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+
+        Assert.Equal(12, membership.AdvisorCode);
+    }
+
+    // D1: opcional al invitar.
+    [Fact]
+    public void InviteWithoutAnAdvisorCodeLeavesItNull()
+    {
+        var membership = Invite(Guid.CreateVersion7());
+
+        Assert.Null(membership.AdvisorCode);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void InviteRejectsANonPositiveAdvisorCode(int advisorCode)
+    {
+        var error = Assert.Throws<TenantDomainException>(
+            () => Invite(Guid.CreateVersion7(), advisorCode));
+
+        Assert.Equal("tenancy.membership.advisor_code_invalid", error.Code);
+    }
+
+    // Spec 2026-09-24, Application y API: en la re-invitación un código en el cuerpo reemplaza al
+    // que había.
+    [Fact]
+    public void ReinviteAppliesTheAdvisorCodeFromTheBody()
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        membership.Reinvite(
+            InvitedName, ["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl, advisorCode: 34);
+
+        Assert.Equal(34, membership.AdvisorCode);
+    }
+
+    // A diferencia del nombre, un cuerpo sin código no borra el que había: la re-invitación lo
+    // conserva (decisión del developer, 2026-09-24). Borrar el código es sólo por PUT .../profile.
+    [Fact]
+    public void ReinviteWithoutACodeKeepsThePreviousOne()
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        membership.Reinvite(InvitedName, ["advisor"], RenewedToken, RenewedTokenHash, lapsed, Ttl);
+
+        Assert.Equal(12, membership.AdvisorCode);
+    }
+
+    // D4: la quitada que vuelve sin código en el cuerpo sigue con el suyo.
+    [Fact]
+    public void ReinvitingARemovedMembershipWithoutACodeKeepsIt()
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(1));
+
+        membership.Reinvite(
+            InvitedName, ["advisor"], RenewedToken, RenewedTokenHash, InvitedAt.AddHours(2), Ttl);
+
+        Assert.Equal(MembershipState.Invited, membership.State);
+        Assert.Equal(12, membership.AdvisorCode);
+    }
+
+    // Un código inválido corta antes de tocar nada: ni roles, ni token, ni versión.
+    [Fact]
+    public void AReinviteWithAnInvalidCodeLeavesTheMembershipUntouched()
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        var version = membership.Version;
+        var lapsed = InvitedAt + Ttl + TimeSpan.FromHours(1);
+
+        var error = Assert.Throws<TenantDomainException>(
+            () => membership.Reinvite(
+                InvitedName, ["tenancy.admin"], RenewedToken, RenewedTokenHash, lapsed, Ttl,
+                advisorCode: 0));
+
+        Assert.Equal("tenancy.membership.advisor_code_invalid", error.Code);
+        Assert.Equal(12, membership.AdvisorCode);
+        Assert.Equal(["advisor"], membership.Roles);
+        Assert.Equal(TokenHash, membership.InvitationTokenHash);
+        Assert.Equal(version, membership.Version);
+    }
+
+    // D4: la membresía quitada conserva su código.
+    [Fact]
+    public void RemovingAMembershipKeepsItsAdvisorCode()
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+
+        membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(1));
+
+        Assert.Equal(MembershipState.Removed, membership.State);
+        Assert.Equal(12, membership.AdvisorCode);
+    }
+
+    private static Membership Invite(Guid userId, int? advisorCode = null) =>
         Membership.Invite(
             MembershipId.New(),
             userId,
@@ -860,7 +1013,8 @@ public sealed class MembershipTests
             Token,
             TokenHash,
             InvitedAt,
-            Ttl);
+            Ttl,
+            advisorCode);
 
     private static Membership CreateOwner() =>
         Membership.CreateActive(
