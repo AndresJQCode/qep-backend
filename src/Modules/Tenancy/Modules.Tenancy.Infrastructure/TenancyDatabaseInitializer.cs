@@ -8,11 +8,16 @@ namespace Modules.Tenancy.Infrastructure;
 /// Aplica las migraciones de Tenancy al arrancar. **No siembra nada.**
 ///
 /// Hasta el 2026-09-21 creaba además un tenant <c>qcode-demo</c> en Development. Ese tenant no
-/// servía para nada: se creaba sin ninguna membresía, y como los permisos se resuelven desde la
-/// membresía, cualquier request contra él devolvía 403. Nadie lo referenciaba —ni un seeder, ni
-/// una prueba, ni una fixture— y era el único tenant del sistema que quedaba sin owner, que es
-/// justo lo que la guarda del agregado necesita para valer
-/// (<c>Tenant.OwnerMembershipId</c>).
+/// servía para nada: se creaba sin ninguna membresía, y era el único tenant del sistema que
+/// quedaba sin owner, que es justo lo que la guarda del agregado necesita para valer
+/// (<c>Tenant.OwnerMembershipId</c>). En ese momento nadie lo referenciaba desde código de
+/// producción, pero varias pruebas de integración de Tenancy y Notifications sí tenían
+/// hardcodeado su id (<c>MembershipApiTests</c>, <c>TenantSettingsApiTests</c>,
+/// <c>TenantLogoApiTests</c>, <c>InvitationApiTests</c>, <c>AuthSessionApiTests</c>,
+/// <c>TenantClockTests</c>, <c>InvitationNotificationTests</c>) y dependían de que este
+/// inicializador lo sembrara. Quitarlo de acá no las rompió: cada una siembra ahora su propio
+/// tenant con ese mismo id, directo en su base de Testcontainers, sin volver a depender de este
+/// archivo.
 ///
 /// Un tenant creado desde acá **no puede** tener owner: acá no hay usuario a quien nombrar.
 /// Sembrar un tenant usable es trabajo de <c>QepSeedRunner</c>, que crea el usuario, el tenant y

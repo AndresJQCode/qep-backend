@@ -4,6 +4,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -26,6 +29,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -93,6 +97,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         // Autenticado como OtherTenant, intentando invitar al tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
@@ -106,6 +111,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -137,6 +143,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
         var invited = await InviteAsync(client, TenantId, email);
@@ -172,6 +179,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var live = await InviteAsync(client, TenantId, NewEmail());
         var lapsed = await InviteAsync(client, TenantId, NewEmail());
@@ -205,6 +213,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var wanted = NewEmail();
         var invited = await InviteAsync(client, TenantId, wanted);
@@ -238,6 +247,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await client.GetAsync(
@@ -257,6 +267,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var advisorEmail = NewEmail();
         var billingEmail = NewEmail();
@@ -290,6 +301,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var kept = await InviteAsync(client, TenantId, NewEmail());
         var removed = await InviteAsync(client, TenantId, NewEmail());
@@ -330,6 +342,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
         var response = await client.GetAsync(
@@ -344,6 +357,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await client.GetAsync(
@@ -388,6 +402,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         using var request = new HttpRequestMessage(
@@ -419,6 +434,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(client, TenantId, NewEmail(), AdminRoles);
@@ -435,6 +451,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(client, TenantId, NewEmail(), BillingRoles);
@@ -457,6 +474,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -503,6 +521,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -547,6 +566,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -582,6 +602,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -617,6 +638,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -650,6 +672,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -679,6 +702,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var invited = await InviteAsync(client, TenantId, NewEmail());
@@ -727,6 +751,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var invited = await InviteAsync(client, TenantId, NewEmail());
@@ -745,6 +770,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var invited = await InviteAsync(client, TenantId, NewEmail());
@@ -769,6 +795,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         using var request = new HttpRequestMessage(
@@ -788,6 +815,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(
@@ -802,6 +830,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(
@@ -828,6 +857,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -846,6 +876,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -868,6 +899,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var invited = await InviteAsync(
             client, TenantId, NewEmail(), displayName: "Valentina Ríos");
@@ -892,6 +924,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var wanted = await InviteAsync(
             client, TenantId, NewEmail(), displayName: "Valentina Ríos");
@@ -917,6 +950,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var invited = await InviteAsync(
             client, TenantId, NewEmail(), displayName: "Valentina Ríos");
@@ -981,6 +1015,30 @@ public sealed class MembershipApiTests
         command.Parameters.AddWithValue("expiresAt", DateTimeOffset.UtcNow.AddHours(-1));
         command.Parameters.AddWithValue("id", membershipId);
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Desde el 2026-09-21 <c>TenancyDatabaseInitializer</c> ya no siembra ningún tenant: cada
+    /// prueba tiene que crear el suyo. El <c>ownerMembershipId</c> es nuevo y nunca se persiste
+    /// como membership — así el tenant nace con la autoridad que <c>Tenant.Create</c> exige, sin
+    /// agregar una fila al roster que inflaría <c>Counts</c> en las pruebas de conteo.
+    /// </summary>
+    private static async Task SeedSeededTenantAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        // Nombre completo del struct: el campo constante `TenantId` de esta clase tapa el tipo
+        // `Modules.Tenancy.Domain.TenantId` para cualquier referencia sin calificar.
+        dbContext.Tenants.Add(Tenant.Create(
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
+            "qcode-demo",
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static string NewEmail() => $"invitee-{Guid.NewGuid():N}@example.com";

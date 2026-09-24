@@ -3,6 +3,9 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -20,6 +23,7 @@ public sealed class TenantSettingsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var etag = await GetEtagAsync(client, TenantId);
@@ -36,6 +40,7 @@ public sealed class TenantSettingsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
 
         // Autenticado como OtherTenant, intentando alcanzar el tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
@@ -54,6 +59,7 @@ public sealed class TenantSettingsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
 
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "tenancy.settings.read");
@@ -76,6 +82,7 @@ public sealed class TenantSettingsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var staleEtag = await GetEtagAsync(client, TenantId);
@@ -94,6 +101,7 @@ public sealed class TenantSettingsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var etag = await GetEtagAsync(client, TenantId);
@@ -161,6 +169,29 @@ public sealed class TenantSettingsApiTests
         }
 
         return values;
+    }
+
+    /// <summary>
+    /// Desde el 2026-09-21 <c>TenancyDatabaseInitializer</c> ya no siembra ningún tenant: cada
+    /// prueba tiene que crear el suyo. El <c>ownerMembershipId</c> es nuevo y nunca se persiste
+    /// como membership, así que no hace falta un usuario dueño real para estas pruebas.
+    /// </summary>
+    private static async Task SeedSeededTenantAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        // Nombre completo del struct: el campo constante `TenantId` de esta clase tapa el tipo
+        // `Modules.Tenancy.Domain.TenantId` para cualquier referencia sin calificar.
+        dbContext.Tenants.Add(Tenant.Create(
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
+            "qcode-demo",
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static string NewDisplayName() =>
