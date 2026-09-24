@@ -52,4 +52,5 @@ stages:
             - secret
             - service
             - deployment
+            - pdb
             - ingress

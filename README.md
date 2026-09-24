@@ -60,7 +60,8 @@ tenant de demostración.
 | Recurso                              | Dirección                               |
 | ------------------------------------ | --------------------------------------- |
 | API                                  | `http://localhost:5000`                 |
-| Health check                         | `http://localhost:5000/health/live`     |
+| Health check (liveness)              | `http://localhost:5000/health/live`     |
+| Health check (readiness, con base)   | `http://localhost:5000/health/ready`    |
 | Documento OpenAPI (solo Development) | `http://localhost:5000/openapi/v1.json` |
 | PostgreSQL                           | `localhost:5432`                        |
 | OTLP gRPC / HTTP                     | `localhost:4317` / `localhost:4318`     |
@@ -570,6 +571,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | Grupo de rutas                                     | Operaciones                                                                                 | Autorización                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `/health/live`                                     | `GET`                                                                                       | anónimo                                                                                      |
+| `/health/ready`                                    | `GET`                                                                                       | anónimo                                                                                      |
 | `/api/v1/auth/registration-policy`                 | `GET`                                                                                       | anónimo                                                                                      |
 | `/api/v1/auth/register-tenant`                     | `POST`                                                                                      | token del proveedor OIDC                                                                     |
 | `/api/v1/auth/session`                             | `POST`                                                                                      | token del proveedor OIDC                                                                     |
@@ -590,7 +592,20 @@ Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 GET /health/live
 ```
 
-Es anónimo y responde `200 OK` con `{"status":"healthy"}`.
+Es anónimo y responde `200 OK` con `{"status":"healthy"}`. **No toca la base**, a propósito:
+es la `livenessProbe` y la `startupProbe` del Deployment, y si dependiera de PostgreSQL una
+caída de la base haría que Kubernetes reiniciara todos los pods en cadena.
+
+```http
+GET /health/ready
+```
+
+Es anónimo y es la `readinessProbe`. Abre una conexión a `QepDatabase` y corre `SELECT 1` con un
+límite de 2 s: responde `200 OK` (`Healthy`) si la base contesta y `503 Service Unavailable`
+(`Unhealthy`) si no. El cuerpo es sólo el estado, sin el detalle del error. Un pod con 503 sale
+del Service hasta que la base vuelva, sin reiniciarse. El `PodDisruptionBudget`
+(`k8s/prod-pdb.yaml`, `minAvailable: 1`) evita que un drain del nodo deje la API sin pods;
+mientras el Deployment siga en `replicas: 1`, ese mismo PDB bloquea el drain hasta escalar a 2.
 
 ### Configuración del tenant
 
