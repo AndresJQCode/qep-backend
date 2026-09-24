@@ -49,6 +49,10 @@ internal static class QuotationItemEdits
         Guid tenantId,
         MemberId updatedBy,
         DateTimeOffset occurredAt,
+        // Si el documento, tal como va a quedar guardado, es detal: con eso las líneas no miran
+        // escalas ni exigen que estén completas. Es el del cuerpo y no el de la cotización,
+        // porque el pedido aplica su detal después de las líneas y leería el valor viejo.
+        bool isRetail,
         CancellationToken cancellationToken)
     {
         // Foto de antes de mutar: las altas agregan líneas a quotation.Items mientras se recorre.
@@ -61,7 +65,7 @@ internal static class QuotationItemEdits
             // Rechaza inexistente, inactivo o sin precio en la moneda, con los mismos códigos que
             // POST /quotations/{quotationId}/items.
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.ProductId, line.Quantity, quotation.Currency, cancellationToken);
+                pricingLookup, tenantId, line.ProductId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
 
             quotation.AddItem(
                 QuotationItemId.New(), line.ProductId, line.Quantity,
@@ -82,7 +86,7 @@ internal static class QuotationItemEdits
             // escala y el impuesto se vuelven a resolver, igual que en UpdateQuotationItemHandler.
             var previousQuantity = item.Quantity;
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.ProductId, line.Quantity, quotation.Currency, cancellationToken);
+                pricingLookup, tenantId, line.ProductId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
 
             quotation.UpdateItemQuantity(
                 item.Id, line.Quantity, pricing.Pricing.DiscountPercentage,

@@ -151,4 +151,78 @@ public sealed class QuotationRetailTests
 
         Assert.True(quotation.IsRetail);
     }
+    // Desde el 2026-09-23 el detal no tiene endpoint propio: viaja en el cuerpo del guardado, al
+    // lado del piso global, y UpdateDetails lo aplica. Mismo contrato que el piso en 400773f.
+    private static void SaveHeader(Quotation quotation, bool isRetail, int? globalScaleFloor) =>
+        quotation.UpdateDetails(
+            validUntil: ValidUntil,
+            paymentMethod: "Transferencia bancaria",
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: null,
+            repricing: null,
+            isRetail,
+            globalScaleFloor,
+            AdvisorId,
+            Now.AddHours(3));
+
+    // Prender detal en el guardado limpia el piso aunque el cuerpo no lo mande: la pantalla manda
+    // null en el mismo cuerpo, y el agregado no puede quedar con los dos a la vez.
+    [Fact]
+    public void SavingTheHeaderWithRetailOnTurnsItOnAndClearsTheFloor()
+    {
+        var quotation = NewQuotation();
+        quotation.SetGlobalScaleFloor(6, AdvisorId, Now.AddHours(1));
+
+        SaveHeader(quotation, isRetail: true, globalScaleFloor: null);
+
+        Assert.True(quotation.IsRetail);
+        Assert.Null(quotation.GlobalScaleFloor);
+    }
+
+    // El cuerpo contradictorio: prender detal y elegir un piso a la vez. Lo resuelve el dominio
+    // con el mismo código que el mutador suelto, aunque la cotización guardada no fuera detal:
+    // el guard mira el detal que va a quedar, no el que había.
+    [Fact]
+    public void SavingTheHeaderWithRetailOnAndAFloorIsRejected()
+    {
+        var quotation = NewQuotation();
+
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => SaveHeader(quotation, isRetail: true, globalScaleFloor: 6));
+
+        Assert.Equal("quotation.retail.floor_not_allowed", error.Code);
+        // Rechazado antes de asignar nada: el agregado queda como estaba.
+        Assert.False(quotation.IsRetail);
+        Assert.Null(quotation.GlobalScaleFloor);
+    }
+
+    // Detal se aplica antes que el piso: apagarlo y elegir un piso en el mismo guardado funciona,
+    // aunque la cotización guardada viniera con detal prendido.
+    [Fact]
+    public void SavingTheHeaderWithRetailOffAcceptsAFloorComingFromRetail()
+    {
+        var quotation = NewQuotation();
+        quotation.SetIsRetail(true, AdvisorId, Now.AddHours(1));
+
+        SaveHeader(quotation, isRetail: false, globalScaleFloor: 6);
+
+        Assert.False(quotation.IsRetail);
+        Assert.Equal(6, quotation.GlobalScaleFloor);
+    }
+
+    // Mandar el mismo detal que ya estaba no es un cambio: la foto del encabezado no se mueve y
+    // el historial no gana una fila.
+    [Fact]
+    public void SavingTheSameRetailFlagIsNotAHeaderChange()
+    {
+        var quotation = NewQuotation();
+        quotation.SetIsRetail(true, AdvisorId, Now.AddHours(1));
+        var before = Modules.Quotations.Application.QuotationHeaderSnapshot.Of(quotation);
+
+        SaveHeader(quotation, isRetail: true, globalScaleFloor: null);
+
+        Assert.Null(Modules.Quotations.Application.QuotationChangeSummary.HeaderChanged(
+            before, Modules.Quotations.Application.QuotationHeaderSnapshot.Of(quotation)));
+    }
 }

@@ -41,7 +41,7 @@ public sealed class QuotationProductPricingResolverTests
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             QuotationProductPricingResolver.ResolveAsync(
-                lookup, TenantId, productId, 3m, QuotationCurrency.Cop,
+                lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: false,
                 TestContext.Current.CancellationToken));
 
         Assert.Equal(IncompleteCode, error.Code);
@@ -56,7 +56,7 @@ public sealed class QuotationProductPricingResolverTests
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             QuotationProductPricingResolver.ResolveManyAsync(
-                lookup, TenantId, [(productId, 3m)], QuotationCurrency.Usd,
+                lookup, TenantId, [(productId, 3m)], QuotationCurrency.Usd, isRetail: false,
                 TestContext.Current.CancellationToken));
 
         Assert.Equal(IncompleteCode, error.Code);
@@ -72,7 +72,7 @@ public sealed class QuotationProductPricingResolverTests
             null));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 3m, QuotationCurrency.Cop,
+            lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(5m, priced.Pricing.DiscountPercentage);
@@ -123,7 +123,7 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 13m, QuotationCurrency.Cop,
+            lookup, TenantId, productId, 13m, QuotationCurrency.Cop, isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(0m, priced.Pricing.DiscountPercentage);
@@ -139,7 +139,7 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 24m, QuotationCurrency.Cop,
+            lookup, TenantId, productId, 24m, QuotationCurrency.Cop, isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(15m, priced.Pricing.DiscountPercentage);
@@ -153,9 +153,59 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveManyAsync(
-            lookup, TenantId, [(productId, 13m)], QuotationCurrency.Usd,
+            lookup, TenantId, [(productId, 13m)], QuotationCurrency.Usd, isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(0m, priced[productId].DiscountPercentage);
     }
+    // Cotizacion detal (decision del owner, 2026-09-23): "el sistema debe omitir cualquier escala
+    // de precio y no validar restricciones". Un producto con escalas a medio configurar se cotiza
+    // igual, porque en detal las escalas no se usan para nada.
+    [Fact]
+    public async Task RetailPricesAProductWithAnIncompleteScale()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(ProductWithAnIncompleteScale(productId));
+
+        var priced = await QuotationProductPricingResolver.ResolveAsync(
+            lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: true,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(100_000m, priced.Pricing.UnitPrice);
+        Assert.Equal(0m, priced.Pricing.DiscountPercentage);
+    }
+
+    // Y omite la escala aunque este completa y la cantidad caiga en un tramo con descuento: en
+    // detal ninguna linea descuenta, desde el momento en que se agrega.
+    [Fact]
+    public async Task RetailIgnoresAScaleThatWouldHaveGivenADiscount()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(new QuotationProductPricingRef(
+            productId, TenantId, "Vela de soja", true, 100_000m, null,
+            [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, null)],
+            null));
+
+        var priced = await QuotationProductPricingResolver.ResolveAsync(
+            lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: true,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(0m, priced.Pricing.DiscountPercentage);
+    }
+
+    // El cambio de moneda de una cotizacion detal tampoco valida escalas.
+    [Fact]
+    public async Task RetailRepricesLinesOfAProductWithAnIncompleteScale()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(ProductWithAnIncompleteScale(productId));
+
+        var priced = await QuotationProductPricingResolver.ResolveManyAsync(
+            lookup, TenantId, [(productId, 3m)], QuotationCurrency.Usd, isRetail: true,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(25m, priced[productId].UnitPrice);
+        Assert.Equal(0m, priced[productId].DiscountPercentage);
+    }
+
 }

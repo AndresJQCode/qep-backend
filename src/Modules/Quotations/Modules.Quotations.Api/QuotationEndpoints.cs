@@ -289,7 +289,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
@@ -313,7 +313,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));

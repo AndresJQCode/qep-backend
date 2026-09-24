@@ -23,10 +23,11 @@ public sealed class SaveOrderEditsValidatorTests
             items ?? [new OrderItemAddition(ProductId, 1m)],
             proofs ?? OrderEditProofs.None,
             notes,
-            null);
+            null,
+            false);
 
     private static PreviewOrderEditsQuery Query(OrderEditProofs proofs) =>
-        new(Guid.CreateVersion7(), Guid.CreateVersion7(), [new OrderItemAddition(ProductId, 1m)], proofs, null, null);
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), [new OrderItemAddition(ProductId, 1m)], proofs, null, null, false);
 
     private static void AssertFailsOn(FluentValidation.Results.ValidationResult result, string propertyName)
     {

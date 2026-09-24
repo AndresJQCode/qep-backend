@@ -59,7 +59,7 @@ public sealed class ExportQuotationPdfHandlerTests
             "Se agrego una observacion",
             QuotationParties.Empty,
             billingAccount: null,
-            repricing: null, globalScaleFloor: null,
+            repricing: null, isRetail: false, globalScaleFloor: null,
             AdvisorId,
             Now.AddHours(1));
 

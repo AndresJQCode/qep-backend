@@ -171,6 +171,7 @@ public sealed class QuotationGlobalScaleFloorTests
             QuotationParties.Empty,
             billingAccount: null,
             repricing: null,
+            isRetail: false,
             globalScaleFloor: 1000,
             editor,
             editedAt);
@@ -193,6 +194,7 @@ public sealed class QuotationGlobalScaleFloorTests
             QuotationParties.Empty,
             billingAccount: null,
             repricing: null,
+            isRetail: false,
             globalScaleFloor: null,
             AdvisorId,
             Now.AddHours(2));
@@ -216,6 +218,7 @@ public sealed class QuotationGlobalScaleFloorTests
             QuotationParties.Empty,
             billingAccount: null,
             repricing: null,
+            isRetail: true,
             globalScaleFloor: 1000,
             AdvisorId,
             Now.AddHours(2)));
@@ -237,6 +240,7 @@ public sealed class QuotationGlobalScaleFloorTests
             QuotationParties.Empty,
             billingAccount: null,
             repricing: null,
+            isRetail: true,
             globalScaleFloor: null,
             AdvisorId,
             Now.AddHours(2));

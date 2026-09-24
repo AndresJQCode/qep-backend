@@ -110,7 +110,11 @@ public sealed record SaveOrderEditsRequest(
     /// <summary>El piso de escala global de la cotización del pedido, o null para quitarlo. Viaja
     /// con el resto de la edición: cambiarlo recalcula contra la vista previa, igual que una
     /// cantidad, y se persiste al guardar.</summary>
-    int? GlobalScaleFloor = null);
+    int? GlobalScaleFloor = null,
+    /// <summary>Cotización detal de la cotización del pedido. Ausente se lee como false. Se aplica
+    /// antes que el piso: true con un piso no nulo en el mismo cuerpo es 422
+    /// quotation.retail.floor_not_allowed.</summary>
+    bool IsRetail = false);
 
 public sealed record OrderPaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
 

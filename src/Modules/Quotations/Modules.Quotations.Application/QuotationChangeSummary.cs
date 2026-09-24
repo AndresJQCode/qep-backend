@@ -138,6 +138,17 @@ public static class QuotationChangeSummary
             changes.Add(after.Notes is null ? "nota (borrada)" : "nota");
         }
 
+        // Mismo motivo que el piso, y antes que él porque es la causa: prender el detal se lleva
+        // el piso, y la fila tiene que leerse "detal, y por eso quitó el descuento global". Al
+        // prender se nombra el efecto, igual que RetailChanged: "detal" solo no dice que borra
+        // los descuentos que la cotización ya tenía.
+        if (before.IsRetail != after.IsRetail)
+        {
+            changes.Add(after.IsRetail
+                ? "detal (ninguna línea recibe descuento)"
+                : "quitó el detal");
+        }
+
         // Desde que el piso viaja con el encabezado y se persiste con "Guardar cambios", es la
         // única forma de que un guardado que sólo cambia el piso deje rastro.
         if (before.GlobalScaleFloor != after.GlobalScaleFloor)
@@ -262,7 +273,8 @@ public sealed record QuotationHeaderSnapshot(
     bool BillsToFinalConsumer,
     bool? BillingWithRetention,
     bool? BillingVatSurplus,
-    int? GlobalScaleFloor = null)
+    int? GlobalScaleFloor = null,
+    bool IsRetail = false)
 {
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
@@ -279,7 +291,8 @@ public sealed record QuotationHeaderSnapshot(
         quotation.BillsToFinalConsumer,
         quotation.PartyWithRetention,
         quotation.PartyVatSurplus,
-        quotation.GlobalScaleFloor);
+        quotation.GlobalScaleFloor,
+        quotation.IsRetail);
 
     private static string? Describe(QuotationParty? party) =>
         party is null

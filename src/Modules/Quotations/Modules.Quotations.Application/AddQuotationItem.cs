@@ -58,7 +58,7 @@ public sealed class AddQuotationItemHandler(
             command.TenantId,
             command.ProductId,
             command.Quantity,
-            quotation.Currency,
+            quotation.Currency, quotation.IsRetail,
             cancellationToken);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(

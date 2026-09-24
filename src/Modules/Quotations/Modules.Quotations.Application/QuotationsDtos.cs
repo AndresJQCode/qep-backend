@@ -238,12 +238,6 @@ public sealed record ChangeQuotationClientRequest(Guid ClientId);
 public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
 
 
-/// <summary>
-/// Prende o apaga la cotizacion detal. Ver <see cref="SetQuotationRetailCommand"/>: con el
-/// prendido ninguna linea recibe descuento y el piso de escala global queda en null.
-/// </summary>
-public sealed record SetRetailRequest(bool IsRetail);
-
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
 /// <summary>Una línea a agregar, tal como viaja en el request de la tanda — mismo par que
@@ -278,7 +272,11 @@ public sealed record SaveQuotationRequest(
     IReadOnlyList<QuotationEditItemRequest>? Items,
     /// <summary>El piso de escala global, o null para quitarlo. Ausente se lee como null: el
     /// guardado reemplaza el encabezado entero.</summary>
-    int? GlobalScaleFloor = null);
+    int? GlobalScaleFloor = null,
+    /// <summary>Cotización detal: con true ninguna línea recibe descuento. Ausente se lee como
+    /// false, mismo criterio que el piso. Se aplica antes que el piso: true con un piso no nulo
+    /// en el mismo cuerpo es 422 quotation.retail.floor_not_allowed.</summary>
+    bool IsRetail = false);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>

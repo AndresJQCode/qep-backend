@@ -17,7 +17,8 @@ public sealed record SaveOrderEditsCommand(
     IReadOnlyList<OrderItemAddition> Items,
     OrderEditProofs Proofs,
     string? Notes,
-    int? GlobalScaleFloor) : ICommand<OrderDetailDto>, IOrderEdits;
+    int? GlobalScaleFloor,
+    bool IsRetail) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -130,7 +131,7 @@ public sealed class SaveOrderEditsHandler(
         try
         {
             var itemEdits = await OrderItemEdits.ApplyAsync(
-                quotation, command.Items, pricingLookup, command.TenantId, updatedBy, now, cancellationToken);
+                quotation, command.Items, pricingLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
 
             foreach (var proofId in removedProofIds)
             {
@@ -163,8 +164,20 @@ public sealed class SaveOrderEditsHandler(
 
             var notesChanged = order.UpdateNotes(command.Notes, now);
 
+            // El detal antes que el piso, mismo orden que Quotation.UpdateDetails: así apagarlo y
+            // elegir un piso en el mismo guardado funciona, y prenderlo con un piso no nulo llega
+            // a SetGlobalScaleFloorAfterConversion con el detal ya prendido y se rechaza con
+            // quotation.retail.floor_not_allowed. Sólo si cambió, por el mismo motivo que el piso.
+            var retailChanged = quotation.IsRetail != command.IsRetail;
+            if (retailChanged)
+            {
+                quotation.SetIsRetailAfterConversion(command.IsRetail, updatedBy, now);
+            }
+
             // El cuerpo manda el piso entero en cada guardado; sólo se toca si cambió, porque el
-            // mutador sube la versión de la cotización.
+            // mutador sube la versión de la cotización. Se compara después del detal: prenderlo
+            // ya dejó el piso en null, y ese null no es un segundo cambio que contar — la fila de
+            // RetailChanged ya dice que el detal se lleva el piso.
             var floorChanged = quotation.GlobalScaleFloor != command.GlobalScaleFloor;
             if (floorChanged)
             {
@@ -175,12 +188,27 @@ public sealed class SaveOrderEditsHandler(
             // Paso 9: sin cambio real no hay historial, auditoría, recálculo ni escritura, y la
             // versión queda igual (RecalculatePaymentStatus siempre la sube). Un cambio que es
             // sólo de piso global es real: sin contarlo, se descartaría en silencio.
-            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged)
+            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged)
             {
                 return new OrderDetailDto(order.ToDto(), quotation.ToDto());
             }
 
             await RecordItemEditsAsync(command.TenantId, quotation, order, itemEdits, updatedBy, now, cancellationToken);
+
+            // Misma fila y misma auditoría que el piso, con su propio texto y su propia acción.
+            if (retailChanged)
+            {
+                quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
+                    QuotationHistoryEntryId.New(),
+                    quotation.Id,
+                    QuotationHistoryEventType.Edited,
+                    updatedBy,
+                    QuotationChangeSummary.RetailChanged(command.IsRetail),
+                    now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.retail_changed",
+                    order.Id.ToString(), "success", now);
+            }
 
             if (floorChanged)
             {

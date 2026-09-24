@@ -33,6 +33,13 @@ public interface IOrderEdits
     /// contra la vista previa, igual que cambiar una cantidad.
     /// </summary>
     int? GlobalScaleFloor { get; }
+
+    /// <summary>
+    /// Cotización detal de la cotización del pedido. Mismo contrato que
+    /// <c>IQuotationEdits.IsRetail</c>: viaja con la edición, se aplica antes que el piso y se
+    /// persiste al guardar sólo si cambió.
+    /// </summary>
+    bool IsRetail { get; }
 }
 
 /// <summary>
