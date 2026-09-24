@@ -431,7 +431,7 @@ public sealed class Quotation
     private void SetGlobalScaleFloorCore(
         int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
     {
-        EnsureGlobalScaleFloorAllowed(floor);
+        EnsureGlobalScaleFloorAllowed(floor, IsRetail);
         GlobalScaleFloor = floor;
         Touch(updatedBy, occurredAt);
     }
@@ -476,8 +476,12 @@ public sealed class Quotation
     /// Las dos condiciones de un piso global, en un solo lugar: lo usan el mutador suelto y el
     /// guardado del encabezado (<see cref="UpdateDetails"/>), y si divergieran el guardado sería
     /// una puerta trasera a la exclusión con detal.
+    ///
+    /// <paramref name="isRetail"/> es el detal que va a quedar, no necesariamente el guardado: el
+    /// mutador suelto pasa <see cref="IsRetail"/>, pero el guardado del encabezado trae el detal
+    /// en el mismo cuerpo y lo aplica antes que el piso, así que el guard tiene que mirar ése.
     /// </summary>
-    private void EnsureGlobalScaleFloorAllowed(int? floor)
+    private static void EnsureGlobalScaleFloorAllowed(int? floor, bool isRetail)
     {
         // En detal ninguna línea recibe descuento, así que un piso guardado no describiría nada
         // de lo que la cotización está aplicando: se rechaza en vez de guardarse dormido. Va
@@ -485,7 +489,7 @@ public sealed class Quotation
         // "floor_invalid" a un piso perfectamente válido mandaría a mirar el select en vez del
         // interruptor de detal. Quitarlo (null) sigue permitido: no pide descuento, y
         // rechazarlo obligaría a apagar el detal para limpiar un piso que el detal ya limpió.
-        if (IsRetail && floor is not null)
+        if (isRetail && floor is not null)
         {
             throw new QuotationsDomainException(
                 "quotation.retail.floor_not_allowed",
@@ -612,18 +616,26 @@ public sealed class Quotation
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
         IReadOnlyDictionary<Guid, QuotationItemPricing>? repricing,
+        bool isRetail,
         int? globalScaleFloor,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
         EnsureEditable();
-        EnsureGlobalScaleFloorAllowed(globalScaleFloor);
+        // Detal antes que el piso, y contra el detal del cuerpo: así apagar el detal y elegir un
+        // piso en el mismo guardado funciona, y prenderlo con un piso no nulo es un cuerpo
+        // contradictorio que se rechaza con quotation.retail.floor_not_allowed — el mismo código
+        // que el mutador suelto, sin regla cruzada en el validador de forma.
+        EnsureGlobalScaleFloorAllowed(globalScaleFloor, isRetail);
         // Antes de asignar nada: un encabezado rechazado no puede quedar aplicado a medias.
         EnsureBillingIsConsistent(parties);
 
         ValidUntil = validUntil;
         // El guardado manda el encabezado entero, así que un piso ausente es "quitalo" y no "no
-        // lo toques" — mismo criterio que ValidUntil o Notes.
+        // lo toques" — mismo criterio que ValidUntil o Notes. Lo mismo el detal: ausente es
+        // false. Prender el detal deja el piso en null sin pasar por SetIsRetailCore porque el
+        // guard de arriba ya garantizó que, con detal, el piso del cuerpo es null.
+        IsRetail = isRetail;
         GlobalScaleFloor = globalScaleFloor;
         PaymentMethod = NormalizePaymentMethod(paymentMethod);
         Notes = NormalizeNotes(notes);

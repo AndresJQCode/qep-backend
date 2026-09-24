@@ -20,6 +20,7 @@ internal static class QuotationProductPricingResolver
         Guid productId,
         decimal quantity,
         QuotationCurrency currency,
+        bool isRetail,
         CancellationToken cancellationToken)
     {
         var product = await lookup.FindAsync(tenantId, productId, cancellationToken);
@@ -40,7 +41,8 @@ internal static class QuotationProductPricingResolver
                 "An inactive product cannot be added to a quotation.");
         }
 
-        return new QuotationPricedProduct(product.Name, PriceFor(product, quantity, currency));
+        return new QuotationPricedProduct(
+            product.Name, PriceFor(product, quantity, currency, isRetail));
     }
 
     /// <summary>
@@ -57,6 +59,7 @@ internal static class QuotationProductPricingResolver
         Guid tenantId,
         IReadOnlyCollection<(Guid ProductId, decimal Quantity)> lines,
         QuotationCurrency currency,
+        bool isRetail,
         CancellationToken cancellationToken)
     {
         if (lines.Count == 0)
@@ -79,14 +82,17 @@ internal static class QuotationProductPricingResolver
                     $"Product '{productId}' was not found in this tenant.");
             }
 
-            priced[productId] = PriceFor(product, quantity, currency);
+            priced[productId] = PriceFor(product, quantity, currency, isRetail);
         }
 
         return priced;
     }
 
     private static QuotationItemPricing PriceFor(
-        QuotationProductPricingRef product, decimal quantity, QuotationCurrency currency)
+        QuotationProductPricingRef product,
+        decimal quantity,
+        QuotationCurrency currency,
+        bool isRetail)
     {
         var unitPrice = currency == QuotationCurrency.Usd
             ? product.UnitPriceUsd
@@ -97,6 +103,16 @@ internal static class QuotationProductPricingResolver
             throw new QuotationsDomainException(
                 "quotation.item.product_price_unavailable",
                 $"The product does not have a price in {currency.ToCode()}.");
+        }
+
+        // Cotización detal (decisión del owner, 2026-09-23): "el sistema debe omitir cualquier
+        // escala de precio y no validar restricciones". Las escalas no se miran, así que tampoco
+        // se exige que estén completas: un producto a medio configurar en el catálogo se cotiza
+        // igual, a precio de lista. El precio en la moneda sí se sigue exigiendo — no es una
+        // escala, es el importe, y no se puede inventar.
+        if (isRetail)
+        {
+            return new QuotationItemPricing(price, 0m, product.TaxPercentage ?? 0);
         }
 
         // Antes que el descuento, y también desde ResolveManyAsync: cambiar la moneda es volver a

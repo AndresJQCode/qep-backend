@@ -23,7 +23,8 @@ public sealed record SaveQuotationCommand(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<QuotationItemAddition> Items,
-    int? GlobalScaleFloor) : ICommand<QuotationDto>, IQuotationEdits;
+    int? GlobalScaleFloor,
+    bool IsRetail) : ICommand<QuotationDto>, IQuotationEdits;
 
 public sealed class SaveQuotationValidator : QuotationEditsValidator<SaveQuotationCommand>;
 

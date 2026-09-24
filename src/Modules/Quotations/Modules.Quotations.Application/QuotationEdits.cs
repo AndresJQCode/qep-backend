@@ -40,6 +40,15 @@ public interface IQuotationEdits : IQuotationHeaderEdits
     /// piso sobre cada línea antes de guardar.
     /// </summary>
     int? GlobalScaleFloor { get; }
+
+    /// <summary>
+    /// Cotización detal: con <c>true</c> ninguna línea recibe descuento. Viaja al lado del piso y
+    /// por el mismo motivo —decisión del owner, 2026-09-23: sin endpoint propio—, y se aplica
+    /// **antes** que él en <c>Quotation.UpdateDetails</c>: apagar el detal y elegir un piso en el
+    /// mismo cuerpo funciona; prenderlo con un piso no nulo es contradictorio y el dominio lo
+    /// rechaza con <c>quotation.retail.floor_not_allowed</c>.
+    /// </summary>
+    bool IsRetail { get; }
 }
 
 /// <summary>

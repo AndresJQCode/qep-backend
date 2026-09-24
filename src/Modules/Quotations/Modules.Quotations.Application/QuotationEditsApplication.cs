@@ -58,7 +58,7 @@ internal static class QuotationEditsApplication
                 quotation.Items
                     .Select(item => (item.ProductId, item.Quantity))
                     .ToArray(),
-                currency,
+                currency, edits.IsRetail,
                 cancellationToken);
 
         // La foto de antes, para poder decir en el historial **qué** se editó: el cuerpo manda el
@@ -73,6 +73,7 @@ internal static class QuotationEditsApplication
             edits.Parties.ToDomain(),
             billingAccount,
             repricing,
+            edits.IsRetail,
             edits.GlobalScaleFloor,
             updatedBy,
             now);
@@ -80,7 +81,7 @@ internal static class QuotationEditsApplication
             before, QuotationHeaderSnapshot.Of(quotation));
 
         var itemEdits = await QuotationItemEdits.ApplyAsync(
-            quotation, edits.Items, pricingLookup, tenantId, updatedBy, now, cancellationToken);
+            quotation, edits.Items, pricingLookup, tenantId, updatedBy, now, edits.IsRetail, cancellationToken);
 
         // Una sola pasada al final: el descuento por escala depende de la cotización entera, así
         // que resolverlo en medio del diff lo calcularía contra un estado a medio aplicar. Y el
