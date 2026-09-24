@@ -59,6 +59,11 @@ public sealed class OrdersExportProcessor(
     /// Comprobante N" con el enlace clicable a su copia pública —la URL misma como texto, para que
     /// se lea sin abrirla—, o «Sin enlace» si es privado. También al final, por la misma razón que
     /// "Cod. Asesor".
+    ///
+    /// Y de última, "Valor Unit sin IVA" (2026-09-24): el precio unitario con el IVA que trae
+    /// adentro quitado (<see cref="QuotationItem.UnitPriceWithoutTax"/>). Al final por la misma
+    /// razón que las anteriores. "Valor Unit" no cambia y sigue llevando el precio con IVA incluido,
+    /// que es como se carga <see cref="QuotationItem.UnitPrice"/>.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
@@ -85,6 +90,7 @@ public sealed class OrdersExportProcessor(
             new($"V. Comprobante {number}", 18),
             new($"URL Comprobante {number}", 60),
         }),
+        new("Valor Unit sin IVA", 18),
     ];
 
     public ExportJobKind Kind => ExportJobKind.Orders;
@@ -300,6 +306,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(banco),
                 ExportCell.OfText(cuenta),
                 .. proofCells,
+                ExportCell.OfNumber(item.UnitPriceWithoutTax),
             ];
         }
     }
