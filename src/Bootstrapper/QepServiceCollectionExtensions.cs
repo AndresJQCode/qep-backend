@@ -93,9 +93,6 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<UpdateMemberRolesCommand, MembershipListItemDto>,
             UpdateMemberRolesHandler>();
         services.AddScoped<
-            ICommandHandler<UpdateMemberDisplayNameCommand, MembershipListItemDto>,
-            UpdateMemberDisplayNameHandler>();
-        services.AddScoped<
             ICommandHandler<UpdateMemberProfileCommand, MembershipListItemDto>,
             UpdateMemberProfileHandler>();
         services.AddScoped<
