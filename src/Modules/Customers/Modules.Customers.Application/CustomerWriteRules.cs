@@ -107,8 +107,12 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         // Colombia, asi que un cliente de afuera no tiene CityId que mandar y escribe su ciudad.
         // Marcar el campo correcto importa: el formulario pinta un combobox o un input de texto
         // segun el pais, y un error apuntando al campo que no esta en pantalla no se ve.
+        // NotEmpty() en un Guid? solo rechaza null: un Guid.Empty explicito lo deja pasar y el
+        // rechazo llega despues, como customers.customer.city_not_found del dominio y sin el mapa
+        // errors -- el mismo hueco que register-tenant ya documenta para un campo obligatorio mal
+        // comprobado. Must() cubre los dos casos con el mismo codigo de campo.
         RuleFor(command => command.CityId)
-            .NotEmpty()
+            .Must(cityId => cityId is { } value && value != Guid.Empty)
             .WithMessage("The city is required.")
             .When(IsColombian);
         RuleFor(command => command.CityName)

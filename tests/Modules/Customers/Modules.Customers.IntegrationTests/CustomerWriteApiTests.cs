@@ -26,6 +26,7 @@ public sealed class CustomerWriteApiTests
                 phone = "310 935 2187",
                 email = "Compras@VerdeEsencial.CO",
                 address = "Calle 10 # 45-12",
+                country = "CO",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = true
@@ -282,6 +283,7 @@ public sealed class CustomerWriteApiTests
                 phone = "310 935 2187",
                 email = "persona@verde.co",
                 address = "Calle 10 # 45-12",
+                country = "CO",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = false
@@ -311,6 +313,7 @@ public sealed class CustomerWriteApiTests
                 identificationType = "DNI",
                 identificationNumber = "",
                 email = "no-es-un-correo",
+                country = "",
                 cityId = Guid.Empty,
                 classificationId = Guid.Empty,
                 withRetention = false
@@ -324,6 +327,7 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("IdentificationNumber", fields);
         Assert.Contains("Email", fields);
         Assert.Contains("Phone", fields);
+        Assert.Contains("Country", fields);
         Assert.Contains("CityId", fields);
         Assert.Contains("ClassificationId", fields);
     }
@@ -469,6 +473,7 @@ public sealed class CustomerWriteApiTests
                 phone = "310 935 2187",
                 email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
+                country = "CO",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = true
@@ -560,6 +565,7 @@ public sealed class CustomerWriteApiTests
                 phone = "310 935 2187",
                 email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
+                country = "CO",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = false

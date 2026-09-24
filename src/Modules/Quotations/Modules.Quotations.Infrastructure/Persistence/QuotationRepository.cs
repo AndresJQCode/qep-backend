@@ -12,23 +12,31 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
     // RemoveItem no las ve borradas. Lo mismo vale para Parties: sin la fila vieja trackeada,
     // volver a prender el switch ("usa los datos del cliente") no borraria nada. Mismo criterio que ProductRepository.FindAsync con
     // PriceScales.
+    //
+    // AsSingleQuery explicito, no por defecto: Parties tiene como mucho 2 filas
+    // (QuotationParties), asi que el cartesiano con Items solo las duplica. Split costaria 3
+    // round-trips y, con tracking, una lectura no consistente entre queries. Declararlo ademas
+    // calla el warning 20504 de EF (MultipleCollectionIncludeWarning).
     public Task<Quotation?> FindAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         dbContext.Quotations
             .Include(quotation => quotation.Items)
             .Include(quotation => quotation.Parties)
+            .AsSingleQuery()
             .SingleOrDefaultAsync(
                 quotation => quotation.TenantId == tenantId && quotation.Id == quotationId,
                 cancellationToken);
 
     // Mismos Include que FindAsync —el cálculo previo pinta las líneas y recalcula con ellas—, sin
-    // tracking a propósito (spec 2026-09-17, decisión 4).
+    // tracking a propósito (spec 2026-09-17, decisión 4). AsSingleQuery por el mismo motivo que
+    // en FindAsync.
     public Task<Quotation?> FindUntrackedAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         dbContext.Quotations
             .AsNoTracking()
             .Include(quotation => quotation.Items)
             .Include(quotation => quotation.Parties)
+            .AsSingleQuery()
             .SingleOrDefaultAsync(
                 quotation => quotation.TenantId == tenantId && quotation.Id == quotationId,
                 cancellationToken);
