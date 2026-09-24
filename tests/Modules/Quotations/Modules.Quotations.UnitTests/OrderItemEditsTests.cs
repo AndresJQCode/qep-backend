@@ -46,7 +46,7 @@ public sealed class OrderItemEditsTests
     private static Task<IReadOnlyList<OrderItemEdit>> ApplyAsync(
         Quotation quotation, StubPricingCatalog catalog, params OrderItemAddition[] desired) =>
         OrderItemEdits.ApplyAsync(
-            quotation, desired, catalog, TenantId, UpdatedBy, Now.AddDays(1),
+            quotation, desired, catalog, TenantId, UpdatedBy, Now.AddDays(1), isRetail: false,
             TestContext.Current.CancellationToken);
 
     [Fact]

@@ -75,7 +75,7 @@ public sealed class AddOrderItemsHandler(
         {
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
                 pricingLookup, command.TenantId, addition.ProductId, addition.Quantity,
-                quotation.Currency, cancellationToken);
+                quotation.Currency, quotation.IsRetail, cancellationToken);
 
             quotation.AddItemAfterConversion(
                 QuotationItemId.New(), addition.ProductId, addition.Quantity,

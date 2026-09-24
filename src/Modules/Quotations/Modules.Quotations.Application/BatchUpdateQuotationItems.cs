@@ -134,7 +134,7 @@ public sealed class BatchUpdateQuotationItemsHandler(
                 command.TenantId,
                 addition.ProductId,
                 addition.Quantity,
-                quotation.Currency,
+                quotation.Currency, quotation.IsRetail,
                 cancellationToken);
 
             quotation.AddItem(

@@ -85,7 +85,7 @@ public sealed class UpdateQuotationItemHandler(
             command.TenantId,
             item.ProductId,
             command.Quantity,
-            quotation.Currency,
+            quotation.Currency, quotation.IsRetail,
             cancellationToken);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(

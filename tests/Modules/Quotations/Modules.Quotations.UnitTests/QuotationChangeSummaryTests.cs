@@ -157,4 +157,54 @@ public sealed class QuotationChangeSummaryTests
         Assert.Contains("quitó el descuento global", summary);
     }
 
+    // El detal viaja con el encabezado desde el 2026-09-23, igual que el piso. Sin contarlo, un
+    // guardado que sólo prende el detal no deja rastro, y es el que más cambia el total.
+    [Fact]
+    public void TurningRetailOnIsReported()
+    {
+        var before = Snapshot(null, isStorePickup: false);
+        var after = before with { IsRetail = true };
+
+        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+
+        Assert.Equal("Editó detal (ninguna línea recibe descuento).", summary);
+    }
+
+    [Fact]
+    public void TurningRetailOffIsReported()
+    {
+        var before = Snapshot(null, isStorePickup: false) with { IsRetail = true };
+        var after = before with { IsRetail = false };
+
+        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+
+        Assert.Equal("Editó quitó el detal.", summary);
+    }
+
+    // Prender el detal se lleva el piso: las dos cosas pasaron y las dos se cuentan, detal
+    // primero porque es la causa.
+    [Fact]
+    public void TurningRetailOnOverAFloorReportsBoth()
+    {
+        var before = Snapshot(null, isStorePickup: false) with { GlobalScaleFloor = 20 };
+        var after = before with { IsRetail = true, GlobalScaleFloor = null };
+
+        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+
+        Assert.Equal(
+            "Editó detal (ninguna línea recibe descuento), quitó el descuento global.", summary);
+    }
+
+    // El pedido no tiene resumen de encabezado: deja una fila propia con este texto, igual que
+    // GlobalScaleFloorChanged.
+    [Fact]
+    public void RetailChangedNamesTheEffect()
+    {
+        Assert.Equal(
+            "Marcó la cotización como detal: ninguna línea recibe descuento.",
+            QuotationChangeSummary.RetailChanged(true));
+        Assert.Equal(
+            "Quitó el detal: las líneas vuelven a su descuento por escala.",
+            QuotationChangeSummary.RetailChanged(false));
+    }
 }

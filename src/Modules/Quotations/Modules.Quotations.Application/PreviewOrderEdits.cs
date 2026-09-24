@@ -15,7 +15,8 @@ public sealed record PreviewOrderEditsQuery(
     IReadOnlyList<OrderItemAddition> Items,
     OrderEditProofs Proofs,
     string? Notes,
-    int? GlobalScaleFloor) : IQuery<OrderDetailDto>, IOrderEdits;
+    int? GlobalScaleFloor,
+    bool IsRetail) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -82,7 +83,7 @@ public sealed class PreviewOrderEditsHandler(
         var now = clock.UtcNow;
 
         await OrderItemEdits.ApplyAsync(
-            quotation, query.Items, pricingLookup, query.TenantId, updatedBy, now, cancellationToken);
+            quotation, query.Items, pricingLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
 
         foreach (var proofId in query.Proofs.RemoveIds)
         {
@@ -101,6 +102,13 @@ public sealed class PreviewOrderEditsHandler(
             updatedBy,
             now);
         order.UpdateNotes(query.Notes, now);
+
+        // El detal del borrador, en memoria y antes que el piso: mismo orden que
+        // SaveOrderEditsHandler, o la vista previa aceptaría un cuerpo que el guardado rechaza.
+        if (quotation.IsRetail != query.IsRetail)
+        {
+            quotation.SetIsRetailAfterConversion(query.IsRetail, updatedBy, now);
+        }
 
         // El piso del borrador, en memoria: es lo que hace que cambiar el select recalcule al
         // vuelo sin escribir nada, igual que cambiar una cantidad.
