@@ -19,6 +19,14 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
     /// </summary>
     private const string TenantSlugIndex = "IX_tenants_slug";
 
+    /// <summary>
+    /// Índice único parcial del código de asesor (spec 2026-09-24, D3). Se reconoce por nombre, y
+    /// no sólo por el 23505, porque memberships tiene otros índices únicos —(user_id, tenant_id) e
+    /// invitation_token_hash— y etiquetarlos como "código tomado" mandaría a corregir el campo
+    /// equivocado.
+    /// </summary>
+    private const string AdvisorCodeIndex = "IX_memberships_tenant_id_advisor_code";
+
     public async Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
         string email,
         CancellationToken cancellationToken)
@@ -71,6 +79,20 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
             throw new TenantDomainException(
                 "tenancy.slug.taken",
                 "Tenant slug is already in use.");
+        }
+        // El handler ya pregunta antes con IsAdvisorCodeTakenAsync, pero dos requests pueden
+        // pasar ese chequeo a la vez: el índice es la autoridad, y su choque es un 422 del
+        // dominio, no un 500.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException
+            {
+                SqlState: UniqueViolation,
+                ConstraintName: AdvisorCodeIndex,
+            })
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.advisor_code_taken",
+                "The advisor code is already in use in this tenant.");
         }
     }
 }

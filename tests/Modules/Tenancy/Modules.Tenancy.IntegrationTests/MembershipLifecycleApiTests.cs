@@ -3,6 +3,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -611,6 +614,81 @@ public sealed class MembershipLifecycleApiTests
         Assert.Equal(1, tenantBOwnerMembership.Version);
     }
 
+    // D3: único por tenant sólo cuando existe, y sin filtrar por estado (D4). El índice es la
+    // autoridad ante una carrera, así que se verifica su forma en la base y no sólo su efecto.
+    [Fact]
+    public async Task TheAdvisorCodeIndexIsUniquePerTenantAndSkipsMembersWithoutCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Registrar arranca la API, y arrancarla aplica las migraciones.
+        await RegisterTenantWithOwnerAsync(factory);
+
+        await using var connection = new NpgsqlConnection(factory.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT indexdef FROM pg_indexes
+            WHERE schemaname = 'tenancy' AND indexname = 'IX_memberships_tenant_id_advisor_code'
+            """,
+            connection);
+        var definition = (string?)await command.ExecuteScalarAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(definition);
+        Assert.Contains("CREATE UNIQUE INDEX", definition, StringComparison.Ordinal);
+        Assert.Contains("(tenant_id, advisor_code)", definition, StringComparison.Ordinal);
+        Assert.Contains("WHERE (advisor_code IS NOT NULL)", definition, StringComparison.Ordinal);
+        Assert.DoesNotContain("state", definition, StringComparison.Ordinal);
+    }
+
+    // Review Focus 1: dos requests que pasan el chequeo previo a la vez. El segundo llega a la
+    // base, y el 23505 de este índice tiene que salir como el código de dominio (422) y no como
+    // un 500. Se ejerce saltándose el handler, que es exactamente lo que pasa en la carrera.
+    // Las dos membresías nacen sin código y conviven: el índice es parcial.
+    [Fact]
+    public async Task ADuplicateCodeThatReachesTheDatabaseIsTheDomainCodeAndNotAServerError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var first = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        var second = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        await SetAdvisorCodeThroughTheAggregateAsync(factory, tenantId, first, 7);
+
+        var error = await Assert.ThrowsAsync<TenantDomainException>(
+            () => SetAdvisorCodeThroughTheAggregateAsync(factory, tenantId, second, 7));
+
+        Assert.Equal("tenancy.membership.advisor_code_taken", error.Code);
+    }
+
+    // D4 y el chequeo previo: una quitada sigue ocupando su código, la propia membresía no se
+    // cuenta a sí misma, y otro tenant tiene su propio espacio de códigos (D3).
+    [Fact]
+    public async Task IsAdvisorCodeTakenSeesRemovedMembersSkipsTheExcludedOneAndIgnoresOtherTenants()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var (otherTenantId, _, _, _) = await RegisterTenantWithOwnerAsync(factory);
+        var holder = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        await SetAdvisorCodeThroughTheAggregateAsync(factory, tenantId, holder, 7);
+        var removal = await SendActionAsync(ownerClient, tenantId, holder, "remove");
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var memberships = scope.ServiceProvider.GetRequiredService<IMembershipRepository>();
+        var tenant = new TenantId(Guid.Parse(tenantId));
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        Assert.True(await memberships.IsAdvisorCodeTakenAsync(tenant, 7, null, cancellationToken));
+        Assert.False(await memberships.IsAdvisorCodeTakenAsync(
+            tenant, 7, new MembershipId(holder), cancellationToken));
+        Assert.False(await memberships.IsAdvisorCodeTakenAsync(
+            new TenantId(Guid.Parse(otherTenantId)), 7, null, cancellationToken));
+        Assert.False(await memberships.IsAdvisorCodeTakenAsync(tenant, 8, null, cancellationToken));
+    }
+
     private static readonly string[] AdvisorRoles = ["advisor"];
     private static readonly string[] AdminRoles = ["admin"];
     private const string DefaultDisplayName = "Ana Pérez";
@@ -765,6 +843,28 @@ public sealed class MembershipLifecycleApiTests
         }
 
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    // Carga la membresía y le pone el código por el agregado, sin pasar por ningún handler: es
+    // lo que deja a la prueba llegar al índice sin el chequeo previo.
+    private static async Task SetAdvisorCodeThroughTheAggregateAsync(
+        QepApiFactory factory,
+        string tenantId,
+        Guid membershipId,
+        int? advisorCode)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var memberships = scope.ServiceProvider.GetRequiredService<IMembershipRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>();
+        var membership = await memberships.FindByIdAsync(
+            new MembershipId(membershipId),
+            new TenantId(Guid.Parse(tenantId)),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+
+        membership.UpdateProfile(
+            membership.DisplayName ?? DefaultDisplayName, advisorCode, DateTimeOffset.UtcNow);
+        await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static async Task<IReadOnlyList<string>> AuditOutcomesAsync(
