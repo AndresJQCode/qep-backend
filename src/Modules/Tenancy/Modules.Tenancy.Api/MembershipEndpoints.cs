@@ -71,9 +71,22 @@ public static class MembershipEndpoints
 
         // Con If-Match, igual que `/roles`: dos administradores renombrando a la misma persona es
         // una carrera real, y el nombre termina impreso en un PDF que se le manda al cliente.
+        // Se retira cuando el frontend migre a `/profile` (spec 2026-09-24, D7).
         group.MapPut("/{membershipId:guid}/display-name", UpdateDisplayNameAsync)
             .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
             .Accepts<MembershipDisplayNameUpdateRequest>("application/json")
+            .Produces<MembershipListItemResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Nombre y código de asesor en un solo PUT (spec 2026-09-24, D6): el diálogo los edita
+        // juntos, y dos PUT desde el mismo diálogo chocarían entre sí por el If-Match.
+        group.MapPut("/{membershipId:guid}/profile", UpdateProfileAsync)
+            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
+            .Accepts<MembershipProfileUpdateRequest>("application/json")
             .Produces<MembershipListItemResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -131,6 +144,34 @@ public static class MembershipEndpoints
                 new TenantId(tenantId),
                 new MembershipId(membershipId),
                 request.DisplayName ?? string.Empty,
+                expectedVersion,
+                httpContext.TraceIdentifier),
+            cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{membership.Version}\"";
+        return Results.Ok(ToListItemResponse(membership));
+    }
+
+    private static async Task<IResult> UpdateProfileAsync(
+        Guid tenantId,
+        Guid membershipId,
+        MembershipProfileUpdateRequest request,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion))
+        {
+            throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded membership version is required.");
+        }
+
+        var membership = await dispatcher.SendAsync(
+            new UpdateMemberProfileCommand(
+                new TenantId(tenantId),
+                new MembershipId(membershipId),
+                request.DisplayName ?? string.Empty,
+                AdvisorCodeInput.ToCommandValue(request.AdvisorCode),
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -225,6 +266,7 @@ public static class MembershipEndpoints
                 new TenantId(tenantId),
                 request.Email,
                 request.DisplayName,
+                AdvisorCodeInput.ToCommandValue(request.AdvisorCode),
                 request.Roles ?? [],
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -240,6 +282,7 @@ public static class MembershipEndpoints
             membership.UserId,
             email,
             membership.DisplayName,
+            membership.AdvisorCode,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -254,6 +297,7 @@ public static class MembershipEndpoints
             membership.UserId,
             membership.Email,
             membership.DisplayName,
+            membership.AdvisorCode,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -286,10 +330,17 @@ public static class MembershipEndpoints
 /// <c>validation.failed</c> con <c>errors.DisplayName</c>, el único 422 que el formulario sabe
 /// marcar en el input.
 /// </param>
+/// <param name="AdvisorCode">
+/// Opcional (spec 2026-09-24, D1). <see cref="decimal"/> a propósito —ver
+/// <see cref="AdvisorCodeInput"/>—: lo que no sea un entero positivo responde 422 con
+/// <c>errors.AdvisorCode</c>; uno ya tomado en el tenant, 422
+/// <c>tenancy.membership.advisor_code_taken</c>.
+/// </param>
 public sealed record MembershipInviteRequest(
     string Email,
     string DisplayName,
-    IReadOnlyCollection<string>? Roles);
+    IReadOnlyCollection<string>? Roles,
+    decimal? AdvisorCode);
 
 public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? Roles);
 
@@ -304,11 +355,21 @@ public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? R
 /// </summary>
 public sealed record MembershipDisplayNameUpdateRequest(string? DisplayName);
 
+/// <summary>
+/// El perfil completo que edita el diálogo "Editar miembro" (spec 2026-09-24, D6).
+/// <c>DisplayName</c> es nullable por la misma razón que en
+/// <see cref="MembershipDisplayNameUpdateRequest"/>: ausente llega como nulo, el endpoint lo pasa
+/// a vacío y el validador lo rechaza con <c>errors.DisplayName</c>. <c>AdvisorCode</c> nulo borra
+/// el código (D1); es <see cref="decimal"/> por lo que explica <see cref="AdvisorCodeInput"/>.
+/// </summary>
+public sealed record MembershipProfileUpdateRequest(string? DisplayName, decimal? AdvisorCode);
+
 public sealed record MembershipResponse(
     Guid Id,
     Guid UserId,
     string Email,
     string? DisplayName,
+    int? AdvisorCode,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,
@@ -321,11 +382,16 @@ public sealed record MembershipResponse(
 /// Nulo en membresías anteriores al nombre y en el owner hasta que se cargue. La celda
 /// "Persona" muestra entonces sólo el correo, con el aviso "Sin nombre".
 /// </param>
+/// <param name="AdvisorCode">
+/// Nulo si la persona no tiene código en el sistema externo del tenant (spec 2026-09-24, D1): la
+/// fila no muestra nada, en vez de un "Cód." vacío.
+/// </param>
 public sealed record MembershipListItemResponse(
     Guid Id,
     Guid UserId,
     string? Email,
     string? DisplayName,
+    int? AdvisorCode,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,

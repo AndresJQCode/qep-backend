@@ -90,5 +90,23 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
                 membership.State == MembershipState.Active)
             .ToListAsync(cancellationToken);
 
+    public Task<bool> IsAdvisorCodeTakenAsync(
+        TenantId tenantId,
+        int advisorCode,
+        MembershipId? exceptMembershipId,
+        CancellationToken cancellationToken)
+    {
+        // Sin filtro por estado a propósito (D4): una quitada conserva su código y lo sigue
+        // bloqueando, igual que el índice.
+        var query = dbContext.Memberships.Where(membership =>
+            membership.TenantId == tenantId && membership.AdvisorCode == advisorCode);
+        if (exceptMembershipId is { } except)
+        {
+            query = query.Where(membership => membership.Id != except);
+        }
+
+        return query.AnyAsync(cancellationToken);
+    }
+
     public void Add(Membership membership) => dbContext.Memberships.Add(membership);
 }

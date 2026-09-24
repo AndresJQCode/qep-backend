@@ -322,6 +322,13 @@ public sealed class InvitationServiceTests
             TenantId tenantId, MembershipId excludeId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Membership>>([]);
 
+        public Task<bool> IsAdvisorCodeTakenAsync(
+            TenantId tenantId,
+            int advisorCode,
+            MembershipId? exceptMembershipId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
         public void Add(Membership membership) => _memberships.Add(membership);
     }
 

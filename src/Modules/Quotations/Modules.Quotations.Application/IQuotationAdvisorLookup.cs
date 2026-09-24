@@ -6,7 +6,10 @@ namespace Modules.Quotations.Application;
 /// <param name="DisplayName">El nombre que el tenant cargó en la membresía. Null en las
 /// membresías anteriores a que existiera y en las creadas con <c>CreateActive</c> —el owner al
 /// registrarse y los miembros sembrados— hasta que alguien lo cargue desde el roster.</param>
-public sealed record QuotationAdvisor(string? Email, string? DisplayName)
+/// <param name="AdvisorCode">El código con el que el sistema externo del tenant identifica a la
+/// asesora (spec 2026-09-24). Es el de hoy, no uno congelado al vender (D9): si se lo cambian, los
+/// pedidos viejos salen con el nuevo. Null si la membresía no tiene código.</param>
+public sealed record QuotationAdvisor(string? Email, string? DisplayName, int? AdvisorCode)
 {
     /// <summary>Cómo presentar a la asesora donde se la muestra por nombre —el listado de
     /// cotizaciones y su Excel—: el nombre o, mientras la membresía no tenga uno, el correo

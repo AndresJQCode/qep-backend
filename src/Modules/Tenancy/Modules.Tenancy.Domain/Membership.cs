@@ -78,9 +78,19 @@ public sealed class Membership
     /// porque el usuario es global: con el nombre ahí, el admin de otro tenant cambiaría lo que
     /// imprimen los PDFs de este. Nulo en las filas anteriores a este cambio y en el owner de
     /// registro, que nunca pasó por una invitación; se carga desde el roster con
-    /// <see cref="Rename"/>.
+    /// <see cref="UpdateProfile"/>.
     /// </summary>
     public string? DisplayName { get; private set; }
+
+    /// <summary>
+    /// El código con el que un sistema externo del tenant (ERP, contabilidad) identifica a esta
+    /// persona, para que sus registros y los de QEP casen (spec 2026-09-24). Opcional (D1): nulo
+    /// significa "no tiene código allá". Entero positivo (D2), así que <c>0012</c> y <c>12</c> son
+    /// el mismo. La unicidad por tenant (D3) no vive acá —una membresía no ve a las demás—: la
+    /// sostiene el índice único parcial de la base, con un chequeo previo en los handlers para
+    /// responder claro. Una membresía quitada lo conserva y lo sigue bloqueando (D4).
+    /// </summary>
+    public int? AdvisorCode { get; private set; }
 
     public DateTimeOffset InvitedAt { get; private set; }
 
@@ -121,7 +131,8 @@ public sealed class Membership
         string invitationToken,
         string invitationTokenHash,
         DateTimeOffset invitedAt,
-        TimeSpan timeToLive)
+        TimeSpan timeToLive,
+        int? advisorCode = null)
     {
         if (userId == Guid.Empty)
         {
@@ -139,6 +150,7 @@ public sealed class Membership
 
         ValidateInvitationToken(invitationToken, invitationTokenHash);
         var normalizedName = NormalizeDisplayName(displayName);
+        var normalizedCode = NormalizeAdvisorCode(advisorCode);
 
         var membership = new Membership(
             id,
@@ -151,6 +163,7 @@ public sealed class Membership
         {
             InvitationTokenHash = invitationTokenHash,
             DisplayName = normalizedName,
+            AdvisorCode = normalizedCode,
         };
         membership._domainEvents.Add(new MembershipInvitedDomainEvent(
             Guid.CreateVersion7(),
@@ -286,6 +299,11 @@ public sealed class Membership
     ///
     /// El nombre se reescribe junto con los roles: quien renueva una invitación la está armando
     /// de nuevo (spec 2026-09-11, D5).
+    ///
+    /// El código de asesor no viaja igual que el nombre: uno en el cuerpo reemplaza al que había,
+    /// pero un cuerpo sin código lo conserva (spec 2026-09-24, Application y API). Así una quitada
+    /// que vuelve no pierde ni libera su código (D4); borrarlo es sólo por
+    /// <see cref="UpdateProfile"/>. La unicidad la revisa el handler antes de llamar acá.
     /// </remarks>
     public void Reinvite(
         string displayName,
@@ -293,7 +311,8 @@ public sealed class Membership
         string invitationToken,
         string invitationTokenHash,
         DateTimeOffset occurredAt,
-        TimeSpan timeToLive)
+        TimeSpan timeToLive,
+        int? advisorCode = null)
     {
         if (timeToLive <= TimeSpan.Zero)
         {
@@ -304,6 +323,7 @@ public sealed class Membership
 
         ValidateInvitationToken(invitationToken, invitationTokenHash);
         var normalizedName = NormalizeDisplayName(displayName);
+        var normalizedCode = NormalizeAdvisorCode(advisorCode);
 
         if (State == MembershipState.Invited && occurredAt <= ExpiresAt)
         {
@@ -322,6 +342,8 @@ public sealed class Membership
         _roles.Clear();
         _roles.AddRange(NormalizeRoles(roles));
         DisplayName = normalizedName;
+        // Nulo es "sin cambios", no "borrar": ver el <remarks>.
+        AdvisorCode = normalizedCode ?? AdvisorCode;
         State = MembershipState.Invited;
         InvitedAt = occurredAt;
         ExpiresAt = occurredAt + timeToLive;
@@ -485,23 +507,31 @@ public sealed class Membership
     }
 
     /// <summary>
-    /// Cambia el nombre de la persona. Vale en cualquier estado: el nombre es presentación y no
-    /// cambia el acceso.
+    /// Cambia el perfil de la persona: el nombre y el código de asesor (spec 2026-09-24, D6).
+    /// Vale en cualquier estado: el perfil es presentación y no cambia el acceso.
     /// </summary>
+    /// <remarks>
+    /// Los dos se validan antes de tocar nada, así que un rechazo no deja el nombre cambiado y el
+    /// código viejo. La unicidad del código no se mira acá —una membresía no ve a las demás—: la
+    /// revisa el handler y, ante una carrera, el índice de la base.
+    /// </remarks>
     /// <returns>
-    /// <c>false</c> —sin tocar versión ni fecha— cuando el nombre normalizado es el que ya
-    /// tiene. Un guardado repetido no invalida el If-Match de otra pestaña ni deja auditado un
+    /// <c>false</c> —sin tocar versión ni fecha— cuando nombre y código normalizados son los que
+    /// ya tiene. Un guardado repetido no invalida el If-Match de otra pestaña ni deja auditado un
     /// cambio que no ocurrió.
     /// </returns>
-    public bool Rename(string displayName, DateTimeOffset occurredAt)
+    public bool UpdateProfile(string displayName, int? advisorCode, DateTimeOffset occurredAt)
     {
-        var normalized = NormalizeDisplayName(displayName);
-        if (string.Equals(DisplayName, normalized, StringComparison.Ordinal))
+        var normalizedName = NormalizeDisplayName(displayName);
+        var normalizedCode = NormalizeAdvisorCode(advisorCode);
+        if (string.Equals(DisplayName, normalizedName, StringComparison.Ordinal) &&
+            AdvisorCode == normalizedCode)
         {
             return false;
         }
 
-        DisplayName = normalized;
+        DisplayName = normalizedName;
+        AdvisorCode = normalizedCode;
         Version++;
         UpdatedAt = occurredAt;
         return true;
@@ -562,6 +592,19 @@ public sealed class Membership
         }
 
         return normalized;
+    }
+
+    // D2: entero >= 1. Nulo pasa: no tener código es un estado válido (D1).
+    private static int? NormalizeAdvisorCode(int? value)
+    {
+        if (value is < 1)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.advisor_code_invalid",
+                "An advisor code must be a positive integer.");
+        }
+
+        return value;
     }
 
     private static string ValidateOrigin(string value)

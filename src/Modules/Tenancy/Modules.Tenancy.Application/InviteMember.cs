@@ -10,6 +10,7 @@ public sealed record InviteMemberCommand(
     TenantId TenantId,
     string Email,
     string DisplayName,
+    int? AdvisorCode,
     IReadOnlyCollection<string> Roles,
     string CorrelationId) : ICommand<MembershipDto>;
 
@@ -23,6 +24,11 @@ public sealed class InviteMemberValidator : AbstractValidator<InviteMemberComman
         RuleFor(command => command.DisplayName)
             .NotEmpty()
             .MaximumLength(Membership.DisplayNameMaxLength);
+        // Mismo criterio para el código de asesor (spec 2026-09-24, D2): el dominio da
+        // `advisor_code_invalid`, el validador da `errors.AdvisorCode`. Opcional (D1).
+        RuleFor(command => command.AdvisorCode)
+            .GreaterThan(0)
+            .When(command => command.AdvisorCode is not null);
         RuleFor(command => command.Roles).NotNull();
     }
 }
@@ -74,6 +80,17 @@ public sealed class InviteMemberHandler(
             return renewed;
         }
 
+        // El chequeo del código va después de aprovisionar porque la re-invitación necesita
+        // excluir a la propia membresía, y sólo se sabe cuál es con el usuario resuelto. Si
+        // choca, el usuario recién aprovisionado queda sin membresía y lo recoge
+        // OrphanUserCleanupWorker, igual que cuando un invite falla en la base.
+        await AdvisorCodeAvailability.EnsureAvailableAsync(
+            membershipRepository,
+            command.TenantId,
+            command.AdvisorCode,
+            exceptMembershipId: null,
+            cancellationToken);
+
         // El token plano nace acá y sólo entra al agregado para viajar en el evento de
         // dominio (outbox → email); la fila persiste únicamente su hash.
         var invitationToken = InvitationTokens.Generate();
@@ -87,7 +104,8 @@ public sealed class InviteMemberHandler(
             invitationToken,
             InvitationTokens.HashOf(invitationToken),
             clock.UtcNow,
-            Membership.DefaultInvitationTimeToLive);
+            Membership.DefaultInvitationTimeToLive,
+            command.AdvisorCode);
         membershipRepository.Add(membership);
 
         auditRecorder.Record(
@@ -128,8 +146,9 @@ public sealed class InviteMemberHandler(
 
         // Una invitación viva y una membresía activa son las dos no-ops. Renovar una invitación
         // viva movería un plazo con el que alguien cuenta e invalidaría el link que ya está en
-        // su bandeja. El nombre del cuerpo se ignora igual que los roles: para renombrar a un
-        // miembro está PUT .../display-name (spec 2026-09-11, D5).
+        // su bandeja. El nombre y el código del cuerpo se ignoran igual que los roles —tampoco
+        // se valida si el código está tomado—: para cambiarle el perfil a un miembro está
+        // PUT .../profile (spec 2026-09-24, D6).
         var invitationIsLive =
             existing.State == MembershipState.Invited && now <= existing.ExpiresAt;
         if (invitationIsLive || existing.State == MembershipState.Active)
@@ -142,6 +161,18 @@ public sealed class InviteMemberHandler(
         // Las tres son renovables (SDD-OD-04; la quitada, por decisión del owner) y vuelven a
         // Invited, así que la persona tiene que aceptar de nuevo. Suspended no: Reinvite la
         // rechaza y se levanta con Reactivate (SDD-OD-13).
+        //
+        // El código se revisa excluyendo a esta misma membresía: una quitada que vuelve con su
+        // propio código no choca consigo misma (D4), pero no puede llevarse el de otra persona.
+        // Sin código en el cuerpo no hay nada que revisar: Reinvite conserva el que ya tenía, que
+        // es suyo (decisión del developer, 2026-09-24; borrar es sólo por PUT .../profile).
+        await AdvisorCodeAvailability.EnsureAvailableAsync(
+            membershipRepository,
+            command.TenantId,
+            command.AdvisorCode,
+            existing.Id,
+            cancellationToken);
+
         // Token nuevo en cada renovación: el link vencido muere con su ventana.
         var invitationToken = InvitationTokens.Generate();
         existing.Reinvite(
@@ -150,7 +181,8 @@ public sealed class InviteMemberHandler(
             invitationToken,
             InvitationTokens.HashOf(invitationToken),
             now,
-            Membership.DefaultInvitationTimeToLive);
+            Membership.DefaultInvitationTimeToLive,
+            command.AdvisorCode);
 
         auditRecorder.Record(
             command.TenantId.Value,

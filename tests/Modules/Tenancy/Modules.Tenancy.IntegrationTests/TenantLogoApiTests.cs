@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Storage.Application;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Webp;
@@ -39,6 +41,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
 
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
@@ -79,6 +82,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var oldFileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var firstEtag = await GetEtagAsync(client);
@@ -103,6 +107,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var etag = await GetEtagAsync(client);
@@ -131,6 +136,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
 
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"{SettingsUrl}/logo");
@@ -147,6 +153,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var etag = await GetEtagAsync(client);
@@ -167,6 +174,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var etag = await GetEtagAsync(client);
 
@@ -186,6 +194,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var etag = await GetEtagAsync(client);
@@ -214,6 +223,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         using var otherClient = factory.CreateClient();
         otherClient.DefaultRequestHeaders.Add("X-Subject-Id", SubjectId);
@@ -236,6 +246,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "application/pdf", 2048);
         var etag = await GetEtagAsync(client);
@@ -253,6 +264,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", (2 * 1024 * 1024) + 1);
         var etag = await GetEtagAsync(client);
@@ -270,6 +282,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var staleEtag = await GetEtagAsync(client);
@@ -298,6 +311,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
 
@@ -319,6 +333,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var etag = await GetEtagAsync(client);
@@ -354,6 +369,7 @@ public sealed class TenantLogoApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new TenantLogoApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory);
         var fileId = await UploadTenantFileAsync(client, factory, "image/png", 2048);
         var etag = await GetEtagAsync(client);
@@ -370,6 +386,29 @@ public sealed class TenantLogoApiTests
         var settings = await secondPut.Content.ReadFromJsonAsync<SettingsPayload>(
             TestContext.Current.CancellationToken);
         Assert.Equal(fileId, settings!.Logo!.FileId);
+    }
+
+    /// <summary>
+    /// Desde el 2026-09-21 <c>TenancyDatabaseInitializer</c> ya no siembra ningún tenant: cada
+    /// prueba tiene que crear el suyo. El <c>ownerMembershipId</c> es nuevo y nunca se persiste
+    /// como membership, así que no hace falta un usuario dueño real para estas pruebas.
+    /// </summary>
+    private static async Task SeedSeededTenantAsync(TenantLogoApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        // Nombre completo del struct: el campo constante `TenantId` de esta clase tapa el tipo
+        // `Modules.Tenancy.Domain.TenantId` para cualquier referencia sin calificar.
+        dbContext.Tenants.Add(Tenant.Create(
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
+            "qcode-demo",
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static string SettingsUrl => $"/api/v1/tenants/{TenantId}/settings";

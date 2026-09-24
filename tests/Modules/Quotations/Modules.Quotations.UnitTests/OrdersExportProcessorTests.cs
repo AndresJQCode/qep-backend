@@ -50,6 +50,7 @@ public sealed class OrdersExportProcessorTests
                 "Cantidad", "Valor Unit", "IVA", "Descuento", "Nota Detalle",
                 "Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5",
                 "Ciudad", "Documento", "Pedido", "Direccion", "Observaciones", "Telefono", "Email",
+                "Cod. Asesor",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -405,6 +406,100 @@ public sealed class OrdersExportProcessorTests
                 .ProcessAsync(job, TestContext.Current.CancellationToken));
     }
 
+    // Spec 2026-09-24, D9: la columna nueva va al final, después de Email, para no mover nada de
+    // lo que el ERP ya importa.
+    [Fact]
+    public async Task CodAsesorIsTheLastColumn()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Cod. Asesor", writer.Columns[^1].Header);
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
+
+    // D9: celda numérica, repetida en cada línea del pedido como el resto de sus campos.
+    [Fact]
+    public async Task CodAsesorCarriesTheAdvisorsCodeOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                advisors: new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno", advisorCode: 12))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, writer.Rows.Count);
+        foreach (var cells in writer.Rows)
+        {
+            Assert.Equal(12m, cells[22].Number);
+            Assert.Null(cells[22].Text);
+        }
+    }
+
+    // D9: vacía si la membresía asesora no tiene código.
+    [Fact]
+    public async Task CodAsesorIsEmptyWhenTheAdvisorHasNoCode()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001")),
+                writer,
+                advisors: new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno", advisorCode: null))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cell = Assert.Single(writer.Rows)[22];
+        Assert.Equal(string.Empty, cell.Text);
+        Assert.Null(cell.Number);
+    }
+
+    // Review Focus 5: una asesora que el lookup no devuelve (otro tenant, fila borrada) deja la
+    // celda vacía, sin romper el lote ni correr las columnas.
+    [Fact]
+    public async Task CodAsesorIsEmptyWhenTheAdvisorDoesNotResolve()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001")),
+                writer,
+                advisors: new StubQuotationAdvisorLookup(resolves: false))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(writer.Columns.Count, row.Count);
+        Assert.Equal(string.Empty, row[22].Text);
+        Assert.Null(row[22].Number);
+    }
+
+    // D9: una consulta por lote, con las asesoras distintas del lote — no una por pedido ni por
+    // línea.
+    [Fact]
+    public async Task ResolvesTheAdvisorsOncePerBatchWithTheDistinctIds()
+    {
+        var rows = Enumerable.Range(1, ExportJobLimits.BatchSize + 1)
+            .Select(number => NewRow($"PED-2026-{number:0000}"))
+            .ToArray();
+        var advisors = new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno", advisorCode: 12);
+
+        await NewProcessor(new StubOrderListRepository(rows), advisors: advisors)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, advisors.FindCalls);
+        Assert.All(advisors.Requests, request => Assert.Equal([AdvisorId.Value], request));
+    }
+
     private static ExportJob NewJob(OrdersExportFilters? filters = null) =>
         ExportJob.Enqueue(
             Guid.CreateVersion7(),
@@ -457,7 +552,8 @@ public sealed class OrdersExportProcessorTests
         StubQuotationCustomerLookup? customers = null,
         StubQuotationProductLookup? products = null,
         StubQuotationCompanyLookup? companies = null,
-        StubQuotationGeographyLookup? geography = null) =>
+        StubQuotationGeographyLookup? geography = null,
+        StubQuotationAdvisorLookup? advisors = null) =>
         new(repository,
             customers ?? new StubQuotationCustomerLookup(DefaultCustomer),
             products ?? new StubQuotationProductLookup(
@@ -468,6 +564,7 @@ public sealed class OrdersExportProcessorTests
                 }),
             companies ?? new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             geography ?? new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
             tenantClock ?? new FixedTenantClock(Now));
