@@ -54,8 +54,29 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
+                "Valor Unit sin IVA",
             ],
             writer.Columns.Select(column => column.Header));
+    }
+
+    // 2026-09-24: "Valor Unit sin IVA" va al final, por la misma razón que "Cod. Asesor". Es el
+    // precio unitario con el IVA que trae adentro quitado; "Valor Unit" sigue siendo el precio con
+    // IVA, que es como se carga QuotationItem.UnitPrice. El descuento no entra en ninguno de los dos.
+    [Fact]
+    public async Task ValorUnitSinIvaIsTheLastColumnWithTheVatRemovedFromTheUnitPrice()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", items: [(ProductId, 3m, 119_000m, 10m, 19)]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Valor Unit sin IVA", writer.Columns[^1].Header);
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(writer.Columns.Count, cells.Count);
+        Assert.Equal(119_000m, cells[3].Number);
+        Assert.Equal(100_000m, cells[^1].Number);
+        Assert.Null(cells[^1].Text);
     }
 
     [Fact]

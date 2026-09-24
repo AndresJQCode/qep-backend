@@ -94,6 +94,20 @@ public sealed class QuotationItem
     public decimal DiscountedUnitPrice =>
         Quantity > 0 ? Round((Round(Quantity * UnitPrice) - DiscountAmount) / Quantity) : 0m;
 
+    /// <summary>
+    /// El precio unitario bruto con el IVA que trae adentro quitado: <see cref="UnitPrice"/> se
+    /// carga con IVA incluido (ver <see cref="Apply"/>), así que esto es la base por unidad, antes
+    /// de cualquier descuento. Lo pide el Excel de pedidos ("Valor Unit sin IVA", 2026-09-24).
+    ///
+    /// Derivado, no persistido, igual que <see cref="DiscountedUnitPrice"/>: sin columna ni
+    /// migración, y una línea vieja lo reporta igual. Misma familia de fórmula que
+    /// <see cref="TaxAmount"/> (<c>× tasa / (100 + tasa)</c>, no <c>× tasa / 100</c>), así que
+    /// <c>UnitPrice − UnitPriceWithoutTax</c> es el IVA contenido por unidad. Con tasa 0 es igual a
+    /// <see cref="UnitPrice"/> y el divisor nunca es 0. Redondeado a dos decimales como todo importe
+    /// de la línea.
+    /// </summary>
+    public decimal UnitPriceWithoutTax => Round(UnitPrice * 100m / (100m + TaxPercentage));
+
     /// <summary>Posición de la fila para mantener el orden de despliegue.</summary>
     public int Position { get; private set; }
 
