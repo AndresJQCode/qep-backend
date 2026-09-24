@@ -54,5 +54,15 @@ public interface IMembershipRepository
         MembershipId excludeId,
         CancellationToken cancellationToken);
 
+    // ¿Alguna membresía del tenant —en cualquier estado, quitadas incluidas (spec 2026-09-24, D4)—
+    // tiene este código de asesor? exceptMembershipId deja afuera a la propia membresía, para que
+    // editar o re-invitar sin cambiar el código no choque consigo mismo. Es el chequeo previo que
+    // responde claro; ante una carrera la autoridad es el índice único parcial.
+    Task<bool> IsAdvisorCodeTakenAsync(
+        TenantId tenantId,
+        int advisorCode,
+        MembershipId? exceptMembershipId,
+        CancellationToken cancellationToken);
+
     void Add(Membership membership);
 }

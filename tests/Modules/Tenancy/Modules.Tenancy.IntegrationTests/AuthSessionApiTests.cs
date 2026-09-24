@@ -23,6 +23,7 @@ public sealed class AuthSessionApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         var email = NewEmail();
         var googleSubject = Guid.CreateVersion7().ToString();
 
@@ -74,6 +75,7 @@ public sealed class AuthSessionApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
 
         using var client = CreateLoginClient(
             factory,
@@ -93,6 +95,7 @@ public sealed class AuthSessionApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         var email = NewEmail();
 
         using (var admin = CreateAdminClient(factory))
@@ -118,6 +121,7 @@ public sealed class AuthSessionApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         var email = NewEmail();
         var googleSubject = Guid.CreateVersion7().ToString();
 
@@ -148,12 +152,12 @@ public sealed class AuthSessionApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         var email = NewEmail();
         var googleSubject = Guid.CreateVersion7().ToString();
 
         // Un segundo tenant activo y un tercero que se suspende después del login, sembrados
-        // directo en la base — mismo patrón que TenancyDatabaseInitializer usa para el tenant
-        // de desarrollo (ver SeedStartupTests.cs).
+        // directo en la base — mismo patrón que usa SeedSeededTenantAsync para el tenant sembrado.
         var secondTenantId = Guid.CreateVersion7();
         var suspendedTenantId = Guid.CreateVersion7();
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -279,6 +283,7 @@ public sealed class AuthSessionApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         var email = NewEmail();
         var googleSubject = Guid.CreateVersion7().ToString();
         var seededTenantId = Guid.Parse(SeededTenantId);
@@ -373,6 +378,29 @@ public sealed class AuthSessionApiTests
         var tenant = Assert.Single(session.ActiveTenants, tenant => tenant.TenantId == tenantId);
         Assert.NotNull(tenant.Roles);
         return tenant.Roles;
+    }
+
+    /// <summary>
+    /// Desde el 2026-09-21 <c>TenancyDatabaseInitializer</c> ya no siembra ningún tenant: cada
+    /// prueba tiene que crear el suyo. El <c>ownerMembershipId</c> es nuevo y nunca se persiste
+    /// como membership — mismo patrón que ya usa esta clase para <c>secondTenantId</c> y
+    /// <c>suspendedTenantId</c> más abajo—, así que no aparece en ningún roster ni infla sus
+    /// conteos.
+    /// </summary>
+    private static async Task SeedSeededTenantAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        dbContext.Tenants.Add(Tenant.Create(
+            new TenantId(Guid.Parse(SeededTenantId)),
+            "qcode-demo",
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static string NewEmail() => $"login-{Guid.NewGuid():N}@example.com";

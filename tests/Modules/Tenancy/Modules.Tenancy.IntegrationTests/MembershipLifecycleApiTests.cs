@@ -3,6 +3,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -611,6 +614,314 @@ public sealed class MembershipLifecycleApiTests
         Assert.Equal(1, tenantBOwnerMembership.Version);
     }
 
+    // 200 con la fila entera y el ETag nuevo: el diálogo repinta la fila y ya tiene qué mandar
+    // en el próximo If-Match. La auditoría va en la misma transacción que el cambio.
+    [Fact]
+    public async Task ProfileUpdateReturnsTheRowWithANewEtagAndIsAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendProfileAsync(
+            ownerClient, tenantId, memberId, "  Ana María Pérez  ", 12);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("\"2\"", response.Headers.ETag?.Tag);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(memberId, membership!.Id);
+        Assert.Equal("Ana María Pérez", membership.DisplayName);
+        Assert.Equal(12, membership.AdvisorCode);
+        Assert.Equal(2, membership.Version);
+        Assert.Equal("Invited", membership.State);
+        Assert.Equal(AdvisorRoles, membership.Roles);
+        var outcomes = await AuditOutcomesAsync(
+            factory.ConnectionString, memberId, "tenancy.membership.profile_updated");
+        Assert.Equal("success", Assert.Single(outcomes));
+    }
+
+    // Guardar sin tocar nada no es un cambio: misma versión y nada auditado, o una pantalla
+    // abierta en otro lado recibe un 412 falso (spec 2026-09-24, Dominio).
+    [Fact]
+    public async Task ProfileUpdateWithoutChangesKeepsTheVersionAndRecordsNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(
+            ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 12);
+
+        var response = await SendProfileAsync(
+            ownerClient, tenantId, memberId, DefaultDisplayName, 12);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("\"1\"", response.Headers.ETag?.Tag);
+        Assert.Empty(await AuditOutcomesAsync(
+            factory.ConnectionString, memberId, "tenancy.membership.profile_updated"));
+    }
+
+    [Fact]
+    public async Task ProfileUpdateRequiresIfMatch()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendProfileAsync(
+            ownerClient, tenantId, memberId, "Ana María Pérez", 12, expectedVersion: null);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("precondition.if_match_required", problem!.Code);
+    }
+
+    [Fact]
+    public async Task ProfileUpdateWithAStaleVersionIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendProfileAsync(
+            ownerClient, tenantId, memberId, "Ana María Pérez", 12, expectedVersion: 99);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProfileUpdateWithAZeroCodeMarksTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendProfileAsync(
+            ownerClient, tenantId, memberId, DefaultDisplayName, 0);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", document.RootElement.GetProperty("code").GetString());
+        Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("AdvisorCode", out _));
+    }
+
+    // Review Focus 3: un decimal no puede salir como 500.
+    [Fact]
+    public async Task ProfileUpdateWithADecimalCodeMarksTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendProfileAsync(
+            ownerClient, tenantId, memberId, DefaultDisplayName, 12.5m);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", document.RootElement.GetProperty("code").GetString());
+        Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("AdvisorCode", out _));
+    }
+
+    // D3: el código ya lo tiene otra membresía del tenant.
+    [Fact]
+    public async Task ProfileUpdateWithACodeTakenInTheTenantIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 7);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendProfileAsync(
+            ownerClient, tenantId, memberId, DefaultDisplayName, 7);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.advisor_code_taken", problem!.Code);
+    }
+
+    // D3: cada tenant tiene su propio sistema externo, así que el mismo código vale en otro.
+    [Fact]
+    public async Task TheSameCodeInAnotherTenantIsAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 7);
+        var otherMemberId = await InviteAsync(
+            otherOwnerClient, otherTenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendProfileAsync(
+            otherOwnerClient, otherTenantId, otherMemberId, DefaultDisplayName, 7);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(7, membership!.AdvisorCode);
+    }
+
+    // D1: mandar null borra el código, y borrarlo lo libera para otra persona.
+    [Fact]
+    public async Task ClearingTheCodeWithNullFreesItForAnotherMember()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var holder = await InviteAsync(
+            ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 7);
+        var other = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var cleared = await SendProfileAsync(
+            ownerClient, tenantId, holder, DefaultDisplayName, null);
+
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        var clearedRow = await cleared.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Null(clearedRow!.AdvisorCode);
+        Assert.Equal(2, clearedRow.Version);
+
+        var taken = await SendProfileAsync(ownerClient, tenantId, other, DefaultDisplayName, 7);
+
+        Assert.Equal(HttpStatusCode.OK, taken.StatusCode);
+    }
+
+    // 403 y nunca 404: la ruta pide un tenant que no es el del contexto (doble capa).
+    [Fact]
+    public async Task ProfileUpdateFromAnotherTenantIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, _) = await RegisterTenantWithOwnerAsync(factory);
+        using var otherClient = CreateClient(factory, OtherSubjectId, OtherTenantId);
+
+        var response = await SendProfileAsync(
+            otherClient, tenantId, ownerMembershipId, "Ana María Pérez", 12);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProfileUpdateRequiresTheManagePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        using var readerOnly = CreateClient(factory, Guid.CreateVersion7().ToString(), tenantId);
+        readerOnly.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
+
+        var response = await SendProfileAsync(
+            readerOnly, tenantId, memberId, "Ana María Pérez", 12);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // D7: display-name sigue vivo hasta que el frontend migre, y renombrar por ahí no borra el
+    // código que se cargó por profile o al invitar.
+    [Fact]
+    public async Task TheDisplayNameEndpointKeepsTheAdvisorCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(
+            ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 7);
+
+        var response = await SendDisplayNameAsync(
+            ownerClient, tenantId, memberId, "Ana María Pérez");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Ana María Pérez", membership!.DisplayName);
+        Assert.Equal(7, membership.AdvisorCode);
+    }
+
+    // D3: único por tenant sólo cuando existe, y sin filtrar por estado (D4). El índice es la
+    // autoridad ante una carrera, así que se verifica su forma en la base y no sólo su efecto.
+    [Fact]
+    public async Task TheAdvisorCodeIndexIsUniquePerTenantAndSkipsMembersWithoutCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Registrar arranca la API, y arrancarla aplica las migraciones.
+        await RegisterTenantWithOwnerAsync(factory);
+
+        await using var connection = new NpgsqlConnection(factory.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT indexdef FROM pg_indexes
+            WHERE schemaname = 'tenancy' AND indexname = 'IX_memberships_tenant_id_advisor_code'
+            """,
+            connection);
+        var definition = (string?)await command.ExecuteScalarAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(definition);
+        Assert.Contains("CREATE UNIQUE INDEX", definition, StringComparison.Ordinal);
+        Assert.Contains("(tenant_id, advisor_code)", definition, StringComparison.Ordinal);
+        Assert.Contains("WHERE (advisor_code IS NOT NULL)", definition, StringComparison.Ordinal);
+        Assert.DoesNotContain("state", definition, StringComparison.Ordinal);
+    }
+
+    // Review Focus 1: dos requests que pasan el chequeo previo a la vez. El segundo llega a la
+    // base, y el 23505 de este índice tiene que salir como el código de dominio (422) y no como
+    // un 500. Se ejerce saltándose el handler, que es exactamente lo que pasa en la carrera.
+    // Las dos membresías nacen sin código y conviven: el índice es parcial.
+    [Fact]
+    public async Task ADuplicateCodeThatReachesTheDatabaseIsTheDomainCodeAndNotAServerError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var first = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        var second = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        await SetAdvisorCodeThroughTheAggregateAsync(factory, tenantId, first, 7);
+
+        var error = await Assert.ThrowsAsync<TenantDomainException>(
+            () => SetAdvisorCodeThroughTheAggregateAsync(factory, tenantId, second, 7));
+
+        Assert.Equal("tenancy.membership.advisor_code_taken", error.Code);
+    }
+
+    // D4 y el chequeo previo: una quitada sigue ocupando su código, la propia membresía no se
+    // cuenta a sí misma, y otro tenant tiene su propio espacio de códigos (D3).
+    [Fact]
+    public async Task IsAdvisorCodeTakenSeesRemovedMembersSkipsTheExcludedOneAndIgnoresOtherTenants()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var (otherTenantId, _, _, _) = await RegisterTenantWithOwnerAsync(factory);
+        var holder = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        await SetAdvisorCodeThroughTheAggregateAsync(factory, tenantId, holder, 7);
+        var removal = await SendActionAsync(ownerClient, tenantId, holder, "remove");
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var memberships = scope.ServiceProvider.GetRequiredService<IMembershipRepository>();
+        var tenant = new TenantId(Guid.Parse(tenantId));
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        Assert.True(await memberships.IsAdvisorCodeTakenAsync(tenant, 7, null, cancellationToken));
+        Assert.False(await memberships.IsAdvisorCodeTakenAsync(
+            tenant, 7, new MembershipId(holder), cancellationToken));
+        Assert.False(await memberships.IsAdvisorCodeTakenAsync(
+            new TenantId(Guid.Parse(otherTenantId)), 7, null, cancellationToken));
+        Assert.False(await memberships.IsAdvisorCodeTakenAsync(tenant, 8, null, cancellationToken));
+    }
+
     private static readonly string[] AdvisorRoles = ["advisor"];
     private static readonly string[] AdminRoles = ["admin"];
     private const string DefaultDisplayName = "Ana Pérez";
@@ -674,10 +985,11 @@ public sealed class MembershipLifecycleApiTests
         string tenantId,
         string email,
         IReadOnlyCollection<string>? roles = null,
-        string displayName = DefaultDisplayName)
+        string displayName = DefaultDisplayName,
+        int? advisorCode = null)
     {
         var response = await SendInviteAsync(
-            client, tenantId, email, roles ?? AdvisorRoles, displayName);
+            client, tenantId, email, roles ?? AdvisorRoles, displayName, advisorCode);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var membership = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
             TestContext.Current.CancellationToken);
@@ -689,13 +1001,14 @@ public sealed class MembershipLifecycleApiTests
         string tenantId,
         string email,
         IReadOnlyCollection<string> roles,
-        string displayName)
+        string displayName,
+        int? advisorCode = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, displayName, roles })
+            Content = JsonContent.Create(new { email, displayName, roles, advisorCode })
         };
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
@@ -765,6 +1078,51 @@ public sealed class MembershipLifecycleApiTests
         }
 
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    // advisorCode es object para poder mandar un decimal (Review Focus 3).
+    private static async Task<HttpResponseMessage> SendProfileAsync(
+        HttpClient client,
+        string tenantId,
+        Guid membershipId,
+        string? displayName,
+        object? advisorCode,
+        long? expectedVersion = 1)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/profile")
+        {
+            Content = JsonContent.Create(new { displayName, advisorCode })
+        };
+        if (expectedVersion is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{expectedVersion}\"");
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    // Carga la membresía y le pone el código por el agregado, sin pasar por ningún handler: es
+    // lo que deja a la prueba llegar al índice sin el chequeo previo.
+    private static async Task SetAdvisorCodeThroughTheAggregateAsync(
+        QepApiFactory factory,
+        string tenantId,
+        Guid membershipId,
+        int? advisorCode)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var memberships = scope.ServiceProvider.GetRequiredService<IMembershipRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>();
+        var membership = await memberships.FindByIdAsync(
+            new MembershipId(membershipId),
+            new TenantId(Guid.Parse(tenantId)),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+
+        membership.UpdateProfile(
+            membership.DisplayName ?? DefaultDisplayName, advisorCode, DateTimeOffset.UtcNow);
+        await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static async Task<IReadOnlyList<string>> AuditOutcomesAsync(
@@ -878,7 +1236,8 @@ public sealed class MembershipLifecycleApiTests
         DateTimeOffset ExpiresAt,
         long Version,
         bool IsOwner,
-        string? DisplayName);
+        string? DisplayName,
+        int? AdvisorCode);
 
     private sealed record MembershipListPayload(
         IReadOnlyList<MembershipListItemPayload> Items);

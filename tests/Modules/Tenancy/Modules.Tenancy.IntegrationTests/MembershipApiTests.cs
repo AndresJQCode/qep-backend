@@ -4,6 +4,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -26,6 +29,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -93,6 +97,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         // Autenticado como OtherTenant, intentando invitar al tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
@@ -106,6 +111,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -137,6 +143,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
         var invited = await InviteAsync(client, TenantId, email);
@@ -172,6 +179,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var live = await InviteAsync(client, TenantId, NewEmail());
         var lapsed = await InviteAsync(client, TenantId, NewEmail());
@@ -205,6 +213,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var wanted = NewEmail();
         var invited = await InviteAsync(client, TenantId, wanted);
@@ -238,6 +247,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await client.GetAsync(
@@ -257,6 +267,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var advisorEmail = NewEmail();
         var billingEmail = NewEmail();
@@ -290,6 +301,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var kept = await InviteAsync(client, TenantId, NewEmail());
         var removed = await InviteAsync(client, TenantId, NewEmail());
@@ -330,6 +342,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
         var response = await client.GetAsync(
@@ -344,6 +357,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await client.GetAsync(
@@ -388,6 +402,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         using var request = new HttpRequestMessage(
@@ -419,6 +434,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(client, TenantId, NewEmail(), AdminRoles);
@@ -435,6 +451,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(client, TenantId, NewEmail(), BillingRoles);
@@ -457,6 +474,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -503,6 +521,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -547,6 +566,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -582,6 +602,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -617,6 +638,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -650,6 +672,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -679,6 +702,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var invited = await InviteAsync(client, TenantId, NewEmail());
@@ -727,6 +751,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var invited = await InviteAsync(client, TenantId, NewEmail());
@@ -745,6 +770,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var invited = await InviteAsync(client, TenantId, NewEmail());
@@ -769,6 +795,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         using var request = new HttpRequestMessage(
@@ -788,6 +815,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(
@@ -802,6 +830,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await InviteAsync(
@@ -828,6 +857,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -846,6 +876,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
 
@@ -868,6 +899,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var invited = await InviteAsync(
             client, TenantId, NewEmail(), displayName: "Valentina Ríos");
@@ -892,6 +924,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var wanted = await InviteAsync(
             client, TenantId, NewEmail(), displayName: "Valentina Ríos");
@@ -917,6 +950,7 @@ public sealed class MembershipApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var invited = await InviteAsync(
             client, TenantId, NewEmail(), displayName: "Valentina Ríos");
@@ -930,6 +964,278 @@ public sealed class MembershipApiTests
         var row = await response.Content.ReadFromJsonAsync<MembershipListItemPayload>(
             TestContext.Current.CancellationToken);
         Assert.Equal("Valentina Ríos", row!.DisplayName);
+    }
+
+    [Fact]
+    public async Task InviteWithAnAdvisorCodeReturnsAndStoresIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(client, TenantId, NewEmail(), advisorCode: 12);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(12, membership!.AdvisorCode);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var row = await QueryRowAsync(
+            connection,
+            "SELECT advisor_code FROM tenancy.memberships WHERE id = @id",
+            ("id", membership.Id));
+        Assert.Equal("12", row![0]);
+    }
+
+    // D1: el código es opcional al invitar.
+    [Fact]
+    public async Task InviteWithoutAnAdvisorCodeLeavesItNull()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(client, TenantId, NewEmail());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Null(membership!.AdvisorCode);
+    }
+
+    // Review Focus 3: nada que no sea un entero positivo puede salir como 500. Cero y negativo los
+    // corta el validador; un decimal o un número que no cabe en un int los convierte AdvisorCodeInput
+    // en un valor inválido para que también los corte el validador, con el campo marcado.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    [InlineData(12.5)]
+    [InlineData(99999999999L)]
+    public async Task InviteWithAnAdvisorCodeThatIsNotAPositiveIntegerMarksTheField(object advisorCode)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(client, TenantId, NewEmail(), advisorCode: advisorCode);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("AdvisorCode", await ValidationFieldsAsync(response));
+    }
+
+    // Review Focus 3: las opciones web de System.Text.Json leen números desde string, así que "12"
+    // es 12. Queda fijado para que un cambio de opciones no lo convierta en 500 sin aviso.
+    [Fact]
+    public async Task InviteWithTheAdvisorCodeAsANumericStringIsAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await InviteAsync(client, TenantId, NewEmail(), advisorCode: "12");
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(12, membership!.AdvisorCode);
+    }
+
+    // D3: dos membresías del mismo tenant no comparten código.
+    [Fact]
+    public async Task InviteWithAnAdvisorCodeTakenInTheTenantIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+
+        var response = await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.advisor_code_taken", problem!.Code);
+    }
+
+    // D4 / Review Focus 2: la quitada conserva su código y lo sigue bloqueando.
+    [Fact]
+    public async Task ARemovedMembershipKeepsBlockingItsCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var invited = await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+        var holder = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        var removal = await RemoveAsync(client, TenantId, holder!.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        var response = await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.advisor_code_taken", problem!.Code);
+    }
+
+    // Review Focus 2: re-invitar a la quitada con su propio código no choca consigo misma.
+    [Fact]
+    public async Task ReinvitingARemovedMemberWithItsOwnCodeIsAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+        var invited = await InviteAsync(client, TenantId, email, advisorCode: 7);
+        var holder = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        var removal = await RemoveAsync(client, TenantId, holder!.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        var response = await InviteAsync(client, TenantId, email, advisorCode: 7);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var renewed = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(holder.Id, renewed!.Id);
+        Assert.Equal("Invited", renewed.State);
+        Assert.Equal(7, renewed.AdvisorCode);
+    }
+
+    // Review Focus 2 (e): re-invitar a la quitada sin código en el cuerpo le conserva el suyo, y
+    // el código sigue ocupado para cualquier otra persona.
+    [Fact]
+    public async Task ReinvitingARemovedMemberWithoutACodeKeepsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+        var invited = await InviteAsync(client, TenantId, email, advisorCode: 7);
+        var holder = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        var removal = await RemoveAsync(client, TenantId, holder!.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        var response = await InviteAsync(client, TenantId, email);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var renewed = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(holder.Id, renewed!.Id);
+        Assert.Equal("Invited", renewed.State);
+        Assert.Equal(7, renewed.AdvisorCode);
+        var taken = await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, taken.StatusCode);
+    }
+
+    // Spec: en la re-invitación de una vencida un código en el cuerpo reemplaza al que había.
+    [Fact]
+    public async Task ReinvitingALapsedInvitationAppliesTheNewCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+        var first = await InviteAsync(client, TenantId, email, advisorCode: 12);
+        var invited = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await LapseInvitationAsync(database, invited!.Id);
+
+        var response = await InviteAsync(client, TenantId, email, advisorCode: 34);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var renewed = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(invited.Id, renewed!.Id);
+        Assert.Equal(34, renewed.AdvisorCode);
+    }
+
+    // Review Focus 2: una vencida no se renueva con el código de otra persona, y el rechazo no la
+    // deja a medias: ni renovada, ni con el código nuevo.
+    [Fact]
+    public async Task ReinvitingALapsedInvitationWithACodeTakenByAnotherIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+        var first = await InviteAsync(client, TenantId, email);
+        var lapsed = await first.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        await LapseInvitationAsync(database, lapsed!.Id);
+        await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+
+        var response = await InviteAsync(client, TenantId, email, advisorCode: 7);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.advisor_code_taken", problem!.Code);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var row = await QueryRowAsync(
+            connection,
+            "SELECT version, advisor_code FROM tenancy.memberships WHERE id = @id",
+            ("id", lapsed.Id));
+        Assert.Equal(lapsed.Version.ToString(CultureInfo.InvariantCulture), row![0]);
+        Assert.Equal(string.Empty, row[1]);
+    }
+
+    // Review Focus 2: una invitación viva es la no-op de siempre —el cuerpo se ignora entero—, así
+    // que un código tomado tampoco la convierte en un 422.
+    [Fact]
+    public async Task InvitingAgainWhileTheInvitationIsLiveIgnoresEvenATakenCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var email = NewEmail();
+        await InviteAsync(client, TenantId, email);
+        await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+
+        var response = await InviteAsync(client, TenantId, email, advisorCode: 7);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = await response.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Null(membership!.AdvisorCode);
+    }
+
+    [Fact]
+    public async Task ListShowsEachMembersAdvisorCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var invited = await InviteAsync(client, TenantId, NewEmail(), advisorCode: 12);
+        var membership = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
+            TestContext.Current.CancellationToken);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/memberships",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<MembershipListPayload>(
+            TestContext.Current.CancellationToken);
+        var row = Assert.Single(list!.Items, item => item.Id == membership!.Id);
+        Assert.Equal(12, row.AdvisorCode);
     }
 
     private static async Task<HttpResponseMessage> ReactivateAsync(
@@ -983,6 +1289,30 @@ public sealed class MembershipApiTests
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>
+    /// Desde el 2026-09-21 <c>TenancyDatabaseInitializer</c> ya no siembra ningún tenant: cada
+    /// prueba tiene que crear el suyo. El <c>ownerMembershipId</c> es nuevo y nunca se persiste
+    /// como membership — así el tenant nace con la autoridad que <c>Tenant.Create</c> exige, sin
+    /// agregar una fila al roster que inflaría <c>Counts</c> en las pruebas de conteo.
+    /// </summary>
+    private static async Task SeedSeededTenantAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        // Nombre completo del struct: el campo constante `TenantId` de esta clase tapa el tipo
+        // `Modules.Tenancy.Domain.TenantId` para cualquier referencia sin calificar.
+        dbContext.Tenants.Add(Tenant.Create(
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
+            "qcode-demo",
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string NewEmail() => $"invitee-{Guid.NewGuid():N}@example.com";
 
     // El formulario marca el input leyendo las claves de `errors`, en PascalCase: es lo único
@@ -997,18 +1327,22 @@ public sealed class MembershipApiTests
             : [];
     }
 
+    // advisorCode es object para poder mandar lo que un cliente mal armado mandaría: un decimal,
+    // un número fuera de rango o un string. Nulo viaja como `"advisorCode": null`.
     private static async Task<HttpResponseMessage> InviteAsync(
         HttpClient client,
         string tenantId,
         string email,
         string[]? roles = null,
-        string displayName = DefaultDisplayName)
+        string displayName = DefaultDisplayName,
+        object? advisorCode = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/tenants/{tenantId}/memberships")
         {
-            Content = JsonContent.Create(new { email, displayName, roles = roles ?? DefaultRoles })
+            Content = JsonContent.Create(
+                new { email, displayName, roles = roles ?? DefaultRoles, advisorCode })
         };
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
@@ -1090,7 +1424,8 @@ public sealed class MembershipApiTests
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
         long Version,
-        string? DisplayName);
+        string? DisplayName,
+        int? AdvisorCode);
 
     private sealed record MembershipListItemPayload(
         Guid Id,
@@ -1103,7 +1438,8 @@ public sealed class MembershipApiTests
         DateTimeOffset? AcceptedAt,
         DateTimeOffset ExpiresAt,
         long Version,
-        string? DisplayName);
+        string? DisplayName,
+        int? AdvisorCode);
 
     private sealed record MembershipListPayload(
         IReadOnlyList<MembershipListItemPayload> Items,

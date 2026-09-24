@@ -60,7 +60,8 @@ tenant de demostración.
 | Recurso                              | Dirección                               |
 | ------------------------------------ | --------------------------------------- |
 | API                                  | `http://localhost:5000`                 |
-| Health check                         | `http://localhost:5000/health/live`     |
+| Health check (liveness)              | `http://localhost:5000/health/live`     |
+| Health check (readiness, con base)   | `http://localhost:5000/health/ready`    |
 | Documento OpenAPI (solo Development) | `http://localhost:5000/openapi/v1.json` |
 | PostgreSQL                           | `localhost:5432`                        |
 | OTLP gRPC / HTTP                     | `localhost:4317` / `localhost:4318`     |
@@ -570,6 +571,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | Grupo de rutas                                     | Operaciones                                                                                 | Autorización                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `/health/live`                                     | `GET`                                                                                       | anónimo                                                                                      |
+| `/health/ready`                                    | `GET`                                                                                       | anónimo                                                                                      |
 | `/api/v1/auth/registration-policy`                 | `GET`                                                                                       | anónimo                                                                                      |
 | `/api/v1/auth/register-tenant`                     | `POST`                                                                                      | token del proveedor OIDC                                                                     |
 | `/api/v1/auth/session`                             | `POST`                                                                                      | token del proveedor OIDC                                                                     |
@@ -577,7 +579,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/authorization/me`      | `GET`                                                                                       | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
 | `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `advisorship.read`                                                                    |
 | `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PUT`                                                                                | `tenancy.settings.read` / `.update`                                                          |
-| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `display-name` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
+| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile`, `display-name` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 
@@ -590,7 +592,23 @@ Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 GET /health/live
 ```
 
-Es anónimo y responde `200 OK` con `{"status":"healthy"}`.
+Es anónimo y responde `200 OK` con `{"status":"healthy"}`. **No toca la base**, a propósito:
+es la `livenessProbe` y la `startupProbe` del Deployment, y si dependiera de PostgreSQL una
+caída de la base haría que Kubernetes reiniciara todos los pods en cadena.
+
+```http
+GET /health/ready
+```
+
+Es anónimo y es la `readinessProbe`. Abre una conexión a `QepDatabase` y corre `SELECT 1` con un
+límite de 2 s: responde `200 OK` (`Healthy`) si la base contesta y `503 Service Unavailable`
+(`Unhealthy`) si no. El cuerpo es sólo el estado, sin el detalle del error. Un pod con 503 sale
+del Service hasta que la base vuelva, sin reiniciarse.
+
+`k8s/prod-pdb.yaml` (`PodDisruptionBudget`, `minAvailable: 1`) está preparado pero **no se
+despliega**: `azure-pipelines.yml` no lo lista. Con `replicas: 1` bloquearía el drain del nodo.
+Al escalar a 2 réplicas se agrega `pdb` a la lista de manifests del pipeline, después de
+`deployment`, en el mismo cambio.
 
 ### Configuración del tenant
 
@@ -685,6 +703,7 @@ anterior:
 $body = @{
   email = "new.member@example.com"
   displayName = "Ana Pérez"
+  advisorCode = 12
   roles = @("advisor")
 } | ConvertTo-Json
 
@@ -703,6 +722,7 @@ Respuesta `201 Created`:
   "id": "01900000-0000-7000-8000-000000000010",
   "userId": "01900000-0000-7000-8000-000000000011",
   "displayName": "Ana Pérez",
+  "advisorCode": 12,
   "tenantId": "01900000-0000-7000-8000-000000000001",
   "state": "Invited",
   "roles": ["advisor"],
@@ -716,9 +736,18 @@ Repetir secuencialmente la invitación para el mismo email y tenant devuelve la
 Membership existente sin crear duplicados.
 
 `displayName` es obligatorio: se guarda sin espacios a los costados y admite entre 1 y 150
-caracteres. Sin él responde `422 validation.failed` con `errors.DisplayName`. Una invitación
-viva o una membresía activa ignoran el nombre del cuerpo; sólo renovar una invitación vencida
-lo reescribe. Para cambiárselo a un miembro está `PATCH .../display-name`.
+caracteres. Sin él responde `422 validation.failed` con `errors.DisplayName`.
+
+`advisorCode` es opcional: el código entero positivo con el que el sistema externo del tenant
+(ERP, contabilidad) identifica a la persona. Se guarda como `integer`, así que `0012` y `12` son
+el mismo. Un valor que no sea un entero mayor que cero responde `422 validation.failed` con
+`errors.AdvisorCode`; uno que ya tenga otra membresía del tenant —incluida una quitada, que
+conserva el suyo—, `422 tenancy.membership.advisor_code_taken`.
+
+Una invitación viva o una membresía activa ignoran el nombre y el código del cuerpo. Renovar una
+invitación vencida o una membresía quitada reescribe el nombre y, si el cuerpo trae
+`advisorCode`, lo reemplaza; sin `advisorCode` conserva el que la membresía ya tenía. Para
+cambiárselos a un miembro —incluido borrar el código— está `PUT .../profile`.
 
 Los errores usan `ProblemDetails` e incluyen `code` y `traceId`; los errores de
 validación también incluyen un mapa `errors`.
@@ -732,34 +761,50 @@ validación también incluyen un mapa `errors`.
 | `422`  | Falló una validación o regla de dominio                             |
 | `428`  | Falta un encabezado `If-Match` válido                               |
 
-### Nombre del miembro
+### Perfil del miembro: nombre y código de asesor
 
-| Método  | Ruta                                                                  | Permiso              |
-| ------- | --------------------------------------------------------------------- | -------------------- |
-| `PATCH` | `/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name` | `advisorship.manage` |
+| Método | Ruta                                                              | Permiso              |
+| ------ | ----------------------------------------------------------------- | --------------------- |
+| `PUT`  | `/api/v1/tenants/{tenantId}/memberships/{membershipId}/profile`   | `advisorship.manage` |
 
-Cambia el nombre con el que el tenant presenta a la persona, el que imprime el PDF de
-cotización. Vale en cualquier estado de la membresía y sobre la propia: el owner, que entra por
-`register-tenant` sin nombre, lo carga desde acá. Exige `If-Match` con la versión cargada, igual
-que `PATCH .../roles`, y responde `200` con la fila del roster y el `ETag` nuevo. Guardar el
-mismo nombre no sube la versión ni se audita; un cambio real se audita como
-`tenancy.membership.renamed`.
+Cambia, en un solo request, el nombre con el que el tenant presenta a la persona —el que imprime
+el PDF de cotización— y su código de asesor, el entero con el que la identifica el sistema externo
+del tenant. Van juntos porque el diálogo los edita juntos: con dos requests, el segundo viajaría
+con el `If-Match` viejo y respondería `412`. Vale en cualquier estado de la membresía y sobre la
+propia: el owner, que entra por `register-tenant` sin nombre ni código, los carga desde acá.
+
+Exige `If-Match` con la versión cargada, igual que `PUT .../roles`, y responde `200` con la fila
+del roster y el `ETag` nuevo. Guardar sin cambios no sube la versión ni se audita; un cambio real
+se audita como `tenancy.membership.profile_updated`.
 
 ```powershell
-$body = @{ displayName = "Ana María Pérez" } | ConvertTo-Json
-$patchHeaders = $headers.Clone()
-$patchHeaders["If-Match"] = '"1"'
+$body = @{ displayName = "Ana María Pérez"; advisorCode = 12 } | ConvertTo-Json
+$putHeaders = $headers.Clone()
+$putHeaders["If-Match"] = '"1"'
 
 Invoke-RestMethod `
-  -Method Patch `
-  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/memberships/$membershipId/display-name" `
-  -Headers $patchHeaders `
+  -Method Put `
+  -Uri "http://localhost:5000/api/v1/tenants/$tenantId/memberships/$membershipId/profile" `
+  -Headers $putHeaders `
   -ContentType "application/json" `
   -Body $body
 ```
 
-Sin `If-Match` responde `428 precondition.if_match_required`; con una versión vieja, `412`; con
-un nombre vacío o de más de 150 caracteres, `422 validation.failed` con `errors.DisplayName`.
+`advisorCode` es opcional; `null` borra el código. Sin `If-Match` responde
+`428 precondition.if_match_required`; con una versión vieja, `412`; con un nombre vacío o de más
+de 150 caracteres, `422 validation.failed` con `errors.DisplayName`; con un código que no sea un
+entero mayor que cero, `422 validation.failed` con `errors.AdvisorCode`; con un código que ya
+tiene otra membresía del tenant —incluida una quitada, que conserva el suyo—,
+`422 tenancy.membership.advisor_code_taken`. El mismo código en otro tenant es válido.
+
+`PUT .../display-name` (`{ displayName }`, mismas reglas de `If-Match`, auditado como
+`tenancy.membership.renamed`) sigue disponible mientras el frontend migra a `profile`; cambia sólo
+el nombre y conserva el código. Se retira en un slice posterior.
+
+El código de asesor llega al sistema externo por el Excel de pedidos: la columna `Cod. Asesor`,
+la última, numérica y repetida en cada línea del pedido. Se resuelve al exportar desde la
+membresía asesora de la cotización con el código **de hoy** —si se lo cambian, los pedidos viejos
+salen con el nuevo— y queda vacía si la membresía no tiene código.
 
 ### Aceptación de la invitación
 

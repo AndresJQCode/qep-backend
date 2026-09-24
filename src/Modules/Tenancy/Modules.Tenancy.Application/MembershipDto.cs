@@ -6,10 +6,14 @@ namespace Modules.Tenancy.Application;
 /// Nulo cuando la membresía es anterior al nombre o es la del owner: el reinvite no-op devuelve
 /// la fila existente tal como está (spec 2026-09-11, D5).
 /// </param>
+/// <param name="AdvisorCode">
+/// El código del sistema externo del tenant (spec 2026-09-24). Nulo si no tiene (D1).
+/// </param>
 public sealed record MembershipDto(
     MembershipId Id,
     Guid UserId,
     string? DisplayName,
+    int? AdvisorCode,
     TenantId TenantId,
     MembershipState State,
     IReadOnlyCollection<string> Roles,
@@ -25,6 +29,7 @@ public static class MembershipMappings
             membership.Id,
             membership.UserId,
             membership.DisplayName,
+            membership.AdvisorCode,
             membership.TenantId,
             membership.State,
             membership.Roles,

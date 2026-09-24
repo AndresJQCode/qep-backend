@@ -168,6 +168,7 @@ public sealed class OrderExportApiTests
                 "Cantidad", "Valor Unit", "IVA", "Descuento", "Nota Detalle",
                 "Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5",
                 "Ciudad", "Documento", "Pedido", "Direccion", "Observaciones", "Telefono", "Email",
+                "Cod. Asesor",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[17]));
@@ -201,6 +202,8 @@ public sealed class OrderExportApiTests
         Assert.Equal("Calle 10 # 45-12", first[18]);
         Assert.Equal("310 935 2187", first[20]);
         Assert.Equal("compras@verde.co", first[21]);
+        // El owner nace sin código (CreateActive): la celda sale vacía.
+        Assert.Equal(string.Empty, first[22]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -340,6 +343,53 @@ public sealed class OrderExportApiTests
     private static string Iso(DateOnly date) =>
         date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
+    // Spec 2026-09-24, D9, de punta a punta: el código se carga por PUT .../profile en Tenancy, el
+    // adaptador de Bootstrapper lo resuelve desde la membresía, y sale como número en la última
+    // columna. Ninguna prueba unitaria ve ese cruce.
+    [Fact]
+    public async Task TheOrdersWorkbookCarriesTheAdvisorsCodeInTheLastColumn()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // X-Permissions reemplaza el set por defecto del stub, así que los de Tenancy para leer el
+        // roster y editar el perfil se piden explícitos.
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, "advisorship.read", "advisorship.manage"]);
+        using var _ = client;
+        await CreateOrderAsync(client, factory, tenantId);
+        await SetOwnerAdvisorCodeAsync(client, tenantId, 7);
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}", content: null, TestContext.Current.CancellationToken);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+
+        var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        Assert.Equal("Cod. Asesor", sheet.Rows[0][^1]);
+        Assert.Equal("7", sheet.Rows[1][22]);
+        Assert.True(sheet.NumericCells[1][22]);
+    }
+
+    // La asesora de CreateOrderAsync es el owner, la única membresía del tenant recién registrado.
+    // La versión se lee del roster en vez de suponerla: If-Match tiene que llevar la vigente.
+    private static async Task SetOwnerAdvisorCodeAsync(HttpClient client, Guid tenantId, int advisorCode)
+    {
+        var roster = await client.GetFromJsonAsync<MembershipRosterPayload>(
+            $"/api/v1/tenants/{tenantId}/memberships", TestContext.Current.CancellationToken);
+        var owner = Assert.Single(roster!.Items, item => item.IsOwner);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{tenantId}/memberships/{owner.Id}/profile")
+        {
+            Content = JsonContent.Create(new { displayName = "Laura Gómez", advisorCode })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{owner.Version}\"");
+        using var updated = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+    }
+
     /// <summary>Un pedido convertido hoy, sin comprobantes (pago pendiente), mismo camino que
     /// OrderListApiTests.ConvertToOrderAsync.</summary>
     private static async Task<OrderResponse> CreateOrderAsync(HttpClient client, QepApiFactory factory, Guid tenantId)
@@ -475,4 +525,8 @@ public sealed class OrderExportApiTests
     private sealed record AcceptedDto(Guid JobId, DateTimeOffset RequestedAt);
 
     private sealed record ProblemDto(string? Code, Dictionary<string, string[]>? Errors);
+
+    private sealed record MembershipRosterPayload(IReadOnlyList<MembershipRosterRowPayload> Items);
+
+    private sealed record MembershipRosterRowPayload(Guid Id, long Version, bool IsOwner);
 }

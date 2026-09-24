@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
@@ -15,7 +17,7 @@ namespace Modules.Tenancy.IntegrationTests;
 /// </summary>
 public sealed class TenantClockTests
 {
-    // El tenant que TenancyDatabaseInitializer siembra en Development, con America/Bogota.
+    // El tenant que la prueba siembra con America/Bogota, usando el helper SeedDevelopmentTenantAsync.
     private static readonly Guid DevelopmentTenantId = Guid.Parse("01900000-0000-7000-8000-000000000001");
 
     private static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
@@ -39,6 +41,7 @@ public sealed class TenantClockTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        await SeedDevelopmentTenantAsync(factory);
         await using var scope = factory.Services.CreateAsyncScope();
         var tenantClock = scope.ServiceProvider.GetRequiredService<ITenantClock>();
 
@@ -47,6 +50,27 @@ public sealed class TenantClockTests
         Assert.Equal("America/Bogota", calendar.TimeZone.Id);
         Assert.Equal(NewYearsEveInBogota, calendar.UtcNow);
         Assert.Equal(new DateOnly(2026, 12, 31), calendar.Today);
+    }
+
+    /// <summary>
+    /// Desde el 2026-09-21 <c>TenancyDatabaseInitializer</c> ya no siembra ningún tenant: esta
+    /// prueba tiene que crear el suyo con America/Bogota. El <c>ownerMembershipId</c> es nuevo y
+    /// nunca se persiste como membership, así que no hace falta un usuario dueño real.
+    /// </summary>
+    private static async Task SeedDevelopmentTenantAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        dbContext.Tenants.Add(Tenant.Create(
+            new TenantId(DevelopmentTenantId),
+            "qcode-demo",
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()

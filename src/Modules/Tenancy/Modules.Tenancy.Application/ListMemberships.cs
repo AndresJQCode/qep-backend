@@ -1,3 +1,4 @@
+using System.Globalization;
 using BuildingBlocks.Application;
 using Modules.Identity.Application;
 using Modules.Tenancy.Domain;
@@ -7,6 +8,10 @@ namespace Modules.Tenancy.Application;
 /// <param name="DisplayName">
 /// El nombre que el tenant cargó para esta persona. Nulo en las membresías anteriores al nombre
 /// y en el owner hasta que alguien lo cargue: la pantalla muestra entonces sólo el correo.
+/// </param>
+/// <param name="AdvisorCode">
+/// El código con el que el sistema externo del tenant identifica a la persona (spec 2026-09-24).
+/// Nulo si no tiene (D1); la fila del roster entonces no muestra nada.
 /// </param>
 /// <param name="IsOwner">
 /// Marca la membresía del owner (ADR 0017), la que el dominio protege de suspender, quitar o
@@ -19,6 +24,7 @@ public sealed record MembershipListItemDto(
     Guid UserId,
     string? Email,
     string? DisplayName,
+    int? AdvisorCode,
     TenantId TenantId,
     MembershipState State,
     IReadOnlyCollection<string> Roles,
@@ -39,6 +45,7 @@ public static class MembershipListItemMappings
             membership.UserId,
             email,
             membership.DisplayName,
+            membership.AdvisorCode,
             membership.TenantId,
             membership.State,
             membership.Roles,
@@ -161,11 +168,16 @@ public sealed class ListMembershipsHandler(
     }
 
     /// <summary>
-    /// La búsqueda es por correo o por nombre, los dos datos con los que alguien identifica a una
-    /// persona en el roster; el UserId es un GUID que nadie escribe de memoria. Un campo nulo no
-    /// coincide con ningún texto, así que una membresía vieja sin nombre se sigue encontrando por
-    /// su correo.
+    /// La búsqueda es por correo, por nombre o por código de asesor, los datos con los que alguien
+    /// identifica a una persona en el roster; el UserId es un GUID que nadie escribe de memoria. Un
+    /// campo nulo no coincide con ningún texto, así que una membresía vieja sin nombre se sigue
+    /// encontrando por su correo.
     /// </summary>
+    /// <remarks>
+    /// Correo y nombre coinciden por contenido; el código, exacto (spec 2026-09-24, D8): quien
+    /// busca "1" busca al asesor 1, no a 12, 21 y 100. Se compara como número y no como texto
+    /// porque el código es un entero (D2): "0012" encuentra a 12, que es el mismo código.
+    /// </remarks>
     private static IReadOnlyList<MembershipListItemDto> ApplySearch(
         IReadOnlyList<MembershipListItemDto> items,
         string? search)
@@ -176,13 +188,24 @@ public sealed class ListMembershipsHandler(
         }
 
         var term = search.Trim();
+        var advisorCode = ParseAdvisorCode(term);
         return items
-            .Where(item => Matches(item.Email, term) || Matches(item.DisplayName, term))
+            .Where(item =>
+                Matches(item.Email, term) ||
+                Matches(item.DisplayName, term) ||
+                (advisorCode is not null && item.AdvisorCode == advisorCode))
             .ToList();
     }
 
     private static bool Matches(string? value, string term) =>
         value is not null && value.Contains(term, StringComparison.OrdinalIgnoreCase);
+
+    // Sólo dígitos: NumberStyles.None rechaza signo, espacios internos y separadores, así que un
+    // término que no es un código posible no filtra por código.
+    private static int? ParseAdvisorCode(string term) =>
+        int.TryParse(term, NumberStyles.None, CultureInfo.InvariantCulture, out var code) && code > 0
+            ? code
+            : null;
 
     /// <summary>
     /// Los conteos se calculan sobre lo buscado pero antes de filtrar por estado: son lo que

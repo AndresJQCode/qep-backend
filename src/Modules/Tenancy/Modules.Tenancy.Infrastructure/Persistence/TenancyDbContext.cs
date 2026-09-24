@@ -116,6 +116,15 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         membership.Property(value => value.DisplayName)
             .HasColumnName("display_name")
             .HasMaxLength(Membership.DisplayNameMaxLength);
+        // Spec 2026-09-24. Nulo es "no tiene código en el sistema externo" (D1). Único por tenant
+        // sólo cuando existe (D3): el filtro deja convivir a todas las membresías sin código. No
+        // filtra por estado (D4): una quitada conserva su código y lo sigue bloqueando. El nombre
+        // va explícito porque TenancyUnitOfWork lo reconoce por nombre para traducir el 23505.
+        membership.Property(value => value.AdvisorCode).HasColumnName("advisor_code");
+        membership.HasIndex(value => new { value.TenantId, value.AdvisorCode })
+            .IsUnique()
+            .HasFilter("advisor_code IS NOT NULL")
+            .HasDatabaseName("IX_memberships_tenant_id_advisor_code");
         membership.Property(value => value.InvitedAt).HasColumnName("invited_at");
         membership.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
         membership.Property(value => value.ExpiresAt).HasColumnName("expires_at");

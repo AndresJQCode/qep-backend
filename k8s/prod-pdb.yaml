@@ -1,0 +1,23 @@
+# PREPARADO, NO DESPLEGADO. azure-pipelines.yml no lo lista a propósito: se agrega a la lista
+# de manifests (después de deployment) en el mismo cambio que sube el Deployment a replicas: 2
+# (plan 2026-09-24, tarea 6).
+#
+# Al drenar un nodo, Kubernetes no desaloja un pod si con eso quedan menos de uno disponible:
+# con dos réplicas, el drain saca un pod y espera a que el otro quede listo antes de tocar el
+# segundo. Con replicas: 1 haría lo contrario de lo que se busca: bloquearía el drain del nodo
+# (el maxSurge sólo aplica a rollouts, no a desalojos) hasta que alguien escalara a mano.
+# Mismo selector que el Deployment (prod-deployment.yaml).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: #{APP_NAME}#
+  namespace: prod-#{APP_NAME}#
+  labels:
+    app.kubernetes.io/name: #{APP_NAME}#
+    app.kubernetes.io/part-of: qep
+    app.kubernetes.io/environment: prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: #{APP_NAME}#
