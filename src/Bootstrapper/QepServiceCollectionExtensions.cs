@@ -96,6 +96,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<UpdateMemberDisplayNameCommand, MembershipListItemDto>,
             UpdateMemberDisplayNameHandler>();
         services.AddScoped<
+            ICommandHandler<UpdateMemberProfileCommand, MembershipListItemDto>,
+            UpdateMemberProfileHandler>();
+        services.AddScoped<
             ICommandHandler<CreateUploadSessionCommand, UploadSessionDto>,
             CreateUploadSessionHandler>();
         services.AddScoped<
