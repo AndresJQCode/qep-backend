@@ -1,8 +1,11 @@
-# Al drenar un nodo, Kubernetes no desaloja un pod si con eso quedan menos de uno disponible.
-# Pensado para replicas: 2 (plan 2026-09-24, tarea 6): el drain saca un pod y espera a que el
-# otro quede listo antes de tocar el segundo. Ojo mientras siga en replicas: 1: el drain
-# voluntario queda BLOQUEADO (el maxSurge sólo aplica a rollouts, no a desalojos), así que para
-# drenar el nodo antes hay que escalar a 2 a mano. Los rollouts no se ven afectados.
+# PREPARADO, NO DESPLEGADO. azure-pipelines.yml no lo lista a propósito: se agrega a la lista
+# de manifests (después de deployment) en el mismo cambio que sube el Deployment a replicas: 2
+# (plan 2026-09-24, tarea 6).
+#
+# Al drenar un nodo, Kubernetes no desaloja un pod si con eso quedan menos de uno disponible:
+# con dos réplicas, el drain saca un pod y espera a que el otro quede listo antes de tocar el
+# segundo. Con replicas: 1 haría lo contrario de lo que se busca: bloquearía el drain del nodo
+# (el maxSurge sólo aplica a rollouts, no a desalojos) hasta que alguien escalara a mano.
 # Mismo selector que el Deployment (prod-deployment.yaml).
 apiVersion: policy/v1
 kind: PodDisruptionBudget

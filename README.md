@@ -603,9 +603,12 @@ GET /health/ready
 Es anónimo y es la `readinessProbe`. Abre una conexión a `QepDatabase` y corre `SELECT 1` con un
 límite de 2 s: responde `200 OK` (`Healthy`) si la base contesta y `503 Service Unavailable`
 (`Unhealthy`) si no. El cuerpo es sólo el estado, sin el detalle del error. Un pod con 503 sale
-del Service hasta que la base vuelva, sin reiniciarse. El `PodDisruptionBudget`
-(`k8s/prod-pdb.yaml`, `minAvailable: 1`) evita que un drain del nodo deje la API sin pods;
-mientras el Deployment siga en `replicas: 1`, ese mismo PDB bloquea el drain hasta escalar a 2.
+del Service hasta que la base vuelva, sin reiniciarse.
+
+`k8s/prod-pdb.yaml` (`PodDisruptionBudget`, `minAvailable: 1`) está preparado pero **no se
+despliega**: `azure-pipelines.yml` no lo lista. Con `replicas: 1` bloquearía el drain del nodo.
+Al escalar a 2 réplicas se agrega `pdb` a la lista de manifests del pipeline, después de
+`deployment`, en el mismo cambio.
 
 ### Configuración del tenant
 
