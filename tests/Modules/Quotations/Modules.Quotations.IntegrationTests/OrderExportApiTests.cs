@@ -164,7 +164,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("Pedidos", sheet.Name);
         Assert.Equal(
             [
-                "EMPRESA", "Forma de pago 1", "V. Consignacion 1", "Cod. Producto", "U.Medida",
+                "EMPRESA", "Cod. Producto",
                 "Cantidad", "Valor Unit", "IVA", "Descuento", "Nota Detalle",
                 "Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5",
                 "Ciudad", "Documento", "Pedido", "Direccion", "Observaciones", "Telefono", "Email",
@@ -174,45 +174,41 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 5", "URL Comprobante 5",
             ],
             sheet.Rows[0]);
-        Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[17]));
+        Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
         var first = sheet.Rows[1];
         // CreateCompanyWithBankAccountAsync siempre da de alta la misma razón social.
         Assert.Equal("QEP Comercial S.A.S.", first[0]);
-        Assert.Equal(items[0].PaymentMethod, first[1]);
-        Assert.True(sheet.NumericCells[1][2]);
-        Assert.Equal(items[0].Total, decimal.Parse(first[2], CultureInfo.InvariantCulture));
         // La única línea del pedido: cantidad 1 de un producto sin tasa de impuesto, en la
-        // primera escala (1-9, sin descuento, múltiplo de 1).
-        Assert.NotEqual(string.Empty, first[3]);
-        Assert.Equal("Múltiplo de 1", first[4]);
+        // primera escala (1-9, sin descuento).
+        Assert.NotEqual(string.Empty, first[1]);
+        Assert.True(sheet.NumericCells[1][2]);
+        Assert.Equal(1m, decimal.Parse(first[2], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][3]);
+        Assert.Equal(100_000m, decimal.Parse(first[3], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][4]);
+        Assert.Equal(0m, decimal.Parse(first[4], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][5]);
-        Assert.Equal(1m, decimal.Parse(first[5], CultureInfo.InvariantCulture));
-        Assert.True(sheet.NumericCells[1][6]);
-        Assert.Equal(100_000m, decimal.Parse(first[6], CultureInfo.InvariantCulture));
-        Assert.True(sheet.NumericCells[1][7]);
-        Assert.Equal(0m, decimal.Parse(first[7], CultureInfo.InvariantCulture));
-        Assert.True(sheet.NumericCells[1][8]);
-        Assert.Equal(0m, decimal.Parse(first[8], CultureInfo.InvariantCulture));
-        Assert.Equal(string.Empty, first[9]);
+        Assert.Equal(0m, decimal.Parse(first[5], CultureInfo.InvariantCulture));
+        Assert.Equal(string.Empty, first[6]);
         // Sin comprobantes: las cinco fechas de pago quedan vacías.
         Assert.Equal(
             [string.Empty, string.Empty, string.Empty, string.Empty, string.Empty],
-            first.Skip(10).Take(5));
+            first.Skip(7).Take(5));
         // Sin parte de entrega propia: "los mismos datos del cliente" (CreateActiveCustomerAsync).
-        Assert.NotEqual(string.Empty, first[15]);
-        Assert.NotEqual(string.Empty, first[16]);
-        Assert.Equal(items[0].OrderNumber, first[17]);
-        Assert.Equal("Calle 10 # 45-12", first[18]);
-        Assert.Equal("310 935 2187", first[20]);
-        Assert.Equal("compras@verde.co", first[21]);
+        Assert.NotEqual(string.Empty, first[12]);
+        Assert.NotEqual(string.Empty, first[13]);
+        Assert.Equal(items[0].OrderNumber, first[14]);
+        Assert.Equal("Calle 10 # 45-12", first[15]);
+        Assert.Equal("310 935 2187", first[17]);
+        Assert.Equal("compras@verde.co", first[18]);
         // El owner nace sin código (CreateActive): la celda sale vacía.
-        Assert.Equal(string.Empty, first[22]);
+        Assert.Equal(string.Empty, first[19]);
         // Banco y Cuenta: la cuenta de facturación de CreateCompanyWithBankAccountAsync, siempre en
         // Bancolombia y con un número al azar.
-        Assert.Equal("Bancolombia", first[23]);
-        Assert.NotEqual(string.Empty, first[24]);
+        Assert.Equal("Bancolombia", first[20]);
+        Assert.NotEqual(string.Empty, first[21]);
         // Sin comprobantes: los cinco pares de monto y enlace quedan vacíos.
-        Assert.All(first.Skip(25).Take(10), cell => Assert.Equal(string.Empty, cell));
+        Assert.All(first.Skip(22).Take(10), cell => Assert.Equal(string.Empty, cell));
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -376,9 +372,9 @@ public sealed class OrderExportApiTests
 
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
-        Assert.Equal("Cod. Asesor", sheet.Rows[0][22]);
-        Assert.Equal("7", sheet.Rows[1][22]);
-        Assert.True(sheet.NumericCells[1][22]);
+        Assert.Equal("Cod. Asesor", sheet.Rows[0][19]);
+        Assert.Equal("7", sheet.Rows[1][19]);
+        Assert.True(sheet.NumericCells[1][19]);
     }
 
     // La asesora de CreateOrderAsync es el owner, la única membresía del tenant recién registrado.
@@ -440,27 +436,27 @@ public sealed class OrderExportApiTests
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         Assert.Equal(
             ["Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5"],
-            sheet.Rows[0].Skip(10).Take(5));
+            sheet.Rows[0].Skip(7).Take(5));
         var row = sheet.Rows[1];
-        Assert.Equal(order.OrderNumber, row[17]);
-        Assert.NotEqual(string.Empty, row[10]);
-        Assert.NotEqual(string.Empty, row[11]);
-        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(12).Take(3));
+        Assert.Equal(order.OrderNumber, row[14]);
+        Assert.NotEqual(string.Empty, row[7]);
+        Assert.NotEqual(string.Empty, row[8]);
+        Assert.Equal([string.Empty, string.Empty, string.Empty], row.Skip(9).Take(3));
         // El segundo comprobante se subió después: su fecha no puede ser anterior a la del
         // primero. Comparables como texto porque el formato es "yyyy-MM-dd HH:mm".
-        Assert.True(string.CompareOrdinal(row[10], row[11]) <= 0);
+        Assert.True(string.CompareOrdinal(row[7], row[8]) <= 0);
         Assert.NotEmpty(withSecond.PaymentProofs);
         // 2026-09-24: el monto de cada comprobante, en el mismo orden, como número. Con los enlaces
         // públicos apagados (el default de la factoría) los dos dicen «Sin enlace».
         Assert.Equal(
             ["V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2"],
-            sheet.Rows[0].Skip(25).Take(4));
-        Assert.Equal(10_000m, decimal.Parse(row[25], CultureInfo.InvariantCulture));
-        Assert.True(sheet.NumericCells[1][25]);
-        Assert.Equal(OrdersExportProcessor.PrivateProofText, row[26]);
-        Assert.Equal(5_000m, decimal.Parse(row[27], CultureInfo.InvariantCulture));
-        Assert.Equal(OrdersExportProcessor.PrivateProofText, row[28]);
-        Assert.All(row.Skip(29).Take(6), cell => Assert.Equal(string.Empty, cell));
+            sheet.Rows[0].Skip(22).Take(4));
+        Assert.Equal(10_000m, decimal.Parse(row[22], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][22]);
+        Assert.Equal(OrdersExportProcessor.PrivateProofText, row[23]);
+        Assert.Equal(5_000m, decimal.Parse(row[24], CultureInfo.InvariantCulture));
+        Assert.Equal(OrdersExportProcessor.PrivateProofText, row[25]);
+        Assert.All(row.Skip(26).Take(6), cell => Assert.Equal(string.Empty, cell));
     }
 
     // E6 contra Postgres: una sola lectura por lote, por pedido y en el orden de las columnas —fecha de

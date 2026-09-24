@@ -46,7 +46,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Pedidos", writer.SheetName);
         Assert.Equal(
             [
-                "EMPRESA", "Forma de pago 1", "V. Consignacion 1", "Cod. Producto", "U.Medida",
+                "EMPRESA", "Cod. Producto",
                 "Cantidad", "Valor Unit", "IVA", "Descuento", "Nota Detalle",
                 "Fecha Pago 1", "Fecha Pago 2", "Fecha Pago 3", "Fecha Pago 4", "Fecha Pago 5",
                 "Ciudad", "Documento", "Pedido", "Direccion", "Observaciones", "Telefono", "Email",
@@ -78,14 +78,14 @@ public sealed class OrdersExportProcessorTests
         // Los campos del pedido se repiten igual en las dos filas.
         foreach (var cells in writer.Rows)
         {
-            Assert.Equal("Transferencia", cells[1].Text);
-            Assert.Equal(row.Quotation.Total, cells[2].Number);
-            Assert.Equal("PED-2026-0001", cells[17].Text);
+            // Sin forma de pago ni valor a consignar: el pedido la trae y el Excel no.
+            Assert.DoesNotContain(cells, cell => cell.Text == "Transferencia");
+            Assert.Equal("PED-2026-0001", cells[14].Text);
         }
 
         // Cada fila trae su propia línea.
-        Assert.Equal(2m, writer.Rows[0][5].Number);
-        Assert.Equal(5m, writer.Rows[1][5].Number);
+        Assert.Equal(2m, writer.Rows[0][2].Number);
+        Assert.Equal(5m, writer.Rows[1][2].Number);
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         var row = Assert.Single(writer.Rows);
-        Assert.Equal("PED-2026-0001", row[17].Text);
+        Assert.Equal("PED-2026-0001", row[14].Text);
     }
 
     [Fact]
@@ -138,58 +138,6 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(string.Empty, Assert.Single(writer.Rows)[0].Text);
     }
 
-    // U.Medida (ajuste 2026-09-20): la restricción de la escala del producto que cubre la
-    // cantidad de la línea, recalculada contra el catálogo de hoy — la línea no guardó a cuál
-    // respondió al cotizarse.
-    [Fact]
-    public async Task UMedidaShowsTheMultipleWhenTheMatchingScaleIsAMultiple()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var product = DefaultProduct with
-        {
-            Scales = [new QuotationPriceScaleRef(1, 100, 0m, QuotationPriceScaleRestriction.Multiple, 3, null)],
-        };
-        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef> { [ProductId] = product });
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, products: products)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal("Múltiplo de 3", Assert.Single(writer.Rows)[4].Text);
-    }
-
-    [Fact]
-    public async Task UMedidaShowsThePackagingUnitWhenTheMatchingScaleIsAPackage()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var product = DefaultProduct with
-        {
-            Scales = [new QuotationPriceScaleRef(1, 100, 0m, QuotationPriceScaleRestriction.PackagingUnit, null, 12)],
-        };
-        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef> { [ProductId] = product });
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, products: products)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal("Empaque de 12", Assert.Single(writer.Rows)[4].Text);
-    }
-
-    [Fact]
-    public async Task UMedidaIsEmptyWhenNoScaleCoversTheQuantity()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var product = DefaultProduct with
-        {
-            Scales = [new QuotationPriceScaleRef(50, 100, 0m, QuotationPriceScaleRestriction.Multiple, 3, null)],
-        };
-        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef> { [ProductId] = product });
-
-        // La línea por defecto pide cantidad 2, fuera del rango 50-100 de la única escala.
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, products: products)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[4].Text);
-    }
-
     [Fact]
     public async Task NotaDetalleIsAlwaysEmpty()
     {
@@ -198,7 +146,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[9].Text);
+        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[6].Text);
     }
 
     [Fact]
@@ -209,7 +157,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", notes: "Frágil")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Frágil", Assert.Single(writer.Rows)[19].Text);
+        Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
     }
 
     [Fact]
@@ -220,7 +168,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("CUC-001", Assert.Single(writer.Rows)[16].Text);
+        Assert.Equal("CUC-001", Assert.Single(writer.Rows)[13].Text);
     }
 
     // Sin parte de entrega propia: "los mismos datos del cliente" (el caso normal) resuelve
@@ -234,10 +182,10 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         var row = Assert.Single(writer.Rows);
-        Assert.Equal("Bogotá", row[15].Text);
-        Assert.Equal("Calle 1 # 2-3", row[18].Text);
-        Assert.Equal("3001234567", row[20].Text);
-        Assert.Equal("cliente@ejemplo.co", row[21].Text);
+        Assert.Equal("Bogotá", row[12].Text);
+        Assert.Equal("Calle 1 # 2-3", row[15].Text);
+        Assert.Equal("3001234567", row[17].Text);
+        Assert.Equal("cliente@ejemplo.co", row[18].Text);
     }
 
     // Con parte de entrega propia, ésta gana sobre el cliente, incluida su ciudad (que se
@@ -266,10 +214,10 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         var row = Assert.Single(writer.Rows);
-        Assert.Equal("Rionegro", row[15].Text);
-        Assert.Equal("Zona Franca, Bodega 14", row[18].Text);
-        Assert.Equal("6015550000", row[20].Text);
-        Assert.Equal("bodega@ejemplo.co", row[21].Text);
+        Assert.Equal("Rionegro", row[12].Text);
+        Assert.Equal("Zona Franca, Bodega 14", row[15].Text);
+        Assert.Equal("6015550000", row[17].Text);
+        Assert.Equal("bodega@ejemplo.co", row[18].Text);
     }
 
     [Fact]
@@ -282,8 +230,8 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         var row = Assert.Single(writer.Rows);
-        Assert.Equal("2026-09-12 10:00", row[10].Text);
-        Assert.Equal(string.Empty, row[11].Text);
+        Assert.Equal("2026-09-12 10:00", row[7].Text);
+        Assert.Equal(string.Empty, row[8].Text);
     }
 
     [Fact]
@@ -297,7 +245,7 @@ public sealed class OrdersExportProcessorTests
         var row = Assert.Single(writer.Rows);
         Assert.Equal(
             [string.Empty, string.Empty, string.Empty, string.Empty, string.Empty],
-            Enumerable.Range(10, 5).Select(index => row[index].Text));
+            Enumerable.Range(7, 5).Select(index => row[index].Text));
     }
 
     [Fact]
@@ -419,8 +367,8 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Email", writer.Columns[21].Header);
-        Assert.Equal("Cod. Asesor", writer.Columns[22].Header);
+        Assert.Equal("Email", writer.Columns[18].Header);
+        Assert.Equal("Cod. Asesor", writer.Columns[19].Header);
         Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
     }
 
@@ -539,7 +487,7 @@ public sealed class OrdersExportProcessorTests
     }
 
     // Banco va justo después de "Cod. Asesor"; Cuenta, después de Banco.
-    private const int BancoIndex = 23;
+    private const int BancoIndex = 20;
 
     // "V. Comprobante N" (desde 1); su "URL Comprobante N" es la columna siguiente.
     private static int ProofIndex(int number) => BancoIndex + 2 + ((number - 1) * 2);
@@ -566,8 +514,8 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(2, writer.Rows.Count);
         foreach (var cells in writer.Rows)
         {
-            Assert.Equal(12m, cells[22].Number);
-            Assert.Null(cells[22].Text);
+            Assert.Equal(12m, cells[19].Number);
+            Assert.Null(cells[19].Text);
         }
     }
 
@@ -583,7 +531,7 @@ public sealed class OrdersExportProcessorTests
                 advisors: new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno", advisorCode: null))
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        var cell = Assert.Single(writer.Rows)[22];
+        var cell = Assert.Single(writer.Rows)[19];
         Assert.Equal(string.Empty, cell.Text);
         Assert.Null(cell.Number);
     }
@@ -603,8 +551,8 @@ public sealed class OrdersExportProcessorTests
 
         var row = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, row.Count);
-        Assert.Equal(string.Empty, row[22].Text);
-        Assert.Null(row[22].Number);
+        Assert.Equal(string.Empty, row[19].Text);
+        Assert.Null(row[19].Number);
     }
 
     // D9: una consulta por lote, con las asesoras distintas del lote — no una por pedido ni por
