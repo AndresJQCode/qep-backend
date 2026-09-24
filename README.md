@@ -703,6 +703,7 @@ anterior:
 $body = @{
   email = "new.member@example.com"
   displayName = "Ana Pérez"
+  advisorCode = 12
   roles = @("advisor")
 } | ConvertTo-Json
 
@@ -721,6 +722,7 @@ Respuesta `201 Created`:
   "id": "01900000-0000-7000-8000-000000000010",
   "userId": "01900000-0000-7000-8000-000000000011",
   "displayName": "Ana Pérez",
+  "advisorCode": 12,
   "tenantId": "01900000-0000-7000-8000-000000000001",
   "state": "Invited",
   "roles": ["advisor"],
@@ -734,9 +736,18 @@ Repetir secuencialmente la invitación para el mismo email y tenant devuelve la
 Membership existente sin crear duplicados.
 
 `displayName` es obligatorio: se guarda sin espacios a los costados y admite entre 1 y 150
-caracteres. Sin él responde `422 validation.failed` con `errors.DisplayName`. Una invitación
-viva o una membresía activa ignoran el nombre del cuerpo; sólo renovar una invitación vencida
-lo reescribe. Para cambiárselo a un miembro está `PATCH .../display-name`.
+caracteres. Sin él responde `422 validation.failed` con `errors.DisplayName`.
+
+`advisorCode` es opcional: el código entero positivo con el que el sistema externo del tenant
+(ERP, contabilidad) identifica a la persona. Se guarda como `integer`, así que `0012` y `12` son
+el mismo. Un valor que no sea un entero mayor que cero responde `422 validation.failed` con
+`errors.AdvisorCode`; uno que ya tenga otra membresía del tenant —incluida una quitada, que
+conserva el suyo—, `422 tenancy.membership.advisor_code_taken`.
+
+Una invitación viva o una membresía activa ignoran el nombre y el código del cuerpo. Renovar una
+invitación vencida o una membresía quitada reescribe el nombre y, si el cuerpo trae
+`advisorCode`, lo reemplaza; sin `advisorCode` conserva el que la membresía ya tenía. Para
+cambiárselos a un miembro —incluido borrar el código— está `PUT .../profile`.
 
 Los errores usan `ProblemDetails` e incluyen `code` y `traceId`; los errores de
 validación también incluyen un mapa `errors`.

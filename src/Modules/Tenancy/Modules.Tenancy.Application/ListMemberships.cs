@@ -8,6 +8,10 @@ namespace Modules.Tenancy.Application;
 /// El nombre que el tenant cargó para esta persona. Nulo en las membresías anteriores al nombre
 /// y en el owner hasta que alguien lo cargue: la pantalla muestra entonces sólo el correo.
 /// </param>
+/// <param name="AdvisorCode">
+/// El código con el que el sistema externo del tenant identifica a la persona (spec 2026-09-24).
+/// Nulo si no tiene (D1); la fila del roster entonces no muestra nada.
+/// </param>
 /// <param name="IsOwner">
 /// Marca la membresía del owner (ADR 0017), la que el dominio protege de suspender, quitar o
 /// perder `admin`. Viaja en el contrato para que el frontend deshabilite esas acciones en vez de
@@ -19,6 +23,7 @@ public sealed record MembershipListItemDto(
     Guid UserId,
     string? Email,
     string? DisplayName,
+    int? AdvisorCode,
     TenantId TenantId,
     MembershipState State,
     IReadOnlyCollection<string> Roles,
@@ -39,6 +44,7 @@ public static class MembershipListItemMappings
             membership.UserId,
             email,
             membership.DisplayName,
+            membership.AdvisorCode,
             membership.TenantId,
             membership.State,
             membership.Roles,

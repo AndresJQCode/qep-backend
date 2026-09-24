@@ -225,6 +225,7 @@ public static class MembershipEndpoints
                 new TenantId(tenantId),
                 request.Email,
                 request.DisplayName,
+                AdvisorCodeInput.ToCommandValue(request.AdvisorCode),
                 request.Roles ?? [],
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -240,6 +241,7 @@ public static class MembershipEndpoints
             membership.UserId,
             email,
             membership.DisplayName,
+            membership.AdvisorCode,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -254,6 +256,7 @@ public static class MembershipEndpoints
             membership.UserId,
             membership.Email,
             membership.DisplayName,
+            membership.AdvisorCode,
             membership.TenantId.Value,
             membership.State.ToString(),
             membership.Roles,
@@ -286,10 +289,17 @@ public static class MembershipEndpoints
 /// <c>validation.failed</c> con <c>errors.DisplayName</c>, el único 422 que el formulario sabe
 /// marcar en el input.
 /// </param>
+/// <param name="AdvisorCode">
+/// Opcional (spec 2026-09-24, D1). <see cref="decimal"/> a propósito —ver
+/// <see cref="AdvisorCodeInput"/>—: lo que no sea un entero positivo responde 422 con
+/// <c>errors.AdvisorCode</c>; uno ya tomado en el tenant, 422
+/// <c>tenancy.membership.advisor_code_taken</c>.
+/// </param>
 public sealed record MembershipInviteRequest(
     string Email,
     string DisplayName,
-    IReadOnlyCollection<string>? Roles);
+    IReadOnlyCollection<string>? Roles,
+    decimal? AdvisorCode);
 
 public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? Roles);
 
@@ -309,6 +319,7 @@ public sealed record MembershipResponse(
     Guid UserId,
     string Email,
     string? DisplayName,
+    int? AdvisorCode,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,
@@ -321,11 +332,16 @@ public sealed record MembershipResponse(
 /// Nulo en membresías anteriores al nombre y en el owner hasta que se cargue. La celda
 /// "Persona" muestra entonces sólo el correo, con el aviso "Sin nombre".
 /// </param>
+/// <param name="AdvisorCode">
+/// Nulo si la persona no tiene código en el sistema externo del tenant (spec 2026-09-24, D1): la
+/// fila no muestra nada, en vez de un "Cód." vacío.
+/// </param>
 public sealed record MembershipListItemResponse(
     Guid Id,
     Guid UserId,
     string? Email,
     string? DisplayName,
+    int? AdvisorCode,
     Guid TenantId,
     string State,
     IReadOnlyCollection<string> Roles,
