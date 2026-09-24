@@ -39,10 +39,10 @@ public sealed class UpdateMemberProfileValidator : AbstractValidator<UpdateMembe
 /// 2026-09-24, D6). Uno solo y no dos porque el diálogo edita los dos campos juntos: con dos PUT,
 /// el primero sube la versión y el segundo viaja con el If-Match viejo, y la pantalla se pisa
 /// sola con un 412. Nombre y código comparten <c>AdvisorshipManage</c>, así que no hay dos
-/// permisos que separar, que es lo que sí separó a display-name de roles.
+/// permisos que separar, que es lo que sí separó a display-name de roles (ya retirado, D7).
 ///
-/// Reemplaza a <see cref="UpdateMemberDisplayNameHandler"/>, que convive hasta que el frontend
-/// migre (D7). Se permite en cualquier estado y sobre la propia membresía, igual que aquél.
+/// Se permite en cualquier estado y sobre la propia membresía: el owner, que entra por
+/// register-tenant sin nombre ni código, carga los dos desde acá.
 /// </summary>
 public sealed class UpdateMemberProfileHandler(
     IMembershipRepository membershipRepository,

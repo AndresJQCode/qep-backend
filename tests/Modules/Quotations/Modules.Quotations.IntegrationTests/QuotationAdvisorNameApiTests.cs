@@ -129,15 +129,17 @@ public sealed class QuotationAdvisorNameApiTests
         return order;
     }
 
+    // display-name se retiró (spec 2026-09-24, D7); el nombre se edita por PUT .../profile,
+    // que también pide el código de asesor: null lo deja sin tocar.
     private static async Task RenameAsync(
         HttpClient client, Guid tenantId, Guid membershipId, string displayName)
     {
         var version = await MembershipVersionAsync(client, tenantId, membershipId);
         using var rename = new HttpRequestMessage(
             HttpMethod.Put,
-            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/display-name")
+            $"/api/v1/tenants/{tenantId}/memberships/{membershipId}/profile")
         {
-            Content = JsonContent.Create(new { displayName })
+            Content = JsonContent.Create(new { displayName, advisorCode = (int?)null })
         };
         rename.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
         using var renamed = await client.SendAsync(rename, TestContext.Current.CancellationToken);

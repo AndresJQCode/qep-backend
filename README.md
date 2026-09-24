@@ -579,7 +579,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/authorization/me`      | `GET`                                                                                       | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
 | `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `advisorship.read`                                                                    |
 | `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PUT`                                                                                | `tenancy.settings.read` / `.update`                                                          |
-| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile`, `display-name` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
+| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 
@@ -796,10 +796,6 @@ de 150 caracteres, `422 validation.failed` con `errors.DisplayName`; con un cód
 entero mayor que cero, `422 validation.failed` con `errors.AdvisorCode`; con un código que ya
 tiene otra membresía del tenant —incluida una quitada, que conserva el suyo—,
 `422 tenancy.membership.advisor_code_taken`. El mismo código en otro tenant es válido.
-
-`PUT .../display-name` (`{ displayName }`, mismas reglas de `If-Match`, auditado como
-`tenancy.membership.renamed`) sigue disponible mientras el frontend migra a `profile`; cambia sólo
-el nombre y conserva el código. Se retira en un slice posterior.
 
 El código de asesor llega al sistema externo por el Excel de pedidos: la columna `Cod. Asesor`,
 la última, numérica y repetida en cada línea del pedido. Se resuelve al exportar desde la
