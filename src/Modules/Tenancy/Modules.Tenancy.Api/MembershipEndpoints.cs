@@ -69,19 +69,6 @@ public static class MembershipEndpoints
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Con If-Match, igual que `/roles`: dos administradores renombrando a la misma persona es
-        // una carrera real, y el nombre termina impreso en un PDF que se le manda al cliente.
-        // Se retira cuando el frontend migre a `/profile` (spec 2026-09-24, D7).
-        group.MapPut("/{membershipId:guid}/display-name", UpdateDisplayNameAsync)
-            .RequireAuthorization(TenancyPermissions.AdvisorshipManage)
-            .Accepts<MembershipDisplayNameUpdateRequest>("application/json")
-            .Produces<MembershipListItemResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
-            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         // Nombre y código de asesor en un solo PUT (spec 2026-09-24, D6): el diálogo los edita
         // juntos, y dos PUT desde el mismo diálogo chocarían entre sí por el If-Match.
         group.MapPut("/{membershipId:guid}/profile", UpdateProfileAsync)
@@ -117,33 +104,6 @@ public static class MembershipEndpoints
                 new TenantId(tenantId),
                 new MembershipId(membershipId),
                 request.Roles ?? [],
-                expectedVersion,
-                httpContext.TraceIdentifier),
-            cancellationToken);
-        httpContext.Response.Headers.ETag = $"\"{membership.Version}\"";
-        return Results.Ok(ToListItemResponse(membership));
-    }
-
-    private static async Task<IResult> UpdateDisplayNameAsync(
-        Guid tenantId,
-        Guid membershipId,
-        MembershipDisplayNameUpdateRequest request,
-        IRequestDispatcher dispatcher,
-        HttpContext httpContext,
-        CancellationToken cancellationToken)
-    {
-        if (!TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion))
-        {
-            throw new PreconditionRequiredException(
-                "precondition.if_match_required",
-                "A valid If-Match header containing the loaded membership version is required.");
-        }
-
-        var membership = await dispatcher.SendAsync(
-            new UpdateMemberDisplayNameCommand(
-                new TenantId(tenantId),
-                new MembershipId(membershipId),
-                request.DisplayName ?? string.Empty,
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -345,22 +305,15 @@ public sealed record MembershipInviteRequest(
 public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? Roles);
 
 /// <summary>
-/// Nullable porque el campo puede faltar en el JSON: un cuerpo sin <c>displayName</c> llega
-/// acá como <see langword="null"/> (el binder no lo rechaza, sea o no nullable el tipo — ver
-/// <c>MembershipInviteRequest.DisplayName</c>, que es <see langword="string"/> no-nullable y
-/// también acepta el campo ausente). El mapeo a <see cref="string.Empty"/> en el endpoint deja
-/// que sea el validador de FluentValidation quien lo rechace con 422
-/// <c>validation.failed</c> y <c>errors.DisplayName</c>, el único 422 que el diálogo sabe
-/// marcar en el input.
-/// </summary>
-public sealed record MembershipDisplayNameUpdateRequest(string? DisplayName);
-
-/// <summary>
 /// El perfil completo que edita el diálogo "Editar miembro" (spec 2026-09-24, D6).
-/// <c>DisplayName</c> es nullable por la misma razón que en
-/// <see cref="MembershipDisplayNameUpdateRequest"/>: ausente llega como nulo, el endpoint lo pasa
-/// a vacío y el validador lo rechaza con <c>errors.DisplayName</c>. <c>AdvisorCode</c> nulo borra
-/// el código (D1); es <see cref="decimal"/> por lo que explica <see cref="AdvisorCodeInput"/>.
+/// <c>DisplayName</c> es nullable porque el campo puede faltar en el JSON: un cuerpo sin él
+/// llega acá como <see langword="null"/> (el binder no lo rechaza, sea o no nullable el tipo —
+/// ver <c>MembershipInviteRequest.DisplayName</c>, que es <see langword="string"/> no-nullable y
+/// también acepta el campo ausente). El mapeo a <see cref="string.Empty"/> en el endpoint deja
+/// que sea el validador de FluentValidation quien lo rechace con 422 <c>validation.failed</c> y
+/// <c>errors.DisplayName</c>, el único 422 que el diálogo sabe marcar en el input.
+/// <c>AdvisorCode</c> nulo borra el código (D1); es <see cref="decimal"/> por lo que explica
+/// <see cref="AdvisorCodeInput"/>.
 /// </summary>
 public sealed record MembershipProfileUpdateRequest(string? DisplayName, decimal? AdvisorCode);
 
