@@ -3,6 +3,7 @@ using Api;
 using Bootstrapper;
 using Bootstrapper.Authentication;
 using Bootstrapper.Csrf;
+using Bootstrapper.Health;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
@@ -38,6 +39,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
+builder.Services.AddQepHealthChecks(builder.Configuration);
 
 // Superficies públicas/sin autenticar: ventana fija por IP, generosa para tráfico real
 // pero acotada contra el abuso. Hoy está atada al documento OpenAPI y a la referencia de
@@ -92,8 +94,12 @@ app.MapScalarApiReference("/scalar/v1")
     .AllowAnonymous()
     .RequireRateLimiting(RateLimiterPolicies.Public);
 
+// La liveness NO toca la base, a propósito: si dependiera de ella, una caída de PostgreSQL haría
+// que el kubelet reiniciara todos los pods en cadena, y reiniciar no arregla la base. Esa
+// dependencia la mira la readiness, que sólo saca al pod del Service hasta que la base vuelva.
 app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }))
     .AllowAnonymous();
+app.MapQepReadiness();
 app.MapAuthSessionEndpoints();
 app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
