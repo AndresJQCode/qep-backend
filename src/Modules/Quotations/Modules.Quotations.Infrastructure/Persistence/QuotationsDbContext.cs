@@ -30,6 +30,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<ExportJob> ExportJobs => Set<ExportJob>();
 
+    internal DbSet<OrdersExportLayout> OrdersExportLayouts => Set<OrdersExportLayout>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -43,6 +45,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureOrderPaymentProof(modelBuilder);
         ConfigureOrderNumberCounter(modelBuilder);
         ConfigureExportJob(modelBuilder);
+        ConfigureOrdersExportLayout(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -559,6 +562,40 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         job.HasIndex(value => new { value.TenantId, value.RequestedBy, value.Status })
             .HasDatabaseName("IX_export_jobs_requester")
             .HasFilter(ActiveExportJobFilter);
+    }
+
+    /// <summary>
+    /// El layout de columnas del Excel de pedidos por tenant (spec 2026-09-24, D6 y D7). La PK es
+    /// el tenant: uno por tenant, y dos primeros PUT simultáneos chocan acá, que
+    /// QuotationsUnitOfWork traduce a 412 por nombre de constraint (D9). Las columnas van en una
+    /// sola jsonb y no en una tabla normalizada: nunca se consulta una sola, siempre la lista
+    /// entera y en orden. Es el primer OwnsMany().ToJson() del repo; `kind` viaja como texto y los
+    /// nombres del JSON van en minúsculas para que la fila se lea a mano.
+    /// </summary>
+    private static void ConfigureOrdersExportLayout(ModelBuilder modelBuilder)
+    {
+        var layout = modelBuilder.Entity<OrdersExportLayout>();
+        layout.ToTable("orders_export_layouts", "quotations");
+        layout.HasKey(value => value.TenantId).HasName("PK_orders_export_layouts");
+        layout.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        layout.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+        layout.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        layout.OwnsMany(value => value.Columns, columns =>
+        {
+            columns.ToJson("columns");
+            columns.Property(column => column.Kind)
+                .HasConversion<string>()
+                .HasJsonPropertyName("kind");
+            columns.Property(column => column.Key).HasJsonPropertyName("key");
+            columns.Property(column => column.Header).HasJsonPropertyName("header");
+            columns.Property(column => column.Value).HasJsonPropertyName("value");
+            columns.Property(column => column.Visible).HasJsonPropertyName("visible");
+        });
+        layout.Navigation(value => value.Columns)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
