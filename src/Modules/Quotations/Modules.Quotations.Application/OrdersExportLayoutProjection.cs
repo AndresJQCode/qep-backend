@@ -4,9 +4,10 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Aplica el layout efectivo del tenant a una fila del Excel de pedidos (spec 2026-09-24). El
-/// processor sigue armando las 33 celdas en el orden del catálogo —cambio mínimo, comprobable en
-/// unitaria—, y esto las reordena, descarta las ocultas e intercala las fijas como texto en su
-/// posición. Se arma una vez por job: el layout no cambia a mitad de un archivo.
+/// processor sigue armando una celda por columna del catálogo, en su orden —cambio mínimo,
+/// comprobable en unitaria—, y esto las reordena, descarta las ocultas e intercala las fijas como
+/// texto en su posición. Una llave repetida (ajuste 2026-09-25) toma la misma celda de origen cada
+/// vez. Se arma una vez por job: el layout no cambia a mitad de un archivo.
 /// </summary>
 public sealed class OrdersExportLayoutProjection
 {

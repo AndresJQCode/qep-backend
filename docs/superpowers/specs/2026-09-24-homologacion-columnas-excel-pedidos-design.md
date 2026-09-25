@@ -253,3 +253,28 @@ Un slice por repo, cada uno en su ledger:
 - Homologar el **contenido** de las celdas: formato de fechas, separadores, moneda.
 - Columnas calculadas o con valor por fila definidas por el tenant.
 - Layouts por usuario o varios layouts por tenant (un ERP por tenant).
+
+## Ajuste 2026-09-25 — la hoja de importación del ERP del tenant sembrado
+
+La hoja real del ERP del tenant (MIGRACION 1) no cabía en las reglas de arriba. Cambia:
+
+- **Dos columnas nuevas al final del catálogo** (35 en total): `order_date` / "Fecha Pedido",
+  ancho 14 — `Order.CreatedAt` en el día del tenant, texto `yyyy-MM-dd` —, y `customer_name` /
+  "Cliente", ancho 30 — a nombre de quién sale la factura, con la precedencia del bloque de
+  facturación del PDF: `FinalConsumer.Name` si la cotización factura a consumidor final; si no, el
+  nombre de la parte de facturación propia; si no, la razón social del cliente cuando la cotización
+  factura a ella (y no está vacía); si no, el nombre de la ficha.
+- **Una llave puede repetirse** en el layout, con encabezados distintos: el ERP lee la fecha del
+  pedido en FECHA, Bloq/act y Vencimiento, y el primer comprobante bajo dos nombres.
+  `columns_invalid` queda para una llave vacía o desconocida. `Effective` conserva toda entrada con
+  llave conocida, repetidas incluidas, y completa al final sólo las llaves que no aparecen ni una
+  vez. La regla de encabezados duplicados entre visibles no cambia. Supera D3 y la línea
+  "llave de catálogo desconocida o repetida → `columns_invalid`" de "Dominio".
+- **El tope de fijas pasa de 10 a 40**: la hoja pide 24.
+- **La semilla** (`QuotationsSeeder.SeedOrdersExportLayoutAsync`, llamada después del formato de
+  número de pedido) crea el layout de esa hoja para el tenant sembrado: 47 columnas visibles —24
+  fijas— y ocultas las del catálogo que la hoja no usa. Sólo crea: si el tenant ya tiene fila, no
+  la toca.
+
+Pendiente en el frontend: el editor asume una llave por fila (restaurar fila por
+`defaultPosition`, "restaurar todo") y el tope de 10 en su validación local y en su texto.

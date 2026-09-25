@@ -352,7 +352,9 @@ dotnet run --project src/Api --launch-profile http
 
 Con `Seed:Enabled` en `true`, la aplicación deja el ambiente utilizable al arrancar:
 crea el tenant **Origen botánico**, el usuario que lo administra, su membresía y el
-catálogo de diecinueve productos con la tasa `IVA 19%`. Pensada para el ambiente
+catálogo de diecinueve productos con la tasa `IVA 19%`, y le deja configurados el formato de
+número de pedido (`PW…`) y las columnas del Excel de pedidos de su ERP (ver
+[homologación](#columnas-del-excel-de-pedidos-por-tenant-homologación)). Pensada para el ambiente
 desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
 de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
 
@@ -805,8 +807,19 @@ salen con el nuevo— y queda vacía si la membresía no tiene código.
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 33 columnas del Excel de pedidos y agregar hasta 10 columnas fijas de
-texto (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración.
+reordenar y ocultar las 35 columnas del Excel de pedidos y agregar hasta 40 columnas fijas de
+texto (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una misma columna del catálogo
+puede ir más de una vez con encabezados distintos: el ERP puede leer el mismo dato bajo varios
+nombres (la fecha del pedido en `FECHA`, `Bloq/act` y `Vencimiento`).
+
+Las dos últimas del catálogo (2026-09-25) son `Fecha Pedido` (`order_date`: el día en que nació
+el pedido, en la zona del tenant, como texto `yyyy-MM-dd`) y `Cliente` (`customer_name`: a nombre
+de quién sale la factura — `Consumidor final`, el nombre de la parte de facturación propia, la
+razón social si la cotización factura a ella, o el nombre de la ficha del cliente).
+
+La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
+ERP, «MIGRACION 1»: 47 columnas visibles, 24 de ellas fijas. Sólo crea: si el tenant ya tiene
+layout, no lo toca.
 
 | Método | Ruta                                                | Permiso                  |
 | ------ | --------------------------------------------------- | ------------------------ |
@@ -820,12 +833,13 @@ catálogo tal cual (el Excel de siempre) con `version: 1` y ETag `"1"`. Cada col
 `header`, `value` (sólo las fijas) y `visible`.
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
-vieja, incluido el choque de dos primeros guardados). No exige las 33: lo que falte se completa.
+vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no
+aparezca ni una vez se completa.
 Con un encabezado vacío o de más de 64 caracteres, o un valor fijo de más de 128, responde
 `422 validation.failed` con `errors.Columns[i].Header` / `.Value` / `.Kind`. Reglas del dominio,
-con prefijo `quotations.orders_export_layout.`: `columns_invalid` (llave desconocida o repetida),
-`header_duplicated` (dos **visibles** con el mismo encabezado, sin distinguir mayúsculas),
-`all_hidden`, `too_many_fixed_columns` (más de 10). Audita
+con prefijo `quotations.orders_export_layout.`: `columns_invalid` (llave vacía o desconocida; una
+repetida es válida desde el 2026-09-25), `header_duplicated` (dos **visibles** con el mismo
+encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` (más de 40). Audita
 `quotations.orders_export_layout.updated` sólo si algo cambió. No hay `DELETE`: restaurar es un
 `PUT` con el catálogo en su orden y nombres, sin fijas.
 

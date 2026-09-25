@@ -8,11 +8,15 @@ namespace Modules.Quotations.Domain;
 /// del logo abierta no da un 412 cruzado.
 ///
 /// La lista se guarda y viaja entera (D7): la posición es el índice. Lo guardado no tiene por qué
-/// traer las 33 llaves: <see cref="Effective(OrdersExportLayout?)"/> completa con el catálogo (D8).
+/// traer todas las llaves del catálogo: <see cref="Effective(OrdersExportLayout?)"/> completa con
+/// él (D8). Una llave puede aparecer más de una vez, con encabezados distintos (ajuste
+/// 2026-09-25): el ERP del tenant lee el mismo dato bajo varios nombres.
 /// </summary>
 public sealed class OrdersExportLayout
 {
-    public const int MaxFixedColumns = 10;
+    /// <summary>Era 10; la hoja de importación del ERP del tenant (MIGRACION 1) pide 24 fijas, y
+    /// 40 deja margen sin volver la pantalla una lista sin fin (ajuste 2026-09-25).</summary>
+    public const int MaxFixedColumns = 40;
 
     /// <summary>La versión que responde el layout no guardado (D9): el primer PUT viaja con
     /// <c>If-Match: "1"</c> y la fila nace en 2.</summary>
@@ -85,11 +89,12 @@ public sealed class OrdersExportLayout
         columns.Count == _columns.Count
         && columns.Zip(_columns).All(pair => pair.First.IsSameAs(pair.Second));
 
-    // Llave desconocida o repetida → columns_invalid. Ordinal: "Company" no es "company"
-    // (Review Focus 5). Las fijas no tienen llave y no cuentan acá.
+    // Llave nula o desconocida → columns_invalid. Ordinal: "Company" no es "company"
+    // (Review Focus 5). Repetida ya no (ajuste 2026-09-25): el mismo dato puede viajar bajo varios
+    // encabezados, y lo que el ERP no tolera —dos visibles con el mismo nombre— lo sigue cuidando
+    // la regla de duplicados de Validate. Las fijas no tienen llave y no cuentan acá.
     private static void EnsureKnownKeys(IReadOnlyList<OrdersExportColumnSetting> columns)
     {
-        var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var column in columns)
         {
             if (column.Kind == OrdersExportColumnKind.Fixed)
@@ -97,11 +102,11 @@ public sealed class OrdersExportLayout
                 continue;
             }
 
-            if (column.Key is not { } key || !OrdersExportColumnCatalog.Contains(key) || !keys.Add(key))
+            if (column.Key is not { } key || !OrdersExportColumnCatalog.Contains(key))
             {
                 throw new QuotationsDomainException(
                     "quotations.orders_export_layout.columns_invalid",
-                    "Every catalog column must use a known key, at most once.");
+                    "Every catalog column must use a known key.");
             }
         }
     }
@@ -144,10 +149,10 @@ public sealed class OrdersExportLayout
 
     /// <summary>
     /// D8, como función pura: las entradas guardadas en su orden —una llave que ya no está en el
-    /// catálogo se descarta en silencio—, más toda llave del catálogo que no esté guardada, al
-    /// final, visible y con su nombre por defecto. Así una columna nueva del backend aparece sola
-    /// sin obligar al tenant a re-guardar, un PUT no exige las 33, y sin fila guardada el efectivo
-    /// es el catálogo tal cual.
+    /// catálogo se descarta en silencio; una repetida se conserva cada vez, con su encabezado—, más
+    /// toda llave del catálogo que no aparezca ni una vez, al final, visible y con su nombre por
+    /// defecto. Así una columna nueva del backend aparece sola sin obligar al tenant a re-guardar,
+    /// un PUT no exige el catálogo entero, y sin fila guardada el efectivo es el catálogo tal cual.
     /// </summary>
     public static IReadOnlyList<OrdersExportColumnSetting> Effective(
         IReadOnlyList<OrdersExportColumnSetting> stored,
@@ -165,8 +170,9 @@ public sealed class OrdersExportLayout
                 continue;
             }
 
-            if (column.Key is { } key && known.Contains(key) && seen.Add(key))
+            if (column.Key is { } key && known.Contains(key))
             {
+                seen.Add(key);
                 effective.Add(column);
             }
         }
