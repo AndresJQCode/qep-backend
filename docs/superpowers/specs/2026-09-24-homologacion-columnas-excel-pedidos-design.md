@@ -72,8 +72,10 @@ catálogo tal cual = el Excel de hoy.
 
 ### D9 — Versión implícita 1 para el layout no guardado
 
-El layout por defecto no guardado responde `version: 1` y ETag `"1"`. El primer PUT viaja con
-`If-Match: "1"` y crea la fila en versión 2. Dos primeros PUT simultáneos chocan en la PK de la
+El layout por defecto no guardado responde `version: 1` y ETag `"1"`. Un primer PUT con
+`If-Match: "1"` que cambia algo crea la fila en versión 2. **Si el PUT es idéntico al catálogo por
+defecto, es un no-op: no crea fila, no audita y responde la versión implícita `1`** —guardar sin
+tocar nada no es un cambio. Dos primeros PUT simultáneos que sí cambian algo chocan en la PK de la
 tabla, e Infrastructure traduce esa violación a 412. `RequireIfMatch` (exige `> 0`) sirve sin
 cambios, y no hay side effect en el GET ni fila creada al aprovisionar.
 

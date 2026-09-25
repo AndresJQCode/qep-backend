@@ -18,6 +18,7 @@ namespace Modules.Quotations.Application;
 /// </summary>
 public sealed class OrdersExportProcessor(
     IOrderRepository repository,
+    IOrdersExportLayoutRepository layoutRepository,
     IQuotationCustomerLookup customerLookup,
     IQuotationProductLookup productLookup,
     IQuotationCompanyLookup companyLookup,
@@ -33,10 +34,10 @@ public sealed class OrdersExportProcessor(
 
     public const string FilePrefix = "pedidos";
 
-    /// <summary>Cuántas fechas de pago tienen columna propia, mismo criterio y mismo número que
-    /// <c>OrderPaymentProof</c> antes de este ajuste: es lo que paga un pedido en la práctica.
-    /// </summary>
-    public const int PaymentDateColumns = 5;
+    /// <summary>Cuántas fechas de pago tienen columna propia (ajuste 2026-09-20). El número vive en
+    /// el catálogo desde la homologación (spec 2026-09-24); acá queda el alias que ya usan las
+    /// pruebas.</summary>
+    public const int PaymentDateColumns = OrdersExportColumnCatalog.PaymentDateColumns;
 
     /// <summary>La celda "URL Comprobante N" de un comprobante privado, o con los enlaces públicos
     /// apagados: que no haya enlace no es lo mismo que no haya comprobante, y una celda vacía no
@@ -44,54 +45,21 @@ public sealed class OrdersExportProcessor(
     public const string PrivateProofText = "Sin enlace";
 
     /// <summary>
-    /// Las columnas que el ERP contable espera, en su orden (ajuste 2026-09-20). "Nota Detalle"
-    /// sale siempre vacía: no existe una nota por línea, sólo <c>Quotation.Notes</c> a nivel
-    /// pedido, que ya es la columna "Observaciones". "Vencimiento" no está: no hay lote ni
-    /// caducidad de producto en ningún lado del sistema todavía.
+    /// Las columnas por defecto del ERP contable, en su orden: las del catálogo
+    /// (<see cref="OrdersExportColumnCatalog"/>, spec 2026-09-24) con su encabezado y su ancho. Ya
+    /// no es una lista literal: es lo que sale sin layout guardado, y es lo que
+    /// <see cref="OrdersExportLayoutProjection"/> reordena, renombra y recorta cuando lo hay.
     ///
-    /// "Cod. Asesor" (spec 2026-09-24, D9) va al final a propósito: el ERP lee por encabezado, y
-    /// al final no mueve nada de lo que ya importa. Es el nombre por defecto que la homologación de
-    /// columnas por tenant (D10, otro spec) podrá renombrar.
-    ///
-    /// Después van "Banco" y "Cuenta" (2026-09-24), una vez por fila: la cuenta de facturación
-    /// congelada en la cotización, la misma para todos los comprobantes del pedido. Y por cada
-    /// comprobante, en el orden de "Fecha Pago N", "V. Comprobante N" con su monto y "URL
-    /// Comprobante N" con el enlace clicable a su copia pública —la URL misma como texto, para que
-    /// se lea sin abrirla—, o «Sin enlace» si es privado. También al final, por la misma razón que
-    /// "Cod. Asesor".
-    ///
-    /// Y de última, "Valor Unit sin IVA" (2026-09-24): el precio unitario con el IVA que trae
-    /// adentro quitado (<see cref="QuotationItem.UnitPriceWithoutTax"/>). Al final por la misma
-    /// razón que las anteriores. "Valor Unit" no cambia y sigue llevando el precio con IVA incluido,
-    /// que es como se carga <see cref="QuotationItem.UnitPrice"/>.
+    /// Las razones de cada columna siguen valiendo y viven con su llave en el catálogo: "Nota
+    /// Detalle" sale siempre vacía (no existe nota por línea); "Cod. Asesor" (D9 del spec del código
+    /// de asesor) va después de "Email" para no mover lo que el ERP ya importa; "Banco", "Cuenta" y
+    /// los pares "V. Comprobante N" / "URL Comprobante N" (2026-09-24) van al final por lo mismo; y
+    /// de última "Valor Unit sin IVA" (<see cref="QuotationItem.UnitPriceWithoutTax"/>), mientras
+    /// "Valor Unit" sigue llevando el precio con IVA incluido.
     /// </summary>
-    public static readonly IReadOnlyList<ExportColumn> Columns =
-    [
-        new("EMPRESA", 30),
-        new("Cod. Producto", 18),
-        new("Cantidad", 12),
-        new("Valor Unit", 16),
-        new("IVA", 14),
-        new("Descuento", 14),
-        new("Nota Detalle", 30),
-        .. Enumerable.Range(1, PaymentDateColumns).Select(number => new ExportColumn($"Fecha Pago {number}", 18)),
-        new("Ciudad", 20),
-        new("Documento", 16),
-        new("Pedido", 18),
-        new("Direccion", 40),
-        new("Observaciones", 40),
-        new("Telefono", 16),
-        new("Email", 30),
-        new("Cod. Asesor", 14),
-        new("Banco", 24),
-        new("Cuenta", 20),
-        .. Enumerable.Range(1, PaymentDateColumns).SelectMany(number => new ExportColumn[]
-        {
-            new($"V. Comprobante {number}", 18),
-            new($"URL Comprobante {number}", 60),
-        }),
-        new("Valor Unit sin IVA", 18),
-    ];
+    public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
+        .Select(column => new ExportColumn(column.DefaultHeader, column.Width))
+        .ToArray();
 
     public ExportJobKind Kind => ExportJobKind.Orders;
 
@@ -107,13 +75,19 @@ public sealed class OrdersExportProcessor(
         var converted = TenantDayRange.Of(calendar, filters.ConvertedFrom, filters.ConvertedTo);
         var generatedAt = calendar.UtcNow;
 
+        // El layout del tenant, una vez por job (spec 2026-09-24): encabezados, orden y ocultas del
+        // tenant, más sus fijas. Sin fila guardada, el efectivo es el catálogo y el archivo es el de
+        // siempre (D8).
+        var layout = OrdersExportLayoutProjection.For(
+            OrdersExportLayout.Effective(await layoutRepository.FindAsync(job.TenantId, cancellationToken)));
+
         // El conteo del archivo (filas de producto) se lleva aparte del que devuelve el lote
         // (pedidos leídos, para el chequeo de "vacío" de abajo): un pedido con tres líneas aporta
         // tres filas, y ExportBatchLoop no lo sabe — cuenta entidades del lote, no lo que
         // devuelve `toRows`.
         var exportedRows = 0;
 
-        using var workbook = writer.Create(SheetName, Columns);
+        using var workbook = writer.Create(SheetName, layout.Columns);
         var orderCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
             workbook,
             (after, limit, ct) => repository.ListForExportAsync(
@@ -132,7 +106,12 @@ public sealed class OrdersExportProcessor(
             async (batch, ct) =>
             {
                 var context = await LoadBatchContextAsync(job.TenantId, batch, ct);
-                var rows = batch.SelectMany(row => RowsFor(row, context, calendar, paymentProofPublisher)).ToArray();
+                // RowsFor sigue armando las celdas en el orden del catálogo; la proyección las lleva
+                // al orden del tenant. Cambio mínimo, y el mismo para todas las filas del job.
+                var rows = batch
+                    .SelectMany(row => RowsFor(row, context, calendar, paymentProofPublisher))
+                    .Select(cells => layout.Project(cells))
+                    .ToArray();
                 exportedRows += rows.Length;
                 return rows;
             },

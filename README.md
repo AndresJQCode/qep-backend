@@ -802,6 +802,35 @@ después de `Email`, numérica y repetida en cada línea del pedido. Se resuelve
 membresía asesora de la cotización con el código **de hoy** —si se lo cambian, los pedidos viejos
 salen con el nuevo— y queda vacía si la membresía no tiene código.
 
+### Columnas del Excel de pedidos por tenant (homologación)
+
+Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
+reordenar y ocultar las 33 columnas del Excel de pedidos y agregar hasta 10 columnas fijas de
+texto (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración.
+
+| Método | Ruta                                                | Permiso                  |
+| ------ | --------------------------------------------------- | ------------------------ |
+| `GET`  | `/api/v1/tenants/{tenantId}/orders-export-layout`   | `tenancy.settings.read`  |
+| `PUT`  | `/api/v1/tenants/{tenantId}/orders-export-layout`   | `tenancy.settings.update`|
+
+El `GET` devuelve el layout **efectivo**: lo guardado en su orden más toda columna del catálogo
+que no esté guardada, al final, visible y con su nombre por defecto; sin nada guardado es el
+catálogo tal cual (el Excel de siempre) con `version: 1` y ETag `"1"`. Cada columna viaja con
+`kind` (`Catalog` | `Fixed`), `key` y `defaultHeader`/`defaultPosition` (sólo las del catálogo),
+`header`, `value` (sólo las fijas) y `visible`.
+
+El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
+vieja, incluido el choque de dos primeros guardados). No exige las 33: lo que falte se completa.
+Con un encabezado vacío o de más de 64 caracteres, o un valor fijo de más de 128, responde
+`422 validation.failed` con `errors.Columns[i].Header` / `.Value` / `.Kind`. Reglas del dominio,
+con prefijo `quotations.orders_export_layout.`: `columns_invalid` (llave desconocida o repetida),
+`header_duplicated` (dos **visibles** con el mismo encabezado, sin distinguir mayúsculas),
+`all_hidden`, `too_many_fixed_columns` (más de 10). Audita
+`quotations.orders_export_layout.updated` sólo si algo cambió. No hay `DELETE`: restaurar es un
+`PUT` con el catálogo en su orden y nombres, sin fijas.
+
+Un layout guardado se aplica en la siguiente exportación de pedidos; el de cotizaciones no cambia.
+
 ### Aceptación de la invitación
 
 El email lleva `{Notifications:InvitationUrl}/{token}`. La pantalla que abre ese

@@ -52,6 +52,9 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IDocumentNumberingFormatLookup, DocumentNumberingFormatLookup>();
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
+        // El layout de columnas del Excel de pedidos (spec 2026-09-24): lo leen el PUT/GET del
+        // tenant y el processor, cada uno en su scope.
+        services.AddScoped<IOrdersExportLayoutRepository, OrdersExportLayoutRepository>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
         // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).

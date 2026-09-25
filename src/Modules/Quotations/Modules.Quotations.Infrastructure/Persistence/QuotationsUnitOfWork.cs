@@ -30,6 +30,13 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // OrderApiTests.AMisconfiguredPrefixThatCollidesWithAnAlreadyIssuedOrderNumberIsRejected.
     private const string OrderNumberIndex = "IX_orders_tenant_number";
 
+    // La PK del layout de columnas del Excel de pedidos (spec 2026-09-24, D9): sin fila, los dos
+    // primeros PUT viajan con If-Match "1", pasan el chequeo de versión en memoria y los dos
+    // intentan INSERT. El segundo choca acá, y es el mismo 412 que si la versión hubiera cambiado
+    // —no un 422 de dominio, porque el tenant no hizo nada mal: alguien más guardó primero—. La
+    // prueba es OrdersExportLayoutPersistenceTests.TwoFirstSavesForTheSameTenantEndInAConcurrencyConflict.
+    private const string OrdersExportLayoutKey = "PK_orders_export_layouts";
+
     // IOrderNumberGenerator recibe el mismo QuotationsDbContext scoped que esta clase, así que su
     // SQL crudo corre en esta conexión y queda dentro de la transacción. Si alguna vez se
     // registrara con un DbContext propio, el incremento volvería a autocommitearse aparte.
@@ -99,6 +106,19 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new QuotationsDomainException(
                 "order.order.number_taken",
                 "Another order in this tenant already uses that number.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      OrdersExportLayoutKey,
+                      StringComparison.Ordinal))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The orders export layout was created by another request while this one was being committed.",
+                exception);
         }
     }
 }
