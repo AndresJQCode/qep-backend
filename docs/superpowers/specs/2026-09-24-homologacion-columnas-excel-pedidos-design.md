@@ -32,7 +32,7 @@ mano que quiere evitar.
 
 `Fecha Pago 1..5`, `V. Comprobante 1..5` y `URL Comprobante 1..5` son 15 entradas
 independientes, no tres grupos con patrón. Un tenant puede nombrar `Fecha Pago 4` distinto u
-ocultar sólo esa. El costo es una pantalla más larga (32 filas de catálogo).
+ocultar sólo esa. El costo es una pantalla más larga (33 filas de catálogo).
 
 ### D4 — Columnas fijas del tenant, sólo texto
 
@@ -46,7 +46,7 @@ por columna es un enum más en la entrada, sin romper lo guardado.
 Es configuración del tenant: la cambia el admin una vez y la usa todo el mundo. Permisos
 `TenancyPermissions.SettingsRead` / `SettingsUpdate`, sin permiso nuevo (que serían dos mitades y
 una razón para que el vendedor le mueva las columnas al contador). Página propia dentro de
-Configuración, no una sección del formulario: 32+ filas no caben como sección, y el guardado no
+Configuración, no una sección del formulario: 33+ filas no caben como sección, y el guardado no
 comparte estado ni versión con `PUT /settings`.
 
 ### D6 — Agregado propio en Quotations, no columna en `Tenant`
@@ -67,7 +67,7 @@ reemplaza completa. Es la regla del repo para colecciones editables.
 Lo que ven `GET` y el processor es: las entradas guardadas en su orden, más toda llave del catálogo
 que no esté guardada, **al final, visible, con su nombre por defecto**. Una llave guardada que ya no
 existe en el catálogo se descarta en silencio. Así una columna nueva del backend aparece sola sin
-obligar al tenant a re-guardar, un PUT no exige las 32, y sin fila guardada el efectivo es el
+obligar al tenant a re-guardar, un PUT no exige las 33, y sin fila guardada el efectivo es el
 catálogo tal cual = el Excel de hoy.
 
 ### D9 — Versión implícita 1 para el layout no guardado
@@ -87,23 +87,36 @@ falta un endpoint para borrarla.
 
 ### Catálogo — `OrdersExportColumnCatalog` (Domain, estático)
 
-Las 32 columnas de hoy, en su orden, cada una con `Key` estable, `DefaultHeader` (el encabezado
-actual, sin cambios) y `Width`. Vive en Domain porque `Effective` (D8) lo necesita y Domain no
-referencia Application. El tenant no puede agregar ni quitar llaves; sólo el backend, al sumar una
-columna.
+Las 33 columnas de `OrdersExportProcessor.Columns` a la fecha (incluida "Valor Unit sin IVA",
+`f479656`, 2026-09-24), cada una con `Key` estable, `DefaultHeader` (el encabezado actual, sin
+cambios) y `Width`. Vive en Domain porque `Effective` (D8) lo necesita y Domain no referencia
+Application. El tenant no puede agregar ni quitar llaves; sólo el backend, al sumar una columna.
 
-| Key | DefaultHeader | | Key | DefaultHeader |
-| --- | --- | --- | --- | --- |
-| `company` | EMPRESA | | `order_number` | Pedido |
-| `product_code` | Cod. Producto | | `address` | Direccion |
-| `quantity` | Cantidad | | `notes` | Observaciones |
-| `unit_price` | Valor Unit | | `phone` | Telefono |
-| `tax` | IVA | | `email` | Email |
-| `discount` | Descuento | | `advisor_code` | Cod. Asesor |
-| `line_note` | Nota Detalle | | `bank` | Banco |
-| `payment_date_1`…`_5` | Fecha Pago 1…5 | | `account` | Cuenta |
-| `city` | Ciudad | | `proof_amount_1`…`_5` | V. Comprobante 1…5 |
-| `document` | Documento | | `proof_url_1`…`_5` | URL Comprobante 1…5 |
+La posición de esta tabla **es** el orden del catálogo, el mismo de `Columns` hoy; si el código
+cambia antes de implementar, gana el código y se corrige la tabla.
+
+| # | Key | DefaultHeader |
+| --- | --- | --- |
+| 1 | `company` | EMPRESA |
+| 2 | `product_code` | Cod. Producto |
+| 3 | `quantity` | Cantidad |
+| 4 | `unit_price` | Valor Unit |
+| 5 | `tax` | IVA |
+| 6 | `discount` | Descuento |
+| 7 | `line_note` | Nota Detalle |
+| 8–12 | `payment_date_1`…`payment_date_5` | Fecha Pago 1…5 |
+| 13 | `city` | Ciudad |
+| 14 | `document` | Documento |
+| 15 | `order_number` | Pedido |
+| 16 | `address` | Direccion |
+| 17 | `notes` | Observaciones |
+| 18 | `phone` | Telefono |
+| 19 | `email` | Email |
+| 20 | `advisor_code` | Cod. Asesor |
+| 21 | `bank` | Banco |
+| 22 | `account` | Cuenta |
+| 23–32 | `proof_amount_1`, `proof_url_1` … `proof_amount_5`, `proof_url_5` | V. Comprobante 1, URL Comprobante 1 … 5 |
+| 33 | `unit_price_without_tax` | Valor Unit sin IVA |
 
 `Columns` de `OrdersExportProcessor` deja de ser la lista literal: se deriva del catálogo, y las
 pruebas actuales del processor siguen verdes sin layout guardado.
@@ -135,7 +148,9 @@ pruebas actuales del processor siguen verdes sin layout guardado.
 - Tabla `quotations.orders_export_layouts`: `tenant_id uuid PK`, `columns jsonb NOT NULL`,
   `version bigint NOT NULL`, `updated_at timestamptz NOT NULL`. `Columns` con
   `OwnsMany(...).ToJson()` y discriminador `kind` por entrada. Migración `AddOrdersExportLayout`.
-- `IOrdersExportLayoutRepository`: `FindAsync(tenantId, ct)`, `Add(layout)`.
+- `IOrdersExportLayoutRepository`: `FindAsync(tenantId, ct)`, `Add(layout)`. No hay `Update`:
+  `FindAsync` devuelve la entidad trackeada y `SaveChangesAsync` del unit of work persiste el
+  `Replace`, como en el resto de los repositorios del módulo.
 - El unit of work de Quotations traduce el `23505` de `PK_orders_export_layouts` —por nombre de
   índice, como siempre— a `RequestConcurrencyException` → 412 (D9).
 
@@ -165,7 +180,7 @@ pruebas actuales del processor siguen verdes sin layout guardado.
 
 `OrdersExportProcessor` recibe `IOrdersExportLayoutRepository`, resuelve el efectivo **una vez por
 job**, arma `Columns` (encabezado del tenant; ancho del catálogo, 18 para las fijas) y proyecta cada
-fila. `RowsFor` sigue produciendo las 32 celdas en orden de catálogo; una
+fila. `RowsFor` sigue produciendo las 33 celdas en orden de catálogo; una
 `OrdersExportLayoutProjection` reordena, descarta ocultas e inserta las fijas como
 `ExportCell.OfText(value)` en su posición. Cambio mínimo y comprobable en unitaria.
 
@@ -208,7 +223,7 @@ fila. `RowsFor` sigue produciendo las 32 celdas en orden de catálogo; una
   `snapshot` al montar (lista + versión); "Guardar" deshabilitado si nada cambió o si la
   validación local falla — las mismas reglas del dominio (encabezado vacío, duplicado visible,
   ninguna visible, más de 10 fijas), para no ir al servidor a que diga lo obvio.
-- **Reordenar** con `@dnd-kit/core` + `@dnd-kit/sortable` (dependencia nueva: con 32+ filas,
+- **Reordenar** con `@dnd-kit/core` + `@dnd-kit/sortable` (dependencia nueva: con 33+ filas,
   mover una del puesto 15 al 1 sólo con botones son 14 clics), más ↑/↓ accesibles por fila.
 - Pruebas Vitest + Testing Library: carga y pinta las columnas; guardar deshabilitado sin
   cambios; duplicado visible bloquea con mensaje en las dos filas; ocultar quita de la vista
