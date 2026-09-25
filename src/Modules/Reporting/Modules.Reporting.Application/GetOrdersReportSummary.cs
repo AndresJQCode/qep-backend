@@ -18,7 +18,8 @@ public sealed class GetOrdersReportSummaryHandler(
     IOrdersReportSource source,
     IValidator<OrdersReportFilter> validator,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IMembershipDirectory membershipDirectory)
     : IQueryHandler<GetOrdersReportSummaryQuery, OrdersReportSummaryDto>
 {
     public async Task<OrdersReportSummaryDto> HandleAsync(
@@ -28,11 +29,23 @@ public sealed class GetOrdersReportSummaryHandler(
         // Autorizar primero, siempre: antes de validar y antes de tocar ningún origen de datos.
         ReportingAuthorization.EnsureAuthorized(
             executionContext, query.Filter.TenantId, ReportingPermissions.OrdersRead);
-        await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
+        // Sin reporting.all_advisors.read, el asesor lo decide quien llama y no la URL. Se acota
+        // el filtro una sola vez, acá arriba, para que el ranking por asesor y la ventana
+        // anterior hereden el mismo alcance sin que nadie se acuerde de repetirlo.
+        var filter = query.Filter with
+        {
+            AdvisorId = await ReportingAuthorization.ScopeAdvisorAsync(
+                executionContext,
+                membershipDirectory,
+                query.Filter.TenantId,
+                query.Filter.AdvisorId,
+                cancellationToken),
+        };
+        await validator.ValidateAndThrowAsync(filter, cancellationToken);
 
         // El rango y la ventana anterior se cortan con el mismo calendario (spec 2026-09-17, punto 4).
-        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
-        var criteria = query.Filter.ToCriteria(calendar);
+        var calendar = await tenantClock.GetAsync(filter.TenantId, cancellationToken);
+        var criteria = filter.ToCriteria(calendar);
         var current = await source.SummarizeAsync(
             criteria, ReportSummaryRules.RankSize, cancellationToken);
 
@@ -44,7 +57,7 @@ public sealed class GetOrdersReportSummaryHandler(
             current.Monthly,
             current.ByAdvisor,
             current.ByClient,
-            await SummarizePrecedingAsync(query.Filter, criteria, calendar, cancellationToken));
+            await SummarizePrecedingAsync(filter, criteria, calendar, cancellationToken));
     }
 
     /// <summary>

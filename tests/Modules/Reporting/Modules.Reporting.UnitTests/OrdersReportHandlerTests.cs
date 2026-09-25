@@ -106,7 +106,8 @@ public sealed class OrdersReportHandlerTests
             source,
             new OrdersReportFilterValidator(),
             new FakeExecutionContext(callerTenant, permissions),
-            new FixedTenantClock());
+            new FixedTenantClock(),
+            new FakeMembershipDirectory());
 
     // Spec 2026-09-17, punto 4: el reporte de diciembre va del 00:00 del 1 de diciembre al 00:00 del
     // 1 de enero en el huso del tenant, y el huso viaja para la serie mensual.

@@ -269,6 +269,42 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// El layout de columnas del Excel de pedidos (spec 2026-09-24, D6 y D7): la PK es el tenant y
+    /// las columnas van en una sola jsonb, con los nombres del JSON fijados a mano. Es el primer
+    /// OwnsMany().ToJson() del repo: un nombre por convención ("Kind", "Header") no lo ve el
+    /// compilador, lo ve quien lea la fila a mano y el frontend que no la lee.
+    /// </summary>
+    [Fact]
+    public void OrdersExportLayoutMapsToItsTableWithTheColumnsInOneJsonColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var layout = model.FindEntityType(typeof(OrdersExportLayout));
+        Assert.NotNull(layout);
+        Assert.Equal("orders_export_layouts", layout.GetTableName());
+        Assert.Equal("quotations", layout.GetSchema());
+        Assert.Equal("PK_orders_export_layouts", layout.FindPrimaryKey()!.GetName());
+        Assert.Equal(["TenantId"], layout.FindPrimaryKey()!.Properties.Select(property => property.Name));
+        Assert.Equal(
+            ["tenant_id", "updated_at", "version"],
+            layout.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
+        Assert.True(layout.FindProperty(nameof(OrdersExportLayout.Version))!.IsConcurrencyToken);
+
+        var setting = model.FindEntityType(typeof(OrdersExportColumnSetting));
+        Assert.NotNull(setting);
+        Assert.True(setting.IsOwned());
+        Assert.Equal("columns", setting.GetContainerColumnName());
+        // Sin las de sombra: el ordinal sintetizado y la FK al layout no viajan en el JSON.
+        Assert.Equal(
+            ["header", "key", "kind", "value", "visible"],
+            setting.GetProperties()
+                .Where(property => !property.IsShadowProperty())
+                .Select(property => property.GetJsonPropertyName()!)
+                .Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
     /// generada y después escrita a mano tiene que dejar el snapshot al día (Tasks 2 y 5). No abre

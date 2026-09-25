@@ -5,6 +5,7 @@ using Modules.Catalog.Infrastructure.Seed;
 using Modules.Companies.Infrastructure.Seed;
 using Modules.Geography.Application;
 using Modules.Identity.Infrastructure.Seed;
+using Modules.Quotations.Infrastructure.Seed;
 using Modules.Tenancy.Infrastructure.Seed;
 
 namespace Bootstrapper.Seeding;
@@ -57,6 +58,10 @@ public static class QepSeedRunner
         // se resuelven desde la membresía, así que sin admin activo cualquier request daría 403.
         var ownerUserId = await services.SeedUserAsync(options.OwnerEmail!, cancellationToken);
         await services.SeedTenantWithOwnerAsync(ownerUserId, cancellationToken);
+
+        // Pegado al tenant y antes que todo lo demas: el primer pedido que se convierta ya tiene
+        // que salir con la serie del cliente (PW...), no con el PED- del default.
+        await services.SeedOrderNumberingAsync(TenancySeeder.SeedTenantId, cancellationToken);
 
         await services.SeedCatalogAsync(TenancySeeder.SeedTenantId, cancellationToken);
 

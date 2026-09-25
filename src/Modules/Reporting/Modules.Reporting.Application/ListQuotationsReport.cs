@@ -16,7 +16,8 @@ public sealed class ListQuotationsReportHandler(
     IQuotationsReportSource source,
     IValidator<QuotationsReportFilter> validator,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IMembershipDirectory membershipDirectory)
     : IQueryHandler<ListQuotationsReportQuery, ReportPage<QuotationsReportItemDto>>
 {
     public async Task<ReportPage<QuotationsReportItemDto>> HandleAsync(
@@ -25,15 +26,26 @@ public sealed class ListQuotationsReportHandler(
     {
         ReportingAuthorization.EnsureAuthorized(
             executionContext, query.Filter.TenantId, ReportingPermissions.QuotationRead);
-        await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
+        // Sin reporting.all_advisors.read, el asesor lo decide quien llama y no la URL. Ver
+        // ReportingAuthorization.ScopeAdvisorAsync.
+        var filter = query.Filter with
+        {
+            AdvisorId = await ReportingAuthorization.ScopeAdvisorAsync(
+                executionContext,
+                membershipDirectory,
+                query.Filter.TenantId,
+                query.Filter.AdvisorId,
+                cancellationToken),
+        };
+        await validator.ValidateAndThrowAsync(filter, cancellationToken);
 
         var page = ReportPaging.NormalizePage(query.Page);
         var pageSize = ReportPaging.NormalizePageSize(query.PageSize);
 
         // El rango se corta en el día del tenant (spec 2026-09-17, punto 4).
-        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
+        var calendar = await tenantClock.GetAsync(filter.TenantId, cancellationToken);
         var (items, total) = await source.ListAsync(
-            query.Filter.ToCriteria(calendar), page, pageSize, cancellationToken);
+            filter.ToCriteria(calendar), page, pageSize, cancellationToken);
 
         return new ReportPage<QuotationsReportItemDto>(items, total, page, pageSize);
     }

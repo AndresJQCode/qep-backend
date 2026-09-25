@@ -173,3 +173,20 @@ internal sealed class RecordingExportFileStorage : IExportFileStorage
             StubExportJobProcessor.LinkExpiresAt));
     }
 }
+
+/// <summary>El layout de columnas del Excel de pedidos en memoria (spec 2026-09-24). Anota cuántas
+/// veces se preguntó: el processor lo resuelve una vez por job, y el conteo es la aserción.</summary>
+internal sealed class InMemoryOrdersExportLayoutRepository : IOrdersExportLayoutRepository
+{
+    public List<OrdersExportLayout> Layouts { get; } = [];
+
+    public int FindCalls { get; private set; }
+
+    public Task<OrdersExportLayout?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(Layouts.FirstOrDefault(layout => layout.TenantId == tenantId));
+    }
+
+    public void Add(OrdersExportLayout layout) => Layouts.Add(layout);
+}

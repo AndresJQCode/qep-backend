@@ -172,6 +172,7 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
+                "Valor Unit sin IVA",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -395,6 +396,74 @@ public sealed class OrderExportApiTests
         Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
     }
 
+    // Spec 2026-09-24 (homologación de columnas), de punta a punta: el PUT del layout guarda el
+    // jsonb, el worker lo lee en su propio scope, y la hoja sale con la fija primero, "Email"
+    // renombrada segunda, EMPRESA ausente y el resto del catálogo detrás, en cada fila.
+    [Fact]
+    public async Task TheOrdersWorkbookFollowsTheTenantsLayoutAfterThePut()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // X-Permissions reemplaza el set por defecto del stub: los de settings se piden explícitos.
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, "tenancy.settings.read", "tenancy.settings.update"]);
+        using var _ = client;
+        await CreateOrderAsync(client, factory, tenantId);
+        await SaveOrdersExportLayoutAsync(client, tenantId);
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}", content: null, TestContext.Current.CancellationToken);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+
+        var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        var header = sheet.Rows[0];
+        // 33 del catálogo + 1 fija − 1 oculta.
+        Assert.Equal(33, header.Count);
+        Assert.Equal("Tipo Doc", header[0]);
+        Assert.Equal("Correo", header[1]);
+        Assert.Equal("Cod. Producto", header[2]);
+        Assert.Equal("Cantidad", header[3]);
+        Assert.DoesNotContain("EMPRESA", header);
+        Assert.DoesNotContain("Email", header);
+        Assert.Equal("Valor Unit sin IVA", header[^1]);
+        var row = sheet.Rows[1];
+        Assert.Equal(header.Count, row.Count);
+        Assert.Equal("FV", row[0]);
+        Assert.Equal("compras@verde.co", row[1]);
+        Assert.NotEqual(string.Empty, row[2]);
+        Assert.True(sheet.NumericCells[1][3]);
+        Assert.Equal(1m, decimal.Parse(row[3], CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>El layout de la prueba: una fija "Tipo Doc" = "FV" primero, "Email" renombrada
+    /// "Correo" segunda, EMPRESA oculta, el resto del catálogo en su orden. La versión se lee del
+    /// GET y no se supone: If-Match tiene que llevar la vigente.</summary>
+    private static async Task SaveOrdersExportLayoutAsync(HttpClient client, Guid tenantId)
+    {
+        var url = $"/api/v1/tenants/{tenantId}/orders-export-layout";
+        var current = await client.GetFromJsonAsync<OrdersExportLayoutPayload>(url, TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+        var columns = current.Columns.ToList();
+        var email = columns.Single(column => column.Key == "email");
+        columns.Remove(email);
+        columns.Insert(0, email with { Header = "Correo" });
+        columns.Insert(0, new OrdersExportColumnPayload("Fixed", null, "Tipo Doc", "FV", true));
+        var company = columns.Single(column => column.Key == "company");
+        columns[columns.IndexOf(company)] = company with { Visible = false };
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new { columns }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{current.Version}\"");
+        using var saved = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal("\"2\"", saved.Headers.ETag?.Tag);
+    }
+
     /// <summary>Un pedido convertido hoy, sin comprobantes (pago pendiente), mismo camino que
     /// OrderListApiTests.ConvertToOrderAsync.</summary>
     private static async Task<OrderResponse> CreateOrderAsync(HttpClient client, QepApiFactory factory, Guid tenantId)
@@ -545,4 +614,9 @@ public sealed class OrderExportApiTests
     private sealed record MembershipRosterPayload(IReadOnlyList<MembershipRosterRowPayload> Items);
 
     private sealed record MembershipRosterRowPayload(Guid Id, long Version, bool IsOwner);
+
+    private sealed record OrdersExportLayoutPayload(IReadOnlyList<OrdersExportColumnPayload> Columns, long Version);
+
+    // Sólo lo que el PUT lee; el GET trae además defaultHeader/defaultPosition, que acá no importan.
+    private sealed record OrdersExportColumnPayload(string Kind, string? Key, string Header, string? Value, bool Visible);
 }
