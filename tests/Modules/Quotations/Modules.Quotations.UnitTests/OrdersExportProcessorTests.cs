@@ -593,6 +593,138 @@ public sealed class OrdersExportProcessorTests
         Assert.All(advisors.Requests, request => Assert.Equal([AdvisorId.Value], request));
     }
 
+    // Spec 2026-09-24 (homologación de columnas): sin fila guardada, el archivo es el de siempre,
+    // y WritesTheErpColumnsInOrder lo sigue fijando encabezado por encabezado. Acá queda dicho
+    // explícito, y que el layout se preguntó igual.
+    [Fact]
+    public async Task WithoutAStoredLayoutTheFileIsTheCatalogAsToday()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = new InMemoryOrdersExportLayoutRepository();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(OrdersExportProcessor.Columns, writer.Columns);
+        Assert.Equal(1, layouts.FindCalls);
+    }
+
+    // D2 y D8: encabezados del tenant, su orden, sin las ocultas y con el resto del catálogo
+    // detrás. Los anchos son los del catálogo, no importa el nombre.
+    [Fact]
+    public async Task AStoredLayoutRenamesReordersAndHidesColumns()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("email", "Correo", visible: true),
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("company", "EMPRESA", visible: false));
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(32, writer.Columns.Count);
+        Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
+        Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
+        Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
+        Assert.Equal("Valor Unit sin IVA", writer.Columns[^1].Header);
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(writer.Columns.Count, cells.Count);
+        Assert.Equal("cliente@ejemplo.co", cells[0].Text);
+        Assert.Equal("PED-2026-0001", cells[1].Text);
+        Assert.Equal("TOR-001", cells[2].Text);
+        Assert.Equal(2m, cells[3].Number);
+    }
+
+    // D4 y Review Focus 3: la fija repite su texto en cada línea del pedido, también la vacía —una
+    // celda vacía, no espacios—; ancho 18, en su posición.
+    [Fact]
+    public async Task FixedColumnsWriteTheirTextOnEveryRowIncludingAnEmptyOne()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Fixed("Tipo Doc", "FV", visible: true),
+            OrdersExportColumnSetting.Catalog("company", "EMPRESA", visible: true),
+            OrdersExportColumnSetting.Fixed("Bodega", "   ", visible: true));
+        var row = NewRow(
+            "PED-2026-0001",
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(35, writer.Columns.Count);
+        Assert.Equal(new ExportColumn("Tipo Doc", OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
+        Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
+        Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
+        Assert.Equal(2, writer.Rows.Count);
+        foreach (var cells in writer.Rows)
+        {
+            Assert.Equal(writer.Columns.Count, cells.Count);
+            Assert.Equal(ExportCell.OfText("FV"), cells[0]);
+            Assert.Equal(ExportCell.OfText(string.Empty), cells[2]);
+        }
+
+        // Cantidad queda en la 5.ª: Tipo Doc, EMPRESA, Bodega, Cod. Producto, Cantidad.
+        Assert.Equal(2m, writer.Rows[0][4].Number);
+        Assert.Equal(5m, writer.Rows[1][4].Number);
+    }
+
+    // Una fija oculta no viaja: ni columna ni celda. Hay 33 columnas, como sin layout.
+    [Fact]
+    public async Task AHiddenFixedColumnIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(OrdersExportColumnSetting.Fixed("Tipo Doc", "FV", visible: false));
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(OrdersExportProcessor.Columns, writer.Columns);
+        Assert.DoesNotContain(Assert.Single(writer.Rows), cell => cell.Text == "FV");
+    }
+
+    // Una fila con dos fijas seguidas y una columna del catálogo entre otras dos fijas: el orden
+    // de las fijas es el del layout, no el de las llaves.
+    [Fact]
+    public async Task FixedColumnsComeOutInTheLayoutsOrderAmongTheCatalogOnes()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Fixed("A", "a", visible: true),
+            OrdersExportColumnSetting.Fixed("B", "b", visible: true),
+            OrdersExportColumnSetting.Catalog("email", "Email", visible: true),
+            OrdersExportColumnSetting.Fixed("C", "c", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Pedido", "A", "B", "Email", "C", "EMPRESA"], writer.Columns.Take(6).Select(column => column.Header));
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(["PED-2026-0001", "a", "b", "cliente@ejemplo.co", "c", string.Empty], cells.Take(6).Select(cell => cell.Text));
+    }
+
+    // El layout se resuelve una vez por job: no por lote ni por fila.
+    [Fact]
+    public async Task TheLayoutIsReadOnceForTheWholeJob()
+    {
+        var rows = Enumerable.Range(1, ExportJobLimits.BatchSize + 1)
+            .Select(number => NewRow($"PED-2026-{number:0000}"))
+            .ToArray();
+        var layouts = StoredLayout(OrdersExportColumnSetting.Catalog("email", "Correo", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(rows), layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, layouts.FindCalls);
+    }
+
     private static ExportJob NewJob(OrdersExportFilters? filters = null) =>
         ExportJob.Enqueue(
             Guid.CreateVersion7(),
@@ -648,8 +780,11 @@ public sealed class OrdersExportProcessorTests
         StubQuotationCompanyLookup? companies = null,
         StubQuotationGeographyLookup? geography = null,
         StubQuotationAdvisorLookup? advisors = null,
-        RecordingPaymentProofPublisher? publisher = null) =>
+        RecordingPaymentProofPublisher? publisher = null,
+        InMemoryOrdersExportLayoutRepository? layouts = null) =>
         new(repository,
+            // Sin layout guardado por defecto: el archivo de siempre (spec 2026-09-24, D8).
+            layouts ?? new InMemoryOrdersExportLayoutRepository(),
             customers ?? new StubQuotationCustomerLookup(DefaultCustomer),
             products ?? new StubQuotationProductLookup(
                 new Dictionary<Guid, QuotationProductRef>
@@ -664,4 +799,15 @@ public sealed class OrdersExportProcessorTests
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
             tenantClock ?? new FixedTenantClock(Now));
+
+    /// <summary>Un layout guardado para el tenant de las pruebas (spec 2026-09-24): lo que se
+    /// pasa se completa con el catálogo, como hace Replace.</summary>
+    private static InMemoryOrdersExportLayoutRepository StoredLayout(params OrdersExportColumnSetting[] columns)
+    {
+        var layouts = new InMemoryOrdersExportLayoutRepository();
+        var layout = OrdersExportLayout.CreateDefault(TenantId, Now);
+        Assert.True(layout.Replace(columns, Now));
+        layouts.Add(layout);
+        return layouts;
+    }
 }
