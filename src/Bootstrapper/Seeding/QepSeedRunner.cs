@@ -63,6 +63,10 @@ public static class QepSeedRunner
         // que salir con la serie del cliente (PW...), no con el PED- del default.
         await services.SeedOrderNumberingAsync(TenancySeeder.SeedTenantId, cancellationToken);
 
+        // Mismo motivo: el primer Excel de pedidos ya sale con la hoja de importación del ERP del
+        // tenant (MIGRACION 1) y no con el catálogo por defecto.
+        await services.SeedOrdersExportLayoutAsync(TenancySeeder.SeedTenantId, cancellationToken);
+
         await services.SeedCatalogAsync(TenancySeeder.SeedTenantId, cancellationToken);
 
         // Despues del catalogo y no antes por comodidad de lectura nada mas: las empresas no

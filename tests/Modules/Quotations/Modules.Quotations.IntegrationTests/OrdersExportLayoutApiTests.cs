@@ -37,12 +37,12 @@ public sealed class OrdersExportLayoutApiTests
         Assert.NotNull(layout);
         Assert.Equal(tenantId, layout.TenantId);
         Assert.Equal(1, layout.Version);
-        Assert.Equal(33, layout.Columns.Count);
+        Assert.Equal(35, layout.Columns.Count);
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
         Assert.All(layout.Columns, column => Assert.True(column.Visible));
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, true), layout.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "email", "Email", 19, "Email", null, true), layout.Columns[18]);
-        Assert.Equal(33, layout.Columns[32].DefaultPosition);
+        Assert.Equal(35, layout.Columns[34].DefaultPosition);
     }
 
     // D9: el primer PUT viaja con "1" y la fila nace en 2. El GET siguiente la devuelve tal cual.
@@ -65,7 +65,7 @@ public sealed class OrdersExportLayoutApiTests
         var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
         Assert.NotNull(saved);
         Assert.Equal(2, saved.Version);
-        Assert.Equal(34, saved.Columns.Count);
+        Assert.Equal(36, saved.Columns.Count);
         Assert.Equal(new ColumnPayload("Fixed", null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, false), saved.Columns[1]);
         Assert.Equal("Correo", saved.Columns[19].Header);
@@ -236,8 +236,10 @@ public sealed class OrdersExportLayoutApiTests
         await AssertDomainCodeAsync(client, tenantId, columns, "quotations.orders_export_layout.columns_invalid");
     }
 
+    // Ajuste 2026-09-25: una llave puede repetirse bajo otro encabezado. Se guarda cada entrada, y
+    // el GET devuelve las dos con el mismo defecto.
     [Fact]
-    public async Task PutWithARepeatedKeyIsColumnsInvalid()
+    public async Task PutWithARepeatedKeyUnderAnotherHeaderIsSaved()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -246,7 +248,18 @@ public sealed class OrdersExportLayoutApiTests
         var columns = await DefaultColumnsAsync(client, tenantId);
         columns.Add(columns[18] with { Header = "Otro correo" });
 
-        await AssertDomainCodeAsync(client, tenantId, columns, "quotations.orders_export_layout.columns_invalid");
+        using var response = await PutAsync(client, tenantId, columns, "\"1\"");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
+        var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(36, layout!.Columns.Count);
+        Assert.Equal(
+            [
+                new ColumnPayload("Catalog", "email", "Email", 19, "Email", null, true),
+                new ColumnPayload("Catalog", "email", "Email", 19, "Otro correo", null, true),
+            ],
+            layout.Columns.Where(column => column.Key == "email"));
     }
 
     [Fact]
@@ -276,27 +289,28 @@ public sealed class OrdersExportLayoutApiTests
         await AssertDomainCodeAsync(client, tenantId, columns, "quotations.orders_export_layout.all_hidden");
     }
 
-    // Review Focus 4: la undécima sobre una fila con diez la rechaza y deja la fila intacta.
+    // Review Focus 4: la fija 41 sobre una fila con cuarenta la rechaza y deja la fila intacta
+    // (el tope pasó de 10 a 40 el 2026-09-25).
     [Fact]
-    public async Task PutWithElevenFixedColumnsIsTooManyFixedColumns()
+    public async Task PutWithFortyOneFixedColumnsIsTooManyFixedColumns()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
-        var ten = await DefaultColumnsAsync(client, tenantId);
-        ten.AddRange(Enumerable.Range(1, 10).Select(number => Fixed($"Fija {number}", $"{number}")));
-        using var saved = await PutAsync(client, tenantId, ten, "\"1\"");
+        var forty = await DefaultColumnsAsync(client, tenantId);
+        forty.AddRange(Enumerable.Range(1, 40).Select(number => Fixed($"Fija {number}", $"{number}")));
+        using var saved = await PutAsync(client, tenantId, forty, "\"1\"");
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
-        var eleven = (await saved.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken))!.Columns.ToList();
-        eleven.Add(Fixed("Fija 11", "11"));
+        var fortyOne = (await saved.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken))!.Columns.ToList();
+        fortyOne.Add(Fixed("Fija 41", "41"));
 
-        await AssertDomainCodeAsync(client, tenantId, eleven, "quotations.orders_export_layout.too_many_fixed_columns", ifMatch: "\"2\"");
+        await AssertDomainCodeAsync(client, tenantId, fortyOne, "quotations.orders_export_layout.too_many_fixed_columns", ifMatch: "\"2\"");
 
         using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
         Assert.Equal("\"2\"", read.Headers.ETag?.Tag);
         var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(10, layout!.Columns.Count(column => column.Kind == "Fixed"));
+        Assert.Equal(40, layout!.Columns.Count(column => column.Kind == "Fixed"));
     }
 
     [Fact]
@@ -392,7 +406,7 @@ public sealed class OrdersExportLayoutApiTests
             await OutboxMessagesAsync(factory, AuditEvent), message => ActionOf(message) == AuditAction);
     }
 
-    // D8: un PUT no exige las 33; lo que falte va al final, visible y con su nombre.
+    // D8: un PUT no exige el catálogo entero; lo que falte va al final, visible y con su nombre.
     [Fact]
     public async Task PutWithoutSomeCatalogKeysCompletesThemAtTheEnd()
     {
@@ -406,7 +420,7 @@ public sealed class OrdersExportLayoutApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var layout = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(33, layout!.Columns.Count);
+        Assert.Equal(35, layout!.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal("order_number", layout.Columns[1].Key);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, true), layout.Columns[2]);
@@ -432,7 +446,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
         Assert.Equal("\"3\"", restored.Headers.ETag?.Tag);
         var layout = await restored.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(33, layout!.Columns.Count);
+        Assert.Equal(35, layout!.Columns.Count);
         Assert.DoesNotContain(layout.Columns, column => column.Kind == "Fixed");
         Assert.Equal(defaults, layout.Columns);
     }

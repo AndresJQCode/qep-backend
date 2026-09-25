@@ -55,7 +55,9 @@ public sealed class OrdersExportProcessor(
     /// de asesor) va después de "Email" para no mover lo que el ERP ya importa; "Banco", "Cuenta" y
     /// los pares "V. Comprobante N" / "URL Comprobante N" (2026-09-24) van al final por lo mismo; y
     /// de última "Valor Unit sin IVA" (<see cref="QuotationItem.UnitPriceWithoutTax"/>), mientras
-    /// "Valor Unit" sigue llevando el precio con IVA incluido.
+    /// "Valor Unit" sigue llevando el precio con IVA incluido. Detrás, por lo mismo, las dos que pidió
+    /// la hoja de importación del ERP (ajuste 2026-09-25): "Fecha Pedido" (<see cref="Order.CreatedAt"/>
+    /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura).
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Select(column => new ExportColumn(column.DefaultHeader, column.Width))
@@ -246,10 +248,14 @@ public sealed class OrdersExportProcessor(
         context.Customers.TryGetValue(quotation.ClientId, out var customer);
         var documento = customer?.Cuc ?? string.Empty;
 
-        var shipping = context.PartiesByQuotation.TryGetValue(quotation.Id, out var parties)
-            ? parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping)
-            : null;
+        var parties = context.PartiesByQuotation.TryGetValue(quotation.Id, out var foundParties)
+            ? foundParties
+            : [];
+        var shipping = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping);
+        var billingParty = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);
         var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
+        var cliente = BilledNameFor(quotation, billingParty, customer);
+        var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         var observaciones = quotation.Notes ?? string.Empty;
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
@@ -286,8 +292,38 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(cuenta),
                 .. proofCells,
                 ExportCell.OfNumber(item.UnitPriceWithoutTax),
+                ExportCell.OfText(fechaPedido),
+                ExportCell.OfText(cliente),
             ];
         }
+    }
+
+    // "Cliente" (ajuste 2026-09-25): a nombre de quién sale la factura, con la misma precedencia que
+    // el bloque Facturación del PDF (QuotationPdfDocumentMapper.BillingFor). Consumidor final gana
+    // —el dominio le prohíbe parte propia—; después la parte de facturación con datos propios, cuyo
+    // nombre escribió alguien; y con los datos del cliente, la razón social si la cotización factura
+    // a ella (CLI-RS-01) o el nombre de contacto. Una razón social pedida pero vacía cae al contacto
+    // en vez de dejar la celda en blanco. Todo sale de lo que el lote ya cargó: ninguna consulta
+    // por fila.
+    private static string BilledNameFor(
+        Quotation quotation, QuotationParty? billing, QuotationCustomerRef? customer)
+    {
+        if (quotation.BillsToFinalConsumer)
+        {
+            return FinalConsumer.Name;
+        }
+
+        if (billing?.Name is { Length: > 0 } billingName)
+        {
+            return billingName;
+        }
+
+        if (quotation.BillingUsesBusinessName && !string.IsNullOrWhiteSpace(customer?.BusinessName))
+        {
+            return customer.BusinessName;
+        }
+
+        return customer?.Name ?? string.Empty;
     }
 
     // La entrega con datos propios manda; sin ella, "los mismos datos del cliente" (el caso

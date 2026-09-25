@@ -30,7 +30,7 @@ public sealed class OrdersExportLayoutEffectiveTests
         Assert.All(effective, column => Assert.Equal(OrdersExportColumnKind.Catalog, column.Kind));
     }
 
-    // Sin fila, contra el catálogo real: las 33 en su orden, con sus nombres — el Excel de hoy.
+    // Sin fila, contra el catálogo real: las 35 en su orden, con sus nombres — el Excel de hoy.
     [Fact]
     public void WithoutAStoredLayoutTheRealCatalogComesOutWhole()
     {
@@ -91,6 +91,26 @@ public sealed class OrdersExportLayoutEffectiveTests
         var effective = OrdersExportLayout.Effective(stored, Catalog);
 
         Assert.Equal(["company", "email", "city"], effective.Select(column => column.Key));
+    }
+
+    // Ajuste 2026-09-25: una llave puede viajar bajo varios encabezados. Toda entrada guardada con
+    // llave conocida se conserva, repetidas incluidas y en su orden; al final sólo se completa lo
+    // que no aparece ni una vez.
+    [Fact]
+    public void RepeatedStoredKeysAreAllKeptAndNotCompletedAgain()
+    {
+        var stored = new[]
+        {
+            OrdersExportColumnSetting.Catalog("email", "Correo", visible: true),
+            OrdersExportColumnSetting.Catalog("company", "EMPRESA", visible: true),
+            OrdersExportColumnSetting.Catalog("email", "Correo 2", visible: false),
+        };
+
+        var effective = OrdersExportLayout.Effective(stored, Catalog);
+
+        Assert.Equal(["email", "company", "email", "city"], effective.Select(column => column.Key));
+        Assert.Equal(["Correo", "EMPRESA", "Correo 2", "Ciudad"], effective.Select(column => column.Header));
+        Assert.False(effective[2].Visible);
     }
 
     // La fija no tiene llave: la identifica su posición, y la conserva.

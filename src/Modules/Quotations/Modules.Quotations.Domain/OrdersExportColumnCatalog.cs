@@ -12,7 +12,9 @@ public sealed record OrdersExportCatalogColumn(string Key, string DefaultHeader,
 /// así que sin layout guardado el archivo es idéntico al de siempre.
 ///
 /// Sólo el backend agrega o quita llaves, al sumar una columna. Una llave es un identificador y
-/// no un texto: se compara ordinal y nunca se traduce ni se recorta.
+/// no un texto: se compara ordinal y nunca se traduce ni se recorta. En el catálogo cada llave
+/// está una vez; en el layout de un tenant puede repetirse bajo otros encabezados (ajuste
+/// 2026-09-25).
 /// </summary>
 public static class OrdersExportColumnCatalog
 {
@@ -47,6 +49,11 @@ public static class OrdersExportColumnCatalog
             new($"proof_url_{number}", $"URL Comprobante {number}", 60),
         }),
         new("unit_price_without_tax", "Valor Unit sin IVA", 18),
+        // Ajuste 2026-09-25, las dos que pide la hoja de importación del ERP (MIGRACION 1): el día
+        // en que nació el pedido y a nombre de quién sale la factura. Al final, como toda columna
+        // nueva, para no mover lo que el ERP ya importa sin layout guardado.
+        new("order_date", "Fecha Pedido", 14),
+        new("customer_name", "Cliente", 30),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
