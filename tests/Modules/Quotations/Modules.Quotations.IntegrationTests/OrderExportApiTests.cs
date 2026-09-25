@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
+using Modules.Quotations.Infrastructure.Seed;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -137,6 +138,7 @@ public sealed class OrderExportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
+        var today = TodayInBogota();
         await CreateOrderAsync(client, factory, tenantId);
         await CreateOrderAsync(client, factory, tenantId);
 
@@ -172,7 +174,7 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
-                "Valor Unit sin IVA",
+                "Valor Unit sin IVA", "Fecha Pedido", "Cliente",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -210,6 +212,12 @@ public sealed class OrderExportApiTests
         Assert.NotEqual(string.Empty, first[21]);
         // Sin comprobantes: los cinco pares de monto y enlace quedan vacíos.
         Assert.All(first.Skip(22).Take(10), cell => Assert.Equal(string.Empty, cell));
+        // "Fecha Pedido" (2026-09-25): el pedido nació hoy en Bogotá — o mañana, si la prueba
+        // cruzó la medianoche. Texto, no número.
+        Assert.Contains(first[33], new[] { Iso(today), Iso(today.AddDays(1)) });
+        Assert.False(sheet.NumericCells[1][33]);
+        // "Cliente": sin parte de facturación propia, el nombre de la ficha (CreateActiveCustomerAsync).
+        Assert.Equal("Verde Esencial S.A.S.", first[34]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -420,15 +428,15 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 33 del catálogo + 1 fija − 1 oculta.
-        Assert.Equal(33, header.Count);
+        // 35 del catálogo + 1 fija − 1 oculta.
+        Assert.Equal(35, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
         Assert.Equal("Cantidad", header[3]);
         Assert.DoesNotContain("EMPRESA", header);
         Assert.DoesNotContain("Email", header);
-        Assert.Equal("Valor Unit sin IVA", header[^1]);
+        Assert.Equal("Cliente", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -436,6 +444,42 @@ public sealed class OrderExportApiTests
         Assert.NotEqual(string.Empty, row[2]);
         Assert.True(sheet.NumericCells[1][3]);
         Assert.Equal(1m, decimal.Parse(row[3], CultureInfo.InvariantCulture));
+    }
+
+    // Ajuste 2026-09-25, de punta a punta: el layout de la semilla (la hoja MIGRACION 1 del ERP del
+    // tenant) produce exactamente sus 47 encabezados, con la fecha del pedido repetida bajo FECHA,
+    // Bloq/act y Vencimiento, y las fijas con su texto en cada fila.
+    [Fact]
+    public async Task TheSeededLayoutProducesTheErpImportSheet()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var today = TodayInBogota();
+        await CreateOrderAsync(client, factory, tenantId);
+        await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}", content: null, TestContext.Current.CancellationToken);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+
+        var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders, sheet.Rows[0]);
+        var row = sheet.Rows[1];
+        Assert.Equal(47, row.Count);
+        Assert.Equal("QEP Comercial S.A.S.", row[0]);
+        Assert.Equal(["FV", "PM", string.Empty], row.Skip(1).Take(3));
+        Assert.Contains(row[4], new[] { Iso(today), Iso(today.AddDays(1)) });
+        Assert.Equal(row[4], row[9]);
+        Assert.Equal(row[4], row[26]);
+        Assert.Equal("Verde Esencial S.A.S.", row[6]);
+        Assert.Equal("Bancolombia", row[10]);
+        Assert.Equal("Coordinadora", row[30]);
+        Assert.Equal("901851609", row[46]);
     }
 
     /// <summary>El layout de la prueba: una fija "Tipo Doc" = "FV" primero, "Email" renombrada

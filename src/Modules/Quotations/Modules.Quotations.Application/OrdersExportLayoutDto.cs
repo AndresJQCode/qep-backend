@@ -6,9 +6,10 @@ namespace Modules.Quotations.Application;
 /// Una columna del layout efectivo (spec 2026-09-24, "Application y API"). <c>DefaultHeader</c> y
 /// <c>DefaultPosition</c> viajan por columna (regla BFF del repo): la pantalla los necesita como
 /// placeholder del input, para "restaurar" una sola y para "restaurar todo" sin conocer el
-/// catálogo. <c>DefaultPosition</c> es 1-based (1..33), como la columna # de la tabla del spec: es
-/// la posición que la pantalla muestra. Nulos en una fija, que no tiene defecto; <c>Value</c> nulo
-/// en una del catálogo.
+/// catálogo. <c>DefaultPosition</c> es 1-based (1..35), como la columna # de la tabla del spec: es
+/// la posición que la pantalla muestra. Una llave repetida (ajuste 2026-09-25) trae el mismo
+/// <c>DefaultHeader</c> y <c>DefaultPosition</c> en cada entrada. Nulos en una fija, que no tiene
+/// defecto; <c>Value</c> nulo en una del catálogo.
 /// </summary>
 public sealed record OrdersExportColumnDto(
     string Kind,

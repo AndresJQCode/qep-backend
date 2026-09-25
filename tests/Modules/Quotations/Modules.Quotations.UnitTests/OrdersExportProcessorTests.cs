@@ -54,7 +54,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
-                "Valor Unit sin IVA",
+                "Valor Unit sin IVA", "Fecha Pedido", "Cliente",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -63,7 +63,7 @@ public sealed class OrdersExportProcessorTests
     // precio unitario con el IVA que trae adentro quitado; "Valor Unit" sigue siendo el precio con
     // IVA, que es como se carga QuotationItem.UnitPrice. El descuento no entra en ninguno de los dos.
     [Fact]
-    public async Task ValorUnitSinIvaIsTheLastColumnWithTheVatRemovedFromTheUnitPrice()
+    public async Task ValorUnitSinIvaFollowsTheProofsWithTheVatRemovedFromTheUnitPrice()
     {
         var writer = new RecordingExportWorkbookWriter();
         var row = NewRow("PED-2026-0001", items: [(ProductId, 3m, 119_000m, 10m, 19)]);
@@ -71,12 +71,126 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Valor Unit sin IVA", writer.Columns[^1].Header);
+        Assert.Equal("Valor Unit sin IVA", writer.Columns[ValorUnitSinIvaIndex].Header);
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
         Assert.Equal(119_000m, cells[3].Number);
-        Assert.Equal(100_000m, cells[^1].Number);
-        Assert.Null(cells[^1].Text);
+        Assert.Equal(100_000m, cells[ValorUnitSinIvaIndex].Number);
+        Assert.Null(cells[ValorUnitSinIvaIndex].Text);
+    }
+
+    private const int ValorUnitSinIvaIndex = 32;
+
+    private const int FechaPedidoIndex = 33;
+
+    private const int ClienteIndex = 34;
+
+    // Ajuste 2026-09-25: "Fecha Pedido" es el día en que nació el pedido (Order.CreatedAt), en el
+    // día del tenant y no en UTC — 22:00 de Bogotá ya es el día siguiente en UTC. Texto, como
+    // "Fecha Pago N", porque el ERP lo importa tal cual.
+    [Fact]
+    public async Task FechaPedidoIsTheOrdersCreationDayInTheTenantsLocalTime()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var createdAt = new DateTimeOffset(2026, 9, 12, 3, 0, 0, TimeSpan.Zero); // 22:00 del 11 en Bogotá.
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", at: createdAt)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Fecha Pedido", 14), writer.Columns[FechaPedidoIndex]);
+        var cell = Assert.Single(writer.Rows)[FechaPedidoIndex];
+        Assert.Equal(ExportCell.OfText("2026-09-11"), cell);
+    }
+
+    // Ajuste 2026-09-25: "Cliente" es a nombre de quién sale la factura, con la misma precedencia
+    // que el PDF: consumidor final, la parte de facturación propia, la razón social si la
+    // cotización factura a ella, y si no el nombre de contacto de la ficha.
+    [Fact]
+    public async Task ClienteIsTheCustomersNameWithoutABillingParty()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Cliente", 30), writer.Columns[ClienteIndex]);
+        Assert.Equal(ExportCell.OfText("Ferretería El Tornillo"), Assert.Single(writer.Rows)[ClienteIndex]);
+    }
+
+    [Fact]
+    public async Task ClienteIsTheBillingPartysNameWhenTheQuotationHasOne()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: new QuotationPartyDetails { Name = "Distribuciones Andinas S.A.S.", Phone = "6015550000" },
+            Shipping: null,
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Distribuciones Andinas S.A.S.", Assert.Single(writer.Rows)[ClienteIndex].Text);
+    }
+
+    [Fact]
+    public async Task ClienteIsTheBusinessNameWhenTheQuotationBillsToIt()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = "Tornillos del Valle S.A.S." });
+        var parties = QuotationParties.Empty with { BillingUsesBusinessName = true };
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                writer,
+                customers: customers)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Tornillos del Valle S.A.S.", Assert.Single(writer.Rows)[ClienteIndex].Text);
+    }
+
+    // Una razón social pedida pero vacía en la ficha no deja la celda en blanco: cae al contacto.
+    [Fact]
+    public async Task ClienteFallsBackToTheContactNameWhenTheBusinessNameIsMissing()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = QuotationParties.Empty with { BillingUsesBusinessName = true };
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Ferretería El Tornillo", Assert.Single(writer.Rows)[ClienteIndex].Text);
+    }
+
+    [Fact]
+    public async Task ClienteIsFinalConsumerWhenTheQuotationBillsToIt()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = QuotationParties.Empty with { BillsToFinalConsumer = true };
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(FinalConsumer.Name, Assert.Single(writer.Rows)[ClienteIndex].Text);
+    }
+
+    // Un cliente que el lookup no devuelve deja la celda vacía, sin correr las columnas.
+    [Fact]
+    public async Task ClienteIsEmptyWhenTheCustomerDoesNotResolve()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer);
+        customers.Refs.Clear();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001")),
+                writer,
+                customers: customers)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(writer.Columns.Count, row.Count);
+        Assert.Equal(ExportCell.OfText(string.Empty), row[ClienteIndex]);
     }
 
     [Fact]
@@ -623,11 +737,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(32, writer.Columns.Count);
+        Assert.Equal(34, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("Valor Unit sin IVA", writer.Columns[^1].Header);
+        Assert.Equal("Cliente", writer.Columns[^1].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -658,7 +772,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(35, writer.Columns.Count);
+        Assert.Equal(37, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc", OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -675,7 +789,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 33 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 35 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {
@@ -708,6 +822,30 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(["Pedido", "A", "B", "Email", "C", "EMPRESA"], writer.Columns.Take(6).Select(column => column.Header));
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(["PED-2026-0001", "a", "b", "cliente@ejemplo.co", "c", string.Empty], cells.Take(6).Select(cell => cell.Text));
+    }
+
+    // Ajuste 2026-09-25: una llave repetida escribe la misma celda bajo cada uno de sus encabezados
+    // — el ERP del tenant lee la fecha del pedido en FECHA, Bloq/act y Vencimiento.
+    [Fact]
+    public async Task ARepeatedKeyWritesTheSameCellUnderEachOfItsHeaders()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_date", "FECHA", visible: true),
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("order_date", "Bloq/act", visible: true),
+            OrdersExportColumnSetting.Catalog("order_date", "Vencimiento", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new ExportColumn[] { new("FECHA", 14), new("Pedido", 18), new("Bloq/act", 14), new("Vencimiento", 14) },
+            writer.Columns.Take(4));
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Fecha Pedido");
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(writer.Columns.Count, cells.Count);
+        Assert.Equal(["2026-09-12", "PED-2026-0001", "2026-09-12", "2026-09-12"], cells.Take(4).Select(cell => cell.Text));
     }
 
     // El layout se resuelve una vez por job: no por lote ni por fila.
