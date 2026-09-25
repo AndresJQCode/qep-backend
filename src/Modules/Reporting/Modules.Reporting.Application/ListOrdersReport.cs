@@ -19,7 +19,8 @@ public sealed class ListOrdersReportHandler(
     IOrdersReportSource source,
     IValidator<OrdersReportFilter> validator,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IMembershipDirectory membershipDirectory)
     : IQueryHandler<ListOrdersReportQuery, ReportPage<OrdersReportItemDto>>
 {
     public async Task<ReportPage<OrdersReportItemDto>> HandleAsync(
@@ -29,15 +30,26 @@ public sealed class ListOrdersReportHandler(
         // Autorizar primero, siempre: antes de validar y antes de tocar ningun origen de datos.
         ReportingAuthorization.EnsureAuthorized(
             executionContext, query.Filter.TenantId, ReportingPermissions.OrdersRead);
-        await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
+        // Sin reporting.all_advisors.read, el asesor lo decide quien llama y no la URL. Ver
+        // ReportingAuthorization.ScopeAdvisorAsync.
+        var filter = query.Filter with
+        {
+            AdvisorId = await ReportingAuthorization.ScopeAdvisorAsync(
+                executionContext,
+                membershipDirectory,
+                query.Filter.TenantId,
+                query.Filter.AdvisorId,
+                cancellationToken),
+        };
+        await validator.ValidateAndThrowAsync(filter, cancellationToken);
 
         var page = ReportPaging.NormalizePage(query.Page);
         var pageSize = ReportPaging.NormalizePageSize(query.PageSize);
 
         // El rango se corta en el día del tenant (spec 2026-09-17, punto 4).
-        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
+        var calendar = await tenantClock.GetAsync(filter.TenantId, cancellationToken);
         var (items, total) = await source.ListAsync(
-            query.Filter.ToCriteria(calendar), page, pageSize, cancellationToken);
+            filter.ToCriteria(calendar), page, pageSize, cancellationToken);
 
         return new ReportPage<OrdersReportItemDto>(items, total, page, pageSize);
     }

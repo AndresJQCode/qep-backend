@@ -607,6 +607,9 @@ public static class QepServiceCollectionExtensions
                 ReportingPermissions.QuotationRead,
                 ReportingPermissions.PriceChangeRead,
                 ReportingPermissions.CustomerRead,
+                // Sólo admin (decisión 2026-09-24): ver en los reportes de pedidos y cotizaciones
+                // a todos los asesores. Sin él, el handler acota el reporte al asesor que llama.
+                ReportingPermissions.AllAdvisorsRead,
                 // Solo admin: el log expone trazas y mensajes crudos de todos los modulos.
                 PlatformPermissions.RequestLogRead,
                 PlatformPermissions.RequestLogPurge
@@ -864,6 +867,15 @@ public static class QepServiceCollectionExtensions
             "Permite consultar y exportar el padron de clientes (Clientes CUC) del tenant.",
             "Reporting",
             "low"));
+        // Medio y no bajo, mismo criterio que PriceChangeRead: es la venta de cada asesor vista
+        // por otro. No abre ningún reporte por sí solo; amplía el alcance de los de pedidos y
+        // cotizaciones, que sin él muestran sólo lo de quien consulta.
+        services.AddSingleton(new PermissionDefinition(
+            ReportingPermissions.AllAdvisorsRead,
+            "Ver reportes de todos los asesores",
+            "Permite ver en los reportes de pedidos y cotizaciones los datos de todos los asesores, no sólo los propios.",
+            "Reporting",
+            "medium"));
         // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
         // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
         services.AddSingleton(new PermissionDefinition(
@@ -1095,6 +1107,12 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 ReportingPermissions.CustomerRead,
                 policy => AddPermissionRequirement(policy, ReportingPermissions.CustomerRead))
+            // Hoy ningún endpoint la pide con RequireAuthorization —el permiso lo miran los
+            // handlers para acotar el alcance—, pero todo permiso del catálogo tiene su política:
+            // el día que un endpoint la use, no aparece un 500 que no se parece a su causa.
+            .AddPolicy(
+                ReportingPermissions.AllAdvisorsRead,
+                policy => AddPermissionRequirement(policy, ReportingPermissions.AllAdvisorsRead))
             .AddPolicy(
                 PlatformPermissions.RequestLogRead,
                 policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogRead))

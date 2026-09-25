@@ -105,7 +105,8 @@ public sealed class QuotationsReportSummaryHandlerTests
             source,
             new QuotationsReportFilterValidator(),
             new FakeExecutionContext(Tenant, ReportingPermissions.QuotationRead),
-            new FixedTenantClock(NewYearsEveInBogota));
+            new FixedTenantClock(NewYearsEveInBogota),
+            new FakeMembershipDirectory());
 
         await handler.HandleAsync(
             new GetQuotationsReportSummaryQuery(Filter()),
@@ -172,7 +173,10 @@ public sealed class QuotationsReportSummaryHandlerTests
         {
             PrecedingAggregate = FakeQuotationsReportSource.EmptyAggregate(),
         };
-        var handler = Handler(source, Tenant, ReportingPermissions.QuotationRead);
+        // Con el permiso de ver a todos: sin él, el asesor pedido se reemplaza por el propio y
+        // esta prueba mediría el acotamiento, no que la ventana anterior conserve los filtros.
+        var handler = Handler(
+            source, Tenant, ReportingPermissions.QuotationRead, ReportingPermissions.AllAdvisorsRead);
 
         await handler.HandleAsync(
             new GetQuotationsReportSummaryQuery(Filter(
@@ -223,7 +227,8 @@ public sealed class QuotationsReportSummaryHandlerTests
             source,
             new QuotationsReportFilterValidator(),
             new FakeExecutionContext(callerTenant, permissions),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            new FakeMembershipDirectory());
 
     private static QuotationsReportFilter Filter(
         DateOnly? from = null,

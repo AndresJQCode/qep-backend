@@ -121,7 +121,8 @@ public sealed class GetQuotationsReportSummaryHandler(
     IQuotationsReportSource source,
     IValidator<QuotationsReportFilter> validator,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IMembershipDirectory membershipDirectory)
     : IQueryHandler<GetQuotationsReportSummaryQuery, QuotationsReportSummaryDto>
 {
     public async Task<QuotationsReportSummaryDto> HandleAsync(
@@ -131,11 +132,23 @@ public sealed class GetQuotationsReportSummaryHandler(
         // Autorizar primero, siempre: antes de validar y antes de tocar ningún origen de datos.
         ReportingAuthorization.EnsureAuthorized(
             executionContext, query.Filter.TenantId, ReportingPermissions.QuotationRead);
-        await validator.ValidateAndThrowAsync(query.Filter, cancellationToken);
+        // Sin reporting.all_advisors.read, el asesor lo decide quien llama y no la URL. Se acota
+        // el filtro una sola vez, acá arriba, para que el ranking por asesor, la cola de
+        // vencimientos y la ventana anterior hereden el mismo alcance.
+        var filter = query.Filter with
+        {
+            AdvisorId = await ReportingAuthorization.ScopeAdvisorAsync(
+                executionContext,
+                membershipDirectory,
+                query.Filter.TenantId,
+                query.Filter.AdvisorId,
+                cancellationToken),
+        };
+        await validator.ValidateAndThrowAsync(filter, cancellationToken);
 
         // El rango y la ventana anterior se cortan con el mismo calendario (spec 2026-09-17, punto 4).
-        var calendar = await tenantClock.GetAsync(query.Filter.TenantId, cancellationToken);
-        var criteria = query.Filter.ToCriteria(calendar);
+        var calendar = await tenantClock.GetAsync(filter.TenantId, cancellationToken);
+        var criteria = filter.ToCriteria(calendar);
         // "Hoy" es el día del tenant, el mismo en el que se corta el rango (spec 2026-09-17, punto 6):
         // "vencidas", "por vencer" y DaysLeft no pueden adelantarse un día desde las 19:00 en Bogotá.
         var options = new QuotationsSummaryOptions(
@@ -156,7 +169,7 @@ public sealed class GetQuotationsReportSummaryHandler(
             current.ByAdvisor,
             current.Validity,
             current.Expiring,
-            await SummarizePrecedingAsync(query.Filter, criteria, calendar, options, cancellationToken));
+            await SummarizePrecedingAsync(filter, criteria, calendar, options, cancellationToken));
     }
 
     /// <summary>

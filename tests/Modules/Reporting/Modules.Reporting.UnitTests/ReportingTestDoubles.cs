@@ -17,6 +17,44 @@ internal sealed class FakeExecutionContext(Guid tenantId, params string[] permis
     public bool HasPermission(string permission) => permissions.Contains(permission);
 }
 
+/// <summary>
+/// El directorio de membresías con la respuesta que la prueba elija. Por defecto quien llama
+/// tiene membresía activa con id <see cref="CallerMembershipId"/>, que es el asesor al que un
+/// llamador sin <c>reporting.all_advisors.read</c> queda acotado. Nulo simula a alguien sin
+/// membresía activa en el tenant.
+/// </summary>
+internal sealed class FakeMembershipDirectory(Guid? activeMembershipId) : IMembershipDirectory
+{
+    public static readonly Guid CallerMembershipId = Guid.Parse("01900000-0000-7000-8000-0000000000c1");
+
+    public FakeMembershipDirectory()
+        : this(CallerMembershipId)
+    {
+    }
+
+    public List<(Guid UserId, Guid TenantId)> Lookups { get; } = [];
+
+    public Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(
+        Guid userId,
+        Guid tenantId,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Reporting no pregunta por roles.");
+
+    public Task<Guid?> FindActiveMembershipIdAsync(
+        Guid userId,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        Lookups.Add((userId, tenantId));
+        return Task.FromResult(activeMembershipId);
+    }
+
+    public Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Reporting no pregunta por membresías históricas.");
+}
+
 /// <summary>El calendario de un tenant en un huso fijo, Bogotá por defecto (spec 2026-09-17). Sin
 /// instante, media tarde del 3 de septiembre de 2026 en UTC: las pruebas que no miran el hoy no
 /// tienen que inventarlo.</summary>
@@ -105,6 +143,8 @@ internal sealed class FakeQuotationsReportSource : IQuotationsReportSource
 
     public List<QuotationsSummaryOptions> SummarizedOptions { get; } = [];
 
+    public QuotationsReportCriteria? LastCriteria { get; private set; }
+
     public Task<QuotationsReportAggregate> SummarizeAsync(
         QuotationsReportCriteria criteria,
         QuotationsSummaryOptions options,
@@ -120,8 +160,11 @@ internal sealed class FakeQuotationsReportSource : IQuotationsReportSource
         QuotationsReportCriteria criteria,
         int page,
         int pageSize,
-        CancellationToken cancellationToken) =>
-        Task.FromResult(((IReadOnlyList<QuotationsReportItemDto>)[], 0));
+        CancellationToken cancellationToken)
+    {
+        LastCriteria = criteria;
+        return Task.FromResult(((IReadOnlyList<QuotationsReportItemDto>)[], 0));
+    }
 
     public static QuotationsReportAggregate EmptyAggregate(
         int quotationCount = 0,

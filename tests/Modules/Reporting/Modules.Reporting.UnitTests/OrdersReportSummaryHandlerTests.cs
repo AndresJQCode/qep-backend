@@ -149,7 +149,10 @@ public sealed class OrdersReportSummaryHandlerTests
             Aggregate = Aggregate(),
             PrecedingAggregate = Aggregate(),
         };
-        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
+        // Con el permiso de ver a todos: sin él, el asesor pedido se reemplaza por el propio y
+        // esta prueba mediría el acotamiento, no que la ventana anterior conserve los filtros.
+        var handler = Handler(
+            source, Tenant, ReportingPermissions.OrdersRead, ReportingPermissions.AllAdvisorsRead);
 
         await handler.HandleAsync(
             new GetOrdersReportSummaryQuery(Filter(
@@ -187,7 +190,8 @@ public sealed class OrdersReportSummaryHandlerTests
             source,
             new OrdersReportFilterValidator(),
             new FakeExecutionContext(callerTenant, permissions),
-            new FixedTenantClock());
+            new FixedTenantClock(),
+            new FakeMembershipDirectory());
 
     private static OrdersReportFilter Filter(
         DateOnly? from = null,

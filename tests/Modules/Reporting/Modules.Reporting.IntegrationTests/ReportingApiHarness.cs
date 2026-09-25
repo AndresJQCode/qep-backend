@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,6 +13,7 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Reporting.Application;
 using Modules.Storage.Application;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Reporting.IntegrationTests;
@@ -80,10 +82,19 @@ internal static class ReportingApiHarness
         ReportingPermissions.OrdersRead,
         ReportingPermissions.QuotationRead,
         ReportingPermissions.PriceChangeRead,
-        ReportingPermissions.CustomerRead
+        ReportingPermissions.CustomerRead,
+        // Quien administra ve a todos los asesores. Sin este, el handler acota los reportes de
+        // pedidos y cotizaciones al asesor que llama (decisión 2026-09-24).
+        ReportingPermissions.AllAdvisorsRead
     ];
 
-    /// <summary>Los mismos permisos de siembra, sin **ninguno** de los cuatro de Reporting: es lo
+    /// <summary>Los de <see cref="ManagerPermissions"/> menos
+    /// <see cref="ReportingPermissions.AllAdvisorsRead"/>: una asesora que siembra y lee sus
+    /// reportes, pero sólo ve lo suyo.</summary>
+    public static readonly string[] OwnAdvisorPermissions =
+        [.. ManagerPermissions.Where(permission => permission != ReportingPermissions.AllAdvisorsRead)];
+
+    /// <summary>Los mismos permisos de siembra, sin **ninguno** de los de Reporting: es lo
     /// que necesita una prueba de 403 por permiso faltante para que el 403 venga del permiso que
     /// se esta probando.</summary>
     public static readonly string[] SeedOnlyPermissions =
@@ -151,6 +162,74 @@ internal static class ReportingApiHarness
         var client = CreateClient(
             factory, registered.OwnerUserId.ToString(), registered.TenantId.ToString(), permissions);
         return new RegisteredTenant(registered.TenantId, registered.OwnerUserId, email, client);
+    }
+
+    /// <summary>
+    /// Una segunda asesora con membresía <c>Active</c> en el tenant: la invita el dueño y ella
+    /// acepta el link, igual que en <c>InvitationApiTests</c>. Hace falta la vuelta completa y no
+    /// un INSERT porque cotizar exige una membresía activa de verdad (la cotización graba su
+    /// <c>MemberId</c> como asesor).
+    ///
+    /// El token plano no vive en ninguna tabla: se pesca del payload del evento de outbox, el único
+    /// lugar por donde viaja rumbo al correo.
+    /// </summary>
+    private static readonly string[] AdvisorRole = ["advisor"];
+
+    public static async Task<InvitedAdvisor> InviteActiveAdvisorAsync(
+        QepApiFactory factory,
+        PostgreSqlContainer database,
+        RegisteredTenant tenant,
+        params string[] permissions)
+    {
+        // Sin X-Permissions el stub concede los de tenancy, que traen advisorship.invite.
+        using var owner = CreateClient(
+            factory, tenant.OwnerUserId.ToString(), tenant.TenantId.ToString());
+        var email = $"advisor-{Guid.CreateVersion7():N}@example.com";
+        var invited = await owner.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenant.TenantId}/memberships",
+            new { email, displayName = "Asesora Invitada", roles = AdvisorRole },
+            TestContext.Current.CancellationToken);
+        invited.EnsureSuccessStatusCode();
+        var membership = await invited.Content.ReadFromJsonAsync<InvitedMembershipDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(membership);
+
+        var token = await FindInvitationTokenAsync(database, membership.Id);
+        using var accepting = CreateClient(
+            factory, membership.UserId.ToString(), tenant.TenantId.ToString());
+        var accepted = await accepting.PostAsync(
+            $"/api/v1/invitations/{token}/accept",
+            content: null,
+            TestContext.Current.CancellationToken);
+        accepted.EnsureSuccessStatusCode();
+
+        var client = CreateClient(
+            factory, membership.UserId.ToString(), tenant.TenantId.ToString(), permissions);
+        return new InvitedAdvisor(membership.Id, membership.UserId, email, client);
+    }
+
+    private static async Task<string> FindInvitationTokenAsync(
+        PostgreSqlContainer database, Guid membershipId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT payload::text FROM platform.outbox_messages
+            WHERE event_name = 'tenancy.membership-invited.v1'
+              AND payload::text LIKE '%' || @membershipId || '%'
+            ORDER BY occurred_at DESC
+            LIMIT 1
+            """,
+            connection);
+        command.Parameters.AddWithValue("membershipId", membershipId.ToString());
+        var payload = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+        Assert.NotNull(payload);
+
+        using var document = JsonDocument.Parse(payload);
+        var token = document.RootElement.GetProperty("token").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(token));
+        return token;
     }
 
     public static async Task<Guid> EnsureCityIdAsync(HttpClient client)
@@ -497,7 +576,14 @@ internal static class ReportingApiHarness
     internal sealed record SeededCustomer(
         Guid Id, string Cuc, Guid ClassificationId, Guid CityId);
 
+    /// <summary><c>MembershipId</c> es el <c>advisorId</c> de los reportes: la cotización graba
+    /// la membresía, no el usuario.</summary>
+    internal sealed record InvitedAdvisor(
+        Guid MembershipId, Guid UserId, string Email, HttpClient Client);
+
     private sealed record RegisterTenantResponseDto(Guid TenantId, Guid OwnerUserId);
+
+    private sealed record InvitedMembershipDto(Guid Id, Guid UserId);
 
     private sealed record GeographyDepartmentDto(Guid Id, string DivipolaCode, string Name);
 
