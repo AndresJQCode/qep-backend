@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 38 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 39 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -19,7 +19,7 @@ public sealed class OrdersExportColumnCatalogTests
         "proof_amount_1", "proof_url_1", "proof_amount_2", "proof_url_2", "proof_amount_3", "proof_url_3",
         "proof_amount_4", "proof_url_4", "proof_amount_5", "proof_url_5",
         "unit_price_without_tax", "order_date", "customer_name", "customer_identification",
-        "bank_account", "proof_amount_total",
+        "bank_account", "proof_amount_total", "tax_rate",
     ];
 
     private static readonly string[] Headers =
@@ -33,13 +33,13 @@ public sealed class OrdersExportColumnCatalogTests
         "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
         "V. Comprobante 5", "URL Comprobante 5",
         "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-        "Banco y cuenta", "Total consignado",
+        "Banco y cuenta", "Total consignado", "Tasa IVA",
     ];
 
     [Fact]
-    public void HasTheThirtyEightColumnsOfTheSpecInItsOrder()
+    public void HasTheThirtyNineColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(38, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(39, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -75,9 +75,21 @@ public sealed class OrdersExportColumnCatalogTests
             OrdersExportColumnCatalog.Columns[36]);
         Assert.Equal(
             new OrdersExportCatalogColumn("proof_amount_total", "Total consignado", 18),
-            OrdersExportColumnCatalog.Columns[^1]);
+            OrdersExportColumnCatalog.Columns[37]);
         Assert.Equal(20, OrdersExportColumnCatalog.IndexOf("bank"));
         Assert.Equal(22, OrdersExportColumnCatalog.IndexOf("proof_amount_1"));
+    }
+
+    // Ajuste 2026-09-26: la tasa de IVA de cada línea como fracción, que es lo que el ERP importa en
+    // "IVA". Detrás de todas, y "tax" sigue siendo el monto: otros ERP lo leen ahí.
+    [Fact]
+    public void TaxRateIsAppendedAtTheEnd()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("tax_rate", "Tasa IVA", 12),
+            OrdersExportColumnCatalog.Columns[^1]);
+        Assert.Equal(38, OrdersExportColumnCatalog.IndexOf("tax_rate"));
+        Assert.Equal(4, OrdersExportColumnCatalog.IndexOf("tax"));
     }
 
     // Las llaves son identificadores: únicas, y el tenant no puede inventar ni repetir una.

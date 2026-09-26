@@ -104,7 +104,9 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("U.Medida", "Und.", visible: true),
         OrdersExportColumnSetting.Catalog("quantity", "Cantidad", visible: true),
         OrdersExportColumnSetting.Catalog("unit_price_without_tax", "Valor Unit", visible: true),
-        OrdersExportColumnSetting.Fixed("IVA", "0.19", visible: true),
+        // Ajuste 2026-09-26: la tasa de cada línea y no un 0.19 fijo, porque hay productos con otra
+        // tarifa. "tax" (el monto) queda entre las ocultas.
+        OrdersExportColumnSetting.Catalog("tax_rate", "IVA", visible: true),
         OrdersExportColumnSetting.Catalog("discount", "Descuento", visible: true),
         OrdersExportColumnSetting.Fixed("Lote", string.Empty, visible: true),
         OrdersExportColumnSetting.Fixed("Centro costos", string.Empty, visible: true),
@@ -131,7 +133,7 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("valor flete", string.Empty, visible: true),
         OrdersExportColumnSetting.Fixed("# Rotulos", "1", visible: true),
         OrdersExportColumnSetting.Catalog("email", "Email", visible: true),
-        OrdersExportColumnSetting.Fixed("GeneraGuia", "X", visible: true),
+        OrdersExportColumnSetting.Fixed("GeneraGuia", string.Empty, visible: true),
         OrdersExportColumnSetting.Fixed("GeneraFactura", string.Empty, visible: true),
         OrdersExportColumnSetting.Fixed("Nit", "901851609", visible: true),
         .. HiddenCatalogKeys().Select(key => OrdersExportColumnSetting.Catalog(

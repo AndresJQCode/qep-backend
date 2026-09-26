@@ -71,6 +71,46 @@ internal static class QuotationHeaderRules
 }
 
 /// <summary>
+/// Las reglas de campo de las partes, compartidas por la creación, el guardado y su cálculo
+/// previo. El dominio ya las hace cumplir con su código
+/// (<c>quotation.billing.identification_required</c>); esto existe para que el 422 traiga el campo
+/// en el mapa <c>errors</c> —<c>Parties.Billing.IdentificationNumber</c>—, que es lo único con lo
+/// que el formulario sabe marcar el input.
+///
+/// <paramref name="requireBillingIdentification"/> en false es el cálculo previo: la persona
+/// todavía está escribiendo, y exigir el número ahí sería un 422 en cada tecla. El tope de largo
+/// sí aplica siempre — un número demasiado largo no se arregla escribiendo más.
+///
+/// La parte de entrega no se valida: el formulario la manda siempre con
+/// <c>identificationNumber: ""</c> y el dominio la descarta.
+///
+/// Interno a propósito: el escaneo de validadores del composition root sólo registra los
+/// públicos, y éste no es un punto de entrada sino una pieza de los tres de arriba.
+/// </summary>
+internal sealed class QuotationPartiesRequestValidator : AbstractValidator<QuotationPartiesRequest>
+{
+    public QuotationPartiesRequestValidator(bool requireBillingIdentification)
+    {
+        // Con consumidor final una parte propia es otro error, con su propio código de dominio
+        // (quotation.billing.final_consumer_conflict): un 422 de campo lo taparía.
+        RuleFor(parties => parties.Billing!.IdentificationNumber)
+            .NotEmpty()
+            .WithMessage("The identification number is required when billing to someone else.")
+            .When(parties =>
+                requireBillingIdentification
+                && !parties.BillsToFinalConsumer
+                && !string.IsNullOrWhiteSpace(parties.Billing?.Name));
+
+        // Contra el valor recortado, que es lo que el dominio guarda y compara.
+        RuleFor(parties => parties.Billing!.IdentificationNumber)
+            .Must(number => number!.Trim().Length <= QuotationPartyDetails.IdentificationNumberMaxLength)
+            .WithMessage(
+                $"The identification number cannot exceed {QuotationPartyDetails.IdentificationNumberMaxLength} characters.")
+            .When(parties => parties.Billing?.IdentificationNumber is not null);
+    }
+}
+
+/// <summary>
 /// Abstracta a propósito, igual que <see cref="OrderEditsValidator{TEdits}"/>: el escaneo de
 /// validadores del composition root sólo registra las dos concretas.
 ///
@@ -82,9 +122,14 @@ internal static class QuotationHeaderRules
 public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits>
     where TEdits : IQuotationEdits
 {
-    protected QuotationEditsValidator()
+    // El guardado exige el documento de la facturación; el cálculo previo no (ver
+    // QuotationPartiesRequestValidator). Es la única regla en la que los dos difieren.
+    protected QuotationEditsValidator(bool requireBillingIdentification = true)
     {
         QuotationHeaderRules.AddTo(this);
+        RuleFor(edits => edits.Parties!)
+            .SetValidator(new QuotationPartiesRequestValidator(requireBillingIdentification))
+            .When(edits => edits.Parties is not null);
 
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {

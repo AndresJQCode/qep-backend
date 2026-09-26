@@ -302,6 +302,9 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(documentoIdentidad),
                 ExportCell.OfText(bancoYCuenta),
                 totalConsignado,
+                // La foto de la tasa que la línea tomó del producto al agregarse, no la de hoy: el
+                // pedido ya se cobró con ésa.
+                ExportCell.OfNumber(item.TaxPercentage / 100m),
             ];
         }
     }
@@ -362,9 +365,11 @@ public sealed class OrdersExportProcessor(
             return FinalConsumer.IdentificationNumber;
         }
 
+        // Con nombre propio la factura sale a otra persona, con su documento. Una fila guardada
+        // antes de que existiera el número no lo tiene: vacío, nunca el del cliente, que es otro.
         if (billing?.Name is { Length: > 0 })
         {
-            return string.Empty;
+            return billing.IdentificationNumber ?? string.Empty;
         }
 
         return customer?.IdentificationNumber ?? string.Empty;

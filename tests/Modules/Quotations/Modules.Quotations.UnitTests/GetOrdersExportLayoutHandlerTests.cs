@@ -23,7 +23,7 @@ public sealed class GetOrdersExportLayoutHandlerTests
 
         Assert.Equal(TenantId, dto.TenantId);
         Assert.Equal(1, dto.Version);
-        Assert.Equal(38, dto.Columns.Count);
+        Assert.Equal(39, dto.Columns.Count);
         Assert.All(dto.Columns, column => Assert.Equal("Catalog", column.Kind));
         Assert.All(dto.Columns, column => Assert.True(column.Visible));
         Assert.All(dto.Columns, column => Assert.Null(column.Value));
@@ -43,6 +43,9 @@ public sealed class GetOrdersExportLayoutHandlerTests
         Assert.Equal(
             new OrdersExportColumnDto("Catalog", "proof_amount_total", "Total consignado", 38, "Total consignado", null, true),
             dto.Columns[37]);
+        Assert.Equal(
+            new OrdersExportColumnDto("Catalog", "tax_rate", "Tasa IVA", 39, "Tasa IVA", null, true),
+            dto.Columns[38]);
     }
 
     [Fact]
@@ -63,7 +66,7 @@ public sealed class GetOrdersExportLayoutHandlerTests
         var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dto.Version);
-        Assert.Equal(39, dto.Columns.Count);
+        Assert.Equal(40, dto.Columns.Count);
         Assert.Equal(new OrdersExportColumnDto("Fixed", null, null, null, "Tipo Doc", "FV", true), dto.Columns[0]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "email", "Email", 19, "Correo", null, true), dto.Columns[1]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, false), dto.Columns[2]);

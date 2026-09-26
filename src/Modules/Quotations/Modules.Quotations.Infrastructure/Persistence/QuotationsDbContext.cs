@@ -238,6 +238,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(QuotationPartyDetails.NameMaxLength);
+        // Nullable en la base aunque el dominio la exija con nombre propio: las filas anteriores a
+        // la columna no la tienen, y la regla es de escritura (ver Quotation.EnsureBillingIsConsistent).
+        party.Property(value => value.IdentificationNumber)
+            .HasColumnName("identification_number")
+            .HasMaxLength(QuotationPartyDetails.IdentificationNumberMaxLength);
         party.Property(value => value.Phone)
             .HasColumnName("phone")
             .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);

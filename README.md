@@ -804,11 +804,41 @@ después de `Email`, numérica y repetida en cada línea del pedido. Se resuelve
 membresía asesora de la cotización con el código **de hoy** —si se lo cambian, los pedidos viejos
 salen con el nuevo— y queda vacía si la membresía no tiene código.
 
+### Facturar a otra persona: documento de identidad
+
+Cuando una cotización se factura a otra persona —la parte de facturación (`parties.billing`) trae
+`name` propio—, esa persona necesita su documento: sin él no se puede facturar (owner,
+2026-09-26). Viaja como `identificationNumber` al lado de `name`, en el request de
+`POST /quotations`, `PUT /quotations/{id}` y `POST /quotations/{id}/preview`, y en la respuesta
+dentro de `parties[]` (rol `Billing`):
+
+```json
+{ "parties": { "billing": { "name": "Distribuciones Andinas S.A.S.", "identificationNumber": "901555444-1", "phone": "6015550000" }, "shipping": null } }
+```
+
+- Vacío o sólo espacios es `null`; se recorta y nada más (los puntos y guiones de un NIT quedan
+  como se escribieron). Tope de 32 caracteres, el mismo que el documento de la ficha del cliente.
+- Sin `name` propio no se pide: la factura sigue saliendo a nombre del cliente, con su documento.
+- En la parte de entrega se **ignora** (el formulario lo manda siempre vacío): nunca se guarda ni
+  se valida.
+- Crear y guardar (`PUT`) sin el número responden `422 validation.failed` con
+  `errors["Parties.Billing.IdentificationNumber"]`; el dominio lo respalda con
+  `quotation.billing.identification_required`. El cálculo previo **no** lo exige: corre mientras
+  la persona escribe.
+- Enviar y convertir en pedido también lo exigen, con `quotation.billing.identification_required`
+  (422). Es lo que ataja las cotizaciones guardadas antes de la columna, que tienen nombre y no
+  número: se leen igual, pero no avanzan hasta que alguien lo cargue.
+- El PDF lo imprime debajo del nombre en «Facturar a», y el Excel de pedidos lo lleva en
+  `Documento de identidad` (ver abajo).
+
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 38 columnas del Excel de pedidos y agregar hasta 40 columnas fijas de
-texto (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una misma columna del catálogo
+reordenar y ocultar las 39 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
+(`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una fija cuyo valor es un número
+canónico en cultura invariante (`0.19`, `9999`, `-1`, `901851609`) sale como **número**, que un
+Excel en `es-CO` muestra `0,19` y el ERP lee como cifra; el resto (`02`, `PM`, `1,5`, `+1`, vacío)
+sale como el texto que se escribió (2026-09-26). Una misma columna del catálogo
 puede ir más de una vez con encabezados distintos: el ERP puede leer el mismo dato bajo varios
 nombres (la fecha del pedido en `FECHA`, `Bloq/act` y `Vencimiento`).
 
@@ -819,9 +849,10 @@ razón social si la cotización factura a ella, o el nombre de la ficha del clie
 
 Detrás de todas (2026-09-26) va `Documento de identidad` (`customer_identification`): el número de
 documento de la misma persona que nombra `Cliente`, con la misma precedencia — `222222222222` para
-consumidor final, el número de la ficha del cliente con razón social o sin ella, y **vacío** cuando
-la factura sale a nombre de una parte de facturación propia, porque la parte no guarda
-identificación. `Documento` (`document`) sigue siendo el CUC.
+consumidor final, el número de la ficha del cliente con razón social o sin ella, y el
+`identificationNumber` de la parte cuando la factura sale a nombre de una parte de facturación
+propia. Una parte guardada antes de que existiera ese número lo deja **vacío**, nunca con el del
+cliente, que es otra persona. `Documento` (`document`) sigue siendo el CUC.
 
 Y detrás de ella (2026-09-26), `Banco y cuenta` (`bank_account`: el banco y el número de la cuenta
 de facturación separados por un espacio —`BANCOLOMBIA 7542`—, vacía sin cuenta de facturación) y
@@ -829,8 +860,14 @@ de facturación separados por un espacio —`BANCOLOMBIA 7542`—, vacía sin cu
 los cinco con columna propia, como número; vacía si el pedido no tiene comprobantes, igual que
 `V. Comprobante N`). `Banco`, `Cuenta` y `V. Comprobante N` no cambian.
 
+La última (2026-09-26) es `Tasa IVA` (`tax_rate`): la tasa de IVA de cada línea como fracción y
+como número —19 % sale `0.19`, 0 % sale `0`—, tomada de la foto que la línea guardó del producto
+al agregarse (`QuotationItem.TaxPercentage`), no de la tarifa de hoy. `IVA` (`tax`) sigue siendo el
+monto.
+
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
-ERP, «MIGRACION 1»: 47 columnas visibles, 23 de ellas fijas. El banco con su cuenta
+ERP, «MIGRACION 1»: 47 columnas visibles, 22 de ellas fijas. Su «IVA» es la tasa de cada línea
+(`tax_rate`) y no un `0.19` fijo, porque hay productos con otra tarifa; `tax` queda oculto. El banco con su cuenta
 (`bank_account`) va en «Forma de pago 1» y «Forma de pago 2» —el ERP exige las dos llenas aunque
 sean la misma— y el total consignado (`proof_amount_total`) en «V. Consignacion (P7)»; `bank` queda
 oculto. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su

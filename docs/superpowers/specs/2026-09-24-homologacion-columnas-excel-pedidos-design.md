@@ -34,7 +34,7 @@ mano que quiere evitar.
 independientes, no tres grupos con patrón. Un tenant puede nombrar `Fecha Pago 4` distinto u
 ocultar sólo esa. El costo es una pantalla más larga (33 filas de catálogo).
 
-### D4 — Columnas fijas del tenant, sólo texto
+### D4 — Columnas fijas del tenant, sólo texto (enmendada el 2026-09-26: ver el final)
 
 El tenant puede agregar columnas cuyo valor es el mismo en todas las filas (`Tipo Doc` = `FV`,
 `Bodega` = `01`). El valor es **texto**: `01` conserva el cero, y un valor fijo es un código, no un
@@ -300,8 +300,14 @@ ahí—; en su lugar:
   ocultas, con su nombre por defecto. Sólo crea: un tenant cuyo layout ya existía no cambia solo, y
   remapea desde la pantalla de configuración.
 
-Pendiente: si una parte de facturación con nombre propio necesita documento, `QuotationParty` tiene
-que ganar el campo (y el formulario de la cotización con él).
+~~Pendiente: si una parte de facturación con nombre propio necesita documento, `QuotationParty` tiene
+que ganar el campo (y el formulario de la cotización con él).~~ **Resuelto el 2026-09-26**: el owner
+confirmó que sin ese número no se puede facturar. `QuotationParty.IdentificationNumber` (columna
+`quotation_parties.identification_number`, nullable, 32 como el de `Customer`) viaja como
+`identificationNumber` al lado de `name`; es obligatorio en facturación con nombre propio al crear,
+guardar, enviar y convertir (`quotation.billing.identification_required`) y se ignora en la entrega.
+`customer_identification` lo lleva cuando la factura sale a nombre de esa parte; una parte guardada
+antes de la columna sigue saliendo **vacía**, nunca con el documento del cliente.
 
 ### Banco con cuenta en las formas de pago, y el total consignado en P7
 
@@ -323,3 +329,22 @@ lugar, **dos llaves nuevas al final del catálogo** (38 en total):
   pasa a las ocultas con su nombre por defecto y `proof_amount_1` queda sólo en
   "V. Consignacion 1". Sólo crea: un tenant cuyo layout ya existía no cambia solo —no hay migración
   de layouts— y remapea desde la pantalla de configuración.
+
+### Tasa de IVA por línea, y las fijas numéricas como número (ajuste 2026-09-26)
+
+El owner vio el "IVA" de la hoja sembrada —una fija `0.19`— llegar como texto: en un Excel con
+configuración regional colombiana un número se muestra "0,19", pero un texto se queda "0.19". Y
+además el IVA no es una constante: es de cada línea.
+
+- **Una llave nueva al final del catálogo** (39 en total): `tax_rate` / "Tasa IVA", ancho 12,
+  **número**: `QuotationItem.TaxPercentage / 100` (19 → 0,19; 0 → 0). Es la foto de
+  `Catalog.TaxRate.Percentage` que la línea tomó al agregarse, no la tarifa de hoy: el pedido ya se
+  cobró con ésa. `tax` sigue siendo el monto — otros tenants lo leen ahí.
+- **La semilla** mapea "IVA" a `tax_rate` en vez de la fija `0.19` (22 fijas, antes 23); `tax` sigue
+  oculta. Sólo crea, como siempre.
+- **Las fijas numéricas salen como número.** Esto enmienda D4 ("sólo texto"): una fija cuyo valor es
+  un número canónico en cultura invariante —`^-?(0|[1-9][0-9]*)(\.[0-9]+)?$`: `0.19`, `9999`, `-1`,
+  `0`, `1`, `901851609`— se escribe como celda numérica; el resto (`02`, `0000-00-00`, `PM`, vacío,
+  `1,5`, `+1`) sigue como el texto que el tenant escribió, así que `01` conserva su cero. El valor
+  se guarda igual que antes (texto); sólo cambia la celda. `OrdersExportColumnSetting.Fixed` recorta
+  los extremos, así que " 1" nunca llega a la proyección.

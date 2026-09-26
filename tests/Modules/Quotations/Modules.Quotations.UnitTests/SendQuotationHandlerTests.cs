@@ -109,7 +109,7 @@ public sealed class SendQuotationHandlerTests
     public async Task SendToTheBillingPartyWithoutAPhoneIsRejected()
     {
         var harness = NewHandler(
-            billing: new QuotationPartyDetails { Name = "Danilo Amaris Ojeda" });
+            billing: new QuotationPartyDetails { Name = "Danilo Amaris Ojeda", IdentificationNumber = "1020304050" });
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             harness.Handler.HandleAsync(
@@ -291,6 +291,7 @@ public sealed class SendQuotationHandlerTests
     private static readonly QuotationPartyDetails BillingParty = new()
     {
         Name = "Danilo Amaris Ojeda",
+        IdentificationNumber = "1020304050",
         Phone = "3013574996",
         Email = "daniloamaris@ejemplo.co",
         Address = "calle 90#45",

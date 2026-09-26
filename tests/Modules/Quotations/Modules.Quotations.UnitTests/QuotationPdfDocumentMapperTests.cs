@@ -235,18 +235,32 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.True(document.Shipping.SameAsCustomer);
     }
 
-    // Una parte de facturacion propia no guarda identificacion: el campo queda vacio, que la
-    // plantilla lee como "no imprimir".
+    // Facturar a otra persona imprime su documento debajo del nombre, igual que el NIT de
+    // consumidor final: sin él la factura no dice a quién identifica.
     [Fact]
-    public void ABillingPartyWithItsOwnDataHasNoTaxId()
+    public void ABillingPartyWithItsOwnDataPrintsItsIdentificationNumber()
     {
         var party = new QuotationPartyResponse(
-            Guid.CreateVersion7(), "Billing", "Sede administrativa", null, null, "Carrera 7",
-            null, null);
+            Guid.CreateVersion7(), "Billing", "Sede administrativa", "1020304050", null, null,
+            "Carrera 7", null, null);
 
         var document = Map(Response() with { Parties = [party] });
 
         Assert.Equal("Sede administrativa", document.Billing.Name);
+        Assert.Equal("1020304050", document.Billing.TaxId);
+    }
+
+    // Una parte guardada antes de que existiera el número no tiene qué imprimir: vacío, que la
+    // plantilla lee como "no imprimir".
+    [Fact]
+    public void ALegacyBillingPartyWithoutIdentificationHasNoTaxId()
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Billing", "Sede administrativa", null, null, null,
+            "Carrera 7", null, null);
+
+        var document = Map(Response() with { Parties = [party] });
+
         Assert.Equal(string.Empty, document.Billing.TaxId);
     }
 

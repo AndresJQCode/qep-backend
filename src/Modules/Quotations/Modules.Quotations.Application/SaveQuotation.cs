@@ -84,6 +84,10 @@ public sealed class SaveQuotationHandler(
         var outcome = await QuotationEditsApplication.ApplyAsync(
             quotation, command, command.TenantId, customerLookup, companyLookup, pricingLookup,
             updatedBy, now, cancellationToken);
+        // UpdateDetails no lo exige para que el cálculo previo, que comparte ApplyAsync, no falle
+        // mientras la persona escribe. El guardado sí: nada se persiste si esto lanza. El
+        // validador ya lo frena antes con el campo en `errors`; esto es el respaldo del dominio.
+        quotation.EnsureBillingIdentified();
 
         // Guardar sin cambiar el encabezado no deja fila: una lista de "editó" vacíos esconde las
         // ediciones que sí importan.

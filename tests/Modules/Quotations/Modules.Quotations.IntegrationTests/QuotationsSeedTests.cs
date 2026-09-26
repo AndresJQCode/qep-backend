@@ -110,7 +110,15 @@ public sealed class QuotationsSeedTests
         Assert.Equal(
             SeededLayoutHeaders,
             layout.Columns.Where(column => column.Visible).Select(column => column.Header));
-        Assert.Equal(23, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        Assert.Equal(22, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        // Ajuste 2026-09-26: "IVA" es la tasa de cada línea (tax_rate), no un 0.19 fijo: hay
+        // productos con otra tarifa. "tax" (el monto) sigue oculta, con su nombre por defecto.
+        Assert.Equal(
+            "tax_rate",
+            Assert.Single(layout.Columns, column => column.Visible && column.Header == "IVA").Key);
+        var tax = Assert.Single(layout.Columns, column => column.Key == "tax");
+        Assert.False(tax.Visible);
+        Assert.Equal("IVA", tax.Header);
         // Ajuste 2026-09-26: el ERP exige las dos formas de pago llenas, aunque sean la misma, y lee
         // en ellas el banco con el número de cuenta. "bank" queda oculta, con su nombre por defecto.
         Assert.Equal(

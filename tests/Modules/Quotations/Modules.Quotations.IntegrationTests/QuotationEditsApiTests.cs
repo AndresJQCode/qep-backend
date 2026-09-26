@@ -250,7 +250,7 @@ public sealed class QuotationEditsApiTests
                 paymentMethod: "Efectivo",
                 notes: "Nota de prueba",
                 parties: new QuotationPartiesRequest(
-                    new QuotationPartyRequest("Nombre alterno", null, null, null, null, null),
+                    new QuotationPartyRequest("Nombre alterno", "1020304050", null, null, null, null, null),
                     Shipping: null)));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -261,6 +261,10 @@ public sealed class QuotationEditsApiTests
         var billing = Assert.Single(updated.Parties);
         Assert.Equal("Billing", billing.Role);
         Assert.Equal("Nombre alterno", billing.Name);
+        Assert.Equal("1020304050", billing.IdentificationNumber);
+        // Ida y vuelta por la base: el número se guarda, no sólo se devuelve.
+        var fetched = await GetQuotationAsync(client, tenantId, created.Id);
+        Assert.Equal("1020304050", Assert.Single(fetched.Parties).IdentificationNumber);
         Assert.NotEqual(created.UpdatedAt, updated.UpdatedAt);
         Assert.False(updated.IsStorePickup);
     }
@@ -278,8 +282,8 @@ public sealed class QuotationEditsApiTests
         var created = await CreateQuotationAsync(client, tenantId, clientId);
         Assert.False(created.IsStorePickup);
 
-        var billing = new QuotationPartyRequest("Sede administrativa", null, null, null, null, null);
-        var shipping = new QuotationPartyRequest("Bodega Fontibon", null, null, "Zona Franca", null, null);
+        var billing = new QuotationPartyRequest("Sede administrativa", "1020304050", null, null, null, null, null);
+        var shipping = new QuotationPartyRequest("Bodega Fontibon", null, null, null, "Zona Franca", null, null);
 
         var withShippingResponse = await PutEditsAsync(
             client, tenantId, created.Id, created.Version,
@@ -390,13 +394,84 @@ public sealed class QuotationEditsApiTests
                 created,
                 paymentMethod: "Efectivo",
                 parties: new QuotationPartiesRequest(
-                    new QuotationPartyRequest("Sede administrativa", null, null, null, null, null),
+                    new QuotationPartyRequest("Sede administrativa", null, null, null, null, null, null),
                     Shipping: null,
                     BillsToFinalConsumer: true)));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal(
             "quotation.billing.final_consumer_conflict", (await ReadProblemAsync(response)).Code);
+    }
+
+    // El cálculo previo no exige el documento: la persona acaba de escribir el nombre y todavía
+    // no el número, y el formulario manda el borrador en cada cambio. Lo exige el guardado.
+    [Fact]
+    public async Task PreviewWithABillingPartyNamedButWithoutIdentificationIsAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var response = await PreviewEditsAsync(
+            client, tenantId, created.Id,
+            RequestFor(
+                created, paymentMethod: "Efectivo",
+                parties: new QuotationPartiesRequest(
+                    new QuotationPartyRequest("Sede administrativa", "", null, null, null, null, null),
+                    new QuotationPartyRequest("Bodega Fontibon", "", null, null, "Zona Franca", null, null))));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var preview = await ReadQuotationAsync(response);
+        var billing = Assert.Single(preview.Parties, party => party.Role == "Billing");
+        Assert.Null(billing.IdentificationNumber);
+        Assert.Null(Assert.Single(preview.Parties, party => party.Role == "Shipping").IdentificationNumber);
+    }
+
+    // Facturar a otra persona sin su documento no se puede facturar (owner, 2026-09-26). El 422
+    // es el de validación, con el campo en el mapa `errors`: es lo que el formulario lee para
+    // marcar el input. Cuerpo crudo a propósito, para fijar el nombre del campo en el cable.
+    [Fact]
+    public async Task UpdateWithABillingPartyNamedButWithoutIdentificationIsUnprocessableOnTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, clientId);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, QuotationUrl(tenantId, created.Id))
+        {
+            Content = new StringContent(
+                """
+                {
+                  "paymentMethod": "Efectivo",
+                  "parties": {
+                    "billing": { "name": "Sede administrativa", "identificationNumber": "  " },
+                    "shipping": null
+                  },
+                  "items": []
+                }
+                """,
+                System.Text.Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{created.Version}\"");
+
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors")
+            .TryGetProperty("Parties.Billing.IdentificationNumber", out var fieldErrors));
+        Assert.NotEmpty(fieldErrors.EnumerateArray());
+        var fetched = await GetQuotationAsync(client, tenantId, created.Id);
+        Assert.Empty(fetched.Parties);
     }
 
     /// <summary>Una cotización enviada —todavía editable— con un producto de 100.000 COP sin

@@ -39,7 +39,7 @@ public sealed class QuotationStorePickupContractTests
     {
         var request = new QuotationPartiesRequest(
             Billing: null,
-            new QuotationPartyRequest("Bodega", null, null, "Zona Franca", null, null),
+            new QuotationPartyRequest("Bodega", null, null, null, "Zona Franca", null, null),
             IsStorePickup: true);
 
         var parties = request.ToDomain();

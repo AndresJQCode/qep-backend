@@ -64,6 +64,8 @@ public sealed class Quotation
         Notes = NormalizeNotes(notes);
         EnsureBillingIsConsistent(parties);
         Assign(parties);
+        // Crear es escribir: no hay cálculo previo de la creación que proteger.
+        EnsureBillingIdentified();
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
@@ -792,6 +794,10 @@ public sealed class Quotation
                 "quotation.quotation.valid_until_required",
                 "A quotation must have a validity date before it can be sent.");
         }
+
+        // Una cotización que le llega al cliente facturada a otra persona sin su documento es una
+        // que después no se puede facturar tal como se le mandó. Ver EnsureBillingIdentified.
+        EnsureBillingIdentified();
     }
 
     /// <summary>US-16: convierte la cotización en pedido. Comprueba lo mismo que
@@ -882,6 +888,10 @@ public sealed class Quotation
                 "The shipping party must have all its fields filled before converting to an order.");
         }
 
+        // El pedido es el paso que lleva a facturar, y sin el documento de a quién se le factura
+        // no se puede (owner, 2026-09-26). Ver EnsureBillingIdentified.
+        EnsureBillingIdentified();
+
         // Con datos propios de facturación nadie más dice si hay retención o excedente de IVA:
         // null es "todavía no se contestó", y un pedido no puede nacer con esa pregunta abierta
         // (a diferencia de con los datos del cliente, donde CustomerWithRetention/VatSurplus ya
@@ -907,6 +917,7 @@ public sealed class Quotation
         && BillingAccount is not null
         && (Billing is not { } billing || billing.IsComplete)
         && (Shipping is not { } shipping || shipping.IsComplete)
+        && !BillingLacksIdentification
         && (Billing is null || (PartyWithRetention is not null && PartyVatSurplus is not null));
 
     /// <summary>
@@ -1014,6 +1025,33 @@ public sealed class Quotation
                 "A quotation billed to the final consumer cannot carry its own billing party or bill to the customer's business name.");
         }
     }
+
+    /// <summary>
+    /// Una facturación con nombre propio es otra persona, y sin su documento no se puede facturar
+    /// (owner, 2026-09-26). Sin nombre propio la factura sigue saliendo a nombre del cliente, con
+    /// el documento de su ficha, así que ahí no se pide.
+    ///
+    /// <b>No lo llama <see cref="UpdateDetails"/></b>, a propósito: el cálculo previo aplica el
+    /// mismo cuerpo mientras la persona todavía escribe —puso el nombre y no el número—, y un 422
+    /// en cada tecla no le sirve a nadie. Lo llaman quienes sí escriben o avanzan: la creación, el
+    /// guardado (<c>SaveQuotationHandler</c>, antes de persistir), <see cref="EnsureSendable"/> y
+    /// <see cref="EnsureConvertibleToOrder"/>. Las dos transiciones además atajan las filas
+    /// guardadas antes de la columna, que tienen nombre y no número: se leen igual, pero no avanzan.
+    /// </summary>
+    public void EnsureBillingIdentified()
+    {
+        if (BillingLacksIdentification)
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.identification_required",
+                "A billing party with its own name requires an identification number.");
+        }
+    }
+
+    private bool BillingLacksIdentification =>
+        Billing is { } billing
+        && !string.IsNullOrWhiteSpace(billing.Name)
+        && string.IsNullOrWhiteSpace(billing.IdentificationNumber);
 
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es

@@ -10,6 +10,11 @@ public sealed record QuotationPartyDetails
 {
     public string? Name { get; init; }
 
+    /// <summary>El documento de identidad de a quién se le factura cuando no es el cliente. Sólo
+    /// tiene sentido en la parte de facturación: <see cref="QuotationParty"/> lo descarta en la de
+    /// entrega, y <see cref="Quotation"/> lo exige cuando la facturación trae nombre propio.</summary>
+    public string? IdentificationNumber { get; init; }
+
     public string? Phone { get; init; }
 
     public string? Email { get; init; }
@@ -30,6 +35,11 @@ public sealed record QuotationPartyDetails
 
     public const int AddressMaxLength = 255;
 
+    // Mismo tope que CustomerIdentification.NumberMaxLength (Modules.Customers.Domain): es el
+    // mismo dato para otra persona. Duplicado y no referenciado porque Quotations no referencia
+    // el dominio de Customers; si allá cambia, cambia acá también.
+    public const int IdentificationNumberMaxLength = 32;
+
     internal QuotationPartyDetails Normalized() => new()
     {
         Name = NormalizeOptional(
@@ -37,6 +47,13 @@ public sealed record QuotationPartyDetails
             NameMaxLength,
             "quotation.party.name_too_long",
             $"The party name cannot exceed {NameMaxLength} characters."),
+        // Se recorta y nada más, mismo criterio que CustomerIdentification: los puntos y guiones
+        // de un NIT ("900.123.456-1") son como la persona lo escribe.
+        IdentificationNumber = NormalizeOptional(
+            IdentificationNumber,
+            IdentificationNumberMaxLength,
+            "quotation.party.identification_number_too_long",
+            $"The party identification number cannot exceed {IdentificationNumberMaxLength} characters."),
         Phone = NormalizeOptional(
             Phone,
             PhoneMaxLength,

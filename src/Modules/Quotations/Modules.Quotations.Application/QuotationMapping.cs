@@ -55,6 +55,7 @@ internal static class QuotationMapping
         party.Id.Value,
         party.Role.ToString(),
         party.Name,
+        party.IdentificationNumber,
         party.Phone,
         party.Email,
         party.Address,
@@ -120,6 +121,7 @@ internal static class QuotationMapping
             : new QuotationPartyDetails
             {
                 Name = request.Name,
+                IdentificationNumber = request.IdentificationNumber,
                 Phone = request.Phone,
                 Email = request.Email,
                 Address = request.Address,

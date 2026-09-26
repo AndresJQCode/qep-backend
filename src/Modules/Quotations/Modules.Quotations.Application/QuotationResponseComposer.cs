@@ -239,6 +239,7 @@ public sealed class QuotationResponseComposer(
         party.Id,
         party.Role,
         party.Name,
+        party.IdentificationNumber,
         party.Phone,
         party.Email,
         party.Address,

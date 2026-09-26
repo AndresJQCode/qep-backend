@@ -64,6 +64,10 @@ public static class OrdersExportColumnCatalog
         // otros ERP pueden estar leyéndolos por separado.
         new("bank_account", "Banco y cuenta", 36),
         new("proof_amount_total", "Total consignado", 18),
+        // Ajuste 2026-09-26: la tasa de IVA de la línea como fracción (19 % → 0,19), que es lo que
+        // el ERP del tenant importa en "IVA". Por línea y no fija: hay productos con otra tarifa. No
+        // reemplaza a "tax", que es el monto y otro tenant puede estar leyéndolo.
+        new("tax_rate", "Tasa IVA", 12),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
