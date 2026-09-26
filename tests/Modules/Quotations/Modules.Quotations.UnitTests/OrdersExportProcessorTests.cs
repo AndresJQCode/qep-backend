@@ -55,6 +55,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
+                "Banco y cuenta", "Total consignado",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -721,6 +722,108 @@ public sealed class OrdersExportProcessorTests
         }
     }
 
+    // Ajuste 2026-09-26: "Banco y cuenta" junta en una celda lo que "Banco" y "Cuenta" llevan por
+    // separado, con un solo espacio en medio, en cada línea del pedido.
+    [Fact]
+    public async Task BancoYCuentaJoinsTheBankAndTheAccountNumberWithASpace()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var billingAccount = new QuotationBillingAccount
+        {
+            CompanyId = CompanyId,
+            BankName = "BANCOLOMBIA",
+            AccountNumber = "7542",
+            Currency = "COP",
+        };
+        var row = NewRow(
+            "PED-2026-0001",
+            billingAccount: billingAccount,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Banco y cuenta", 36), writer.Columns[BancoYCuentaIndex]);
+        Assert.Equal(2, writer.Rows.Count);
+        foreach (var cells in writer.Rows)
+        {
+            Assert.Equal(ExportCell.OfText("BANCOLOMBIA 7542"), cells[BancoYCuentaIndex]);
+            // "Banco" y "Cuenta" no cambian: otros ERP las leen por separado.
+            Assert.Equal("BANCOLOMBIA", cells[BancoIndex].Text);
+            Assert.Equal("7542", cells[BancoIndex + 1].Text);
+        }
+    }
+
+    [Fact]
+    public async Task BancoYCuentaIsEmptyWithoutABillingAccount()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: null)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[BancoYCuentaIndex]);
+    }
+
+    // Ajuste 2026-09-26: "Total consignado" suma TODOS los comprobantes del pedido, no sólo los cinco
+    // que tienen columna propia, como número —el ERP lo suma—, y se repite en cada línea.
+    [Fact]
+    public async Task TotalConsignadoSumsEveryProofOfTheOrderBeyondTheFiveWithTheirOwnColumn()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            proofs:
+            [
+                (10_000m, "payment-proofs/a.pdf"),
+                (20_000m, null),
+                (30_000m, "payment-proofs/c.pdf"),
+                (40_000m, null),
+                (50_000m, "payment-proofs/e.pdf"),
+                (60_000m, null),
+            ],
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Total consignado", 18), writer.Columns[TotalConsignadoIndex]);
+        Assert.Equal(2, writer.Rows.Count);
+        foreach (var cells in writer.Rows)
+        {
+            Assert.Equal(ExportCell.OfNumber(210_000m), cells[TotalConsignadoIndex]);
+            // "V. Comprobante 1" sigue siendo sólo el primero.
+            Assert.Equal(10_000m, cells[ProofIndex(1)].Number);
+        }
+    }
+
+    // Sin comprobantes la celda queda vacía, igual que "V. Comprobante N" sin comprobante: vacío
+    // dice "no hay comprobante", y un 0 diría que hubo una consignación de cero pesos.
+    [Fact]
+    public async Task TotalConsignadoIsEmptyWhenTheOrderHasNoProofs()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(ExportCell.OfText(string.Empty), cells[TotalConsignadoIndex]);
+        Assert.Equal(cells[ProofIndex(1)], cells[TotalConsignadoIndex]);
+    }
+
+    private const int BancoYCuentaIndex = 36;
+
+    private const int TotalConsignadoIndex = 37;
+
     // Banco va justo después de "Cod. Asesor"; Cuenta, después de Banco.
     private const int BancoIndex = 20;
 
@@ -837,11 +940,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(35, writer.Columns.Count);
+        Assert.Equal(37, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("Documento de identidad", writer.Columns[^1].Header);
+        Assert.Equal("Total consignado", writer.Columns[^1].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -872,8 +975,8 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(38, writer.Columns.Count);
-        Assert.Equal(new ExportColumn("Tipo Doc", OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
+        Assert.Equal(40, writer.Columns.Count);
+        Assert.Equal(new ExportColumn("Tipo Doc",OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
         Assert.Equal(2, writer.Rows.Count);
@@ -889,7 +992,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 36 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 38 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {

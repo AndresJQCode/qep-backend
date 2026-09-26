@@ -58,7 +58,8 @@ public sealed class OrdersExportProcessor(
     /// "Valor Unit" sigue llevando el precio con IVA incluido. Detrás, por lo mismo, las dos que pidió
     /// la hoja de importación del ERP (ajuste 2026-09-25): "Fecha Pedido" (<see cref="Order.CreatedAt"/>
     /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
-    /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente.
+    /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
+    /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido).
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Select(column => new ExportColumn(column.DefaultHeader, column.Width))
@@ -263,10 +264,12 @@ public sealed class OrdersExportProcessor(
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
         var banco = quotation.BillingAccount?.BankName ?? string.Empty;
         var cuenta = quotation.BillingAccount?.AccountNumber ?? string.Empty;
+        var bancoYCuenta = BankAndAccount(banco, cuenta);
         // Iguales en todas las líneas del pedido: se arman una vez, no por línea.
         var proofCells = Enumerable.Range(0, PaymentDateColumns)
             .SelectMany(index => ProofCells(proofs, index, publisher))
             .ToArray();
+        var totalConsignado = ProofTotalCell(proofs);
 
         foreach (var item in items)
         {
@@ -297,9 +300,25 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(fechaPedido),
                 ExportCell.OfText(cliente),
                 ExportCell.OfText(documentoIdentidad),
+                ExportCell.OfText(bancoYCuenta),
+                totalConsignado,
             ];
         }
     }
+
+    // "Banco y cuenta" (ajuste 2026-09-26): lo mismo que "Banco" y "Cuenta", en una celda y con un
+    // solo espacio en medio. El dominio exige las dos mitades, pero si una llegara vacía sale la
+    // otra sola, sin espacios de sobra; sin cuenta de facturación, vacía.
+    private static string BankAndAccount(string bank, string account) =>
+        string.Join(' ', new[] { bank, account }.Where(part => !string.IsNullOrWhiteSpace(part)));
+
+    // "Total consignado" (ajuste 2026-09-26): la suma de todos los comprobantes del pedido —no sólo
+    // los cinco con columna propia—, como número porque el ERP lo suma. Sin comprobantes, vacía como
+    // "V. Comprobante N" sin comprobante: un 0 diría que hubo una consignación de cero pesos.
+    private static ExportCell ProofTotalCell(IReadOnlyList<OrderExportPaymentProof> proofs) =>
+        proofs.Count == 0
+            ? ExportCell.OfText(string.Empty)
+            : ExportCell.OfNumber(proofs.Sum(proof => proof.Amount));
 
     // "Cliente" (ajuste 2026-09-25): a nombre de quién sale la factura, con la misma precedencia que
     // el bloque Facturación del PDF (QuotationPdfDocumentMapper.BillingFor). Consumidor final gana

@@ -58,6 +58,12 @@ public static class OrdersExportColumnCatalog
         // lo que el ERP del tenant importa en "Documento (P5)". No reemplaza a "document", que
         // sigue siendo el CUC: otro tenant puede estar leyéndolo de ahí.
         new("customer_identification", "Documento de identidad", 18),
+        // Ajuste 2026-09-26: el banco y el número de cuenta en una sola celda, que es lo que el ERP
+        // del tenant importa como forma de pago, y la suma de todos los comprobantes del pedido, que
+        // importa como valor consignado. No reemplazan a "bank", "account" ni "proof_amount_N":
+        // otros ERP pueden estar leyéndolos por separado.
+        new("bank_account", "Banco y cuenta", 36),
+        new("proof_amount_total", "Total consignado", 18),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

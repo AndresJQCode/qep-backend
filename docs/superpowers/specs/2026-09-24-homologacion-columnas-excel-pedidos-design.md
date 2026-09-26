@@ -302,3 +302,24 @@ ahí—; en su lugar:
 
 Pendiente: si una parte de facturación con nombre propio necesita documento, `QuotationParty` tiene
 que ganar el campo (y el formulario de la cotización con él).
+
+### Banco con cuenta en las formas de pago, y el total consignado en P7
+
+El mismo ERP lee en "Forma de pago 1" y "Forma de pago 2" el banco con el número de cuenta, y en
+"V. Consignacion (P7)" el valor consignado del pedido entero, no el del primer comprobante. `bank`,
+`account` y `proof_amount_N` no cambian de significado —otros ERP los leen por separado—; en su
+lugar, **dos llaves nuevas al final del catálogo** (38 en total):
+
+- `bank_account` / "Banco y cuenta", ancho 36, texto: `BillingAccount.BankName` y
+  `BillingAccount.AccountNumber` —la misma fuente que "Banco" y "Cuenta"— separados por un espacio
+  (`BANCOLOMBIA 7542`). El dominio exige las dos mitades, pero si una llegara vacía sale la otra
+  sola, sin espacios de sobra; sin cuenta de facturación, vacía.
+- `proof_amount_total` / "Total consignado", ancho 18, **número**: la suma de los montos de todos
+  los comprobantes del pedido. `ListPaymentProofsForExportAsync` ya los trae todos —sólo las
+  columnas por comprobante se cortan en cinco—, así que no hay consulta nueva. **Sin comprobantes,
+  vacía** y no 0: es como sale "V. Comprobante N" sin comprobante y como salía P7 cuando la leía de
+  `proof_amount_1`; un 0 diría que hubo una consignación de cero pesos.
+- **La semilla** mapea las dos formas de pago a `bank_account` y P7 a `proof_amount_total`; `bank`
+  pasa a las ocultas con su nombre por defecto y `proof_amount_1` queda sólo en
+  "V. Consignacion 1". Sólo crea: un tenant cuyo layout ya existía no cambia solo —no hay migración
+  de layouts— y remapea desde la pantalla de configuración.

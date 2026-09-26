@@ -175,6 +175,7 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
+                "Banco y cuenta", "Total consignado",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -222,6 +223,10 @@ public sealed class OrderExportApiTests
         // es el CUC de "Documento".
         Assert.StartsWith("900.", first[35], StringComparison.Ordinal);
         Assert.NotEqual(first[13], first[35]);
+        // "Banco y cuenta" (2026-09-26): "Banco" y "Cuenta" en una celda, con un espacio en medio.
+        Assert.Equal($"{first[20]} {first[21]}", first[36]);
+        // "Total consignado" (2026-09-26): sin comprobantes, vacía como "V. Comprobante N".
+        Assert.Equal(string.Empty, first[37]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -432,15 +437,15 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 36 del catálogo + 1 fija − 1 oculta.
-        Assert.Equal(36, header.Count);
+        // 38 del catálogo + 1 fija − 1 oculta.
+        Assert.Equal(38, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
         Assert.Equal("Cantidad", header[3]);
         Assert.DoesNotContain("EMPRESA", header);
         Assert.DoesNotContain("Email", header);
-        Assert.Equal("Documento de identidad", header[^1]);
+        Assert.Equal("Total consignado", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -461,7 +466,9 @@ public sealed class OrderExportApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var today = TodayInBogota();
-        await CreateOrderAsync(client, factory, tenantId, identificationNumber: "900.555.123-4");
+        var order = await CreateOrderAsync(client, factory, tenantId, identificationNumber: "900.555.123-4");
+        await AddProofAsync(client, factory, tenantId, order.Id);
+        await AddProofAsync(client, factory, tenantId, order.Id);
         await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
 
         var response = await client.PostAsync(
@@ -481,8 +488,17 @@ public sealed class OrderExportApiTests
         Assert.Equal(row[4], row[9]);
         Assert.Equal(row[4], row[26]);
         Assert.Equal("Verde Esencial S.A.S.", row[6]);
-        Assert.Equal("Bancolombia", row[10]);
-        Assert.Equal("Bancolombia", row[12]);
+        // "Forma de pago 1" y "Forma de pago 2" (ajuste 2026-09-26): el banco y el número de cuenta de
+        // CreateCompanyWithBankAccountAsync —siempre Bancolombia, número al azar— con un espacio.
+        Assert.Matches(@"^Bancolombia \S+$", row[10]);
+        Assert.Equal(row[10], row[12]);
+        // Dos comprobantes de AddProofAsync, de 5.000 cada uno: uno por "V. Consignacion N" y el
+        // total en "V. Consignacion (P7)" (ajuste 2026-09-26), como número.
+        Assert.Equal(5_000m, decimal.Parse(row[11], CultureInfo.InvariantCulture));
+        Assert.Equal(5_000m, decimal.Parse(row[13], CultureInfo.InvariantCulture));
+        Assert.Equal("V. Consignacion (P7)", sheet.Rows[0][36]);
+        Assert.Equal(10_000m, decimal.Parse(row[36], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][36]);
         Assert.Equal("Coordinadora", row[30]);
         // "Documento (P5)" (ajuste 2026-09-26): el documento de identidad del cliente tal como lo
         // escribió en su ficha —Customers sólo lo recorta—, no el CUC.

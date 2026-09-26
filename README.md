@@ -807,7 +807,7 @@ salen con el nuevo— y queda vacía si la membresía no tiene código.
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 36 columnas del Excel de pedidos y agregar hasta 40 columnas fijas de
+reordenar y ocultar las 38 columnas del Excel de pedidos y agregar hasta 40 columnas fijas de
 texto (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una misma columna del catálogo
 puede ir más de una vez con encabezados distintos: el ERP puede leer el mismo dato bajo varios
 nombres (la fecha del pedido en `FECHA`, `Bloq/act` y `Vencimiento`).
@@ -823,11 +823,20 @@ consumidor final, el número de la ficha del cliente con razón social o sin ell
 la factura sale a nombre de una parte de facturación propia, porque la parte no guarda
 identificación. `Documento` (`document`) sigue siendo el CUC.
 
+Y detrás de ella (2026-09-26), `Banco y cuenta` (`bank_account`: el banco y el número de la cuenta
+de facturación separados por un espacio —`BANCOLOMBIA 7542`—, vacía sin cuenta de facturación) y
+`Total consignado` (`proof_amount_total`: la suma de **todos** los comprobantes del pedido, no sólo
+los cinco con columna propia, como número; vacía si el pedido no tiene comprobantes, igual que
+`V. Comprobante N`). `Banco`, `Cuenta` y `V. Comprobante N` no cambian.
+
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
-ERP, «MIGRACION 1»: 47 columnas visibles, 23 de ellas fijas. El banco va en «Forma de pago 1» y «Forma de pago 2»: el ERP exige las dos llenas aunque sean la misma. Sólo crea: si el tenant ya tiene
-layout, no lo toca. Desde el 2026-09-26 su `Documento (P5)` lleva el documento de identidad
-(`customer_identification`) y el CUC (`document`) queda oculto; un tenant cuyo layout ya existía
-conserva el de antes y lo cambia desde su pantalla de configuración.
+ERP, «MIGRACION 1»: 47 columnas visibles, 23 de ellas fijas. El banco con su cuenta
+(`bank_account`) va en «Forma de pago 1» y «Forma de pago 2» —el ERP exige las dos llenas aunque
+sean la misma— y el total consignado (`proof_amount_total`) en «V. Consignacion (P7)»; `bank` queda
+oculto. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su
+`Documento (P5)` lleva el documento de identidad (`customer_identification`) y el CUC (`document`)
+queda oculto. Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
+y lo cambia desde su pantalla de configuración.
 
 | Método | Ruta                                                | Permiso                  |
 | ------ | --------------------------------------------------- | ------------------------ |

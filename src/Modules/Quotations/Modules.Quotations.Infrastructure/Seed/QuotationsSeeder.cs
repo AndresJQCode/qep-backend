@@ -70,9 +70,9 @@ public static class QuotationsSeeder
     /// para el tenant (tipo de documento, bodega, transportadora, su NIT...) va como fija, vacía
     /// cuando la hoja exige la columna pero no tiene qué ponerle.
     ///
-    /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento, el primer comprobante
-    /// bajo dos encabezados y el banco bajo las dos formas de pago —el ERP las exige llenas aunque
-    /// sean la misma—: el ERP lee el mismo dato con varios nombres. Al final, ocultas, las
+    /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento, y el banco con su cuenta
+    /// bajo las dos formas de pago —el ERP las exige llenas aunque sean la misma—: el ERP lee el
+    /// mismo dato con varios nombres. Al final, ocultas, las
     /// llaves del catálogo que la hoja no usa — sin ellas <see cref="OrdersExportLayout.Effective(OrdersExportLayout?)"/>
     /// las completaría visibles y la hoja tendría columnas que el ERP no espera.
     ///
@@ -91,9 +91,11 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Catalog("advisor_code", "Tercero Interno", visible: true),
         OrdersExportColumnSetting.Fixed("Doc. Externo", string.Empty, visible: true),
         OrdersExportColumnSetting.Catalog("order_date", "Bloq/act", visible: true),
-        OrdersExportColumnSetting.Catalog("bank", "Forma de pago 1", visible: true),
+        // Ajuste 2026-09-26: el ERP lee en las dos formas de pago el banco con el número de cuenta,
+        // no sólo el banco. "bank" queda entre las ocultas.
+        OrdersExportColumnSetting.Catalog("bank_account", "Forma de pago 1", visible: true),
         OrdersExportColumnSetting.Catalog("proof_amount_1", "V. Consignacion 1", visible: true),
-        OrdersExportColumnSetting.Catalog("bank", "Forma de pago 2", visible: true),
+        OrdersExportColumnSetting.Catalog("bank_account", "Forma de pago 2", visible: true),
         OrdersExportColumnSetting.Catalog("proof_amount_2", "V. Consignacion 2", visible: true),
         OrdersExportColumnSetting.Fixed("Verificado", "-1", visible: true),
         OrdersExportColumnSetting.Fixed("Anulado", "0", visible: true),
@@ -119,7 +121,9 @@ public static class QuotationsSeeder
         // CUC. "document" (el CUC) queda entre las ocultas.
         OrdersExportColumnSetting.Catalog("customer_identification", "Documento (P5)", visible: true),
         OrdersExportColumnSetting.Catalog("order_number", "Pedido (P6)", visible: true),
-        OrdersExportColumnSetting.Catalog("proof_amount_1", "V. Consignacion (P7)", visible: true),
+        // Ajuste 2026-09-26: el valor consignado es el total de todos los comprobantes del pedido, no
+        // el primero, que sigue en "V. Consignacion 1".
+        OrdersExportColumnSetting.Catalog("proof_amount_total", "V. Consignacion (P7)", visible: true),
         OrdersExportColumnSetting.Catalog("address", "Direccion (P8)", visible: true),
         OrdersExportColumnSetting.Catalog("notes", "Observaciones", visible: true),
         OrdersExportColumnSetting.Fixed("Guia P9", string.Empty, visible: true),
@@ -144,6 +148,7 @@ public static class QuotationsSeeder
         "tax",
         "document",
         .. Enumerable.Range(2, OrdersExportColumnCatalog.PaymentDateColumns - 1).Select(number => $"payment_date_{number}"),
+        "bank",
         "account",
         .. Enumerable.Range(1, OrdersExportColumnCatalog.PaymentDateColumns).Select(number => $"proof_url_{number}"),
         .. Enumerable.Range(3, OrdersExportColumnCatalog.PaymentDateColumns - 2).Select(number => $"proof_amount_{number}"),

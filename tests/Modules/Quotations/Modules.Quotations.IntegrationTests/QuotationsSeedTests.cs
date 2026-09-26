@@ -111,10 +111,22 @@ public sealed class QuotationsSeedTests
             SeededLayoutHeaders,
             layout.Columns.Where(column => column.Visible).Select(column => column.Header));
         Assert.Equal(23, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
-        // Ajuste 2026-09-26: el ERP exige las dos formas de pago llenas, aunque sean la misma.
+        // Ajuste 2026-09-26: el ERP exige las dos formas de pago llenas, aunque sean la misma, y lee
+        // en ellas el banco con el número de cuenta. "bank" queda oculta, con su nombre por defecto.
         Assert.Equal(
             ["Forma de pago 1", "Forma de pago 2"],
-            layout.Columns.Where(column => column.Key == "bank").Select(column => column.Header));
+            layout.Columns.Where(column => column.Key == "bank_account").Select(column => column.Header));
+        var bank = Assert.Single(layout.Columns, column => column.Key == "bank");
+        Assert.False(bank.Visible);
+        Assert.Equal("Banco", bank.Header);
+        // Ajuste 2026-09-26: "V. Consignacion (P7)" es el total de todos los comprobantes; el primero
+        // sigue en "V. Consignacion 1".
+        Assert.Equal(
+            "proof_amount_total",
+            Assert.Single(layout.Columns, column => column.Header == "V. Consignacion (P7)").Key);
+        Assert.Equal(
+            "V. Consignacion 1",
+            Assert.Single(layout.Columns, column => column.Key == "proof_amount_1").Header);
         Assert.Equal(
             ["FECHA", "Bloq/act", "Vencimiento"],
             layout.Columns.Where(column => column.Key == "order_date").Select(column => column.Header));
