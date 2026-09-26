@@ -278,3 +278,27 @@ La hoja real del ERP del tenant (MIGRACION 1) no cabía en las reglas de arriba.
 
 Pendiente en el frontend: el editor asume una llave por fila (restaurar fila por
 `defaultPosition`, "restaurar todo") y el tope de 10 en su validación local y en su texto.
+
+## Ajuste 2026-09-26 — "Documento (P5)" es el documento de identidad
+
+El ERP del tenant sembrado importa en "Documento (P5)" el número de documento de identidad de quien
+se factura, no el CUC. `document` no cambia de significado —otro ERP puede estar leyendo el CUC de
+ahí—; en su lugar:
+
+- **Una llave nueva al final del catálogo** (36 en total): `customer_identification` /
+  "Documento de identidad", ancho 18, texto. Es el número de la misma persona que nombra
+  `customer_name`, con su misma precedencia: `FinalConsumer.IdentificationNumber` para consumidor
+  final (el NIT genérico que imprime el PDF); **vacío** si la factura sale a nombre de una parte de
+  facturación con nombre propio, porque `QuotationParty` no guarda identificación y poner la del
+  cliente sería atribuirle a otra persona un documento que no es suyo; y en el resto —razón social
+  o nombre de contacto, que son el mismo cliente— `Customer.IdentificationNumber` tal como está
+  guardado (sólo recortado, con puntos y guiones). Sin el tipo de documento.
+- **`QuotationCustomerRef.IdentificationNumber`**, opcional y al final del record, lo llena
+  `QuotationCustomerLookup` desde la ficha. Viaja en el `FindManyAsync` que el lote ya hace:
+  ninguna consulta por fila.
+- **La semilla** mapea "Documento (P5)" a `customer_identification` y deja `document` entre las
+  ocultas, con su nombre por defecto. Sólo crea: un tenant cuyo layout ya existía no cambia solo, y
+  remapea desde la pantalla de configuración.
+
+Pendiente: si una parte de facturación con nombre propio necesita documento, `QuotationParty` tiene
+que ganar el campo (y el formulario de la cotización con él).

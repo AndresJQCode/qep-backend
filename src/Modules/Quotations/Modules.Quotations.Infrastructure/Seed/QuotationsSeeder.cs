@@ -114,7 +114,9 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("Flete (P3)", "CONTRAENTREGA", visible: true),
         OrdersExportColumnSetting.Catalog("city", "Ciudad (P4)", visible: true),
         OrdersExportColumnSetting.Fixed("Tipo Envio", string.Empty, visible: true),
-        OrdersExportColumnSetting.Catalog("document", "Documento (P5)", visible: true),
+        // Ajuste 2026-09-26: el ERP lee acá el documento de identidad de quien se factura, no el
+        // CUC. "document" (el CUC) queda entre las ocultas.
+        OrdersExportColumnSetting.Catalog("customer_identification", "Documento (P5)", visible: true),
         OrdersExportColumnSetting.Catalog("order_number", "Pedido (P6)", visible: true),
         OrdersExportColumnSetting.Catalog("proof_amount_1", "V. Consignacion (P7)", visible: true),
         OrdersExportColumnSetting.Catalog("address", "Direccion (P8)", visible: true),
@@ -139,6 +141,7 @@ public static class QuotationsSeeder
     [
         "unit_price",
         "tax",
+        "document",
         .. Enumerable.Range(2, OrdersExportColumnCatalog.PaymentDateColumns - 1).Select(number => $"payment_date_{number}"),
         "account",
         .. Enumerable.Range(1, OrdersExportColumnCatalog.PaymentDateColumns).Select(number => $"proof_url_{number}"),

@@ -54,6 +54,10 @@ public static class OrdersExportColumnCatalog
         // nueva, para no mover lo que el ERP ya importa sin layout guardado.
         new("order_date", "Fecha Pedido", 14),
         new("customer_name", "Cliente", 30),
+        // Ajuste 2026-09-26: el número de documento de identidad de quien nombra "Cliente", que es
+        // lo que el ERP del tenant importa en "Documento (P5)". No reemplaza a "document", que
+        // sigue siendo el CUC: otro tenant puede estar leyéndolo de ahí.
+        new("customer_identification", "Documento de identidad", 18),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

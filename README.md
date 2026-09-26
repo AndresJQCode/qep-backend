@@ -807,7 +807,7 @@ salen con el nuevo— y queda vacía si la membresía no tiene código.
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 35 columnas del Excel de pedidos y agregar hasta 40 columnas fijas de
+reordenar y ocultar las 36 columnas del Excel de pedidos y agregar hasta 40 columnas fijas de
 texto (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una misma columna del catálogo
 puede ir más de una vez con encabezados distintos: el ERP puede leer el mismo dato bajo varios
 nombres (la fecha del pedido en `FECHA`, `Bloq/act` y `Vencimiento`).
@@ -817,9 +817,17 @@ el pedido, en la zona del tenant, como texto `yyyy-MM-dd`) y `Cliente` (`custome
 de quién sale la factura — `Consumidor final`, el nombre de la parte de facturación propia, la
 razón social si la cotización factura a ella, o el nombre de la ficha del cliente).
 
+Detrás de todas (2026-09-26) va `Documento de identidad` (`customer_identification`): el número de
+documento de la misma persona que nombra `Cliente`, con la misma precedencia — `222222222222` para
+consumidor final, el número de la ficha del cliente con razón social o sin ella, y **vacío** cuando
+la factura sale a nombre de una parte de facturación propia, porque la parte no guarda
+identificación. `Documento` (`document`) sigue siendo el CUC.
+
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
 ERP, «MIGRACION 1»: 47 columnas visibles, 24 de ellas fijas. Sólo crea: si el tenant ya tiene
-layout, no lo toca.
+layout, no lo toca. Desde el 2026-09-26 su `Documento (P5)` lleva el documento de identidad
+(`customer_identification`) y el CUC (`document`) queda oculto; un tenant cuyo layout ya existía
+conserva el de antes y lo cambia desde su pantalla de configuración.
 
 | Método | Ruta                                                | Permiso                  |
 | ------ | --------------------------------------------------- | ------------------------ |

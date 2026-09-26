@@ -30,7 +30,7 @@ public sealed class OrdersExportProcessorTests
     private static readonly QuotationCustomerRef DefaultCustomer = new(
         ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
         "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
-        Email: "cliente@ejemplo.co", CityName: "Bogotá");
+        Email: "cliente@ejemplo.co", CityName: "Bogotá", IdentificationNumber: "900123456");
 
     private static readonly QuotationProductRef DefaultProduct = new(
         ProductId, "Tornillo hexagonal", "TOR-001", ImageUrl: null, Scales: []);
@@ -54,7 +54,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
-                "Valor Unit sin IVA", "Fecha Pedido", "Cliente",
+                "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -84,6 +84,8 @@ public sealed class OrdersExportProcessorTests
     private const int FechaPedidoIndex = 33;
 
     private const int ClienteIndex = 34;
+
+    private const int DocumentoIdentidadIndex = 35;
 
     // Ajuste 2026-09-25: "Fecha Pedido" es el día en que nació el pedido (Order.CreatedAt), en el
     // día del tenant y no en UTC — 22:00 de Bogotá ya es el día siguiente en UTC. Texto, como
@@ -191,6 +193,104 @@ public sealed class OrdersExportProcessorTests
         var row = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, row.Count);
         Assert.Equal(ExportCell.OfText(string.Empty), row[ClienteIndex]);
+    }
+
+    // Ajuste 2026-09-26: "Documento de identidad" es el número de documento de la misma persona que
+    // nombra "Cliente", con la misma precedencia. "Documento" sigue siendo el CUC.
+    [Fact]
+    public async Task DocumentoIdentidadIsTheCustomersIdentificationNumberWithoutABillingParty()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Documento de identidad", 18), writer.Columns[DocumentoIdentidadIndex]);
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(ExportCell.OfText("900123456"), row[DocumentoIdentidadIndex]);
+        Assert.Equal("CUC-001", row[13].Text);
+    }
+
+    // La razón social es del mismo cliente: su NIT es el de la ficha.
+    [Fact]
+    public async Task DocumentoIdentidadIsTheCustomersNumberWhenTheQuotationBillsToTheBusinessName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = "Tornillos del Valle S.A.S." });
+        var parties = QuotationParties.Empty with { BillingUsesBusinessName = true };
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                writer,
+                customers: customers)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("900123456", Assert.Single(writer.Rows)[DocumentoIdentidadIndex].Text);
+    }
+
+    [Fact]
+    public async Task DocumentoIdentidadIsTheFinalConsumersGenericNumber()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = QuotationParties.Empty with { BillsToFinalConsumer = true };
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(FinalConsumer.IdentificationNumber, Assert.Single(writer.Rows)[DocumentoIdentidadIndex].Text);
+    }
+
+    // Una parte de facturación con nombre propio es otra persona, y la parte no guarda
+    // identificación: la celda queda vacía en vez de ponerle el documento del cliente.
+    [Fact]
+    public async Task DocumentoIdentidadIsEmptyWhenTheBillingPartyNamesSomeoneElse()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: new QuotationPartyDetails { Name = "Distribuciones Andinas S.A.S.", Phone = "6015550000" },
+            Shipping: null,
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[DocumentoIdentidadIndex]);
+    }
+
+    // Una parte de facturación sin nombre deja "Cliente" en el de la ficha, y con él su documento.
+    [Fact]
+    public async Task DocumentoIdentidadIsTheCustomersNumberWhenTheBillingPartyHasNoName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: new QuotationPartyDetails { Phone = "6015550000" },
+            Shipping: null,
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal("Ferretería El Tornillo", row[ClienteIndex].Text);
+        Assert.Equal("900123456", row[DocumentoIdentidadIndex].Text);
+    }
+
+    [Fact]
+    public async Task DocumentoIdentidadIsEmptyWhenTheCustomerDoesNotResolve()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer);
+        customers.Refs.Clear();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001")),
+                writer,
+                customers: customers)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[DocumentoIdentidadIndex]);
     }
 
     [Fact]
@@ -737,11 +837,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(34, writer.Columns.Count);
+        Assert.Equal(35, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("Cliente", writer.Columns[^1].Header);
+        Assert.Equal("Documento de identidad", writer.Columns[^1].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -772,7 +872,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(37, writer.Columns.Count);
+        Assert.Equal(38, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc", OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -789,7 +889,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 35 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 36 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {

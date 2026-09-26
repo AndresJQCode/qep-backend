@@ -113,7 +113,8 @@ internal sealed class QuotationCustomerLookup(
                 .Select(address => ToAddressRef(address, citiesById))
                 .ToArray(),
             customer.UpdatedAt,
-            customer.BusinessName);
+            customer.BusinessName,
+            customer.IdentificationNumber);
     }
 
     private static QuotationCustomerAddressRef ToAddressRef(

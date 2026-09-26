@@ -57,7 +57,8 @@ public sealed class OrdersExportProcessor(
     /// de última "Valor Unit sin IVA" (<see cref="QuotationItem.UnitPriceWithoutTax"/>), mientras
     /// "Valor Unit" sigue llevando el precio con IVA incluido. Detrás, por lo mismo, las dos que pidió
     /// la hoja de importación del ERP (ajuste 2026-09-25): "Fecha Pedido" (<see cref="Order.CreatedAt"/>
-    /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura).
+    /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
+    /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Select(column => new ExportColumn(column.DefaultHeader, column.Width))
@@ -255,6 +256,7 @@ public sealed class OrdersExportProcessor(
         var billingParty = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);
         var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
         var cliente = BilledNameFor(quotation, billingParty, customer);
+        var documentoIdentidad = BilledIdentificationFor(quotation, billingParty, customer);
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         var observaciones = quotation.Notes ?? string.Empty;
@@ -294,6 +296,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfNumber(item.UnitPriceWithoutTax),
                 ExportCell.OfText(fechaPedido),
                 ExportCell.OfText(cliente),
+                ExportCell.OfText(documentoIdentidad),
             ];
         }
     }
@@ -324,6 +327,28 @@ public sealed class OrdersExportProcessor(
         }
 
         return customer?.Name ?? string.Empty;
+    }
+
+    // "Documento de identidad" (ajuste 2026-09-26): el número de documento de la misma persona que
+    // nombra "Cliente", en el mismo orden que BilledNameFor. Consumidor final lleva el NIT genérico
+    // (FinalConsumer.IdentificationNumber, el mismo que imprime el PDF). Una parte de facturación
+    // con nombre propio es otra persona y QuotationParty no guarda identificación: la celda queda
+    // vacía antes que ponerle el documento de alguien que no es a quien se factura. La razón
+    // social y el contacto son el mismo cliente, así que llevan el número de su ficha.
+    private static string BilledIdentificationFor(
+        Quotation quotation, QuotationParty? billing, QuotationCustomerRef? customer)
+    {
+        if (quotation.BillsToFinalConsumer)
+        {
+            return FinalConsumer.IdentificationNumber;
+        }
+
+        if (billing?.Name is { Length: > 0 })
+        {
+            return string.Empty;
+        }
+
+        return customer?.IdentificationNumber ?? string.Empty;
     }
 
     // La entrega con datos propios manda; sin ella, "los mismos datos del cliente" (el caso

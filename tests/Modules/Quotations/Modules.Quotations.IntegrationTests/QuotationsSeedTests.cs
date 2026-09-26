@@ -117,6 +117,14 @@ public sealed class QuotationsSeedTests
         Assert.Equal(
             "Nota Encab.",
             Assert.Single(layout.Columns, column => column.Key == "customer_name").Header);
+        // Ajuste 2026-09-26: el ERP importa en "Documento (P5)" el documento de identidad, no el
+        // CUC. "document" sigue en la lista, oculta y con su nombre por defecto.
+        Assert.Equal(
+            "customer_identification",
+            Assert.Single(layout.Columns, column => column.Header == "Documento (P5)").Key);
+        var document = Assert.Single(layout.Columns, column => column.Key == "document");
+        Assert.False(document.Visible);
+        Assert.Equal("Documento", document.Header);
         // Todo el catálogo está en la lista, visible o no: si una llave faltara, Effective la
         // completaría visible al final y la hoja tendría una columna que el ERP no espera.
         Assert.Empty(OrdersExportColumnCatalog.Columns
