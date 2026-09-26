@@ -348,3 +348,18 @@ además el IVA no es una constante: es de cada línea.
   `1,5`, `+1`) sigue como el texto que el tenant escribió, así que `01` conserva su cero. El valor
   se guarda igual que antes (texto); sólo cambia la celda. `OrdersExportColumnSetting.Fixed` recorta
   los extremos, así que " 1" nunca llega a la proyección.
+
+### NIT de la empresa de facturación (ajuste 2026-09-26)
+
+La hoja sembrada llevaba en "Nit" una fija `901851609`: el NIT de una sola empresa, escrito a mano.
+Una cotización facturada por otra empresa del tenant salía con el NIT equivocado.
+
+- **Una llave nueva al final del catálogo** (40 en total): `company_tax_id` / "NIT Empresa", ancho
+  18. Es `QuotationCompanyRef.TaxId` de la empresa de `Quotation.BillingAccount.CompanyId` —la
+  misma que "EMPRESA"—, tal como está hoy en Companies (no se congela: la empresa es del tenant, no
+  un dato del cliente). Vacía sin cuenta de facturación o si la empresa no resuelve.
+- **Tipo de celda: la regla de las fijas**, reusando `OrdersExportLayoutProjection.FixedCellFor`:
+  sólo dígitos (`901851609`) sale número; con puntos o dígito de verificación (`901851609-1`)
+  queda texto, que es como Companies lo guarda.
+- **La semilla** mapea "Nit" a `company_tax_id` en vez de la fija (21 fijas, antes 22). Sólo crea,
+  como siempre: un tenant cuyo layout ya existía conserva la fija y la cambia desde su pantalla.

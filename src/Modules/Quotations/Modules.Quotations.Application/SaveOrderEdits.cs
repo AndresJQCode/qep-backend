@@ -195,6 +195,15 @@ public sealed class SaveOrderEditsHandler(
 
             await RecordItemEditsAsync(command.TenantId, quotation, order, itemEdits, updatedBy, now, cancellationToken);
 
+            // Mismo motivo que AddOrderItemsHandler: una línea sumada al pedido se congela al
+            // agregarla, porque ningún envío posterior lo va a hacer. Sólo si hubo altas.
+            if (itemEdits.Any(edit => edit.Kind == OrderItemEditKind.Added))
+            {
+                quotation.CaptureProductSnapshotsAfterConversion(
+                    await QuotationItemProductLabel.ResolveMissingAsync(
+                        productLookup, command.TenantId, quotation, cancellationToken));
+            }
+
             // Misma fila y misma auditoría que el piso, con su propio texto y su propia acción.
             if (retailChanged)
             {

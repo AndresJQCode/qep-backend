@@ -20,7 +20,12 @@ public sealed record QuotationItemDto(
     /// <c>GlobalFloor</c>. Los enums viajan con su nombre porque el diccionario lo tiene el
     /// frontend. Sin esto la pantalla no puede explicar por que una linea de 3 unidades
     /// descuenta 12%.</summary>
-    string DiscountOrigin);
+    string DiscountOrigin,
+    /// <summary>Código y nombre congelados al salir del borrador; null en un borrador y en las
+    /// líneas enviadas antes de que existieran. No viajan así al cliente HTTP: el composer los
+    /// resuelve contra el catálogo con <see cref="QuotationItemProductLabel"/>.</summary>
+    string? ProductCode,
+    string? ProductName);
 
 public sealed record QuotationDto(
     Guid Id,

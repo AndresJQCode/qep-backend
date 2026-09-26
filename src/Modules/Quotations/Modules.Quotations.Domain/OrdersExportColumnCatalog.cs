@@ -68,6 +68,10 @@ public static class OrdersExportColumnCatalog
         // el ERP del tenant importa en "IVA". Por línea y no fija: hay productos con otra tarifa. No
         // reemplaza a "tax", que es el monto y otro tenant puede estar leyéndolo.
         new("tax_rate", "Tasa IVA", 12),
+        // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la misma que nombra
+        // "company"—, que el ERP del tenant importa en "Nit". Antes era una fija con el NIT escrito a
+        // mano, que dejaba de ser cierto en cuanto la cotización se facturaba por otra empresa.
+        new("company_tax_id", "NIT Empresa", 18),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

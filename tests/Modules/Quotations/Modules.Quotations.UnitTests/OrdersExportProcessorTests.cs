@@ -55,7 +55,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-                "Banco y cuenta", "Total consignado", "Tasa IVA",
+                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -886,6 +886,75 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(0m), writer.Rows[1][TasaIvaIndex]);
     }
 
+    private const int NitEmpresaIndex = 39;
+
+    // Ajuste 2026-09-26: "NIT Empresa" es el NIT de la empresa por la que se factura, la misma que
+    // nombra "EMPRESA". Un NIT sólo de dígitos sale como número, igual que una fija numérica.
+    [Fact]
+    public async Task NitEmpresaIsTheBillingCompanysTaxIdAsANumberWhenItIsOnlyDigits()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: BillingAccountOfCompany())),
+                writer,
+                companies: CompanyWithTaxId("901851609"))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("NIT Empresa", 18), writer.Columns[NitEmpresaIndex]);
+        Assert.Equal(ExportCell.OfNumber(901851609m), Assert.Single(writer.Rows)[NitEmpresaIndex]);
+    }
+
+    // Con dígito de verificación no es un número canónico: sale como el texto que tiene la empresa.
+    [Fact]
+    public async Task NitEmpresaWithACheckDigitStaysText()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: BillingAccountOfCompany())),
+                writer,
+                companies: CompanyWithTaxId("901851609-1"))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("901851609-1"), Assert.Single(writer.Rows)[NitEmpresaIndex]);
+    }
+
+    // Sin cuenta de facturación, o con una empresa que no resuelve, vacía — como "EMPRESA".
+    [Fact]
+    public async Task NitEmpresaIsEmptyWithoutABillingCompany()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var rows = new[]
+        {
+            NewRow("PED-2026-0001"),
+            NewRow("PED-2026-0002", billingAccount: BillingAccountOfCompany()),
+        };
+
+        await NewProcessor(
+                new StubOrderListRepository(rows),
+                writer,
+                companies: new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText(string.Empty), cells[NitEmpresaIndex]));
+    }
+
+    private static QuotationBillingAccount BillingAccountOfCompany() => new()
+    {
+        CompanyId = CompanyId,
+        BankName = "Bancolombia",
+        AccountNumber = "123",
+        Currency = "COP",
+    };
+
+    private static StubQuotationCompanyLookup CompanyWithTaxId(string taxId) =>
+        new(new Dictionary<Guid, QuotationCompanyRef>
+        {
+            [CompanyId] = new(CompanyId, "Raíces Orgánicas", taxId, IsActive: true, Address: null, Phone: null, BankAccounts: []),
+        });
+
     // Banco va justo después de "Cod. Asesor"; Cuenta, después de Banco.
     private const int BancoIndex = 20;
 
@@ -1002,11 +1071,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(38, writer.Columns.Count);
+        Assert.Equal(39, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("Tasa IVA", writer.Columns[^1].Header);
+        Assert.Equal("NIT Empresa", writer.Columns[^1].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -1037,7 +1106,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(41, writer.Columns.Count);
+        Assert.Equal(42, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc",OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -1054,7 +1123,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 39 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 40 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {
@@ -1126,6 +1195,56 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(1, layouts.FindCalls);
+    }
+
+    // Owner, 2026-09-26: la línea de un pedido lleva el código que tenía el producto cuando la
+    // cotización salió del borrador. Que el catálogo lo cambie después no cambia lo que va al ERP.
+    [Fact]
+    public async Task CodProductoIsTheSnapshotEvenIfTheCatalogChanged()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001");
+        row.Quotation.CaptureProductSnapshotsAfterConversion(new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [ProductId] = new("TOR-VIEJO", "Tornillo viejo"),
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("TOR-VIEJO"), Assert.Single(writer.Rows)[1]);
+    }
+
+    // Una línea sin snapshot —enviada antes de que existiera— se sigue leyendo en vivo.
+    [Fact]
+    public async Task CodProductoFallsBackToTheCatalogWithoutASnapshot()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("TOR-001"), Assert.Single(writer.Rows)[1]);
+    }
+
+    // Si todas las líneas del lote ya están congeladas, el catálogo no tiene nada que aportar.
+    [Fact]
+    public async Task ALotOfFrozenLinesDoesNotReadTheCatalog()
+    {
+        var row = NewRow("PED-2026-0001");
+        row.Quotation.CaptureProductSnapshotsAfterConversion(new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [ProductId] = new("TOR-VIEJO", "Tornillo viejo"),
+        });
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>
+        {
+            [ProductId] = DefaultProduct,
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), products: products)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, products.FindManyCalls);
     }
 
     private static ExportJob NewJob(OrdersExportFilters? filters = null) =>

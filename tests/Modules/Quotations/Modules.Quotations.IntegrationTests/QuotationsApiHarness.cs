@@ -401,6 +401,27 @@ internal static class QuotationsApiHarness
         return body.Id;
     }
 
+    /// <summary>
+    /// Le cambia código y nombre a un producto de <see cref="CreateProductWithScalesAsync"/> por la
+    /// API de Catalog, con el mismo precio y las mismas escalas: el PUT reemplaza el recurso
+    /// entero, y así lo único que cambia es lo que la prueba quiere ver cambiar.
+    /// </summary>
+    public static async Task RenameProductAsync(
+        HttpClient client, Guid tenantId, Guid productId, string name, string code,
+        decimal baseCop = 100_000m)
+    {
+        var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
+            new
+            {
+                name,
+                code,
+                pricing = new { baseCop, scales = DefaultScales(baseCop) }
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     private static object[] DefaultScales(decimal baseCop) =>
     [
         new

@@ -101,7 +101,9 @@ internal static class QuotationMapping
         item.TaxPercentage,
         item.TaxAmount,
         item.Position,
-        item.DiscountOrigin.ToString());
+        item.DiscountOrigin.ToString(),
+        item.ProductCode,
+        item.ProductName);
 
     public static QuotationParties ToDomain(this QuotationPartiesRequest? request) =>
         request is null

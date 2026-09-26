@@ -174,12 +174,17 @@ public sealed class OrdersExportProcessor(
         var partiesByQuotation = await repository.ListPartiesForExportAsync(tenantId, quotationIds, cancellationToken);
         var proofsByOrder = await repository.ListPaymentProofsForExportAsync(tenantId, orderIds, cancellationToken);
 
+        // Sólo las líneas sin snapshot: de las congeladas el Excel no usa nada del catálogo, y un
+        // lote de pedidos de hoy no tiene por qué leerlo.
         var productIds = itemsByQuotation.Values
             .SelectMany(items => items)
+            .Where(item => item.ProductCode is null)
             .Select(item => item.ProductId)
             .Distinct()
             .ToArray();
-        var products = await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
+        var products = productIds.Length == 0
+            ? new Dictionary<Guid, QuotationProductRef>()
+            : await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
 
         // Pocas empresas distintas en la práctica (un tenant no suele facturar por más de un
         // puñado de cuentas), así que una consulta por empresa distinta y no un puerto batch
@@ -242,10 +247,14 @@ public sealed class OrdersExportProcessor(
             ? foundProofs
             : [];
 
-        var empresa = quotation.BillingAccount is { } billing
+        var billingCompany = quotation.BillingAccount is { } billing
             && context.Companies.TryGetValue(billing.CompanyId, out var company)
-                ? company.Name
-                : string.Empty;
+                ? company
+                : null;
+        var empresa = billingCompany?.Name ?? string.Empty;
+        // "NIT Empresa" (ajuste 2026-09-26): el de la misma empresa que "EMPRESA". Con la regla de
+        // las fijas: sólo dígitos sale número, con dígito de verificación ("901851609-1") texto.
+        var nitEmpresa = OrdersExportLayoutProjection.FixedCellFor(billingCompany?.TaxId ?? string.Empty);
 
         context.Customers.TryGetValue(quotation.ClientId, out var customer);
         var documento = customer?.Cuc ?? string.Empty;
@@ -278,7 +287,7 @@ public sealed class OrdersExportProcessor(
             yield return
             [
                 ExportCell.OfText(empresa),
-                ExportCell.OfText(product?.Code ?? string.Empty),
+                ExportCell.OfText(QuotationItemProductLabel.CodeOf(item.ProductCode, product)),
                 ExportCell.OfNumber(item.Quantity),
                 ExportCell.OfNumber(item.UnitPrice),
                 ExportCell.OfNumber(item.TaxAmount),
@@ -305,6 +314,7 @@ public sealed class OrdersExportProcessor(
                 // La foto de la tasa que la línea tomó del producto al agregarse, no la de hoy: el
                 // pedido ya se cobró con ésa.
                 ExportCell.OfNumber(item.TaxPercentage / 100m),
+                nitEmpresa,
             ];
         }
     }

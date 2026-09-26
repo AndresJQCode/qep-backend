@@ -145,8 +145,10 @@ public sealed class QuotationResponseComposer(
         return new QuotationItemResponse(
             item.Id,
             item.ProductId,
-            product?.Name ?? string.Empty,
-            product?.Code ?? string.Empty,
+            // Congelados si la cotización ya salió del borrador; si no, los del catálogo de hoy.
+            // Portada y escalas siguen siendo las de hoy: no se congelan.
+            QuotationItemProductLabel.NameOf(item.ProductName, product),
+            QuotationItemProductLabel.CodeOf(item.ProductCode, product),
             product?.ImageUrl,
             // Ordenadas acá y no en el adaptador: el orden es parte del contrato de esta
             // respuesta —la pantalla pinta la tabla de descuentos tal como llega— y Catalog no

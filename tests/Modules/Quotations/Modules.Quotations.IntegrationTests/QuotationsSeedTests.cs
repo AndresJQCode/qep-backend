@@ -110,7 +110,12 @@ public sealed class QuotationsSeedTests
         Assert.Equal(
             SeededLayoutHeaders,
             layout.Columns.Where(column => column.Visible).Select(column => column.Header));
-        Assert.Equal(22, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        Assert.Equal(21, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        // Ajuste 2026-09-26: "Nit" es el NIT de la empresa por la que se factura, no uno escrito a
+        // mano: una cotización facturada por otra empresa lo llevaba mal.
+        Assert.Equal(
+            "company_tax_id",
+            Assert.Single(layout.Columns, column => column.Header == "Nit").Key);
         // Ajuste 2026-09-26: "IVA" es la tasa de cada línea (tax_rate), no un 0.19 fijo: hay
         // productos con otra tarifa. "tax" (el monto) sigue oculta, con su nombre por defecto.
         Assert.Equal(

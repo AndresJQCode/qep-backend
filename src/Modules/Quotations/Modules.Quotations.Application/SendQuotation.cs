@@ -32,6 +32,7 @@ public sealed class SendQuotationHandler(
     IQuotationPdfProvider pdfProvider,
     IQuotationPdfStorage pdfStorage,
     IQuotationCustomerLookup customerLookup,
+    IQuotationProductLookup productLookup,
     IWhatsAppSender whatsAppSender,
     IMembershipDirectory membershipDirectory,
     IQuotationSendFailureLog sendFailureLog,
@@ -81,6 +82,12 @@ public sealed class SendQuotationHandler(
             // cliente no depende de qué pantalla lo pidió ni de qué versión del frontend estaba
             // abierta. Sólo cuesta una llamada a `qcode-pdf` si la cotización cambió.
             stage = QuotationSendStage.Pdf;
+            // El catálogo de hoy para las líneas que el envío va a congelar (owner, 2026-09-26). Se
+            // lee acá y no al marcarla enviada: es lo mismo que el composer va a imprimir en el PDF,
+            // y una falla del catálogo tiene que cortar antes de que el mensaje salga. Cuenta como
+            // paso del documento porque es su contenido.
+            var products = await QuotationItemProductLabel.ResolveMissingAsync(
+                productLookup, command.TenantId, quotation, cancellationToken);
             var pdf = await pdfProvider.EnsureCurrentAsync(quotation, cancellationToken);
 
             // Meta **no puede** bajar el PDF desde una URL prefirmada de R2: le falla y descarta
@@ -117,7 +124,7 @@ public sealed class SendQuotationHandler(
 
             stage = QuotationSendStage.Persistence;
             var now = clock.UtcNow;
-            quotation.Send(sentBy.Value, now);
+            quotation.Send(sentBy.Value, now, products);
 
             repository.AddHistoryEntry(QuotationHistoryEntry.Create(
                 QuotationHistoryEntryId.New(),

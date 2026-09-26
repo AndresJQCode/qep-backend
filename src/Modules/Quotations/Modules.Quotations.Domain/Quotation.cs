@@ -741,16 +741,52 @@ public sealed class Quotation
     ///
     /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> quedan en el mismo instante también en un
     /// reenvío, así que <see cref="HasChangesSinceSent"/> vuelve a <c>false</c>: lo que el
-    /// cliente tiene en la mano es, otra vez, la versión vigente.</summary>
-    public void Send(MemberId sentBy, DateTimeOffset occurredAt)
+    /// cliente tiene en la mano es, otra vez, la versión vigente.
+    ///
+    /// <paramref name="products"/> es el catálogo de hoy para las líneas de esta cotización:
+    /// enviar es salir del borrador, y desde acá cada línea conserva el código y el nombre que
+    /// tenía su producto (owner, 2026-09-26). Un reenvío sólo completa las líneas que todavía no
+    /// los tienen —las agregadas después del primer envío—; lo ya congelado no se pisa. Una línea
+    /// cuyo producto no viene queda sin snapshot y se sigue leyendo en vivo: el envío nunca exigió
+    /// que el producto exista, y no es acá donde se empieza a exigir.</summary>
+    public void Send(
+        MemberId sentBy,
+        DateTimeOffset occurredAt,
+        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
         EnsureSendable();
 
+        CaptureProductSnapshots(products);
         SentAt = occurredAt;
         Status = QuotationStatus.Sent;
         UpdatedBy = sentBy;
         UpdatedAt = occurredAt;
         Version++;
+    }
+
+    /// <summary>
+    /// Congela código y nombre de las líneas que se le sumaron al pedido después de convertir
+    /// (<see cref="AddItemAfterConversion"/>): esas no tienen un envío ni una conversión posterior
+    /// que lo haga. Las que ya los tienen no se tocan.
+    ///
+    /// Mismo criterio que las demás variantes <c>*AfterConversion</c>: no exige estado, porque el
+    /// pedido pendiente lo comprobó el caso de uso. Y como <see cref="ApplyGroupDiscounts"/>, no es
+    /// una edición: no toca <see cref="Version"/> ni <see cref="UpdatedAt"/>, que ya los movió la
+    /// línea que se agregó.
+    /// </summary>
+    public void CaptureProductSnapshotsAfterConversion(
+        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products) =>
+        CaptureProductSnapshots(products);
+
+    private void CaptureProductSnapshots(IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
+    {
+        foreach (var item in _items)
+        {
+            if (products.TryGetValue(item.ProductId, out var product))
+            {
+                item.CaptureProduct(product);
+            }
+        }
     }
 
     /// <summary>US-11: anula la cotización. Disponible desde Draft o Sent; queda de sólo
@@ -806,9 +842,16 @@ public sealed class Quotation
     /// <c>ConvertQuotationToOrderHandler</c> justo después y en la misma unidad de trabajo: si
     /// guardar falla, no queda ni el pedido ni el cambio de estado. Mismo patrón que
     /// <see cref="Void"/> y <see cref="Expire"/>.</summary>
-    public void ConvertToOrder(MemberId convertedBy, DateTimeOffset occurredAt)
+    public void ConvertToOrder(
+        MemberId convertedBy,
+        DateTimeOffset occurredAt,
+        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
         EnsureConvertibleToOrder();
+
+        // Un borrador se puede convertir sin haberse enviado, y también es salir del borrador: el
+        // pedido nace con los productos congelados. Si ya se envió, lo congelado no se pisa.
+        CaptureProductSnapshots(products);
 
         Status = QuotationStatus.Converted;
         UpdatedBy = convertedBy;

@@ -50,7 +50,7 @@ public sealed class QuotationRetailTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(2));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(2), QuotationProductSnapshot.None);
 
         return quotation;
     }

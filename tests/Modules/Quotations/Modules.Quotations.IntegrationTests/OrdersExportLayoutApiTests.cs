@@ -37,13 +37,14 @@ public sealed class OrdersExportLayoutApiTests
         Assert.NotNull(layout);
         Assert.Equal(tenantId, layout.TenantId);
         Assert.Equal(1, layout.Version);
-        Assert.Equal(39, layout.Columns.Count);
+        Assert.Equal(40, layout.Columns.Count);
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
         Assert.All(layout.Columns, column => Assert.True(column.Visible));
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, true), layout.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "email", "Email", 19, "Email", null, true), layout.Columns[18]);
         Assert.Equal(38, layout.Columns[37].DefaultPosition);
         Assert.Equal(new ColumnPayload("Catalog", "tax_rate", "Tasa IVA", 39, "Tasa IVA", null, true), layout.Columns[38]);
+        Assert.Equal(new ColumnPayload("Catalog", "company_tax_id", "NIT Empresa", 40, "NIT Empresa", null, true), layout.Columns[39]);
     }
 
     // D9: el primer PUT viaja con "1" y la fila nace en 2. El GET siguiente la devuelve tal cual.
@@ -66,7 +67,7 @@ public sealed class OrdersExportLayoutApiTests
         var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
         Assert.NotNull(saved);
         Assert.Equal(2, saved.Version);
-        Assert.Equal(40, saved.Columns.Count);
+        Assert.Equal(41, saved.Columns.Count);
         Assert.Equal(new ColumnPayload("Fixed", null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, false), saved.Columns[1]);
         Assert.Equal("Correo", saved.Columns[19].Header);
@@ -254,7 +255,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
         var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(40, layout!.Columns.Count);
+        Assert.Equal(41, layout!.Columns.Count);
         Assert.Equal(
             [
                 new ColumnPayload("Catalog", "email", "Email", 19, "Email", null, true),
@@ -421,7 +422,7 @@ public sealed class OrdersExportLayoutApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var layout = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(39, layout!.Columns.Count);
+        Assert.Equal(40, layout!.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal("order_number", layout.Columns[1].Key);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, true), layout.Columns[2]);
@@ -447,7 +448,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
         Assert.Equal("\"3\"", restored.Headers.ETag?.Tag);
         var layout = await restored.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(39, layout!.Columns.Count);
+        Assert.Equal(40, layout!.Columns.Count);
         Assert.DoesNotContain(layout.Columns, column => column.Kind == "Fixed");
         Assert.Equal(defaults, layout.Columns);
     }

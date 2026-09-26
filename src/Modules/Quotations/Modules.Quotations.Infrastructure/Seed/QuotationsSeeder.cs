@@ -67,7 +67,7 @@ public static class QuotationsSeeder
     /// El layout del Excel de pedidos del tenant sembrado (ajuste 2026-09-25): reproduce la hoja
     /// de importación de su ERP, «MIGRACION 1», columna por columna y en su orden. Lo que el ERP
     /// pide y el backend conoce sale del catálogo con el encabezado de la hoja; lo que es constante
-    /// para el tenant (tipo de documento, bodega, transportadora, su NIT...) va como fija, vacía
+    /// para el tenant (tipo de documento, bodega, transportadora...) va como fija, vacía
     /// cuando la hoja exige la columna pero no tiene qué ponerle.
     ///
     /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento, y el banco con su cuenta
@@ -135,7 +135,9 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Catalog("email", "Email", visible: true),
         OrdersExportColumnSetting.Fixed("GeneraGuia", string.Empty, visible: true),
         OrdersExportColumnSetting.Fixed("GeneraFactura", string.Empty, visible: true),
-        OrdersExportColumnSetting.Fixed("Nit", "901851609", visible: true),
+        // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la de "EMPRESA"—, no uno
+        // escrito a mano, que salía mal en cuanto la cotización se facturaba por otra empresa.
+        OrdersExportColumnSetting.Catalog("company_tax_id", "Nit", visible: true),
         .. HiddenCatalogKeys().Select(key => OrdersExportColumnSetting.Catalog(
             key,
             OrdersExportColumnCatalog.Columns[OrdersExportColumnCatalog.IndexOf(key)].DefaultHeader,

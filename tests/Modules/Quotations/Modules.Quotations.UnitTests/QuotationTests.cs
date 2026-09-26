@@ -721,7 +721,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
 
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
         Assert.Equal(Now, quotation.SentAt);
@@ -736,7 +736,7 @@ public sealed class QuotationTests
             validUntil: null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(AdvisorId, Now));
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.valid_until_required", error.Code);
         Assert.Equal(QuotationStatus.Draft, quotation.Status);
@@ -751,9 +751,9 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
         var later = Now.AddHours(3);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
-        quotation.Send(AdvisorId, later);
+        quotation.Send(AdvisorId, later, QuotationProductSnapshot.None);
 
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
         Assert.Equal(later, quotation.SentAt);
@@ -768,7 +768,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
 
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
         Assert.True(quotation.CanBeSent);
         Assert.False(quotation.HasChangesSinceSent);
@@ -788,12 +788,12 @@ public sealed class QuotationTests
         }
         else
         {
-            quotation.Send(AdvisorId, Now);
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
             quotation.Expire(Now.AddDays(60));
         }
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(AdvisorId, Now.AddDays(61)));
+            quotation.Send(AdvisorId, Now.AddDays(61), QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.not_draft", error.Code);
     }
@@ -806,7 +806,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation();
         if (sendFirst)
         {
-            quotation.Send(AdvisorId, Now);
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         }
 
         quotation.Void(AdvisorId, Now);
@@ -846,7 +846,7 @@ public sealed class QuotationTests
     public void EditingASentQuotationIsAllowed()
     {
         var quotation = NewQuotation();
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now);
 
@@ -857,7 +857,7 @@ public sealed class QuotationTests
     public void ExpireMovesASentQuotationToExpired()
     {
         var quotation = NewQuotation();
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         var updatedByBeforeExpiring = quotation.UpdatedBy;
 
         quotation.Expire(Now);
@@ -881,7 +881,7 @@ public sealed class QuotationTests
     public void EditingAnExpiredQuotationIsRejected()
     {
         var quotation = NewQuotation();
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         quotation.Expire(Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
@@ -901,7 +901,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         var versionBeforeConverting = quotation.Version;
 
         quotation.EnsureConvertibleToOrder();
@@ -949,7 +949,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         quotation.Expire(Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
@@ -971,14 +971,14 @@ public sealed class QuotationTests
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         if (sendFirst)
         {
-            quotation.Send(AdvisorId, Now);
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         }
 
         var versionBeforeConverting = quotation.Version;
         var convertedBy = new MemberId(Guid.CreateVersion7());
         var convertedAt = Now.AddHours(2);
 
-        quotation.ConvertToOrder(convertedBy, convertedAt);
+        quotation.ConvertToOrder(convertedBy, convertedAt, QuotationProductSnapshot.None);
 
         Assert.Equal(QuotationStatus.Converted, quotation.Status);
         Assert.Equal(convertedBy, quotation.UpdatedBy);
@@ -1001,7 +1001,7 @@ public sealed class QuotationTests
         var versionBefore = quotation.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.ConvertToOrder(AdvisorId, Now.AddDays(61)));
+            quotation.ConvertToOrder(AdvisorId, Now.AddDays(61), QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
         Assert.Equal(status, quotation.Status);
@@ -1014,11 +1014,11 @@ public sealed class QuotationTests
     public void ConvertToOrderStillEnforcesThePreconditionsWithoutChangingTheStatus()
     {
         var quotation = NewQuotation(billingAccount: BillingAccount);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         var versionBefore = quotation.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.ConvertToOrder(AdvisorId, Now.AddHours(1)));
+            quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.items_required", error.Code);
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
@@ -1031,7 +1031,7 @@ public sealed class QuotationTests
     public void EditingAConvertedQuotationIsRejected()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var addError = Assert.Throws<QuotationsDomainException>(() =>
             quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now));
@@ -1046,7 +1046,7 @@ public sealed class QuotationTests
     public void VoidRejectsAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() => quotation.Void(AdvisorId, Now));
 
@@ -1060,13 +1060,13 @@ public sealed class QuotationTests
     public void SendingAConvertedQuotationIsRejected()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var ensureError = Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable);
         Assert.Equal("quotation.quotation.not_draft", ensureError.Code);
 
         var sendError = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(AdvisorId, Now.AddHours(2)));
+            quotation.Send(AdvisorId, Now.AddHours(2), QuotationProductSnapshot.None));
         Assert.Equal("quotation.quotation.not_draft", sendError.Code);
     }
 
@@ -1074,7 +1074,7 @@ public sealed class QuotationTests
     public void ExpireRejectsAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() => quotation.Expire(Now.AddDays(60)));
 
@@ -1089,7 +1089,7 @@ public sealed class QuotationTests
     public void RefreshCustomerTaxProfileLeavesAConvertedQuotationAsItWas()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
         var totalBefore = quotation.Total;
         var taxBefore = quotation.TaxAmount;
 
@@ -1114,7 +1114,7 @@ public sealed class QuotationTests
                 quotation.Expire(Now.AddDays(60));
                 break;
             case QuotationStatus.Converted:
-                quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+                quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(status), status, "No transition to that status.");
@@ -1305,7 +1305,7 @@ public sealed class QuotationTests
             BillingAccount, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
         var versionBefore = quotation.Version;
 
-        var error = Assert.Throws<QuotationsDomainException>(() => quotation.Send(AdvisorId, Now));
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.billing.identification_required", error.Code);
         Assert.Equal(QuotationStatus.Draft, quotation.Status);
@@ -1410,7 +1410,7 @@ public sealed class QuotationTests
     public void AddItemAfterConversionAddsALineToAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var totalBefore = quotation.Total;
         var productId = Guid.CreateVersion7();
         var later = Now.AddDays(1);
@@ -1450,7 +1450,7 @@ public sealed class QuotationTests
     {
         var quotation = ConvertibleSentQuotation();
         var existingProductId = Assert.Single(quotation.Items).ProductId;
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.AddItemAfterConversion(
@@ -1466,7 +1466,7 @@ public sealed class QuotationTests
     public void UpdateItemQuantityAfterConversionChangesTheQuantityOfAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var itemId = Assert.Single(quotation.Items).Id;
         var totalBefore = quotation.Total;
         var later = Now.AddDays(1);
@@ -1483,7 +1483,7 @@ public sealed class QuotationTests
     public void UpdateItemQuantityAfterConversionRejectsAnUnknownItem()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.UpdateItemQuantityAfterConversion(
@@ -1500,7 +1500,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 50_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var itemToRemove = quotation.Items.First().Id;
         var later = Now.AddDays(1);
 
@@ -1517,7 +1517,7 @@ public sealed class QuotationTests
     public void RemoveItemAfterConversionRejectsRemovingTheLastRemainingItem()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var itemId = Assert.Single(quotation.Items).Id;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
@@ -1534,7 +1534,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 50_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.RemoveItemAfterConversion(QuotationItemId.New(), AdvisorId, Now.AddDays(1)));
@@ -1550,7 +1550,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         return quotation;
     }
 

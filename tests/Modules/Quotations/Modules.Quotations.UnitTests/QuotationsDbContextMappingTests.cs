@@ -305,6 +305,26 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// El código y el nombre del producto congelados al enviar (owner, 2026-09-26). Nulos: las
+    /// líneas de un borrador y las enviadas antes de la columna no los tienen y se leen en vivo.
+    /// Los largos espejan los de <c>Catalog.Product</c>: más cortos, un producto válido allá no
+    /// cabría acá al enviarlo.
+    /// </summary>
+    [Fact]
+    public void TheProductSnapshotMapsToNullableColumnsSizedLikeTheCatalog()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var item = model.FindEntityType(typeof(QuotationItem))!;
+
+        var code = item.FindProperty(nameof(QuotationItem.ProductCode))!;
+        var name = item.FindProperty(nameof(QuotationItem.ProductName))!;
+
+        Assert.Equal(("product_code", true, 60), (code.GetColumnName(), code.IsNullable, code.GetMaxLength()));
+        Assert.Equal(("product_name", true, 200), (name.GetColumnName(), name.IsNullable, name.GetMaxLength()));
+    }
+
+    /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
     /// generada y después escrita a mano tiene que dejar el snapshot al día (Tasks 2 y 5). No abre

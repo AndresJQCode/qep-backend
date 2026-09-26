@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 39 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 40 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -19,7 +19,7 @@ public sealed class OrdersExportColumnCatalogTests
         "proof_amount_1", "proof_url_1", "proof_amount_2", "proof_url_2", "proof_amount_3", "proof_url_3",
         "proof_amount_4", "proof_url_4", "proof_amount_5", "proof_url_5",
         "unit_price_without_tax", "order_date", "customer_name", "customer_identification",
-        "bank_account", "proof_amount_total", "tax_rate",
+        "bank_account", "proof_amount_total", "tax_rate", "company_tax_id",
     ];
 
     private static readonly string[] Headers =
@@ -33,13 +33,13 @@ public sealed class OrdersExportColumnCatalogTests
         "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
         "V. Comprobante 5", "URL Comprobante 5",
         "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-        "Banco y cuenta", "Total consignado", "Tasa IVA",
+        "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
     ];
 
     [Fact]
-    public void HasTheThirtyNineColumnsOfTheSpecInItsOrder()
+    public void HasTheFortyColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(39, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(40, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -87,9 +87,20 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("tax_rate", "Tasa IVA", 12),
-            OrdersExportColumnCatalog.Columns[^1]);
+            OrdersExportColumnCatalog.Columns[38]);
         Assert.Equal(38, OrdersExportColumnCatalog.IndexOf("tax_rate"));
         Assert.Equal(4, OrdersExportColumnCatalog.IndexOf("tax"));
+    }
+
+    // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la misma de "EMPRESA"—, que el
+    // ERP del tenant importa en "Nit". Detrás de todas, como toda columna nueva.
+    [Fact]
+    public void CompanyTaxIdIsAppendedAtTheEnd()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("company_tax_id", "NIT Empresa", 18),
+            OrdersExportColumnCatalog.Columns[^1]);
+        Assert.Equal(39, OrdersExportColumnCatalog.IndexOf("company_tax_id"));
     }
 
     // Las llaves son identificadores: únicas, y el tenant no puede inventar ni repetir una.
