@@ -57,7 +57,9 @@ public sealed class OrdersExportProcessor(
     /// de última "Valor Unit sin IVA" (<see cref="QuotationItem.UnitPriceWithoutTax"/>), mientras
     /// "Valor Unit" sigue llevando el precio con IVA incluido. Detrás, por lo mismo, las dos que pidió
     /// la hoja de importación del ERP (ajuste 2026-09-25): "Fecha Pedido" (<see cref="Order.CreatedAt"/>
-    /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura).
+    /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
+    /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
+    /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido).
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Select(column => new ExportColumn(column.DefaultHeader, column.Width))
@@ -172,12 +174,17 @@ public sealed class OrdersExportProcessor(
         var partiesByQuotation = await repository.ListPartiesForExportAsync(tenantId, quotationIds, cancellationToken);
         var proofsByOrder = await repository.ListPaymentProofsForExportAsync(tenantId, orderIds, cancellationToken);
 
+        // Sólo las líneas sin snapshot: de las congeladas el Excel no usa nada del catálogo, y un
+        // lote de pedidos de hoy no tiene por qué leerlo.
         var productIds = itemsByQuotation.Values
             .SelectMany(items => items)
+            .Where(item => item.ProductCode is null)
             .Select(item => item.ProductId)
             .Distinct()
             .ToArray();
-        var products = await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
+        var products = productIds.Length == 0
+            ? new Dictionary<Guid, QuotationProductRef>()
+            : await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
 
         // Pocas empresas distintas en la práctica (un tenant no suele facturar por más de un
         // puñado de cuentas), así que una consulta por empresa distinta y no un puerto batch
@@ -240,10 +247,14 @@ public sealed class OrdersExportProcessor(
             ? foundProofs
             : [];
 
-        var empresa = quotation.BillingAccount is { } billing
+        var billingCompany = quotation.BillingAccount is { } billing
             && context.Companies.TryGetValue(billing.CompanyId, out var company)
-                ? company.Name
-                : string.Empty;
+                ? company
+                : null;
+        var empresa = billingCompany?.Name ?? string.Empty;
+        // "NIT Empresa" (ajuste 2026-09-26): el de la misma empresa que "EMPRESA". Con la regla de
+        // las fijas: sólo dígitos sale número, con dígito de verificación ("901851609-1") texto.
+        var nitEmpresa = OrdersExportLayoutProjection.FixedCellFor(billingCompany?.TaxId ?? string.Empty);
 
         context.Customers.TryGetValue(quotation.ClientId, out var customer);
         var documento = customer?.Cuc ?? string.Empty;
@@ -255,16 +266,19 @@ public sealed class OrdersExportProcessor(
         var billingParty = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);
         var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
         var cliente = BilledNameFor(quotation, billingParty, customer);
+        var documentoIdentidad = BilledIdentificationFor(quotation, billingParty, customer);
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         var observaciones = quotation.Notes ?? string.Empty;
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
         var banco = quotation.BillingAccount?.BankName ?? string.Empty;
         var cuenta = quotation.BillingAccount?.AccountNumber ?? string.Empty;
+        var bancoYCuenta = BankAndAccount(banco, cuenta);
         // Iguales en todas las líneas del pedido: se arman una vez, no por línea.
         var proofCells = Enumerable.Range(0, PaymentDateColumns)
             .SelectMany(index => ProofCells(proofs, index, publisher))
             .ToArray();
+        var totalConsignado = ProofTotalCell(proofs);
 
         foreach (var item in items)
         {
@@ -273,7 +287,7 @@ public sealed class OrdersExportProcessor(
             yield return
             [
                 ExportCell.OfText(empresa),
-                ExportCell.OfText(product?.Code ?? string.Empty),
+                ExportCell.OfText(QuotationItemProductLabel.CodeOf(item.ProductCode, product)),
                 ExportCell.OfNumber(item.Quantity),
                 ExportCell.OfNumber(item.UnitPrice),
                 ExportCell.OfNumber(item.TaxAmount),
@@ -294,9 +308,30 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfNumber(item.UnitPriceWithoutTax),
                 ExportCell.OfText(fechaPedido),
                 ExportCell.OfText(cliente),
+                ExportCell.OfText(documentoIdentidad),
+                ExportCell.OfText(bancoYCuenta),
+                totalConsignado,
+                // La foto de la tasa que la línea tomó del producto al agregarse, no la de hoy: el
+                // pedido ya se cobró con ésa.
+                ExportCell.OfNumber(item.TaxPercentage / 100m),
+                nitEmpresa,
             ];
         }
     }
+
+    // "Banco y cuenta" (ajuste 2026-09-26): lo mismo que "Banco" y "Cuenta", en una celda y con un
+    // solo espacio en medio. El dominio exige las dos mitades, pero si una llegara vacía sale la
+    // otra sola, sin espacios de sobra; sin cuenta de facturación, vacía.
+    private static string BankAndAccount(string bank, string account) =>
+        string.Join(' ', new[] { bank, account }.Where(part => !string.IsNullOrWhiteSpace(part)));
+
+    // "Total consignado" (ajuste 2026-09-26): la suma de todos los comprobantes del pedido —no sólo
+    // los cinco con columna propia—, como número porque el ERP lo suma. Sin comprobantes, vacía como
+    // "V. Comprobante N" sin comprobante: un 0 diría que hubo una consignación de cero pesos.
+    private static ExportCell ProofTotalCell(IReadOnlyList<OrderExportPaymentProof> proofs) =>
+        proofs.Count == 0
+            ? ExportCell.OfText(string.Empty)
+            : ExportCell.OfNumber(proofs.Sum(proof => proof.Amount));
 
     // "Cliente" (ajuste 2026-09-25): a nombre de quién sale la factura, con la misma precedencia que
     // el bloque Facturación del PDF (QuotationPdfDocumentMapper.BillingFor). Consumidor final gana
@@ -324,6 +359,30 @@ public sealed class OrdersExportProcessor(
         }
 
         return customer?.Name ?? string.Empty;
+    }
+
+    // "Documento de identidad" (ajuste 2026-09-26): el número de documento de la misma persona que
+    // nombra "Cliente", en el mismo orden que BilledNameFor. Consumidor final lleva el NIT genérico
+    // (FinalConsumer.IdentificationNumber, el mismo que imprime el PDF). Una parte de facturación
+    // con nombre propio es otra persona y QuotationParty no guarda identificación: la celda queda
+    // vacía antes que ponerle el documento de alguien que no es a quien se factura. La razón
+    // social y el contacto son el mismo cliente, así que llevan el número de su ficha.
+    private static string BilledIdentificationFor(
+        Quotation quotation, QuotationParty? billing, QuotationCustomerRef? customer)
+    {
+        if (quotation.BillsToFinalConsumer)
+        {
+            return FinalConsumer.IdentificationNumber;
+        }
+
+        // Con nombre propio la factura sale a otra persona, con su documento. Una fila guardada
+        // antes de que existiera el número no lo tiene: vacío, nunca el del cliente, que es otro.
+        if (billing?.Name is { Length: > 0 })
+        {
+            return billing.IdentificationNumber ?? string.Empty;
+        }
+
+        return customer?.IdentificationNumber ?? string.Empty;
     }
 
     // La entrega con datos propios manda; sin ella, "los mismos datos del cliente" (el caso

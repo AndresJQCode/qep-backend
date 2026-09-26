@@ -174,7 +174,8 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
-                "Valor Unit sin IVA", "Fecha Pedido", "Cliente",
+                "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
+                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -218,6 +219,22 @@ public sealed class OrderExportApiTests
         Assert.False(sheet.NumericCells[1][33]);
         // "Cliente": sin parte de facturación propia, el nombre de la ficha (CreateActiveCustomerAsync).
         Assert.Equal("Verde Esencial S.A.S.", first[34]);
+        // "Documento de identidad" (2026-09-26): el NIT al azar de CreateActiveCustomerAsync, que no
+        // es el CUC de "Documento".
+        Assert.StartsWith("900.", first[35], StringComparison.Ordinal);
+        Assert.NotEqual(first[13], first[35]);
+        // "Banco y cuenta" (2026-09-26): "Banco" y "Cuenta" en una celda, con un espacio en medio.
+        Assert.Equal($"{first[20]} {first[21]}", first[36]);
+        // "Total consignado" (2026-09-26): sin comprobantes, vacía como "V. Comprobante N".
+        Assert.Equal(string.Empty, first[37]);
+        // "Tasa IVA" (2026-09-26): el producto de CreateProductWithScalesAsync no tiene tarifa, así
+        // que la línea se tomó con 0 %. Número, no texto.
+        Assert.Equal("0", first[38]);
+        Assert.True(sheet.NumericCells[1][38]);
+        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync, con
+        // puntos y dígito de verificación, así que texto y no número.
+        Assert.Matches(@"^901\.\d{3}\.\d{3}-2$", first[39]);
+        Assert.False(sheet.NumericCells[1][39]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -428,15 +445,15 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 35 del catálogo + 1 fija − 1 oculta.
-        Assert.Equal(35, header.Count);
+        // 40 del catálogo + 1 fija − 1 oculta.
+        Assert.Equal(40, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
         Assert.Equal("Cantidad", header[3]);
         Assert.DoesNotContain("EMPRESA", header);
         Assert.DoesNotContain("Email", header);
-        Assert.Equal("Cliente", header[^1]);
+        Assert.Equal("NIT Empresa", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -457,7 +474,11 @@ public sealed class OrderExportApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var today = TodayInBogota();
-        await CreateOrderAsync(client, factory, tenantId);
+        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
+        var order = await CreateOrderAsync(
+            client, factory, tenantId, identificationNumber: "900.555.123-4", taxRateId: taxRateId);
+        await AddProofAsync(client, factory, tenantId, order.Id);
+        await AddProofAsync(client, factory, tenantId, order.Id);
         await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
 
         var response = await client.PostAsync(
@@ -477,9 +498,44 @@ public sealed class OrderExportApiTests
         Assert.Equal(row[4], row[9]);
         Assert.Equal(row[4], row[26]);
         Assert.Equal("Verde Esencial S.A.S.", row[6]);
-        Assert.Equal("Bancolombia", row[10]);
+        // "Forma de pago 1" y "Forma de pago 2" (ajuste 2026-09-26): el banco y el número de cuenta de
+        // CreateCompanyWithBankAccountAsync —siempre Bancolombia, número al azar— con un espacio.
+        Assert.Matches(@"^Bancolombia \S+$", row[10]);
+        Assert.Equal(row[10], row[12]);
+        // Dos comprobantes de AddProofAsync, de 5.000 cada uno: uno por "V. Consignacion N" y el
+        // total en "V. Consignacion (P7)" (ajuste 2026-09-26), como número.
+        Assert.Equal(5_000m, decimal.Parse(row[11], CultureInfo.InvariantCulture));
+        Assert.Equal(5_000m, decimal.Parse(row[13], CultureInfo.InvariantCulture));
+        Assert.Equal("V. Consignacion (P7)", sheet.Rows[0][36]);
+        Assert.Equal(10_000m, decimal.Parse(row[36], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][36]);
         Assert.Equal("Coordinadora", row[30]);
-        Assert.Equal("901851609", row[46]);
+        // "Documento (P5)" (ajuste 2026-09-26): el documento de identidad del cliente tal como lo
+        // escribió en su ficha —Customers sólo lo recorta—, no el CUC.
+        Assert.Equal("Documento (P5)", sheet.Rows[0][34]);
+        Assert.Equal("900.555.123-4", row[34]);
+        // "Nit" (ajuste 2026-09-26): el NIT de la empresa por la que se factura la cotización —la
+        // misma de "EMPRESA"—, ya no un NIT escrito a mano. El de CreateCompanyWithBankAccountAsync
+        // trae puntos y dígito de verificación, así que sale como texto.
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
+        Assert.Equal("Nit", sheet.Rows[0][46]);
+        Assert.Equal(detail!.Quotation.BillingAccount!.CompanyTaxId, row[46]);
+        Assert.False(sheet.NumericCells[1][46]);
+        // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en
+        // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; las de texto
+        // ("FV", "Coordinadora") siguen siendo texto.
+        Assert.Equal("IVA", sheet.Rows[0][21]);
+        Assert.Equal(0.19m, decimal.Parse(row[21], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][21]);
+        Assert.Equal("Tercero Externo", sheet.Rows[0][5]);
+        Assert.Equal("9999", row[5]);
+        Assert.True(sheet.NumericCells[1][5]);
+        Assert.Equal("Verificado", sheet.Rows[0][14]);
+        Assert.Equal("-1", row[14]);
+        Assert.True(sheet.NumericCells[1][14]);
+        Assert.False(sheet.NumericCells[1][1]);
+        Assert.False(sheet.NumericCells[1][30]);
     }
 
     /// <summary>El layout de la prueba: una fija "Tipo Doc" = "FV" primero, "Email" renombrada
@@ -510,10 +566,12 @@ public sealed class OrderExportApiTests
 
     /// <summary>Un pedido convertido hoy, sin comprobantes (pago pendiente), mismo camino que
     /// OrderListApiTests.ConvertToOrderAsync.</summary>
-    private static async Task<OrderResponse> CreateOrderAsync(HttpClient client, QepApiFactory factory, Guid tenantId)
+    private static async Task<OrderResponse> CreateOrderAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, string? identificationNumber = null,
+        Guid? taxRateId = null)
     {
-        var customerId = await CreateActiveCustomerAsync(client, tenantId);
-        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, customerId, productId);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",

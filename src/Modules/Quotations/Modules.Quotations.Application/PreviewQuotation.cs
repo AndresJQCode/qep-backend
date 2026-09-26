@@ -22,7 +22,10 @@ public sealed record PreviewQuotationQuery(
     int? GlobalScaleFloor,
     bool IsRetail) : IQuery<QuotationDto>, IQuotationEdits;
 
-public sealed class PreviewQuotationValidator : QuotationEditsValidator<PreviewQuotationQuery>;
+/// <summary>Las mismas reglas que el guardado salvo el documento de la facturación, que el cálculo
+/// previo no exige: corre mientras la persona escribe (ver <c>Quotation.EnsureBillingIdentified</c>).</summary>
+public sealed class PreviewQuotationValidator()
+    : QuotationEditsValidator<PreviewQuotationQuery>(requireBillingIdentification: false);
 
 /// <summary>
 /// Aplica en memoria los mismos pasos que el guardado sobre un agregado leído **sin rastreo**, con

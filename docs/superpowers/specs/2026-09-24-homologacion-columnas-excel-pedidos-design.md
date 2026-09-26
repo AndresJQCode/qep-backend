@@ -34,7 +34,7 @@ mano que quiere evitar.
 independientes, no tres grupos con patrón. Un tenant puede nombrar `Fecha Pago 4` distinto u
 ocultar sólo esa. El costo es una pantalla más larga (33 filas de catálogo).
 
-### D4 — Columnas fijas del tenant, sólo texto
+### D4 — Columnas fijas del tenant, sólo texto (enmendada el 2026-09-26: ver el final)
 
 El tenant puede agregar columnas cuyo valor es el mismo en todas las filas (`Tipo Doc` = `FV`,
 `Bodega` = `01`). El valor es **texto**: `01` conserva el cero, y un valor fijo es un código, no un
@@ -278,3 +278,88 @@ La hoja real del ERP del tenant (MIGRACION 1) no cabía en las reglas de arriba.
 
 Pendiente en el frontend: el editor asume una llave por fila (restaurar fila por
 `defaultPosition`, "restaurar todo") y el tope de 10 en su validación local y en su texto.
+
+## Ajuste 2026-09-26 — "Documento (P5)" es el documento de identidad
+
+El ERP del tenant sembrado importa en "Documento (P5)" el número de documento de identidad de quien
+se factura, no el CUC. `document` no cambia de significado —otro ERP puede estar leyendo el CUC de
+ahí—; en su lugar:
+
+- **Una llave nueva al final del catálogo** (36 en total): `customer_identification` /
+  "Documento de identidad", ancho 18, texto. Es el número de la misma persona que nombra
+  `customer_name`, con su misma precedencia: `FinalConsumer.IdentificationNumber` para consumidor
+  final (el NIT genérico que imprime el PDF); **vacío** si la factura sale a nombre de una parte de
+  facturación con nombre propio, porque `QuotationParty` no guarda identificación y poner la del
+  cliente sería atribuirle a otra persona un documento que no es suyo; y en el resto —razón social
+  o nombre de contacto, que son el mismo cliente— `Customer.IdentificationNumber` tal como está
+  guardado (sólo recortado, con puntos y guiones). Sin el tipo de documento.
+- **`QuotationCustomerRef.IdentificationNumber`**, opcional y al final del record, lo llena
+  `QuotationCustomerLookup` desde la ficha. Viaja en el `FindManyAsync` que el lote ya hace:
+  ninguna consulta por fila.
+- **La semilla** mapea "Documento (P5)" a `customer_identification` y deja `document` entre las
+  ocultas, con su nombre por defecto. Sólo crea: un tenant cuyo layout ya existía no cambia solo, y
+  remapea desde la pantalla de configuración.
+
+~~Pendiente: si una parte de facturación con nombre propio necesita documento, `QuotationParty` tiene
+que ganar el campo (y el formulario de la cotización con él).~~ **Resuelto el 2026-09-26**: el owner
+confirmó que sin ese número no se puede facturar. `QuotationParty.IdentificationNumber` (columna
+`quotation_parties.identification_number`, nullable, 32 como el de `Customer`) viaja como
+`identificationNumber` al lado de `name`; es obligatorio en facturación con nombre propio al crear,
+guardar, enviar y convertir (`quotation.billing.identification_required`) y se ignora en la entrega.
+`customer_identification` lo lleva cuando la factura sale a nombre de esa parte; una parte guardada
+antes de la columna sigue saliendo **vacía**, nunca con el documento del cliente.
+
+### Banco con cuenta en las formas de pago, y el total consignado en P7
+
+El mismo ERP lee en "Forma de pago 1" y "Forma de pago 2" el banco con el número de cuenta, y en
+"V. Consignacion (P7)" el valor consignado del pedido entero, no el del primer comprobante. `bank`,
+`account` y `proof_amount_N` no cambian de significado —otros ERP los leen por separado—; en su
+lugar, **dos llaves nuevas al final del catálogo** (38 en total):
+
+- `bank_account` / "Banco y cuenta", ancho 36, texto: `BillingAccount.BankName` y
+  `BillingAccount.AccountNumber` —la misma fuente que "Banco" y "Cuenta"— separados por un espacio
+  (`BANCOLOMBIA 7542`). El dominio exige las dos mitades, pero si una llegara vacía sale la otra
+  sola, sin espacios de sobra; sin cuenta de facturación, vacía.
+- `proof_amount_total` / "Total consignado", ancho 18, **número**: la suma de los montos de todos
+  los comprobantes del pedido. `ListPaymentProofsForExportAsync` ya los trae todos —sólo las
+  columnas por comprobante se cortan en cinco—, así que no hay consulta nueva. **Sin comprobantes,
+  vacía** y no 0: es como sale "V. Comprobante N" sin comprobante y como salía P7 cuando la leía de
+  `proof_amount_1`; un 0 diría que hubo una consignación de cero pesos.
+- **La semilla** mapea las dos formas de pago a `bank_account` y P7 a `proof_amount_total`; `bank`
+  pasa a las ocultas con su nombre por defecto y `proof_amount_1` queda sólo en
+  "V. Consignacion 1". Sólo crea: un tenant cuyo layout ya existía no cambia solo —no hay migración
+  de layouts— y remapea desde la pantalla de configuración.
+
+### Tasa de IVA por línea, y las fijas numéricas como número (ajuste 2026-09-26)
+
+El owner vio el "IVA" de la hoja sembrada —una fija `0.19`— llegar como texto: en un Excel con
+configuración regional colombiana un número se muestra "0,19", pero un texto se queda "0.19". Y
+además el IVA no es una constante: es de cada línea.
+
+- **Una llave nueva al final del catálogo** (39 en total): `tax_rate` / "Tasa IVA", ancho 12,
+  **número**: `QuotationItem.TaxPercentage / 100` (19 → 0,19; 0 → 0). Es la foto de
+  `Catalog.TaxRate.Percentage` que la línea tomó al agregarse, no la tarifa de hoy: el pedido ya se
+  cobró con ésa. `tax` sigue siendo el monto — otros tenants lo leen ahí.
+- **La semilla** mapea "IVA" a `tax_rate` en vez de la fija `0.19` (22 fijas, antes 23); `tax` sigue
+  oculta. Sólo crea, como siempre.
+- **Las fijas numéricas salen como número.** Esto enmienda D4 ("sólo texto"): una fija cuyo valor es
+  un número canónico en cultura invariante —`^-?(0|[1-9][0-9]*)(\.[0-9]+)?$`: `0.19`, `9999`, `-1`,
+  `0`, `1`, `901851609`— se escribe como celda numérica; el resto (`02`, `0000-00-00`, `PM`, vacío,
+  `1,5`, `+1`) sigue como el texto que el tenant escribió, así que `01` conserva su cero. El valor
+  se guarda igual que antes (texto); sólo cambia la celda. `OrdersExportColumnSetting.Fixed` recorta
+  los extremos, así que " 1" nunca llega a la proyección.
+
+### NIT de la empresa de facturación (ajuste 2026-09-26)
+
+La hoja sembrada llevaba en "Nit" una fija `901851609`: el NIT de una sola empresa, escrito a mano.
+Una cotización facturada por otra empresa del tenant salía con el NIT equivocado.
+
+- **Una llave nueva al final del catálogo** (40 en total): `company_tax_id` / "NIT Empresa", ancho
+  18. Es `QuotationCompanyRef.TaxId` de la empresa de `Quotation.BillingAccount.CompanyId` —la
+  misma que "EMPRESA"—, tal como está hoy en Companies (no se congela: la empresa es del tenant, no
+  un dato del cliente). Vacía sin cuenta de facturación o si la empresa no resuelve.
+- **Tipo de celda: la regla de las fijas**, reusando `OrdersExportLayoutProjection.FixedCellFor`:
+  sólo dígitos (`901851609`) sale número; con puntos o dígito de verificación (`901851609-1`)
+  queda texto, que es como Companies lo guarda.
+- **La semilla** mapea "Nit" a `company_tax_id` en vez de la fija (21 fijas, antes 22). Sólo crea,
+  como siempre: un tenant cuyo layout ya existía conserva la fija y la cambia desde su pantalla.

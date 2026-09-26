@@ -260,9 +260,9 @@
 // lo que la ficha ya dice. Recoger en tienda sí la muestra aunque la facturación siga al cliente:
 // sin ella el documento callaría que no hay entrega, y callar se lee como "a la dirección del
 // cliente".
-// El NIT va en su renglón y con rótulo, no pegado al contacto. Hoy sólo lo trae consumidor
-// final, que no tiene contacto ni dirección: sin el NIT, "Consumidor final" a secas no identifica
-// la factura.
+// El NIT va en su renglón y con rótulo, no pegado al contacto. Lo trae la facturación: el fijo de
+// consumidor final, que no tiene contacto ni dirección —sin el NIT, "Consumidor final" a secas no
+// identifica la factura—, o el documento de una facturación a otra persona. La entrega no lo trae.
 #let parte(valor) = [
   #valor.name
   #if valor.taxId != "" [\ NIT #valor.taxId]

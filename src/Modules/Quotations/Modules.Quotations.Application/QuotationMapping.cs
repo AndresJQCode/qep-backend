@@ -55,6 +55,7 @@ internal static class QuotationMapping
         party.Id.Value,
         party.Role.ToString(),
         party.Name,
+        party.IdentificationNumber,
         party.Phone,
         party.Email,
         party.Address,
@@ -100,7 +101,9 @@ internal static class QuotationMapping
         item.TaxPercentage,
         item.TaxAmount,
         item.Position,
-        item.DiscountOrigin.ToString());
+        item.DiscountOrigin.ToString(),
+        item.ProductCode,
+        item.ProductName);
 
     public static QuotationParties ToDomain(this QuotationPartiesRequest? request) =>
         request is null
@@ -120,6 +123,7 @@ internal static class QuotationMapping
             : new QuotationPartyDetails
             {
                 Name = request.Name,
+                IdentificationNumber = request.IdentificationNumber,
                 Phone = request.Phone,
                 Email = request.Email,
                 Address = request.Address,

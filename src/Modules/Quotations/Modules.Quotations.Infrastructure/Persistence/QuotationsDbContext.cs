@@ -188,6 +188,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("quotation_id")
             .HasConversion(id => id.Value, value => new QuotationId(value));
         item.Property(value => value.ProductId).HasColumnName("product_id");
+        // Nulas: un borrador y las líneas enviadas antes de la columna leen el producto en vivo.
+        item.Property(value => value.ProductCode)
+            .HasColumnName("product_code")
+            .HasMaxLength(QuotationProductSnapshot.CodeMaxLength);
+        item.Property(value => value.ProductName)
+            .HasColumnName("product_name")
+            .HasMaxLength(QuotationProductSnapshot.NameMaxLength);
         item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
         item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
         // Texto y no entero, igual que QuotationHistoryEventType: sumar un valor al enum no va a
@@ -238,6 +245,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(QuotationPartyDetails.NameMaxLength);
+        // Nullable en la base aunque el dominio la exija con nombre propio: las filas anteriores a
+        // la columna no la tienen, y la regla es de escritura (ver Quotation.EnsureBillingIsConsistent).
+        party.Property(value => value.IdentificationNumber)
+            .HasColumnName("identification_number")
+            .HasMaxLength(QuotationPartyDetails.IdentificationNumberMaxLength);
         party.Property(value => value.Phone)
             .HasColumnName("phone")
             .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);

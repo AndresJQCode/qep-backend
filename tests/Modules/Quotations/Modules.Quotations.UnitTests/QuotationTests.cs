@@ -363,7 +363,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation(notes: "nota original");
         var validUntil = new DateOnly(2026, 9, 30);
         var parties = new QuotationParties(
-            new QuotationPartyDetails { Name = "Nombre alterno" }, Shipping: null);
+            new QuotationPartyDetails { Name = "Nombre alterno", IdentificationNumber = "1020304050" }, Shipping: null);
 
         quotation.UpdateDetails(validUntil, "Efectivo", null, parties, null, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
 
@@ -392,7 +392,7 @@ public sealed class QuotationTests
     public void CreateWithStorePickupDropsTheShippingPartyAndKeepsTheBilling()
     {
         var parties = new QuotationParties(
-            new QuotationPartyDetails { Name = "Sede administrativa" },
+            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
             new QuotationPartyDetails { Name = "Bodega Fontibon", Address = "Zona Franca" },
             IsStorePickup: true);
 
@@ -536,7 +536,7 @@ public sealed class QuotationTests
     [Fact]
     public void AnOwnBillingPartyAnsweringYesAppliesRetentionAndVatSurplusRegardlessOfTheCustomer()
     {
-        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa" };
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" };
         var quotation = NewQuotation(
             parties: new QuotationParties(
                 ownBilling, Shipping: null,
@@ -558,7 +558,7 @@ public sealed class QuotationTests
     [Fact]
     public void AnOwnBillingPartyAnsweringNoIgnoresACustomerThatDoesApply()
     {
-        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa" };
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" };
         var quotation = NewQuotation(
             parties: new QuotationParties(
                 ownBilling, Shipping: null,
@@ -595,7 +595,7 @@ public sealed class QuotationTests
     [Fact]
     public void ChangeClientResetsTheOwnBillingPartyTaxProfileAnswers()
     {
-        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa" };
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" };
         var quotation = NewQuotation(
             parties: new QuotationParties(
                 ownBilling, Shipping: null,
@@ -617,7 +617,7 @@ public sealed class QuotationTests
     {
         var error = Assert.Throws<QuotationsDomainException>(() =>
             NewQuotation(parties: new QuotationParties(
-                new QuotationPartyDetails { Name = "Sede administrativa" },
+                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
                 Shipping: null,
                 BillsToFinalConsumer: true)));
 
@@ -648,7 +648,7 @@ public sealed class QuotationTests
             quotation.UpdateDetails(
                 ValidUntil, "Efectivo", "nota nueva",
                 new QuotationParties(
-                    new QuotationPartyDetails { Name = "Sede administrativa" },
+                    new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
                     Shipping: null,
                     BillsToFinalConsumer: true),
                 null, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now));
@@ -721,7 +721,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
 
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
         Assert.Equal(Now, quotation.SentAt);
@@ -736,7 +736,7 @@ public sealed class QuotationTests
             validUntil: null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(AdvisorId, Now));
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.valid_until_required", error.Code);
         Assert.Equal(QuotationStatus.Draft, quotation.Status);
@@ -751,9 +751,9 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
         var later = Now.AddHours(3);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
-        quotation.Send(AdvisorId, later);
+        quotation.Send(AdvisorId, later, QuotationProductSnapshot.None);
 
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
         Assert.Equal(later, quotation.SentAt);
@@ -768,7 +768,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation();
 
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
         Assert.True(quotation.CanBeSent);
         Assert.False(quotation.HasChangesSinceSent);
@@ -788,12 +788,12 @@ public sealed class QuotationTests
         }
         else
         {
-            quotation.Send(AdvisorId, Now);
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
             quotation.Expire(Now.AddDays(60));
         }
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(AdvisorId, Now.AddDays(61)));
+            quotation.Send(AdvisorId, Now.AddDays(61), QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.not_draft", error.Code);
     }
@@ -806,7 +806,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation();
         if (sendFirst)
         {
-            quotation.Send(AdvisorId, Now);
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         }
 
         quotation.Void(AdvisorId, Now);
@@ -846,7 +846,7 @@ public sealed class QuotationTests
     public void EditingASentQuotationIsAllowed()
     {
         var quotation = NewQuotation();
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now);
 
@@ -857,7 +857,7 @@ public sealed class QuotationTests
     public void ExpireMovesASentQuotationToExpired()
     {
         var quotation = NewQuotation();
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         var updatedByBeforeExpiring = quotation.UpdatedBy;
 
         quotation.Expire(Now);
@@ -881,7 +881,7 @@ public sealed class QuotationTests
     public void EditingAnExpiredQuotationIsRejected()
     {
         var quotation = NewQuotation();
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         quotation.Expire(Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
@@ -901,7 +901,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         var versionBeforeConverting = quotation.Version;
 
         quotation.EnsureConvertibleToOrder();
@@ -949,7 +949,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         quotation.Expire(Now);
 
         var error = Assert.Throws<QuotationsDomainException>(
@@ -971,14 +971,14 @@ public sealed class QuotationTests
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         if (sendFirst)
         {
-            quotation.Send(AdvisorId, Now);
+            quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         }
 
         var versionBeforeConverting = quotation.Version;
         var convertedBy = new MemberId(Guid.CreateVersion7());
         var convertedAt = Now.AddHours(2);
 
-        quotation.ConvertToOrder(convertedBy, convertedAt);
+        quotation.ConvertToOrder(convertedBy, convertedAt, QuotationProductSnapshot.None);
 
         Assert.Equal(QuotationStatus.Converted, quotation.Status);
         Assert.Equal(convertedBy, quotation.UpdatedBy);
@@ -1001,7 +1001,7 @@ public sealed class QuotationTests
         var versionBefore = quotation.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.ConvertToOrder(AdvisorId, Now.AddDays(61)));
+            quotation.ConvertToOrder(AdvisorId, Now.AddDays(61), QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.status_not_convertible", error.Code);
         Assert.Equal(status, quotation.Status);
@@ -1014,11 +1014,11 @@ public sealed class QuotationTests
     public void ConvertToOrderStillEnforcesThePreconditionsWithoutChangingTheStatus()
     {
         var quotation = NewQuotation(billingAccount: BillingAccount);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         var versionBefore = quotation.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.ConvertToOrder(AdvisorId, Now.AddHours(1)));
+            quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None));
 
         Assert.Equal("quotation.quotation.items_required", error.Code);
         Assert.Equal(QuotationStatus.Sent, quotation.Status);
@@ -1031,7 +1031,7 @@ public sealed class QuotationTests
     public void EditingAConvertedQuotationIsRejected()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var addError = Assert.Throws<QuotationsDomainException>(() =>
             quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now));
@@ -1046,7 +1046,7 @@ public sealed class QuotationTests
     public void VoidRejectsAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() => quotation.Void(AdvisorId, Now));
 
@@ -1060,13 +1060,13 @@ public sealed class QuotationTests
     public void SendingAConvertedQuotationIsRejected()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var ensureError = Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable);
         Assert.Equal("quotation.quotation.not_draft", ensureError.Code);
 
         var sendError = Assert.Throws<QuotationsDomainException>(() =>
-            quotation.Send(AdvisorId, Now.AddHours(2)));
+            quotation.Send(AdvisorId, Now.AddHours(2), QuotationProductSnapshot.None));
         Assert.Equal("quotation.quotation.not_draft", sendError.Code);
     }
 
@@ -1074,7 +1074,7 @@ public sealed class QuotationTests
     public void ExpireRejectsAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() => quotation.Expire(Now.AddDays(60)));
 
@@ -1089,7 +1089,7 @@ public sealed class QuotationTests
     public void RefreshCustomerTaxProfileLeavesAConvertedQuotationAsItWas()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
         var totalBefore = quotation.Total;
         var taxBefore = quotation.TaxAmount;
 
@@ -1114,7 +1114,7 @@ public sealed class QuotationTests
                 quotation.Expire(Now.AddDays(60));
                 break;
             case QuotationStatus.Converted:
-                quotation.ConvertToOrder(AdvisorId, Now.AddHours(1));
+                quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(status), status, "No transition to that status.");
@@ -1157,7 +1157,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation(
             billingAccount: BillingAccount,
             parties: new QuotationParties(
-                new QuotationPartyDetails { Name = "Sede administrativa" }, Shipping: null));
+                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" }, Shipping: null));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -1196,6 +1196,7 @@ public sealed class QuotationTests
         var completeParty = new QuotationPartyDetails
         {
             Name = "Sede administrativa",
+            IdentificationNumber = "1020304050",
             Phone = "3105550134",
             Email = "compras@sede.co",
             Address = "Calle 10 # 45-12",
@@ -1224,6 +1225,7 @@ public sealed class QuotationTests
         var completeParty = new QuotationPartyDetails
         {
             Name = "Sede administrativa",
+            IdentificationNumber = "1020304050",
             Phone = "3105550134",
             Email = "compras@sede.co",
             Address = "Calle 10 # 45-12",
@@ -1243,6 +1245,164 @@ public sealed class QuotationTests
         Assert.False(quotation.CanBeConvertedToOrder);
     }
 
+    // Facturar a otra persona exige su documento: sin él no se puede facturar (pedido del
+    // owner, 2026-09-26). La regla es de escritura — ver la prueba de la fila vieja más abajo.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CreateRejectsABillingPartyWithANameButNoIdentificationNumber(string? number)
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewQuotation(parties: new QuotationParties(
+                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = number },
+                Shipping: null)));
+
+        Assert.Equal("quotation.billing.identification_required", error.Code);
+    }
+
+    // UpdateDetails no lo exige por su cuenta: el cálculo previo aplica el mismo cuerpo mientras
+    // la persona todavía está escribiendo, y un 422 a mitad de camino no le sirve a nadie. Quien lo
+    // exige al guardar es EnsureBillingIdentified, que el guardado llama antes de persistir.
+    [Fact]
+    public void UpdateDetailsLeavesTheIdentificationCheckToEnsureBillingIdentified()
+    {
+        var quotation = NewQuotation();
+
+        quotation.UpdateDetails(
+            ValidUntil, "Efectivo", null,
+            new QuotationParties(
+                new QuotationPartyDetails { Name = "Sede administrativa" }, Shipping: null),
+            null, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
+
+        Assert.Equal("Sede administrativa", quotation.Billing?.Name);
+        var error = Assert.Throws<QuotationsDomainException>(quotation.EnsureBillingIdentified);
+        Assert.Equal("quotation.billing.identification_required", error.Code);
+    }
+
+    [Fact]
+    public void EnsureBillingIdentifiedAcceptsABillingPartyWithItsNumberOrWithoutAName()
+    {
+        NewQuotation(parties: new QuotationParties(
+            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
+            Shipping: null)).EnsureBillingIdentified();
+        NewQuotation(parties: new QuotationParties(
+            new QuotationPartyDetails { Phone = "3105550134" }, Shipping: null)).EnsureBillingIdentified();
+        NewQuotation().EnsureBillingIdentified();
+    }
+
+    // Enviar también lo exige: el frontend cuenta con el mismo código en las dos transiciones, y
+    // una cotización que llega al cliente con un nombre de facturación sin documento es una que
+    // después no se va a poder facturar tal como se le mandó.
+    [Fact]
+    public void SendRejectsABillingPartyWithANameButNoIdentification()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        quotation.UpdateDetails(
+            ValidUntil, "Efectivo", null,
+            new QuotationParties(
+                new QuotationPartyDetails { Name = "Sede administrativa" }, Shipping: null),
+            BillingAccount, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
+        var versionBefore = quotation.Version;
+
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None));
+
+        Assert.Equal("quotation.billing.identification_required", error.Code);
+        Assert.Equal(QuotationStatus.Draft, quotation.Status);
+        Assert.Equal(versionBefore, quotation.Version);
+    }
+
+    // Sin nombre propio la factura sigue saliendo a nombre del cliente, con su documento: la
+    // parte sólo cambia otros datos (teléfono, dirección) y no hay a quién pedirle el número.
+    [Fact]
+    public void CreateAcceptsABillingPartyWithoutANameAndWithoutIdentification()
+    {
+        var quotation = NewQuotation(parties: new QuotationParties(
+            new QuotationPartyDetails { Phone = "3105550134" }, Shipping: null));
+
+        Assert.NotNull(quotation.Billing);
+        Assert.Null(quotation.Billing.IdentificationNumber);
+    }
+
+    [Fact]
+    public void CreateTrimsTheBillingPartyIdentificationNumber()
+    {
+        var quotation = NewQuotation(parties: new QuotationParties(
+            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "  1020304050  " },
+            Shipping: null));
+
+        Assert.Equal("1020304050", quotation.Billing?.IdentificationNumber);
+    }
+
+    [Fact]
+    public void CreateRejectsABillingPartyIdentificationNumberLongerThanTheCustomersOne()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewQuotation(parties: new QuotationParties(
+                new QuotationPartyDetails
+                {
+                    Name = "Sede administrativa",
+                    IdentificationNumber = new string('9', QuotationPartyDetails.IdentificationNumberMaxLength + 1),
+                },
+                Shipping: null)));
+
+        Assert.Equal("quotation.party.identification_number_too_long", error.Code);
+    }
+
+    // A quién se le entrega no se le factura: el número no tiene lugar en la parte de entrega y se
+    // descarta, igual que la parte de entrega entera con recoger en tienda.
+    [Fact]
+    public void CreateIgnoresAnIdentificationNumberOnTheShippingParty()
+    {
+        var quotation = NewQuotation(parties: new QuotationParties(
+            Billing: null,
+            new QuotationPartyDetails
+            {
+                Name = "Bodega Fontibon",
+                IdentificationNumber = new string('9', QuotationPartyDetails.IdentificationNumberMaxLength + 1),
+            }));
+
+        Assert.Equal("Bodega Fontibon", quotation.Shipping?.Name);
+        Assert.Null(quotation.Shipping?.IdentificationNumber);
+    }
+
+    // Una fila guardada antes de la columna tiene nombre y no número. Leerla no rompe, pero sin
+    // el número no se puede facturar, así que no puede convertirse en pedido.
+    [Fact]
+    public void EnsureConvertibleToOrderRejectsALegacyBillingPartyWithANameButNoIdentification()
+    {
+        var completeParty = new QuotationPartyDetails
+        {
+            Name = "Sede administrativa",
+            IdentificationNumber = "1020304050",
+            Phone = "3105550134",
+            Email = "compras@sede.co",
+            Address = "Calle 10 # 45-12",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+        };
+        var quotation = NewQuotation(
+            billingAccount: BillingAccount,
+            parties: new QuotationParties(
+                completeParty, Shipping: null,
+                BillingWithRetention: false, BillingVatSurplus: false));
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        SimulateRowSavedBeforeTheIdentificationColumn(quotation.Billing!);
+
+        var error = Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToOrder);
+
+        Assert.Equal("quotation.billing.identification_required", error.Code);
+        Assert.False(quotation.CanBeConvertedToOrder);
+    }
+
+    // EF materializa por el constructor privado sin pasar por Apply: así llega una fila vieja.
+    private static void SimulateRowSavedBeforeTheIdentificationColumn(QuotationParty party) =>
+        typeof(QuotationParty)
+            .GetProperty(nameof(QuotationParty.IdentificationNumber))!
+            .SetValue(party, null);
+
     // A pedido (2026-09): "Editar" un pedido pendiente para sumarle productos que faltaron al
     // convertir, sin recrear el pedido entero. Sólo sumar — ver Order.RecalculatePaymentStatus
     // para la otra mitad de esta historia.
@@ -1250,7 +1410,7 @@ public sealed class QuotationTests
     public void AddItemAfterConversionAddsALineToAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var totalBefore = quotation.Total;
         var productId = Guid.CreateVersion7();
         var later = Now.AddDays(1);
@@ -1290,7 +1450,7 @@ public sealed class QuotationTests
     {
         var quotation = ConvertibleSentQuotation();
         var existingProductId = Assert.Single(quotation.Items).ProductId;
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.AddItemAfterConversion(
@@ -1306,7 +1466,7 @@ public sealed class QuotationTests
     public void UpdateItemQuantityAfterConversionChangesTheQuantityOfAConvertedQuotation()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var itemId = Assert.Single(quotation.Items).Id;
         var totalBefore = quotation.Total;
         var later = Now.AddDays(1);
@@ -1323,7 +1483,7 @@ public sealed class QuotationTests
     public void UpdateItemQuantityAfterConversionRejectsAnUnknownItem()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.UpdateItemQuantityAfterConversion(
@@ -1340,7 +1500,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 50_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var itemToRemove = quotation.Items.First().Id;
         var later = Now.AddDays(1);
 
@@ -1357,7 +1517,7 @@ public sealed class QuotationTests
     public void RemoveItemAfterConversionRejectsRemovingTheLastRemainingItem()
     {
         var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
         var itemId = Assert.Single(quotation.Items).Id;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
@@ -1374,7 +1534,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 50_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.ConvertToOrder(AdvisorId, Now);
+        quotation.ConvertToOrder(AdvisorId, Now, QuotationProductSnapshot.None);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.RemoveItemAfterConversion(QuotationItemId.New(), AdvisorId, Now.AddDays(1)));
@@ -1390,7 +1550,7 @@ public sealed class QuotationTests
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-        quotation.Send(AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         return quotation;
     }
 

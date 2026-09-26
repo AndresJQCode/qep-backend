@@ -180,7 +180,7 @@ public sealed class QuotationItemEditsTests
     {
         var productId = Guid.CreateVersion7();
         var quotation = EditableQuotation((productId, 1m, 100_000m));
-        quotation.ConvertToOrder(UpdatedBy, Now);
+        quotation.ConvertToOrder(UpdatedBy, Now, QuotationProductSnapshot.None);
         var catalog = new StubPricingCatalog(Product(productId, "Vela de soja", 100_000m));
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>

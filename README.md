@@ -804,11 +804,69 @@ después de `Email`, numérica y repetida en cada línea del pedido. Se resuelve
 membresía asesora de la cotización con el código **de hoy** —si se lo cambian, los pedidos viejos
 salen con el nuevo— y queda vacía si la membresía no tiene código.
 
+### Facturar a otra persona: documento de identidad
+
+Cuando una cotización se factura a otra persona —la parte de facturación (`parties.billing`) trae
+`name` propio—, esa persona necesita su documento: sin él no se puede facturar (owner,
+2026-09-26). Viaja como `identificationNumber` al lado de `name`, en el request de
+`POST /quotations`, `PUT /quotations/{id}` y `POST /quotations/{id}/preview`, y en la respuesta
+dentro de `parties[]` (rol `Billing`):
+
+```json
+{ "parties": { "billing": { "name": "Distribuciones Andinas S.A.S.", "identificationNumber": "901555444-1", "phone": "6015550000" }, "shipping": null } }
+```
+
+- Vacío o sólo espacios es `null`; se recorta y nada más (los puntos y guiones de un NIT quedan
+  como se escribieron). Tope de 32 caracteres, el mismo que el documento de la ficha del cliente.
+- Sin `name` propio no se pide: la factura sigue saliendo a nombre del cliente, con su documento.
+- En la parte de entrega se **ignora** (el formulario lo manda siempre vacío): nunca se guarda ni
+  se valida.
+- Crear y guardar (`PUT`) sin el número responden `422 validation.failed` con
+  `errors["Parties.Billing.IdentificationNumber"]`; el dominio lo respalda con
+  `quotation.billing.identification_required`. El cálculo previo **no** lo exige: corre mientras
+  la persona escribe.
+- Enviar y convertir en pedido también lo exigen, con `quotation.billing.identification_required`
+  (422). Es lo que ataja las cotizaciones guardadas antes de la columna, que tienen nombre y no
+  número: se leen igual, pero no avanzan hasta que alguien lo cargue.
+- El PDF lo imprime debajo del nombre en «Facturar a», y el Excel de pedidos lo lleva en
+  `Documento de identidad` (ver abajo).
+
+### Código y nombre del producto en cada línea
+
+Una línea de cotización referencia su producto por `productId` (sin FK) y congela precio e IVA al
+agregarse. El **código y el nombre** siguen otra regla (owner, 2026-09-26):
+
+- Mientras la cotización es **borrador**, se leen en vivo del catálogo: si el producto cambia, la
+  cotización lo muestra.
+- Cuando **sale del borrador**, cada línea guarda el código y el nombre que tenía su producto en ese
+  momento (`quotation_items.product_code` / `product_name`), y desde ahí la cotización y su pedido
+  ya no cambian con el catálogo. Sale del borrador al **enviarla** y también al **convertirla en
+  pedido** sin haberla enviado.
+- Lo congelado no se pisa nunca: ni un reenvío ni la conversión lo vuelven a leer. Sí se completan
+  las líneas que todavía no lo tienen: las agregadas a una cotización ya enviada se congelan en el
+  siguiente envío (o al convertir), y las que se suman a un pedido pendiente
+  (`POST /orders/{id}/items`, `PUT /orders/{id}`) se congelan al sumarlas.
+- Un producto que el catálogo ya no devuelve no frena el envío: esa línea queda sin foto y se sigue
+  leyendo en vivo, como antes.
+- Las líneas enviadas antes de este cambio no tienen foto y se siguen leyendo en vivo; no hay
+  backfill, porque Quotations no lee las tablas de Catalog. Se congelan solas si la cotización se
+  reenvía o se convierte.
+- Una cotización anulada desde borrador no congela nada (ya no se usa ni en pedidos ni en el
+  Excel). Ninguna transición devuelve una cotización a borrador.
+
+La regla vive en un solo lugar (`QuotationItemProductLabel`) y la usan la respuesta de cotización y
+de pedido, el PDF (que sale de esa misma respuesta) y `Cod. Producto` del Excel de pedidos. La forma
+de la respuesta no cambió: `items[].productCode` y `items[].productName` siguen ahí; lo que cambia
+es de dónde salen. Portada y escalas de la línea siguen siendo las de hoy.
+
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 35 columnas del Excel de pedidos y agregar hasta 40 columnas fijas de
-texto (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una misma columna del catálogo
+reordenar y ocultar las 40 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
+(`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una fija cuyo valor es un número
+canónico en cultura invariante (`0.19`, `9999`, `-1`, `901851609`) sale como **número**, que un
+Excel en `es-CO` muestra `0,19` y el ERP lee como cifra; el resto (`02`, `PM`, `1,5`, `+1`, vacío)
+sale como el texto que se escribió (2026-09-26). Una misma columna del catálogo
 puede ir más de una vez con encabezados distintos: el ERP puede leer el mismo dato bajo varios
 nombres (la fecha del pedido en `FECHA`, `Bloq/act` y `Vencimiento`).
 
@@ -817,9 +875,40 @@ el pedido, en la zona del tenant, como texto `yyyy-MM-dd`) y `Cliente` (`custome
 de quién sale la factura — `Consumidor final`, el nombre de la parte de facturación propia, la
 razón social si la cotización factura a ella, o el nombre de la ficha del cliente).
 
+Detrás de todas (2026-09-26) va `Documento de identidad` (`customer_identification`): el número de
+documento de la misma persona que nombra `Cliente`, con la misma precedencia — `222222222222` para
+consumidor final, el número de la ficha del cliente con razón social o sin ella, y el
+`identificationNumber` de la parte cuando la factura sale a nombre de una parte de facturación
+propia. Una parte guardada antes de que existiera ese número lo deja **vacío**, nunca con el del
+cliente, que es otra persona. `Documento` (`document`) sigue siendo el CUC.
+
+Y detrás de ella (2026-09-26), `Banco y cuenta` (`bank_account`: el banco y el número de la cuenta
+de facturación separados por un espacio —`BANCOLOMBIA 7542`—, vacía sin cuenta de facturación) y
+`Total consignado` (`proof_amount_total`: la suma de **todos** los comprobantes del pedido, no sólo
+los cinco con columna propia, como número; vacía si el pedido no tiene comprobantes, igual que
+`V. Comprobante N`). `Banco`, `Cuenta` y `V. Comprobante N` no cambian.
+
+Después (2026-09-26) va `Tasa IVA` (`tax_rate`): la tasa de IVA de cada línea como fracción y
+como número —19 % sale `0.19`, 0 % sale `0`—, tomada de la foto que la línea guardó del producto
+al agregarse (`QuotationItem.TaxPercentage`), no de la tarifa de hoy. `IVA` (`tax`) sigue siendo el
+monto.
+
+La última (2026-09-26) es `NIT Empresa` (`company_tax_id`): el NIT de la empresa por la que se
+factura la cotización, la misma que nombra `EMPRESA`, tal como está hoy en Companies. Con la misma
+regla que las fijas: sólo dígitos (`901851609`) sale como número; con puntos o dígito de
+verificación (`901851609-1`) sale como texto. Vacía sin cuenta de facturación o si la empresa no
+resuelve.
+
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
-ERP, «MIGRACION 1»: 47 columnas visibles, 24 de ellas fijas. Sólo crea: si el tenant ya tiene
-layout, no lo toca.
+ERP, «MIGRACION 1»: 47 columnas visibles, 21 de ellas fijas. Su «Nit» es el de la empresa de
+facturación (`company_tax_id`) y no un NIT escrito a mano (2026-09-26). Su «IVA» es la tasa de cada línea
+(`tax_rate`) y no un `0.19` fijo, porque hay productos con otra tarifa; `tax` queda oculto. El banco con su cuenta
+(`bank_account`) va en «Forma de pago 1» y «Forma de pago 2» —el ERP exige las dos llenas aunque
+sean la misma— y el total consignado (`proof_amount_total`) en «V. Consignacion (P7)»; `bank` queda
+oculto. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su
+`Documento (P5)` lleva el documento de identidad (`customer_identification`) y el CUC (`document`)
+queda oculto. Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
+y lo cambia desde su pantalla de configuración.
 
 | Método | Ruta                                                | Permiso                  |
 | ------ | --------------------------------------------------- | ------------------------ |

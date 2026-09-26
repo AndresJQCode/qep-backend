@@ -54,6 +54,24 @@ public static class OrdersExportColumnCatalog
         // nueva, para no mover lo que el ERP ya importa sin layout guardado.
         new("order_date", "Fecha Pedido", 14),
         new("customer_name", "Cliente", 30),
+        // Ajuste 2026-09-26: el número de documento de identidad de quien nombra "Cliente", que es
+        // lo que el ERP del tenant importa en "Documento (P5)". No reemplaza a "document", que
+        // sigue siendo el CUC: otro tenant puede estar leyéndolo de ahí.
+        new("customer_identification", "Documento de identidad", 18),
+        // Ajuste 2026-09-26: el banco y el número de cuenta en una sola celda, que es lo que el ERP
+        // del tenant importa como forma de pago, y la suma de todos los comprobantes del pedido, que
+        // importa como valor consignado. No reemplazan a "bank", "account" ni "proof_amount_N":
+        // otros ERP pueden estar leyéndolos por separado.
+        new("bank_account", "Banco y cuenta", 36),
+        new("proof_amount_total", "Total consignado", 18),
+        // Ajuste 2026-09-26: la tasa de IVA de la línea como fracción (19 % → 0,19), que es lo que
+        // el ERP del tenant importa en "IVA". Por línea y no fija: hay productos con otra tarifa. No
+        // reemplaza a "tax", que es el monto y otro tenant puede estar leyéndolo.
+        new("tax_rate", "Tasa IVA", 12),
+        // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la misma que nombra
+        // "company"—, que el ERP del tenant importa en "Nit". Antes era una fija con el NIT escrito a
+        // mano, que dejaba de ser cierto en cuanto la cotización se facturaba por otra empresa.
+        new("company_tax_id", "NIT Empresa", 18),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
