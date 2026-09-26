@@ -39,7 +39,7 @@ public sealed class OrderItemEditsTests
             quotation.AddItem(QuotationItemId.New(), productId, quantity, unitPrice, 0m, 0, UpdatedBy, Now);
         }
 
-        quotation.ConvertToOrder(UpdatedBy, Now);
+        quotation.ConvertToOrder(UpdatedBy, Now, QuotationProductSnapshot.None);
         return quotation;
     }
 

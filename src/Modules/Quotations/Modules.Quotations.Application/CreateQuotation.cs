@@ -22,6 +22,9 @@ public sealed class CreateQuotationValidator : AbstractValidator<CreateQuotation
         RuleFor(command => command.PaymentMethod)
             .MaximumLength(Quotation.PaymentMethodMaxLength)
             .When(command => command.PaymentMethod is not null);
+        RuleFor(command => command.Parties!)
+            .SetValidator(new QuotationPartiesRequestValidator(requireBillingIdentification: true))
+            .When(command => command.Parties is not null);
     }
 }
 

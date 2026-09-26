@@ -15,7 +15,7 @@ public sealed class OrdersExportLayoutTests
 
     private static OrdersExportLayout NewLayout() => OrdersExportLayout.CreateDefault(TenantId, Now);
 
-    /// <summary>Las 35 del catálogo con sus nombres, visibles, como lista editable.</summary>
+    /// <summary>Las 38 del catálogo con sus nombres, visibles, como lista editable.</summary>
     private static List<OrdersExportColumnSetting> Defaults() =>
         [.. OrdersExportLayout.Effective(stored: null)];
 
@@ -92,7 +92,7 @@ public sealed class OrdersExportLayoutTests
         var changed = layout.Replace([Catalog("email", "Correo"), Fixed("Tipo Doc", "FV")], Later);
 
         Assert.True(changed);
-        Assert.Equal(36, layout.Columns.Count);
+        Assert.Equal(41, layout.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal(OrdersExportColumnKind.Fixed, layout.Columns[1].Kind);
         Assert.Equal("company", layout.Columns[2].Key);

@@ -88,7 +88,12 @@ public sealed record QuotationCustomerRef(
     /// <summary>La razon social, cuando el cliente es una empresa. La cotizacion puede facturar
     /// a este nombre en vez de al de contacto — ver <c>Quotation.BillingUsesBusinessName</c>.
     /// </summary>
-    string? BusinessName = null);
+    string? BusinessName = null,
+    /// <summary>El número del documento de identidad del cliente (NIT, CC...), sin el tipo. Lo usa
+    /// la columna "Documento de identidad" del Excel de pedidos (ajuste 2026-09-26), que el ERP
+    /// del tenant importa en vez del CUC. Null cuando quien arma la referencia no lo trae.
+    /// </summary>
+    string? IdentificationNumber = null);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
 /// cotizacion.</summary>

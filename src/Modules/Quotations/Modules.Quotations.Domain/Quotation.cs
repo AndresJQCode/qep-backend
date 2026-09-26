@@ -64,6 +64,8 @@ public sealed class Quotation
         Notes = NormalizeNotes(notes);
         EnsureBillingIsConsistent(parties);
         Assign(parties);
+        // Crear es escribir: no hay cálculo previo de la creación que proteger.
+        EnsureBillingIdentified();
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
@@ -739,16 +741,52 @@ public sealed class Quotation
     ///
     /// <see cref="SentAt"/> y <see cref="UpdatedAt"/> quedan en el mismo instante también en un
     /// reenvío, así que <see cref="HasChangesSinceSent"/> vuelve a <c>false</c>: lo que el
-    /// cliente tiene en la mano es, otra vez, la versión vigente.</summary>
-    public void Send(MemberId sentBy, DateTimeOffset occurredAt)
+    /// cliente tiene en la mano es, otra vez, la versión vigente.
+    ///
+    /// <paramref name="products"/> es el catálogo de hoy para las líneas de esta cotización:
+    /// enviar es salir del borrador, y desde acá cada línea conserva el código y el nombre que
+    /// tenía su producto (owner, 2026-09-26). Un reenvío sólo completa las líneas que todavía no
+    /// los tienen —las agregadas después del primer envío—; lo ya congelado no se pisa. Una línea
+    /// cuyo producto no viene queda sin snapshot y se sigue leyendo en vivo: el envío nunca exigió
+    /// que el producto exista, y no es acá donde se empieza a exigir.</summary>
+    public void Send(
+        MemberId sentBy,
+        DateTimeOffset occurredAt,
+        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
         EnsureSendable();
 
+        CaptureProductSnapshots(products);
         SentAt = occurredAt;
         Status = QuotationStatus.Sent;
         UpdatedBy = sentBy;
         UpdatedAt = occurredAt;
         Version++;
+    }
+
+    /// <summary>
+    /// Congela código y nombre de las líneas que se le sumaron al pedido después de convertir
+    /// (<see cref="AddItemAfterConversion"/>): esas no tienen un envío ni una conversión posterior
+    /// que lo haga. Las que ya los tienen no se tocan.
+    ///
+    /// Mismo criterio que las demás variantes <c>*AfterConversion</c>: no exige estado, porque el
+    /// pedido pendiente lo comprobó el caso de uso. Y como <see cref="ApplyGroupDiscounts"/>, no es
+    /// una edición: no toca <see cref="Version"/> ni <see cref="UpdatedAt"/>, que ya los movió la
+    /// línea que se agregó.
+    /// </summary>
+    public void CaptureProductSnapshotsAfterConversion(
+        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products) =>
+        CaptureProductSnapshots(products);
+
+    private void CaptureProductSnapshots(IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
+    {
+        foreach (var item in _items)
+        {
+            if (products.TryGetValue(item.ProductId, out var product))
+            {
+                item.CaptureProduct(product);
+            }
+        }
     }
 
     /// <summary>US-11: anula la cotización. Disponible desde Draft o Sent; queda de sólo
@@ -792,6 +830,10 @@ public sealed class Quotation
                 "quotation.quotation.valid_until_required",
                 "A quotation must have a validity date before it can be sent.");
         }
+
+        // Una cotización que le llega al cliente facturada a otra persona sin su documento es una
+        // que después no se puede facturar tal como se le mandó. Ver EnsureBillingIdentified.
+        EnsureBillingIdentified();
     }
 
     /// <summary>US-16: convierte la cotización en pedido. Comprueba lo mismo que
@@ -800,9 +842,16 @@ public sealed class Quotation
     /// <c>ConvertQuotationToOrderHandler</c> justo después y en la misma unidad de trabajo: si
     /// guardar falla, no queda ni el pedido ni el cambio de estado. Mismo patrón que
     /// <see cref="Void"/> y <see cref="Expire"/>.</summary>
-    public void ConvertToOrder(MemberId convertedBy, DateTimeOffset occurredAt)
+    public void ConvertToOrder(
+        MemberId convertedBy,
+        DateTimeOffset occurredAt,
+        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
         EnsureConvertibleToOrder();
+
+        // Un borrador se puede convertir sin haberse enviado, y también es salir del borrador: el
+        // pedido nace con los productos congelados. Si ya se envió, lo congelado no se pisa.
+        CaptureProductSnapshots(products);
 
         Status = QuotationStatus.Converted;
         UpdatedBy = convertedBy;
@@ -882,6 +931,10 @@ public sealed class Quotation
                 "The shipping party must have all its fields filled before converting to an order.");
         }
 
+        // El pedido es el paso que lleva a facturar, y sin el documento de a quién se le factura
+        // no se puede (owner, 2026-09-26). Ver EnsureBillingIdentified.
+        EnsureBillingIdentified();
+
         // Con datos propios de facturación nadie más dice si hay retención o excedente de IVA:
         // null es "todavía no se contestó", y un pedido no puede nacer con esa pregunta abierta
         // (a diferencia de con los datos del cliente, donde CustomerWithRetention/VatSurplus ya
@@ -907,6 +960,7 @@ public sealed class Quotation
         && BillingAccount is not null
         && (Billing is not { } billing || billing.IsComplete)
         && (Shipping is not { } shipping || shipping.IsComplete)
+        && !BillingLacksIdentification
         && (Billing is null || (PartyWithRetention is not null && PartyVatSurplus is not null));
 
     /// <summary>
@@ -1014,6 +1068,33 @@ public sealed class Quotation
                 "A quotation billed to the final consumer cannot carry its own billing party or bill to the customer's business name.");
         }
     }
+
+    /// <summary>
+    /// Una facturación con nombre propio es otra persona, y sin su documento no se puede facturar
+    /// (owner, 2026-09-26). Sin nombre propio la factura sigue saliendo a nombre del cliente, con
+    /// el documento de su ficha, así que ahí no se pide.
+    ///
+    /// <b>No lo llama <see cref="UpdateDetails"/></b>, a propósito: el cálculo previo aplica el
+    /// mismo cuerpo mientras la persona todavía escribe —puso el nombre y no el número—, y un 422
+    /// en cada tecla no le sirve a nadie. Lo llaman quienes sí escriben o avanzan: la creación, el
+    /// guardado (<c>SaveQuotationHandler</c>, antes de persistir), <see cref="EnsureSendable"/> y
+    /// <see cref="EnsureConvertibleToOrder"/>. Las dos transiciones además atajan las filas
+    /// guardadas antes de la columna, que tienen nombre y no número: se leen igual, pero no avanzan.
+    /// </summary>
+    public void EnsureBillingIdentified()
+    {
+        if (BillingLacksIdentification)
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.identification_required",
+                "A billing party with its own name requires an identification number.");
+        }
+    }
+
+    private bool BillingLacksIdentification =>
+        Billing is { } billing
+        && !string.IsNullOrWhiteSpace(billing.Name)
+        && string.IsNullOrWhiteSpace(billing.IdentificationNumber);
 
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es

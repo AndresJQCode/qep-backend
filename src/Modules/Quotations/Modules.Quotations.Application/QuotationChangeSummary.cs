@@ -300,6 +300,7 @@ public sealed record QuotationHeaderSnapshot(
             : string.Join(
                 '|',
                 party.Name,
+                party.IdentificationNumber,
                 party.Phone,
                 party.Email,
                 party.Address,

@@ -89,7 +89,10 @@ public static class QuotationPdfDocumentMapper
                 false,
                 party.Name ?? string.Empty,
                 Join(ContactSeparator, party.Phone, party.Email),
-                party.Address ?? string.Empty);
+                party.Address ?? string.Empty,
+                // Sólo la facturación guarda documento (la entrega lo descarta en el dominio); una
+                // fila anterior a la columna no tiene y queda vacío, que la plantilla no imprime.
+                role == QuotationPartyRole.Billing ? party.IdentificationNumber ?? string.Empty : string.Empty);
     }
 
     /// <summary>Consumidor final no tiene fila de facturación —el dominio la prohíbe— pero

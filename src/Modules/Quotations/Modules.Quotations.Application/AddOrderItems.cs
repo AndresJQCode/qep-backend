@@ -34,6 +34,7 @@ public sealed class AddOrderItemsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationProductLookup productLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -91,6 +92,12 @@ public sealed class AddOrderItemsHandler(
                 command.TenantId, executionContext.SubjectId, "quotation.order.item_added",
                 order.Id.ToString(), "success", now);
         }
+
+        // Las líneas de un pedido no tienen un envío posterior que les congele el producto: se
+        // congela al sumarlas (owner, 2026-09-26). Las que ya estaban no se tocan.
+        quotation.CaptureProductSnapshotsAfterConversion(
+            await QuotationItemProductLabel.ResolveMissingAsync(
+                productLookup, command.TenantId, quotation, cancellationToken));
 
         // Antes de mirar el total: las líneas nuevas agrupan con las que ya estaban en la
         // cotización del pedido, y eso mueve el descuento de todas.

@@ -43,6 +43,13 @@ public sealed class QuotationParty
 
     public string? Name { get; private set; }
 
+    /// <summary>El documento de a quién se le factura cuando la facturación tiene nombre propio
+    /// (<see cref="Quotation"/> lo exige ahí al escribir). Siempre null en la parte de entrega: a
+    /// quién se le entrega no se le factura. Nullable también en facturación porque las filas
+    /// guardadas antes de la columna no lo tienen; ésas se leen igual, pero no se convierten en
+    /// pedido (<see cref="Quotation.EnsureConvertibleToOrder"/>).</summary>
+    public string? IdentificationNumber { get; private set; }
+
     public string? Phone { get; private set; }
 
     public string? Email { get; private set; }
@@ -74,12 +81,19 @@ public sealed class QuotationParty
         QuotationPartyDetails details) =>
         new(QuotationPartyId.New(), quotationId, role, details);
 
-    // Asigna los seis siempre, incluidos los null: se puede **limpiar** un campo, no sólo
+    // Asigna todos siempre, incluidos los null: se puede **limpiar** un campo, no sólo
     // setearlo -- mismo criterio que Product.Apply/Customer.Assign.
+    //
+    // El documento se descarta en la parte de entrega antes de normalizar, igual que recoger en
+    // tienda descarta la entrega entera: es un dato que ahí no aplica, no una contradicción que
+    // merezca un 422 (ésas se rechazan, ver final_consumer_conflict).
     internal void Apply(QuotationPartyDetails details)
     {
-        var normalized = details.Normalized();
+        var normalized = (Role == QuotationPartyRole.Billing
+            ? details
+            : details with { IdentificationNumber = null }).Normalized();
         Name = normalized.Name;
+        IdentificationNumber = normalized.IdentificationNumber;
         Phone = normalized.Phone;
         Email = normalized.Email;
         Address = normalized.Address;

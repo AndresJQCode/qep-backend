@@ -30,7 +30,7 @@ public sealed class OrdersExportLayoutEffectiveTests
         Assert.All(effective, column => Assert.Equal(OrdersExportColumnKind.Catalog, column.Kind));
     }
 
-    // Sin fila, contra el catálogo real: las 35 en su orden, con sus nombres — el Excel de hoy.
+    // Sin fila, contra el catálogo real: las 38 en su orden, con sus nombres — el Excel de hoy.
     [Fact]
     public void WithoutAStoredLayoutTheRealCatalogComesOutWhole()
     {

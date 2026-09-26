@@ -72,9 +72,10 @@ public sealed record QuotationPdfDocument(
 /// el bloque "Cliente" ya muestra.
 /// </param>
 /// <param name="TaxId">
-/// El NIT de la parte, cuando tiene uno fijo que imprimir: hoy sólo consumidor final
-/// (<c>FinalConsumer.IdentificationNumber</c>). Vacío en el resto — una parte propia no guarda
-/// identificación. Va aparte y no pegado a <see cref="Contact"/>: la plantilla parte el contacto
+/// El documento de la parte de facturación: el fijo de consumidor final
+/// (<c>FinalConsumer.IdentificationNumber</c>) o el que se cargó en una facturación con datos
+/// propios (<c>QuotationParty.IdentificationNumber</c>). Vacío en la entrega y en las filas
+/// guardadas antes de que existiera el número. Va aparte y no pegado a <see cref="Contact"/>: la plantilla parte el contacto
 /// por " · " y el NIT necesita su rótulo. Default vacío para que las partes que no lo tienen no
 /// tengan que decirlo.
 /// </param>

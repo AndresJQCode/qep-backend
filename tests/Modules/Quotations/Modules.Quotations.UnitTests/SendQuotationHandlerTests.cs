@@ -14,6 +14,7 @@ public sealed class SendQuotationHandlerTests
     private static readonly Guid TenantId = Guid.CreateVersion7();
     private static readonly Guid ClientId = Guid.CreateVersion7();
     private static readonly Guid SubjectId = Guid.CreateVersion7();
+    private static readonly Guid ProductId = Guid.CreateVersion7();
     private static readonly MemberId AdvisorId = new(Guid.CreateVersion7());
     private static readonly DateTimeOffset Now = new(2026, 9, 4, 12, 0, 0, TimeSpan.Zero);
     private static readonly DateOnly ValidUntil = new(2026, 9, 30);
@@ -109,7 +110,7 @@ public sealed class SendQuotationHandlerTests
     public async Task SendToTheBillingPartyWithoutAPhoneIsRejected()
     {
         var harness = NewHandler(
-            billing: new QuotationPartyDetails { Name = "Danilo Amaris Ojeda" });
+            billing: new QuotationPartyDetails { Name = "Danilo Amaris Ojeda", IdentificationNumber = "1020304050" });
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             harness.Handler.HandleAsync(
@@ -175,6 +176,33 @@ public sealed class SendQuotationHandlerTests
             QuotationHistoryEventType.Sent,
             Assert.Single(harness.Repository.HistoryEntries).EventType);
         Assert.Equal("quotation.quotation.sent", Assert.Single(harness.Audit.Actions));
+    }
+
+    // Owner, 2026-09-26: enviar es salir del borrador, y desde ahí cada línea conserva el código y
+    // el nombre que tenía su producto en el catálogo. Los resuelve el handler, no la pantalla.
+    [Fact]
+    public async Task SendingSnapshotsTheCatalogProductOfEveryLine()
+    {
+        var harness = NewHandler();
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        var item = Assert.Single(harness.Repository.Quotation.Items);
+        Assert.Equal(("TOR-001", "Tornillo 1/4"), (item.ProductCode, item.ProductName));
+    }
+
+    // Si WhatsApp falla la cotizacion sigue en borrador, y un borrador lee el catalogo en vivo:
+    // no puede quedar con productos congelados de un envio que no ocurrio.
+    [Fact]
+    public async Task AFailedSendDoesNotSnapshotTheProducts()
+    {
+        var harness = NewHandler(
+            whatsAppFailure: new TaskCanceledException("A task was canceled."));
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Null(Assert.Single(harness.Repository.Quotation.Items).ProductCode);
     }
 
     // ---- El envio que falla ----
@@ -291,6 +319,7 @@ public sealed class SendQuotationHandlerTests
     private static readonly QuotationPartyDetails BillingParty = new()
     {
         Name = "Danilo Amaris Ojeda",
+        IdentificationNumber = "1020304050",
         Phone = "3013574996",
         Email = "daniloamaris@ejemplo.co",
         Address = "calle 90#45",
@@ -333,12 +362,15 @@ public sealed class SendQuotationHandlerTests
             customerVatSurplus: false,
             AdvisorId,
             Now);
+        quotation.AddItem(
+            QuotationItemId.New(), ProductId, quantity: 1m, unitPrice: 1_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         if (alreadySent)
         {
             // Un envío anterior, no el que la prueba ejerce: por eso no pasa por el handler y
             // no deja rastro en los dobles que la aserción mira.
-            quotation.Send(AdvisorId, Now.AddHours(-2));
+            quotation.Send(AdvisorId, Now.AddHours(-2), QuotationProductSnapshot.None);
         }
 
         CurrentQuotationId = quotation.Id.Value;
@@ -365,6 +397,10 @@ public sealed class SendQuotationHandlerTests
                 new StubQuotationLogoLookup()),
             storage,
             new StubQuotationCustomerLookup(customer),
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>
+            {
+                [ProductId] = new(ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, Scales: []),
+            }),
             whatsAppFailure is null
                 ? sender
                 : new FailingWhatsAppSender(whatsAppFailure),

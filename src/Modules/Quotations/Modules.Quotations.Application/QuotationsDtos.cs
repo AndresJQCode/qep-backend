@@ -20,7 +20,12 @@ public sealed record QuotationItemDto(
     /// <c>GlobalFloor</c>. Los enums viajan con su nombre porque el diccionario lo tiene el
     /// frontend. Sin esto la pantalla no puede explicar por que una linea de 3 unidades
     /// descuenta 12%.</summary>
-    string DiscountOrigin);
+    string DiscountOrigin,
+    /// <summary>Código y nombre congelados al salir del borrador; null en un borrador y en las
+    /// líneas enviadas antes de que existieran. No viajan así al cliente HTTP: el composer los
+    /// resuelve contra el catálogo con <see cref="QuotationItemProductLabel"/>.</summary>
+    string? ProductCode,
+    string? ProductName);
 
 public sealed record QuotationDto(
     Guid Id,
@@ -151,6 +156,7 @@ public sealed record QuotationPartyDto(
     Guid Id,
     string Role,
     string? Name,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     string? Address,
@@ -178,9 +184,15 @@ public sealed record QuotationBillingAccountRequest(
     string Currency);
 
 /// <summary>Los datos de una parte tal como viajan en el request (US-6). Cada campo null es
-/// "para éste, el del cliente".</summary>
+/// "para éste, el del cliente".
+///
+/// <c>IdentificationNumber</c> es la excepción: en facturación, un <c>Name</c> propio lo vuelve
+/// obligatorio —422 <c>validation.failed</c> con <c>errors["Parties.Billing.IdentificationNumber"]</c>—
+/// porque la factura sale a otra persona y sin su documento no se puede facturar. En la entrega
+/// se ignora.</summary>
 public sealed record QuotationPartyRequest(
     string? Name,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     string? Address,
@@ -473,6 +485,7 @@ public sealed record QuotationPartyResponse(
     Guid Id,
     string Role,
     string? Name,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     string? Address,

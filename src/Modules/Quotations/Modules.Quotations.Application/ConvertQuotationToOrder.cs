@@ -52,6 +52,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
+    IQuotationProductLookup productLookup,
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
@@ -107,6 +108,13 @@ public sealed class ConvertQuotationToOrderHandler(
         // el contador. ConvertToOrder las vuelve a revisar más abajo, pero para entonces ya pasaron.
         quotation.EnsureConvertibleToOrder();
 
+        // Convertir también saca del borrador: las líneas que todavía no congelaron su producto
+        // (un borrador convertido sin enviarse, o una enviada antes del snapshot) lo congelan acá.
+        // Antes de la transacción, igual que las copias: es una lectura a otro módulo y no tiene
+        // por qué hacerse con el lock del contador tomado.
+        var products = await QuotationItemProductLabel.ResolveMissingAsync(
+            productLookup, command.TenantId, quotation, cancellationToken);
+
         // Las copias públicas de los comprobantes (spec 2026-09-15, P4 y P7) van antes del dominio,
         // porque OrderPaymentProof recibe la clave al crearse. Desde la primera copia, cualquier
         // falla —un rechazo de ConvertToOrder incluido— borra las copias y relanza: un pedido que no
@@ -135,7 +143,7 @@ public sealed class ConvertQuotationToOrderHandler(
             // ConvertToOrder valida las precondiciones antes de mutar. El historial (Approved) y la
             // auditoría (quotation.quotation.approved) no cambian de nombre: son contrato, no el
             // nombre del estado.
-            quotation.ConvertToOrder(convertedBy, now);
+            quotation.ConvertToOrder(convertedBy, now, products);
             order = Order.Create(
                 OrderId.New(),
                 command.TenantId,

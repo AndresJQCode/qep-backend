@@ -41,6 +41,19 @@ public sealed class QuotationItem
     /// ningún módulo de negocio referencia las tablas de otro.</summary>
     public Guid ProductId { get; private set; }
 
+    /// <summary>
+    /// El código del producto congelado cuando la cotización salió del borrador (owner,
+    /// 2026-09-26). Null mientras es borrador —ahí se lee en vivo del catálogo, para que los
+    /// cambios del producto se vean— y en las líneas enviadas antes de que la columna existiera,
+    /// que se siguen leyendo en vivo: no hay backfill, porque este módulo no lee las tablas de
+    /// Catalog. Quien lo muestra decide con <c>QuotationItemProductLabel</c>.
+    /// </summary>
+    public string? ProductCode { get; private set; }
+
+    /// <summary>El nombre del producto, congelado junto con <see cref="ProductCode"/> y con la
+    /// misma regla.</summary>
+    public string? ProductName { get; private set; }
+
     public decimal Quantity { get; private set; }
 
     /// <summary>Precio base del producto, snapshot al momento de agregar la línea. No se
@@ -126,6 +139,22 @@ public sealed class QuotationItem
         int position,
         DateTimeOffset occurredAt) =>
         new(id, quotationId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, occurredAt);
+
+    /// <summary>
+    /// Congela código y nombre si la línea todavía no los tiene. Nunca los pisa: lo que el cliente
+    /// ya recibió no cambia porque el catálogo cambie después, ni en un reenvío ni al convertir. No
+    /// toca <see cref="UpdatedAt"/>: no es una edición de la línea.
+    /// </summary>
+    internal void CaptureProduct(QuotationProductSnapshot product)
+    {
+        if (ProductCode is not null)
+        {
+            return;
+        }
+
+        ProductCode = product.Code;
+        ProductName = product.Name;
+    }
 
     internal void UpdateQuantity(
         decimal quantity, decimal discountPercentage, int taxPercentage, DateTimeOffset occurredAt) =>
