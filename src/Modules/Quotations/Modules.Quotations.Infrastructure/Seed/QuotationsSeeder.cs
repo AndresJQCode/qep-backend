@@ -70,8 +70,9 @@ public static class QuotationsSeeder
     /// para el tenant (tipo de documento, bodega, transportadora, su NIT...) va como fija, vacía
     /// cuando la hoja exige la columna pero no tiene qué ponerle.
     ///
-    /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento, y el primer comprobante
-    /// bajo dos encabezados: el ERP lee el mismo dato con varios nombres. Al final, ocultas, las
+    /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento, el primer comprobante
+    /// bajo dos encabezados y el banco bajo las dos formas de pago —el ERP las exige llenas aunque
+    /// sean la misma—: el ERP lee el mismo dato con varios nombres. Al final, ocultas, las
     /// llaves del catálogo que la hoja no usa — sin ellas <see cref="OrdersExportLayout.Effective(OrdersExportLayout?)"/>
     /// las completaría visibles y la hoja tendría columnas que el ERP no espera.
     ///
@@ -92,7 +93,7 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Catalog("order_date", "Bloq/act", visible: true),
         OrdersExportColumnSetting.Catalog("bank", "Forma de pago 1", visible: true),
         OrdersExportColumnSetting.Catalog("proof_amount_1", "V. Consignacion 1", visible: true),
-        OrdersExportColumnSetting.Fixed("Forma de pago 2", string.Empty, visible: true),
+        OrdersExportColumnSetting.Catalog("bank", "Forma de pago 2", visible: true),
         OrdersExportColumnSetting.Catalog("proof_amount_2", "V. Consignacion 2", visible: true),
         OrdersExportColumnSetting.Fixed("Verificado", "-1", visible: true),
         OrdersExportColumnSetting.Fixed("Anulado", "0", visible: true),

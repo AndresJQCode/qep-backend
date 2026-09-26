@@ -482,6 +482,7 @@ public sealed class OrderExportApiTests
         Assert.Equal(row[4], row[26]);
         Assert.Equal("Verde Esencial S.A.S.", row[6]);
         Assert.Equal("Bancolombia", row[10]);
+        Assert.Equal("Bancolombia", row[12]);
         Assert.Equal("Coordinadora", row[30]);
         // "Documento (P5)" (ajuste 2026-09-26): el documento de identidad del cliente tal como lo
         // escribió en su ficha —Customers sólo lo recorta—, no el CUC.

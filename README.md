@@ -824,7 +824,7 @@ la factura sale a nombre de una parte de facturación propia, porque la parte no
 identificación. `Documento` (`document`) sigue siendo el CUC.
 
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
-ERP, «MIGRACION 1»: 47 columnas visibles, 24 de ellas fijas. Sólo crea: si el tenant ya tiene
+ERP, «MIGRACION 1»: 47 columnas visibles, 23 de ellas fijas. El banco va en «Forma de pago 1» y «Forma de pago 2»: el ERP exige las dos llenas aunque sean la misma. Sólo crea: si el tenant ya tiene
 layout, no lo toca. Desde el 2026-09-26 su `Documento (P5)` lleva el documento de identidad
 (`customer_identification`) y el CUC (`document`) queda oculto; un tenant cuyo layout ya existía
 conserva el de antes y lo cambia desde su pantalla de configuración.

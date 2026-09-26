@@ -110,7 +110,11 @@ public sealed class QuotationsSeedTests
         Assert.Equal(
             SeededLayoutHeaders,
             layout.Columns.Where(column => column.Visible).Select(column => column.Header));
-        Assert.Equal(24, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        Assert.Equal(23, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        // Ajuste 2026-09-26: el ERP exige las dos formas de pago llenas, aunque sean la misma.
+        Assert.Equal(
+            ["Forma de pago 1", "Forma de pago 2"],
+            layout.Columns.Where(column => column.Key == "bank").Select(column => column.Header));
         Assert.Equal(
             ["FECHA", "Bloq/act", "Vencimiento"],
             layout.Columns.Where(column => column.Key == "order_date").Select(column => column.Header));
