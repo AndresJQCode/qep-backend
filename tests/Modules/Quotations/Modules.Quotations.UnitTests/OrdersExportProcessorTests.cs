@@ -905,19 +905,24 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(901851609m), Assert.Single(writer.Rows)[NitEmpresaIndex]);
     }
 
-    // Con dígito de verificación no es un número canónico: sale como el texto que tiene la empresa.
-    [Fact]
-    public async Task NitEmpresaWithACheckDigitStaysText()
+    // Ajuste 2026-09-28: el ERP espera el NIT sin puntos, sin espacios y sin dígito de
+    // verificación. Se limpia sólo al exportar; la empresa conserva el NIT como se escribió.
+    [Theory]
+    [InlineData("901851609-1")]
+    [InlineData("901.851.609-1")]
+    [InlineData("901 851 609")]
+    [InlineData(" 901.851 609 - 1 ")]
+    public async Task NitEmpresaDropsDotsSpacesAndTheCheckDigit(string taxId)
     {
         var writer = new RecordingExportWorkbookWriter();
 
         await NewProcessor(
                 new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: BillingAccountOfCompany())),
                 writer,
-                companies: CompanyWithTaxId("901851609-1"))
+                companies: CompanyWithTaxId(taxId))
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(ExportCell.OfText("901851609-1"), Assert.Single(writer.Rows)[NitEmpresaIndex]);
+        Assert.Equal(ExportCell.OfNumber(901851609m), Assert.Single(writer.Rows)[NitEmpresaIndex]);
     }
 
     // Sin cuenta de facturación, o con una empresa que no resuelve, vacía — como "EMPRESA".
