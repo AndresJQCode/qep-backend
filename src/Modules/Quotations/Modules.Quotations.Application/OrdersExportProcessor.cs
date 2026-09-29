@@ -252,9 +252,10 @@ public sealed class OrdersExportProcessor(
                 ? company
                 : null;
         var empresa = billingCompany?.Name ?? string.Empty;
-        // "NIT Empresa" (ajuste 2026-09-26): el de la misma empresa que "EMPRESA". Con la regla de
-        // las fijas: sólo dígitos sale número, con dígito de verificación ("901851609-1") texto.
-        var nitEmpresa = OrdersExportLayoutProjection.FixedCellFor(billingCompany?.TaxId ?? string.Empty);
+        // "NIT Empresa" (ajuste 2026-09-26): el de la misma empresa que "EMPRESA". Desde el
+        // 2026-09-28 va como lo lee el ERP —ver ErpTaxId— y, con la regla de las fijas, sólo
+        // dígitos sale número.
+        var nitEmpresa = OrdersExportLayoutProjection.FixedCellFor(ErpTaxId(billingCompany?.TaxId));
 
         context.Customers.TryGetValue(quotation.ClientId, out var customer);
         var documento = customer?.Cuc ?? string.Empty;
@@ -410,6 +411,21 @@ public sealed class OrdersExportProcessor(
     // "Cod. Asesor" (D9): numérica, para que el ERP la lea como el número que es. Vacía si la
     // membresía no tiene código o si el lookup no la devuelve —otro tenant, una fila que ya no
     // está—: un pedido sin código no es una razón para frenar el archivo.
+    // El ERP espera el NIT sin puntos, sin espacios y sin dígito de verificación:
+    // "901.851.609-1" sale "901851609". Se limpia sólo acá; la empresa guarda el NIT como se
+    // escribió, porque es el que se muestra en pantalla y en el PDF.
+    private static string ErpTaxId(string? taxId)
+    {
+        if (string.IsNullOrEmpty(taxId))
+        {
+            return string.Empty;
+        }
+
+        var hyphen = taxId.IndexOf('-', StringComparison.Ordinal);
+        var withoutCheckDigit = hyphen < 0 ? taxId : taxId[..hyphen];
+        return string.Concat(withoutCheckDigit.Where(character => character != '.' && !char.IsWhiteSpace(character)));
+    }
+
     private static ExportCell AdvisorCodeCell(
         Quotation quotation, IReadOnlyDictionary<Guid, QuotationAdvisor> advisors) =>
         advisors.TryGetValue(quotation.AdvisorId.Value, out var advisor)
