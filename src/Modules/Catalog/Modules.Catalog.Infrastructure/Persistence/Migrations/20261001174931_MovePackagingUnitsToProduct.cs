@@ -16,6 +16,11 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
     /// hasta hoy cada escala exigía su propio empaque, y fundirlos en un conjunto cambiaría qué
     /// cantidades descuentan en cada tramo sin que nadie lo decida. El <c>RAISE</c> aborta la
     /// transacción entera y lista los productos a revisar.
+    ///
+    /// **El <c>Down</c> no es un rollback real; lo práctico es corregir hacia adelante.** Se niega
+    /// si algún producto tiene más de un empaque, y pierde en silencio los empaques de un producto
+    /// que no tenga ninguna escala <c>packaging_unit</c>: el modelo anterior sólo los guardaba en
+    /// esas escalas, así que no hay dónde ponerlos.
     /// </summary>
     public partial class MovePackagingUnitsToProduct : Migration
     {

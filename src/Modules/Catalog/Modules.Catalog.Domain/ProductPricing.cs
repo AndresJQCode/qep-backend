@@ -14,7 +14,7 @@ public sealed record ProductPricing
     public IReadOnlyCollection<PriceScaleInput> Scales { get; init; } = [];
 
     /// <summary>
-    /// Los empaques en que viene el producto (p. ej. cajas de 100 y de 150). Viajan acá, junto a
+    /// Los empaques en que viene el producto (p. ej. cajas de 100 y de 150). Viajan aquí, junto a
     /// las escalas, y no en <see cref="ProductDetails"/>: una escala con restricción
     /// <see cref="PriceScaleRestriction.PackagingUnit"/> se valida contra este conjunto, así que
     /// los dos se validan juntos en el mismo POST/PUT. Ver <see cref="Product.PackagingUnits"/>.

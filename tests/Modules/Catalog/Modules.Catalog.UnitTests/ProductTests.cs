@@ -738,6 +738,69 @@ public sealed class ProductTests
         Assert.Equal("catalog.product.packaging_units.invalid", error.Code);
     }
 
+    // El tope por valor es Product.MaxPackagingUnitValue: más allá no hay empaque real, y la regla
+    // de Quotations cuenta por restos módulo el empaque menor, así que un número absurdo aquí se
+    // vuelve memoria allá.
+    [Fact]
+    public void CreateRejectsAPackagingUnitAboveTheMaximum()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing
+                {
+                    BaseUsd = 10m,
+                    PackagingUnits = [100, Product.MaxPackagingUnitValue + 1]
+                },
+                Now));
+
+        Assert.Equal("catalog.product.packaging_units.invalid", error.Code);
+    }
+
+    [Fact]
+    public void CreateAcceptsAPackagingUnitAtTheMaximum()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, PackagingUnits = [Product.MaxPackagingUnitValue] },
+            Now);
+
+        Assert.Equal([100_000], product.PackagingUnits);
+    }
+
+    // Ningún producto viene en más de un puñado de cajas; el tope (Product.MaxPackagingUnits)
+    // acota también lo que la regla de Quotations recorre por cada empaque.
+    [Fact]
+    public void CreateRejectsMorePackagingUnitsThanTheMaximum()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing
+                {
+                    BaseUsd = 10m,
+                    PackagingUnits = Enumerable.Range(1, Product.MaxPackagingUnits + 1).ToArray()
+                },
+                Now));
+
+        Assert.Equal("catalog.product.packaging_units.too_many", error.Code);
+    }
+
+    [Fact]
+    public void CreateAcceptsExactlyTheMaximumNumberOfPackagingUnits()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing
+            {
+                BaseUsd = 10m,
+                PackagingUnits = Enumerable.Range(1, Product.MaxPackagingUnits).ToArray()
+            },
+            Now);
+
+        Assert.Equal(10, product.PackagingUnits.Count);
+    }
+
     // Un repetido se rechaza y no se descarta en silencio: quien mandó [100, 100] seguramente
     // quiso escribir otro número, y deduplicarlo le escondería el error.
     [Fact]

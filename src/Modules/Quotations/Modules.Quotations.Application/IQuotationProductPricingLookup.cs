@@ -57,8 +57,10 @@ public enum QuotationPriceScaleRestriction
 /// (<see cref="QuotationProductPricingResolver"/>), pero una cotización que ya lo tenía se sigue
 /// pudiendo leer.</param>
 /// <param name="Multiple">Poblado sólo cuando <paramref name="Restriction"/> es
-/// <c>Multiple</c>; el dominio de Catalog garantiza la exclusión mutua con
-/// <paramref name="PackagingUnits"/>.</param>
+/// <c>Multiple</c>. La exclusión mutua con <paramref name="PackagingUnits"/> la garantiza el
+/// adaptador de <c>Bootstrapper</c> (<c>QuotationPriceScaleMapping</c>), que sólo copia los
+/// empaques del producto en las escalas <c>PackagingUnit</c>; Catalog ya no la ve, porque los
+/// empaques dejaron de ser de la escala.</param>
 /// <param name="PackagingUnits">Los empaques del **producto**, no de la escala: Catalog los
 /// guarda una vez por producto desde el 2026-10-01, y el adaptador de <c>Bootstrapper</c> los
 /// copia en cada escala <c>PackagingUnit</c> para que la regla no necesite el producto. Vacío en

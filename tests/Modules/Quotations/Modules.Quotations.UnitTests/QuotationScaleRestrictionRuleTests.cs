@@ -258,7 +258,7 @@ public sealed class QuotationScaleRestrictionRuleTests
     }
 
     // Catalog exige empaques > 0, y no vacíos cuando hay escala de empaque. Si una fila lo
-    // desmiente, la línea no pierde su descuento por un dato que nadie corrige desde acá.
+    // desmiente, la línea no pierde su descuento por un dato que nadie corrige desde aquí.
     [Fact]
     public void AnEmptySetOfPackagingUnitsDoesNotBlock()
     {
@@ -269,6 +269,83 @@ public sealed class QuotationScaleRestrictionRuleTests
     public void ANonPositivePackagingUnitAmongOthersDoesNotBlock()
     {
         Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(100, 0), 7m).IsSatisfied);
+    }
+
+    // Empaques con divisor común (mcd 2): sumarlos módulo 4 forma dos ciclos de restos, y el
+    // impar nunca se alcanza. Se arman 4, 6, 8, 10, 12 …: a 2 le faltan 2 para 4, a 11 le falta
+    // 1 para 12 (a 13 le faltaría 1 para 14).
+    [Theory]
+    [InlineData(2, false, 2)]
+    [InlineData(4, true, 0)]
+    [InlineData(6, true, 0)]
+    [InlineData(10, true, 0)]
+    [InlineData(11, false, 1)]
+    [InlineData(13, false, 1)]
+    public void PackagingUnitsWithACommonDivisorOnlyReachTheirMultiples(
+        decimal quantity, bool satisfied, decimal shortfall)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(4, 6), quantity);
+
+        Assert.Equal(satisfied, result.IsSatisfied);
+        Assert.Equal(shortfall, result.Shortfall);
+    }
+
+    // El caso clásico de tres empaques (cajas de 6, 9 y 20): 43 es la mayor cantidad que no se
+    // arma, así que le falta 1 para 44 (= 20 + 6 × 4), y de ahí en adelante todo se arma.
+    [Theory]
+    [InlineData(7, false, 2)]
+    [InlineData(43, false, 1)]
+    [InlineData(44, true, 0)]
+    [InlineData(45, true, 0)]
+    [InlineData(1_000_001, true, 0)]
+    public void ThreePackagingUnitsCloseTheGapAfterTheLargestUnreachableQuantity(
+        decimal quantity, bool satisfied, decimal shortfall)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(6, 9, 20), quantity);
+
+        Assert.Equal(satisfied, result.IsSatisfied);
+        Assert.Equal(shortfall, result.Shortfall);
+    }
+
+    // Una cantidad negativa nunca cumple y no reporta faltante: es el mismo resultado que daba
+    // EvaluateStep con un solo empaque, porque no hay "siguiente caja" que tenga sentido.
+    [Fact]
+    public void ANegativeQuantityIsNotSatisfiedAndHasNoShortfall()
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(100, 150), -5m);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal("quotation.item.quantity_not_packaging_unit", result.Code);
+        Assert.Equal(0m, result.Shortfall);
+    }
+
+    // Por encima de 100000 (el tope de Catalog, Product.MaxPackagingUnitValue) la regla cae al
+    // atajo defensivo. Con un solo empaque sigue siendo exacta.
+    [Theory]
+    [InlineData(100_001, true, 0)]
+    [InlineData(100_002, false, 100_000)]
+    [InlineData(200_002, true, 0)]
+    public void ASinglePackagingUnitAboveTheCatalogLimitIsStillExact(
+        decimal quantity, bool satisfied, decimal shortfall)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(100_001), quantity);
+
+        Assert.Equal(satisfied, result.IsSatisfied);
+        Assert.Equal(shortfall, result.Shortfall);
+    }
+
+    // Con dos empaques por encima del tope el atajo es a propósito con pérdida: mira cada
+    // empaque por separado y no los mezcla. 200004 = 100001 + 100003 sí se arma, pero el atajo
+    // lo niega y dice que faltan 2 para 200006 (2 × 100003). Nunca regala un descuento; sólo
+    // puede negar uno, y Catalog no deja cargar empaques así.
+    [Fact]
+    public void TwoPackagingUnitsAboveTheCatalogLimitAreIntentionallyNotCombined()
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(
+            PackagesOf(100_001, 100_003), 200_004m);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal(2m, result.Shortfall);
     }
 
     // El piso global evalúa desde cero, y el empaque ya contaba crudo: las dos lecturas

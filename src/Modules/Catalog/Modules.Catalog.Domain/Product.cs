@@ -12,6 +12,12 @@ public sealed class Product
     public const int NameMaxLength = 200;
     public const int CodeMaxLength = 60;
 
+    // Límites de PackagingUnits. Públicos para que quien dependa de ellos los cite por nombre.
+    // Quotations no puede referenciar Catalog, así que su regla de empaque repite el número en
+    // un comentario: si cambias éstos, revisa QuotationScaleRestrictionRule.
+    public const int MaxPackagingUnits = 10;
+    public const int MaxPackagingUnitValue = 100_000;
+
     // EF Core materializa por acá. El código nunca construye el agregado así:
     // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
     private Product()
@@ -98,7 +104,8 @@ public sealed class Product
 
     /// <summary>
     /// Los empaques en que viene el producto, en unidades: una keratina que llega en cajas de 100
-    /// y de 150 guarda <c>[100, 150]</c>. Mayores que cero, sin repetidos y en orden ascendente.
+    /// y de 150 guarda <c>[100, 150]</c>. Entre 1 y <see cref="MaxPackagingUnitValue"/>, a lo sumo
+    /// <see cref="MaxPackagingUnits"/>, sin repetidos y en orden ascendente.
     ///
     /// Son del producto y no de la escala desde el 2026-10-01: antes cada escala guardaba un solo
     /// número, y un producto con dos empaques no tenía cómo decirlo. La escala conserva la
@@ -197,14 +204,25 @@ public sealed class Product
 
     // Rechaza en vez de corregir: un cero, un negativo o un repetido es un error de tipeo, y
     // descartarlo en silencio le guardaría al usuario algo distinto de lo que cree haber cargado.
-    // Ordenar sí se hace acá — el orden no cambia el significado del conjunto.
+    // Ordenar sí se hace aquí — el orden no cambia el significado del conjunto.
+    //
+    // Los topes (MaxPackagingUnits, MaxPackagingUnitValue) no salen de ningún empaque real: la
+    // regla de Quotations cuenta por restos módulo el empaque menor y recorre cada empaque, así que
+    // sin ellos un dato absurdo aquí se volvería memoria y tiempo en cada cotización.
     private static int[] NormalizePackagingUnits(IReadOnlyCollection<int> packagingUnits)
     {
-        if (packagingUnits.Any(unit => unit <= 0))
+        if (packagingUnits.Count > MaxPackagingUnits)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.packaging_units.too_many",
+                $"A product cannot have more than {MaxPackagingUnits} packaging units.");
+        }
+
+        if (packagingUnits.Any(unit => unit is <= 0 or > MaxPackagingUnitValue))
         {
             throw new CatalogDomainException(
                 "catalog.product.packaging_units.invalid",
-                "Every packaging unit must be greater than zero.");
+                $"Every packaging unit must be between 1 and {MaxPackagingUnitValue}.");
         }
 
         var sorted = packagingUnits.Order().ToArray();
