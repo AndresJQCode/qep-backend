@@ -72,7 +72,7 @@ Y los del pedido, siempre por su `orderId` (el `id` que devuelve la conversión,
 |---|---|---|---|
 | `GET` | `/orders` | — (query: `clientId`, `advisorId`, `status`, `paymentStatus`, `convertedFrom`, `convertedTo`, `clientCuc`, `orderNumber`, `page`, `pageSize`) | Paginado |
 | `GET` | `/orders/{orderId}` | — | 200 `OrderDetailResponse`: el pedido y su cotización compuesta |
-| `POST` | `/orders/{orderId}/approve` | — (sin body) | 200 `OrderResponse` en `Approved`. Sólo desde `Pending` |
+| `POST` | `/orders/{orderId}/approve` | — (sin body) | 200 `OrderResponse` en `Approved`. Sólo desde `Pending`; exige `quotations.order.approve` (admin y facturación, no el asesor: `quotations.order.manage` no alcanza) |
 | `POST` | `/orders/{orderId}/cancel` | `CancelOrderRequest` | 200 `OrderResponse` en `Cancelled`. Desde `Pending` o `Approved`; exige `quotations.order.cancel` (sólo admin). Conserva `approvedAt`/`approvedBy` |
 | `POST` | `/orders/{orderId}/proofs` | `AddOrderPaymentProofsRequest` | 200 `OrderResponse`. Suma comprobantes y corrige monto o archivo de los ya cargados. Sólo con el pedido en `Pending` |
 | `DELETE` | `/orders/{orderId}/proofs/{proofId}` | — | 200 `OrderResponse`. Quita un comprobante y recalcula `paymentStatus`. Sólo con el pedido en `Pending` |
