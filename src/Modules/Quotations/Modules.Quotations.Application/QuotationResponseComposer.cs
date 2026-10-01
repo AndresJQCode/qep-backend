@@ -162,7 +162,7 @@ public sealed class QuotationResponseComposer(
                     scale.Discount,
                     ToWireValue(scale.Restriction),
                     scale.Multiple,
-                    scale.PackagingUnit))
+                    scale.PackagingUnits))
                 .ToArray(),
             item.Quantity,
             item.UnitPrice,

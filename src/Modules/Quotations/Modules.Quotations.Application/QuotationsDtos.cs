@@ -353,13 +353,17 @@ public sealed record QuotationClientAddressResponse(
 /// ("multiple" | "packaging_unit") y no el enum, mismo criterio que
 /// <c>PriceScaleResponse.Restriction</c> en Catalog — null incluido, para la escala incompleta.
 /// </summary>
+/// <param name="PackagingUnits">Los empaques del producto cuando la restricción es
+/// <c>packaging_unit</c>; vacío en las demás, nunca null. Viajan en la escala aunque sean del
+/// producto porque es la escala la que la pantalla tiene en la mano al explicar por qué una
+/// cantidad no descuenta, y con dos empaques (100 y 150) el "múltiplo de N" ya no alcanza.</param>
 public sealed record QuotationItemPriceScaleResponse(
     int FromUnit,
     int ToUnit,
     decimal Discount,
     string? Restriction,
     int? Multiple,
-    int? PackagingUnit);
+    IReadOnlyList<int> PackagingUnits);
 
 public sealed record QuotationResponse(
     Guid Id,
@@ -532,12 +536,18 @@ public sealed record QuotationsPageResponse(
 
 /// <summary>
 /// Por qué el piso global no le dio su descuento a esta línea. <c>Reason</c> es un código y no
-/// un texto: <c>packaging_unit</c> (no es un número entero de paquetes; <c>Step</c> es el tamaño
-/// del paquete), <c>multiple</c> (no es múltiplo; <c>Step</c> es el paso) o <c>no_tier</c> (el
-/// producto no tiene un tramo que arranque en ese piso). La frase la arma el frontend, que es
-/// el que tiene el diccionario. Ver <see cref="QuotationGlobalScaleFloorMiss"/>.
+/// un texto: <c>packaging_unit</c> (no se arma con paquetes enteros de los empaques del producto;
+/// <c>PackagingUnits</c> los trae), <c>multiple</c> (no es múltiplo; <c>Step</c> es el paso) o
+/// <c>no_tier</c> (el producto no tiene un tramo que arranque en ese piso). La frase la arma el
+/// frontend, que es el que tiene el diccionario. Ver <see cref="QuotationGlobalScaleFloorMiss"/>.
+///
+/// <c>Step</c> quedó sólo para <c>multiple</c>: con dos empaques (100 y 150) no hay un único
+/// número que decir, y uno solo —el menor, por ejemplo— le haría creer al asesor que 150 no
+/// sirve. Por eso <c>packaging_unit</c> lleva la lista, y <c>Step</c> en null.
 /// </summary>
-public sealed record GlobalScaleFloorMissResponse(string Reason, int? Step);
+/// <param name="PackagingUnits">Vacío salvo en <c>packaging_unit</c>; nunca null.</param>
+public sealed record GlobalScaleFloorMissResponse(
+    string Reason, int? Step, IReadOnlyList<int> PackagingUnits);
 
 public sealed record QuotationItemResponse(
     Guid Id,

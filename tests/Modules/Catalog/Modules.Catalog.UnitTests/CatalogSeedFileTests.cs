@@ -31,7 +31,8 @@ public sealed class CatalogSeedFileTests
     // Las cinco escalas son las mismas para los 19 productos salvo el descuento —los tres
     // KIT KERATINA tienen su propia columna en la hoja "lista usd"— y la unidad de empaque, que
     // el owner dio por SKU el 2026-09-20. Se afirma el diccionario completo para que un SKU
-    // con la unidad equivocada no pase escondido detrás de un `Assert.All`.
+    // con la unidad equivocada no pase escondido detrás de un `Assert.All`. Desde el 2026-10-01
+    // el empaque es del producto (`packagingUnits`), no de la escala.
     [Fact]
     public void ReadsFiveScalesPerProductWithTheirRestrictions()
     {
@@ -82,20 +83,19 @@ public sealed class CatalogSeedFileTests
             var first = product.Scales[0];
             Assert.Equal("multiple", first.Restriction);
             Assert.Equal(3, first.Multiple);
-            Assert.Null(first.PackagingUnit);
             Assert.True(first.AllowGrouping);
 
             var second = product.Scales[1];
             Assert.Equal("multiple", second.Restriction);
             Assert.Equal(6, second.Multiple);
-            Assert.Null(second.PackagingUnit);
             Assert.False(second.AllowGrouping);
+
+            Assert.Equal([packagingUnits[product.Sku]], product.PackagingUnits ?? []);
 
             foreach (var scale in product.Scales.Skip(2))
             {
                 Assert.Equal("packaging_unit", scale.Restriction);
                 Assert.Null(scale.Multiple);
-                Assert.Equal(packagingUnits[product.Sku], scale.PackagingUnit);
                 Assert.False(scale.AllowGrouping);
             }
         }

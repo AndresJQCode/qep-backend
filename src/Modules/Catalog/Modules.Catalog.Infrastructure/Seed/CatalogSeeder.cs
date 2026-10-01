@@ -72,6 +72,7 @@ public static class CatalogSeeder
                     Scales = product.Scales
                         .Select(scale => ToPriceScaleInput(product, scale))
                         .ToList(),
+                    PackagingUnits = product.PackagingUnits ?? [],
                 },
                 now));
             added = true;
@@ -104,7 +105,6 @@ public static class CatalogSeeder
             scale.Discount,
             restriction,
             scale.Multiple,
-            scale.PackagingUnit,
             PriceScale.FinalFor(product.PriceUsd, scale.Discount),
             PriceScale.FinalFor(product.PriceCop, scale.Discount),
             scale.AllowGrouping);

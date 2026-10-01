@@ -11,6 +11,7 @@ public sealed record ProductDto(
     Guid? TaxRateId,
     decimal? PriceBaseUsd,
     decimal? PriceBaseCop,
+    IReadOnlyList<int> PackagingUnits,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -30,6 +31,10 @@ public sealed record ProductResponse(
     // CAT-09. El precio en dos monedas fijas — reemplazó por completo al viejo Price, retirado.
     decimal? PriceBaseUsd,
     decimal? PriceBaseCop,
+    // Los empaques del producto, ascendentes. Viaja siempre, vacío incluido, y no se omite
+    // cuando no hay: el formulario los repinta tal cual, y la pantalla de cotización los
+    // necesita para explicar una escala `packaging_unit` sin pedir el producto aparte.
+    IReadOnlyList<int> PackagingUnits,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -39,15 +44,24 @@ public sealed record ProductResponse(
 /// <c>BaseUsd</c>/<c>BaseCop</c> es obligatorio — el dominio lo exige incondicionalmente, así
 /// que ningún producto se crea sin esto.
 /// </summary>
+/// <param name="PackagingUnits">Los empaques del producto (p. ej. <c>[100, 150]</c>). Viajan en
+/// el precio y no en los datos maestros porque una escala <c>packaging_unit</c> se valida
+/// contra ellos: el dominio los revisa juntos, y un empaque que llegara por otro request dejaría
+/// una ventana con escalas que exigen empaque y ninguno cargado. Null es lo mismo que vacío,
+/// para que un cuerpo que no los manda siga siendo válido mientras no tenga escalas de empaque.</param>
 public sealed record ProductPricingRequest(
     decimal? BaseUsd,
     decimal? BaseCop,
-    IReadOnlyCollection<PriceScaleRequest>? Scales);
+    IReadOnlyCollection<PriceScaleRequest>? Scales,
+    IReadOnlyCollection<int>? PackagingUnits);
 
 /// <summary>
 /// Restriction es texto ("multiple" | "packaging_unit") y no el enum del dominio: ningún DTO
 /// expone <c>PriceScaleRestriction</c> directamente, mismo criterio que
 /// <c>MembershipListItemResponse.State</c>.
+///
+/// No lleva unidad de empaque: una escala <c>packaging_unit</c> usa los empaques del producto
+/// (<see cref="ProductPricingRequest.PackagingUnits"/>).
 /// </summary>
 /// <param name="AllowGrouping">Nullable y último: los cuerpos que no lo mandan mantienen el
 /// comportamiento de siempre, que es no agrupar.</param>
@@ -57,7 +71,6 @@ public sealed record PriceScaleRequest(
     decimal Discount,
     string? Restriction,
     int? Multiple,
-    int? PackagingUnit,
     decimal? FinalUsd,
     decimal? FinalCop,
     bool? AllowGrouping);
@@ -72,7 +85,6 @@ public sealed record PriceScaleResponse(
     decimal Discount,
     string? Restriction,
     int? Multiple,
-    int? PackagingUnit,
     decimal? FinalUsd,
     decimal? FinalCop,
     bool AllowGrouping);

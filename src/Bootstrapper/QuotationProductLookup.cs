@@ -50,7 +50,7 @@ internal sealed class QuotationProductLookup(
                 product.Code,
                 ResolveImageUrl(product, images, tenantId),
                 product.PriceScales
-                    .Select(scale => scale.ToQuotationRef())
+                    .Select(scale => scale.ToQuotationRef(product.PackagingUnits))
                     .ToArray()));
     }
 

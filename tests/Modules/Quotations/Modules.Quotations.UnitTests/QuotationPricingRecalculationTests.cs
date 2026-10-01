@@ -17,15 +17,15 @@ public sealed class QuotationPricingRecalculationTests
     // Tres tramos: el primero sin descuento, el segundo agrupable, el tercero de volumen.
     private static QuotationPriceScaleRef[] Tiers() =>
     [
-        new(1, 5, 0m, QuotationPriceScaleRestriction.Multiple, 1, null, false),
-        new(6, 48, 5m, QuotationPriceScaleRestriction.Multiple, 3, null, true),
-        new(49, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+        new(1, 5, 0m, QuotationPriceScaleRestriction.Multiple, 1, [], false),
+        new(6, 48, 5m, QuotationPriceScaleRestriction.Multiple, 3, [], true),
+        new(49, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
     ];
 
     // Un solo tramo plano con descuento, para los casos donde lo que se prueba es la compuerta y
     // no la agrupación.
     private static QuotationPriceScaleRef[] FlatTier() =>
-        [new(1, 999, 5m, QuotationPriceScaleRestriction.Multiple, 1, null, false)];
+        [new(1, 999, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false)];
 
     private static QuotationProductPricingRef Product(
         Guid id, decimal? cop, decimal? usd, QuotationPriceScaleRef[] scales) =>
@@ -321,8 +321,8 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 110_000m, null,
             [
-                new(5, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, null, false),
-                new(20, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+                new(5, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false),
+                new(20, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
             TenantId,
             quotation,
@@ -349,9 +349,9 @@ public sealed class QuotationPricingRecalculationTests
             new StubPricingLookup(Product(product, 10_000m, null,
             [
                 // 30 % 7 != 0 -> bloqueada, aunque sea la de mayor descuento.
-                new(1000, 5000, 15m, QuotationPriceScaleRestriction.Multiple, 7, null, false),
+                new(1000, 5000, 15m, QuotationPriceScaleRestriction.Multiple, 7, [], false),
                 // 30 % 1 == 0 -> esta si aplica, y es el mismo piso que eligio el asesor.
-                new(1000, 5000, 12m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+                new(1000, 5000, 12m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
             TenantId,
             quotation,

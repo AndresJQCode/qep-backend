@@ -382,7 +382,7 @@ public sealed class ProductTests
         int multiple = 3, decimal? finalUsd = 10m, decimal? finalCop = null) =>
         new(
             fromUnit, toUnit, discount,
-            PriceScaleRestriction.Multiple, multiple, null, finalUsd, finalCop);
+            PriceScaleRestriction.Multiple, multiple, finalUsd, finalCop);
 
     [Fact]
     public void CreateAcceptsAProductWithValidScales()
@@ -400,25 +400,30 @@ public sealed class ProductTests
         Assert.Equal(1, scale.FromUnit);
         Assert.Equal(9, scale.ToUnit);
         Assert.Equal(3, scale.Multiple);
-        Assert.Null(scale.PackagingUnit);
         Assert.Equal(PriceScaleRestriction.Multiple, scale.Restriction);
     }
 
+    private static PriceScaleInput PackagingScale(bool allowGrouping = false) =>
+        new(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 10m, null, allowGrouping);
+
+    // La escala de empaque no lleva número: usa los empaques del producto.
     [Fact]
-    public void CreateAcceptsAPackagingUnitScale()
+    public void CreateAcceptsAPackagingUnitScaleWhenTheProductHasPackagingUnits()
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
                 BaseUsd = 10m,
-                Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 12, 10m, null)]
+                PackagingUnits = [12],
+                Scales = [PackagingScale()]
             },
             Now);
 
         var scale = Assert.Single(product.PriceScales);
-        Assert.Equal(12, scale.PackagingUnit);
+        Assert.Equal(PriceScaleRestriction.PackagingUnit, scale.Restriction);
         Assert.Null(scale.Multiple);
+        Assert.Equal([12], product.PackagingUnits);
     }
 
     [Fact]
@@ -464,7 +469,7 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, null, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, 10m, null)]
                 },
                 Now));
 
@@ -486,7 +491,7 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, null, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, 10m, null)]
                 },
                 Now.AddMinutes(5)));
 
@@ -502,27 +507,11 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, null, null, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, null, 10m, null)]
                 },
                 Now));
 
         Assert.Equal("catalog.product.price_scale.multiple_required", error.Code);
-    }
-
-    [Fact]
-    public void CreateRejectsAMultipleRestrictionWithAPackagingUnit()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing
-                {
-                    BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, 3, 12, 10m, null)]
-                },
-                Now));
-
-        Assert.Equal("catalog.product.price_scale.packaging_unit_not_allowed", error.Code);
     }
 
     // La agrupación es exclusiva de la restricción Multiple: un empaque no se parte entre
@@ -536,12 +525,8 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    Scales =
-                    [
-                        new PriceScaleInput(
-                            1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 12, 10m, null,
-                            AllowGrouping: true)
-                    ]
+                    PackagingUnits = [12],
+                    Scales = [PackagingScale(allowGrouping: true)]
                 },
                 Now));
 
@@ -559,7 +544,7 @@ public sealed class ProductTests
                 Scales =
                 [
                     new PriceScaleInput(
-                        5, 48, 0m, PriceScaleRestriction.Multiple, 3, null, 10m, null,
+                        5, 48, 0m, PriceScaleRestriction.Multiple, 3, 10m, null,
                         AllowGrouping: true)
                 ]
             },
@@ -578,27 +563,11 @@ public sealed class ProductTests
             new ProductPricing
             {
                 BaseUsd = 10m,
-                Scales = [new PriceScaleInput(5, 48, 0m, PriceScaleRestriction.Multiple, 3, null, 10m, null)]
+                Scales = [new PriceScaleInput(5, 48, 0m, PriceScaleRestriction.Multiple, 3, 10m, null)]
             },
             Now);
 
         Assert.False(Assert.Single(product.PriceScales).AllowGrouping);
-    }
-
-    [Fact]
-    public void CreateRejectsAPackagingUnitRestrictionWithoutAPackagingUnit()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing
-                {
-                    BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, null, 10m, null)]
-                },
-                Now));
-
-        Assert.Equal("catalog.product.price_scale.packaging_unit_required", error.Code);
     }
 
     [Fact]
@@ -610,7 +579,8 @@ public sealed class ProductTests
                 new ProductPricing
                 {
                     BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, 3, 12, 10m, null)]
+                    PackagingUnits = [12],
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, 3, 10m, null)]
                 },
                 Now));
 
@@ -715,5 +685,182 @@ public sealed class ProductTests
             new ProductPricing { BaseUsd = 10m }, Now.AddMinutes(5));
 
         Assert.Empty(product.PriceScales);
+    }
+
+    // ---- Empaques del producto (2026-10-01) ----
+
+    [Fact]
+    public void CreateWithoutPackagingUnitsLeavesThemEmpty()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            ValidPricing, Now);
+
+        Assert.Empty(product.PackagingUnits);
+    }
+
+    // Se guardan ascendentes, lleguen como lleguen: es el orden en que la pantalla los pinta y
+    // en que se comparan, y no tiene por qué depender de cómo los tecleó el usuario.
+    [Fact]
+    public void CreateSortsThePackagingUnits()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, PackagingUnits = [150, 100] },
+            Now);
+
+        Assert.Equal([100, 150], product.PackagingUnits);
+    }
+
+    // Un producto puede declarar sus empaques sin que ninguna escala los exija.
+    [Fact]
+    public void CreateAcceptsPackagingUnitsWithoutAPackagingScale()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, PackagingUnits = [100, 150], Scales = [MultipleScale()] },
+            Now);
+
+        Assert.Equal([100, 150], product.PackagingUnits);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void CreateRejectsAPackagingUnitThatIsNotPositive(int packagingUnit)
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing { BaseUsd = 10m, PackagingUnits = [100, packagingUnit] },
+                Now));
+
+        Assert.Equal("catalog.product.packaging_units.invalid", error.Code);
+    }
+
+    // El tope por valor es Product.MaxPackagingUnitValue: más allá no hay empaque real, y la regla
+    // de Quotations cuenta por restos módulo el empaque menor, así que un número absurdo aquí se
+    // vuelve memoria allá.
+    [Fact]
+    public void CreateRejectsAPackagingUnitAboveTheMaximum()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing
+                {
+                    BaseUsd = 10m,
+                    PackagingUnits = [100, Product.MaxPackagingUnitValue + 1]
+                },
+                Now));
+
+        Assert.Equal("catalog.product.packaging_units.invalid", error.Code);
+    }
+
+    [Fact]
+    public void CreateAcceptsAPackagingUnitAtTheMaximum()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, PackagingUnits = [Product.MaxPackagingUnitValue] },
+            Now);
+
+        Assert.Equal([100_000], product.PackagingUnits);
+    }
+
+    // Ningún producto viene en más de un puñado de cajas; el tope (Product.MaxPackagingUnits)
+    // acota también lo que la regla de Quotations recorre por cada empaque.
+    [Fact]
+    public void CreateRejectsMorePackagingUnitsThanTheMaximum()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing
+                {
+                    BaseUsd = 10m,
+                    PackagingUnits = Enumerable.Range(1, Product.MaxPackagingUnits + 1).ToArray()
+                },
+                Now));
+
+        Assert.Equal("catalog.product.packaging_units.too_many", error.Code);
+    }
+
+    [Fact]
+    public void CreateAcceptsExactlyTheMaximumNumberOfPackagingUnits()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing
+            {
+                BaseUsd = 10m,
+                PackagingUnits = Enumerable.Range(1, Product.MaxPackagingUnits).ToArray()
+            },
+            Now);
+
+        Assert.Equal(10, product.PackagingUnits.Count);
+    }
+
+    // Un repetido se rechaza y no se descarta en silencio: quien mandó [100, 100] seguramente
+    // quiso escribir otro número, y deduplicarlo le escondería el error.
+    [Fact]
+    public void CreateRejectsADuplicatedPackagingUnit()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing { BaseUsd = 10m, PackagingUnits = [100, 150, 100] },
+                Now));
+
+        Assert.Equal("catalog.product.packaging_units.duplicated", error.Code);
+    }
+
+    // La escala de empaque ya no trae número propio: sin empaques en el producto no hay contra
+    // qué validarla.
+    [Fact]
+    public void CreateRejectsAPackagingScaleWhenTheProductHasNoPackagingUnits()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing { BaseUsd = 10m, Scales = [PackagingScale()] },
+                Now));
+
+        Assert.Equal("catalog.product.packaging_units_required", error.Code);
+    }
+
+    // Y en el PUT igual: vaciar los empaques mientras una escala los usa no se puede.
+    [Fact]
+    public void UpdateRejectsRemovingThePackagingUnitsOfAPackagingScale()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, PackagingUnits = [100], Scales = [PackagingScale()] },
+            Now);
+
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            product.Update(
+                "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+                new ProductPricing { BaseUsd = 10m, PackagingUnits = [], Scales = [PackagingScale()] },
+                Now.AddMinutes(5)));
+
+        Assert.Equal("catalog.product.packaging_units_required", error.Code);
+    }
+
+    // El PUT reemplaza el conjunto entero, como las escalas.
+    [Fact]
+    public void UpdateReplacesThePackagingUnits()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, PackagingUnits = [100] },
+            Now);
+
+        product.Update(
+            "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 10m, PackagingUnits = [150, 100], Scales = [PackagingScale()] },
+            Now.AddMinutes(5));
+
+        Assert.Equal([100, 150], product.PackagingUnits);
     }
 }
