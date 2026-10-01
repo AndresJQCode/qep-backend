@@ -681,11 +681,11 @@ public static class QepServiceCollectionExtensions
             [
                 TenancyPermissions.SettingsRead,
                 CustomersPermissions.CustomerRead,
-                // Los tres tercios del alcance de negocio pedido para este rol ("ver clientes,
-                // cotizaciones y pedidos") ya existen. Sólo lectura en los tres, salvo aprobar
-                // pedidos (abajo): facturar necesita ver el estado del pago y los comprobantes, no
-                // convertir ni editar cotizaciones -- eso sigue siendo trabajo de la asesora.
-                QuotationsPermissions.QuotationRead,
+                // Facturación ve clientes y pedidos, y aprueba pedidos (abajo). No ve cotizaciones:
+                // QuotationRead queda afuera a propósito (decisión del owner, 2026-10-01); lo que
+                // necesita para facturar lo trae el detalle del pedido. Sólo lectura en pedidos,
+                // salvo aprobar: facturar necesita ver el estado del pago y los comprobantes, no
+                // convertir ni editar -- eso sigue siendo trabajo de la asesora.
                 OrdersPermissions.OrderRead,
                 // Dar el visto bueno al pedido: facturación revisa el pago y los comprobantes antes
                 // de facturar, y es quien aprueba lo que la asesora registró.

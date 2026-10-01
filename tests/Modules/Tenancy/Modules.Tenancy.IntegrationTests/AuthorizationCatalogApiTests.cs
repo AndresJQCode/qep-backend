@@ -97,6 +97,9 @@ public sealed class AuthorizationCatalogApiTests
         // de POST /files/{id}/download-url, que exige storage.file.read. Sólo lectura: subir,
         // borrar y publicar archivos siguen fuera del rol.
         Assert.Equal(["storage.file.read"], PermissionsOf(catalog, "billing", "storage."));
+        // Facturación no ve cotizaciones (decisión del owner, 2026-10-01): ve clientes y pedidos, y
+        // aprueba pedidos. Ningún permiso de quotations.quotation.*, ni siquiera el de lectura.
+        Assert.Empty(PermissionsOf(catalog, "billing", "quotations.quotation."));
     }
 
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
