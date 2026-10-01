@@ -4,6 +4,7 @@ using Bootstrapper;
 using Bootstrapper.Authentication;
 using Bootstrapper.Csrf;
 using Bootstrapper.Health;
+using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
@@ -40,8 +41,10 @@ builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
 builder.Services.AddQepHealthChecks(builder.Configuration);
+builder.Services.AddQepForwardedHeaders(builder.Configuration);
 
-// Superficies públicas/sin autenticar: ventana fija por IP, generosa para tráfico real
+// Superficies públicas/sin autenticar: ventana fija por IP del cliente —la que deja
+// UseForwardedHeaders detrás del ingress, no la del nodo—, generosa para tráfico real
 // pero acotada contra el abuso. Hoy está atada al documento OpenAPI y a la referencia de
 // API de Scalar; atarla a todo endpoint público de lectura o webhook que se agregue.
 builder.Services.AddRateLimiter(options =>
@@ -61,6 +64,13 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+// Primero de todo, a propósito: reemplaza RemoteIpAddress por la IP del cliente que nginx anota en
+// X-Real-IP (sólo si el par directo está en ForwardedHeaders:KnownNetworks; X-Forwarded-For se
+// ignora), y todo lo que venga después tiene que ver esa y no la del nodo del ingress — la
+// partición del rate limiter, la IP de la sesión y la de la auditoría del registro. Si la pusieras
+// debajo del rate limiter, todo internet volvería a caer en el bucket de uno o dos nodos. Ver
+// AddQepForwardedHeaders.
+app.UseForwardedHeaders();
 app.UseExceptionHandler();
 // Afuera de autenticacion y autorizacion a proposito: es la unica posicion desde la que se puede
 // ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el

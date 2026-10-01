@@ -93,8 +93,9 @@ siguen yendo por [secretos de usuario](#secretos-de-usuario), nunca en un
 Las claves obligatorias no se deducen de ese archivo sino de los validadores que
 corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
-`AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator` y
-`PaymentProofsOptionsValidator`): si algo falta, la API **no arranca**.
+`AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator`,
+`PaymentProofsOptionsValidator` y `ForwardedHeadersSettingsValidator`): si algo
+falta o está mal escrito, la API **no arranca**.
 
 `ConnectionStrings:QepDatabase` **no está en `appsettings.json`**, a propósito:
 lleva una contraseña, y la regla de este repositorio es que una credencial nunca
@@ -107,6 +108,7 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
+| `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
 | `Authentication:UseDevelopmentStub`                    | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque                                |
 | `Authentication:Authority`                             | ausente (cae a `https://accounts.google.com`)                                                 | Emisor OIDC; sólo se define para pisar el de Google                                                                 |
 | `Authentication:Audience`                              | ausente                                                                                       | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId`                      |
@@ -1064,8 +1066,23 @@ AWS SDK para S3 (usado contra Cloudflare R2 en Storage).
 ### Pipeline HTTP (`Program.cs`)
 
 ```
-UseExceptionHandler → UseAuthentication → UseAuthorization → endpoints
+UseForwardedHeaders → UseExceptionHandler → RequestFailureLoggingMiddleware → UseRateLimiter
+  → CSRF (sin el stub) → UseAuthentication → UseAuthorization → endpoints
 ```
+
+`UseForwardedHeaders` va primero para que todo lo que lee `RemoteIpAddress` —la
+partición del rate limiter, la IP de la sesión y la de la auditoría del
+registro— vea la IP del cliente y no la del nodo del ingress. Ver
+`ForwardedHeaders:KnownNetworks` en [Configuración](#configuración).
+
+La IP del cliente sale de `X-Real-IP`, no de `X-Forwarded-For`
+(`ForwardedForHeaderName` en `AddQepForwardedHeaders`). Detrás de Cloudflare,
+ingress-nginx manda `X-Forwarded-For: <lo que llegó>, <IP del borde de Cloudflare>`:
+la entrada de más a la derecha es el borde, no el cliente, y las de la izquierda
+las puede escribir cualquiera. `X-Real-IP` es el `$remote_addr` de nginx, que
+resuelve `CF-Connecting-IP` sólo cuando el par es de Cloudflare
+(`set_real_ip_from`), así que no se falsifica desde afuera. `X-Forwarded-For` se
+ignora por completo.
 
 `ApiExceptionHandler` (`IExceptionHandler`) centraliza el mapeo de excepciones
 a `ProblemDetails` (RFC 7807):
