@@ -64,11 +64,12 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
-// Primero de todo, a propósito: reemplaza RemoteIpAddress por la IP del cliente (sólo si el par
-// directo está en ForwardedHeaders:KnownNetworks), y todo lo que venga después tiene que ver esa y
-// no la del nodo del ingress — la partición del rate limiter, la IP de la sesión y la de la
-// auditoría del registro. Si la pusieras debajo del rate limiter, todo internet volvería a caer en
-// el bucket de uno o dos nodos. Ver AddQepForwardedHeaders.
+// Primero de todo, a propósito: reemplaza RemoteIpAddress por la IP del cliente que nginx anota en
+// X-Real-IP (sólo si el par directo está en ForwardedHeaders:KnownNetworks; X-Forwarded-For se
+// ignora), y todo lo que venga después tiene que ver esa y no la del nodo del ingress — la
+// partición del rate limiter, la IP de la sesión y la de la auditoría del registro. Si la pusieras
+// debajo del rate limiter, todo internet volvería a caer en el bucket de uno o dos nodos. Ver
+// AddQepForwardedHeaders.
 app.UseForwardedHeaders();
 app.UseExceptionHandler();
 // Afuera de autenticacion y autorizacion a proposito: es la unica posicion desde la que se puede

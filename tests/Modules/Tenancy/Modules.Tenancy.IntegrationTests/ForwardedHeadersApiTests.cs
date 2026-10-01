@@ -8,16 +8,26 @@ namespace Modules.Tenancy.IntegrationTests;
 
 /// <summary>
 /// La IP del cliente detrás del ingress. En producción el par directo del pod es el nodo que corre
-/// ingress-nginx (hostNetwork), no el cliente; sin procesar <c>X-Forwarded-For</c>, la política
+/// ingress-nginx (hostNetwork), no el cliente; sin procesar los encabezados reenviados, la política
 /// <c>public</c> del rate limiter metía a todo internet en el bucket de uno o dos nodos, y
 /// <c>identity.sessions.ip_address</c> guardaba la IP del nodo.
 /// </summary>
 /// <remarks>
+/// <para>
+/// La IP del cliente sale de <c>X-Real-IP</c>, no de <c>X-Forwarded-For</c>. Detrás de Cloudflare,
+/// nginx manda <c>X-Forwarded-For: &lt;lo que llegó&gt;, &lt;IP del borde de Cloudflare&gt;</c>, así que
+/// la entrada de más a la derecha es el borde y no el cliente; <c>X-Real-IP</c> es el
+/// <c>$remote_addr</c> de nginx, que resuelve <c>CF-Connecting-IP</c> sólo si el par es de
+/// Cloudflare. Por eso estas pruebas mandan los dos encabezados con valores distintos: el bucket lo
+/// tiene que elegir <c>X-Real-IP</c>.
+/// </para>
+/// <para>
 /// El par directo se fija con <see cref="Microsoft.AspNetCore.TestHost.TestServer.SendAsync"/>:
 /// TestServer deja <c>RemoteIpAddress</c> en <c>null</c>, y el middleware de encabezados reenviados
-/// sólo confía en <c>X-Forwarded-For</c> si ese par cae en una red de confianza. Se mide por el
-/// rate limiter porque es el efecto que importa: la partición es <c>RemoteIpAddress</c>, así que
-/// dos clientes en buckets distintos prueban que el valor cambió, y en cuál.
+/// sólo confía en el encabezado si ese par cae en una red de confianza. Se mide por el rate limiter
+/// porque es el efecto que importa: la partición es <c>RemoteIpAddress</c>, así que dos clientes en
+/// buckets distintos prueban que el valor cambió, y en cuál.
+/// </para>
 /// </remarks>
 public sealed class ForwardedHeadersApiTests
 {
@@ -31,36 +41,57 @@ public sealed class ForwardedHeadersApiTests
 
     private const string ClientA = "203.0.113.10";
     private const string ClientB = "203.0.113.20";
-    private const string Spoofed = "198.51.100.1";
-    private const string OtherSpoofed = "198.51.100.2";
+    private const string CloudflareEdge = "198.18.0.1";
 
-    // El caso de producción: cada cliente detrás del ingress tiene su propio bucket.
+    // El caso de producción: cada cliente detrás del ingress tiene su propio bucket, aunque la
+    // entrada de más a la derecha de X-Forwarded-For —el borde de Cloudflare— sea la misma para los
+    // dos.
     [Fact]
-    public async Task BehindATrustedProxyEachClientGetsItsOwnBucket()
+    public async Task BehindATrustedProxyEachRealIpGetsItsOwnBucket()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new ForwardedHeadersApiFactory(database.GetConnectionString(), TrustedNetwork);
 
-        await ExhaustAsync(factory, IngressNode, ClientA);
+        await ExhaustAsync(factory, IngressNode, ClientA, _ => $"{ClientA}, {CloudflareEdge}");
 
         Assert.Equal(
             StatusCodes.Status429TooManyRequests,
-            await GetOpenApiAsync(factory, IngressNode, ClientA));
-        Assert.Equal(StatusCodes.Status200OK, await GetOpenApiAsync(factory, IngressNode, ClientB));
+            await GetOpenApiAsync(factory, IngressNode, ClientA, $"{ClientA}, {CloudflareEdge}"));
+        Assert.Equal(
+            StatusCodes.Status200OK,
+            await GetOpenApiAsync(factory, IngressNode, ClientB, $"{ClientB}, {CloudflareEdge}"));
     }
 
-    // Un par fuera de las redes de confianza no puede elegir su bucket mandando X-Forwarded-For.
+    // X-Forwarded-For lo puede escribir el cliente: rotarlo no le da un bucket nuevo, y poner ahí la
+    // IP de otro no lo mete en el bucket ajeno.
     [Fact]
-    public async Task FromAnUntrustedPeerTheForwardedForHeaderIsIgnored()
+    public async Task BehindATrustedProxyTheForwardedForHeaderIsIgnored()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new ForwardedHeadersApiFactory(database.GetConnectionString(), TrustedNetwork);
 
-        await ExhaustAsync(factory, UntrustedPeer, ClientA);
+        await ExhaustAsync(factory, IngressNode, ClientA, i => $"198.51.100.{i + 1}");
 
         Assert.Equal(
             StatusCodes.Status429TooManyRequests,
-            await GetOpenApiAsync(factory, UntrustedPeer, ClientB));
+            await GetOpenApiAsync(factory, IngressNode, ClientA, "198.51.100.250"));
+        Assert.Equal(
+            StatusCodes.Status200OK,
+            await GetOpenApiAsync(factory, IngressNode, ClientB, ClientA));
+    }
+
+    // Un par fuera de las redes de confianza no puede elegir su bucket mandando X-Real-IP.
+    [Fact]
+    public async Task FromAnUntrustedPeerTheRealIpHeaderIsIgnored()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new ForwardedHeadersApiFactory(database.GetConnectionString(), TrustedNetwork);
+
+        await ExhaustAsync(factory, UntrustedPeer, ClientA, _ => ClientA);
+
+        Assert.Equal(
+            StatusCodes.Status429TooManyRequests,
+            await GetOpenApiAsync(factory, UntrustedPeer, ClientB, ClientB));
     }
 
     // Sin la clave configurada no se confía en nada más que en el loopback del framework: el
@@ -71,31 +102,11 @@ public sealed class ForwardedHeadersApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new ForwardedHeadersApiFactory(database.GetConnectionString());
 
-        await ExhaustAsync(factory, IngressNode, ClientA);
+        await ExhaustAsync(factory, IngressNode, ClientA, _ => ClientA);
 
         Assert.Equal(
             StatusCodes.Status429TooManyRequests,
-            await GetOpenApiAsync(factory, IngressNode, ClientB));
-    }
-
-    // nginx agrega a la derecha la IP que resolvió; lo de la izquierda lo escribe el cliente. Sólo
-    // cuenta la entrada de más a la derecha (ForwardLimit = 1).
-    [Fact]
-    public async Task OnlyTheRightmostForwardedEntryPicksTheBucket()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new ForwardedHeadersApiFactory(database.GetConnectionString(), TrustedNetwork);
-
-        await ExhaustAsync(factory, IngressNode, $"{Spoofed}, {ClientA}");
-
-        // Cambiar la entrada falsificada no le da un bucket nuevo a ClientA...
-        Assert.Equal(
-            StatusCodes.Status429TooManyRequests,
-            await GetOpenApiAsync(factory, IngressNode, $"{OtherSpoofed}, {ClientA}"));
-        // ...y repetirla no le quita el suyo a ClientB.
-        Assert.Equal(
-            StatusCodes.Status200OK,
-            await GetOpenApiAsync(factory, IngressNode, $"{Spoofed}, {ClientB}"));
+            await GetOpenApiAsync(factory, IngressNode, ClientB, ClientB));
     }
 
     // Una red mal escrita tumba el arranque: ignorarla dejaría todo internet en el bucket del nodo.
@@ -112,22 +123,28 @@ public sealed class ForwardedHeadersApiTests
     }
 
     private static async Task ExhaustAsync(
-        ForwardedHeadersApiFactory factory, IPAddress peer, string forwardedFor)
+        ForwardedHeadersApiFactory factory,
+        IPAddress peer,
+        string realIp,
+        Func<int, string> forwardedFor)
     {
         for (var i = 0; i < PublicPermitLimit; i++)
         {
-            Assert.Equal(StatusCodes.Status200OK, await GetOpenApiAsync(factory, peer, forwardedFor));
+            Assert.Equal(
+                StatusCodes.Status200OK,
+                await GetOpenApiAsync(factory, peer, realIp, forwardedFor(i)));
         }
     }
 
     private static async Task<int> GetOpenApiAsync(
-        ForwardedHeadersApiFactory factory, IPAddress peer, string forwardedFor)
+        ForwardedHeadersApiFactory factory, IPAddress peer, string realIp, string forwardedFor)
     {
         var context = await factory.Server.SendAsync(
             http =>
             {
                 http.Request.Method = HttpMethods.Get;
                 http.Request.Path = "/openapi/v1.json";
+                http.Request.Headers["X-Real-IP"] = realIp;
                 http.Request.Headers["X-Forwarded-For"] = forwardedFor;
                 http.Request.Headers["X-Forwarded-Proto"] = "https";
                 http.Connection.RemoteIpAddress = peer;
