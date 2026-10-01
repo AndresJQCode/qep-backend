@@ -26,7 +26,7 @@ public sealed class PriceScaleCopyTests
         bool allowGrouping = false) =>
         new(
             fromUnit, toUnit, discount,
-            PriceScaleRestriction.Multiple, multiple, null, finalUsd, finalCop, allowGrouping);
+            PriceScaleRestriction.Multiple, multiple, finalUsd, finalCop, allowGrouping);
 
     [Fact]
     public void RecalculatesTheFinalPriceAgainstTheTarget()
@@ -100,18 +100,24 @@ public sealed class PriceScaleCopyTests
         var source = ProductWith(new ProductPricing
         {
             BaseUsd = 100m,
+            PackagingUnits = [12],
             Scales =
             [
                 MultipleScale(fromUnit: 10, toUnit: 20, discount: 20m, multiple: 5,
                     finalUsd: 80m, allowGrouping: true),
                 new PriceScaleInput(
-                    1, 9, 10m, PriceScaleRestriction.PackagingUnit, null, 12, 90m, null)
+                    1, 9, 10m, PriceScaleRestriction.PackagingUnit, null, 90m, null)
             ]
         });
-        var target = ProductWith(new ProductPricing { BaseUsd = 100m }, "VS-002");
+        var target = ProductWith(
+            new ProductPricing { BaseUsd = 100m, PackagingUnits = [100, 150] }, "VS-002");
 
-        target.ApplyCopiedPriceScales(
-            PriceScaleCopy.ToPricingFor(source, target).Scales, Now.AddMinutes(5));
+        var pricing = PriceScaleCopy.ToPricingFor(source, target);
+        target.ApplyCopiedPriceScales(pricing.Scales, Now.AddMinutes(5));
+
+        // Los empaques tampoco se heredan: el precio que se compara es el del destino.
+        Assert.Equal([100, 150], pricing.PackagingUnits);
+        Assert.Equal([100, 150], target.PackagingUnits);
 
         // Ordenadas por rango, no en el orden en que venían.
         var scales = target.PriceScales.ToArray();
@@ -131,7 +137,6 @@ public sealed class PriceScaleCopyTests
         {
             Assert.Null(scale.Restriction);
             Assert.Null(scale.Multiple);
-            Assert.Null(scale.PackagingUnit);
             Assert.False(scale.AllowGrouping);
         });
     }

@@ -12,6 +12,14 @@ public sealed record ProductPricing
     public decimal? BaseCop { get; init; }
 
     public IReadOnlyCollection<PriceScaleInput> Scales { get; init; } = [];
+
+    /// <summary>
+    /// Los empaques en que viene el producto (p. ej. cajas de 100 y de 150). Viajan aquí, junto a
+    /// las escalas, y no en <see cref="ProductDetails"/>: una escala con restricción
+    /// <see cref="PriceScaleRestriction.PackagingUnit"/> se valida contra este conjunto, así que
+    /// los dos se validan juntos en el mismo POST/PUT. Ver <see cref="Product.PackagingUnits"/>.
+    /// </summary>
+    public IReadOnlyCollection<int> PackagingUnits { get; init; } = [];
 }
 
 /// <summary>
@@ -19,6 +27,10 @@ public sealed record ProductPricing
 /// reemplaza en cada `PUT`, así que <see cref="Product"/> asigna un <see cref="PriceScaleId"/>
 /// nuevo a cada una — el mismo criterio que ya usa <c>ProductDetails</c> para sus cinco
 /// opcionales.
+///
+/// No lleva unidad de empaque: desde el 2026-10-01 el empaque es del producto
+/// (<see cref="ProductPricing.PackagingUnits"/>), y una escala con restricción
+/// <see cref="PriceScaleRestriction.PackagingUnit"/> sólo dice "usa los empaques del producto".
 /// </summary>
 /// <param name="AllowGrouping">Si las cantidades de varias líneas de una cotización que caen en
 /// esta misma escala se suman para validar el múltiplo. Exclusivo de
@@ -30,7 +42,6 @@ public sealed record PriceScaleInput(
     decimal Discount,
     PriceScaleRestriction? Restriction,
     int? Multiple,
-    int? PackagingUnit,
     decimal? FinalUsd,
     decimal? FinalCop,
     bool AllowGrouping = false);

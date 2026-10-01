@@ -57,7 +57,6 @@ public sealed class CatalogSeedTests
         Assert.Equal(15m, bronceadorFirst.Discount);
         Assert.Equal(PriceScaleRestriction.Multiple, bronceadorFirst.Restriction);
         Assert.Equal(3, bronceadorFirst.Multiple);
-        Assert.Null(bronceadorFirst.PackagingUnit);
         Assert.True(bronceadorFirst.AllowGrouping);
         Assert.Equal(8.47m, bronceadorFirst.FinalUsd);
         Assert.Equal(30515m, bronceadorFirst.FinalCop);
@@ -68,7 +67,8 @@ public sealed class CatalogSeedTests
         Assert.Equal(35m, bronceadorLast.Discount);
         Assert.Equal(PriceScaleRestriction.PackagingUnit, bronceadorLast.Restriction);
         Assert.Null(bronceadorLast.Multiple);
-        Assert.Equal(108, bronceadorLast.PackagingUnit);
+        // El empaque es del producto desde el 2026-10-01, no de la escala.
+        Assert.Equal([108], bronceador.PackagingUnits);
         Assert.False(bronceadorLast.AllowGrouping);
         Assert.Equal(6.48m, bronceadorLast.FinalUsd);
         Assert.Equal(23335m, bronceadorLast.FinalCop);
@@ -80,7 +80,7 @@ public sealed class CatalogSeedTests
         Assert.Equal(299, keratinaThird.ToUnit);
         Assert.Equal(33.33m, keratinaThird.Discount);
         Assert.Equal(PriceScaleRestriction.PackagingUnit, keratinaThird.Restriction);
-        Assert.Equal(25, keratinaThird.PackagingUnit);
+        Assert.Equal([25], keratina.PackagingUnits);
         Assert.Equal(26.31m, keratinaThird.FinalUsd);
         Assert.Equal(100005m, keratinaThird.FinalCop);
     }

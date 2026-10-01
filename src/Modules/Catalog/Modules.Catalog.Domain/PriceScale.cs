@@ -22,7 +22,6 @@ public sealed class PriceScale
         decimal discount,
         PriceScaleRestriction? restriction,
         int? multiple,
-        int? packagingUnit,
         decimal? finalUsd,
         decimal? finalCop,
         bool allowGrouping)
@@ -35,7 +34,6 @@ public sealed class PriceScale
         Discount = discount;
         Restriction = restriction;
         Multiple = multiple;
-        PackagingUnit = packagingUnit;
         FinalUsd = finalUsd;
         FinalCop = finalCop;
         AllowGrouping = allowGrouping;
@@ -64,10 +62,6 @@ public sealed class PriceScale
 
     /// <summary>Sólo cuando <see cref="Restriction"/> es <c>Multiple</c>; null en el otro caso.</summary>
     public int? Multiple { get; private set; }
-
-    /// <summary>Unidades por empaque. Sólo cuando <see cref="Restriction"/> es
-    /// <c>PackagingUnit</c>; null en el otro caso.</summary>
-    public int? PackagingUnit { get; private set; }
 
     public decimal? FinalUsd { get; private set; }
 
@@ -101,7 +95,6 @@ public sealed class PriceScale
         }
 
         var restriction = input.Restriction.Value;
-        int? packagingUnit;
         int? multiple;
 
         if (restriction == PriceScaleRestriction.Multiple)
@@ -113,15 +106,7 @@ public sealed class PriceScale
                     "A multiple greater than zero is required when the restriction is 'multiple'.");
             }
 
-            if (input.PackagingUnit is not null)
-            {
-                throw new CatalogDomainException(
-                    "catalog.product.price_scale.packaging_unit_not_allowed",
-                    "A packaging unit is not allowed when the restriction is 'multiple'.");
-            }
-
             multiple = input.Multiple;
-            packagingUnit = null;
         }
         else
         {
@@ -132,13 +117,8 @@ public sealed class PriceScale
                     "Grouping is only available when the restriction is 'multiple'.");
             }
 
-            if (input.PackagingUnit is not (> 0))
-            {
-                throw new CatalogDomainException(
-                    "catalog.product.price_scale.packaging_unit_required",
-                    "A packaging unit greater than zero is required when the restriction is 'packaging_unit'.");
-            }
-
+            // Sin número propio: la escala usa los empaques del producto, y que no estén vacíos
+            // lo hace cumplir Product, que es el que ve los dos (Product.PackagingUnits).
             if (input.Multiple is not null)
             {
                 throw new CatalogDomainException(
@@ -146,7 +126,6 @@ public sealed class PriceScale
                     "A multiple is not allowed when the restriction is 'packaging_unit'.");
             }
 
-            packagingUnit = input.PackagingUnit;
             multiple = null;
         }
 
@@ -161,14 +140,13 @@ public sealed class PriceScale
             input.Discount,
             restriction,
             multiple,
-            packagingUnit,
             input.FinalUsd,
             input.FinalCop,
             input.AllowGrouping);
     }
 
     /// <summary>
-    /// Una escala sin restricción, múltiplo, empaque ni agrupación: sólo rango, descuento y los
+    /// Una escala sin restricción, múltiplo ni agrupación: sólo rango, descuento y los
     /// finales. La usa **únicamente** la copia de escalas (<see cref="Product.ApplyCopiedPriceScales"/>);
     /// el formulario pasa por <see cref="Create"/>, que sigue exigiendo la restricción.
     ///
@@ -186,11 +164,10 @@ public sealed class PriceScale
     {
         if (input.Restriction is not null
             || input.Multiple is not null
-            || input.PackagingUnit is not null
             || input.AllowGrouping)
         {
             throw new ArgumentException(
-                "An incomplete price scale cannot carry a restriction, multiple, packaging unit or grouping.",
+                "An incomplete price scale cannot carry a restriction, multiple or grouping.",
                 nameof(input));
         }
 
@@ -206,7 +183,6 @@ public sealed class PriceScale
             input.Discount,
             restriction: null,
             multiple: null,
-            packagingUnit: null,
             input.FinalUsd,
             input.FinalCop,
             allowGrouping: false);

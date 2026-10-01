@@ -48,7 +48,7 @@ public sealed class QuotationItemPriceScalesTests
 
     private static QuotationPriceScaleRef Scale(int fromUnit, int toUnit) =>
         new(fromUnit, toUnit, Discount: 5m, QuotationPriceScaleRestriction.Multiple, Multiple: 1,
-            PackagingUnit: null);
+            PackagingUnits: []);
 
     private static async Task<QuotationResponse> ComposeAsync(
         Quotation quotation, params QuotationPriceScaleRef[] scales)

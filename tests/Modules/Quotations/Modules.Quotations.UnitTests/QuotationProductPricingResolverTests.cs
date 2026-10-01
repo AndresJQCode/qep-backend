@@ -28,8 +28,8 @@ public sealed class QuotationProductPricingResolverTests
             Scales:
             [
                 new QuotationPriceScaleRef(
-                    1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, null),
-                new QuotationPriceScaleRef(10, 99, 10m, null, null, null)
+                    1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, []),
+                new QuotationPriceScaleRef(10, 99, 10m, null, null, [])
             ],
             TaxPercentage: null);
 
@@ -68,7 +68,7 @@ public sealed class QuotationProductPricingResolverTests
         var productId = Guid.NewGuid();
         var lookup = new StubPricingLookup(new QuotationProductPricingRef(
             productId, TenantId, "Vela de soja", true, 100_000m, null,
-            [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, null)],
+            [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
             null));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
@@ -112,7 +112,7 @@ public sealed class QuotationProductPricingResolverTests
             Scales:
             [
                 new QuotationPriceScaleRef(
-                    1, 999, 15m, QuotationPriceScaleRestriction.PackagingUnit, null, 12)
+                    1, 999, 15m, QuotationPriceScaleRestriction.PackagingUnit, null, [12])
             ],
             TaxPercentage: null);
 
@@ -183,7 +183,7 @@ public sealed class QuotationProductPricingResolverTests
         var productId = Guid.NewGuid();
         var lookup = new StubPricingLookup(new QuotationProductPricingRef(
             productId, TenantId, "Vela de soja", true, 100_000m, null,
-            [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, null)],
+            [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
             null));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(

@@ -23,6 +23,10 @@ public sealed class ProductPricingApiTests
     private const string TenantId = "01900000-0000-7000-8000-000000000041";
     private const string SubjectId = "01900000-0000-7000-8000-000000000042";
 
+    // Los empaques viajan en el precio del producto desde el 2026-10-01, no dentro de la escala.
+    private static readonly int[] TwelvePack = [12];
+    private static readonly int[] SixPack = [6];
+
     private static readonly string[] ManagePermissions =
     [
         CatalogPermissions.ProductRead, CatalogPermissions.ProductManage
@@ -43,6 +47,7 @@ public sealed class ProductPricingApiTests
             {
                 baseUsd = 100m,
                 baseCop = 400000m,
+                packagingUnits = TwelvePack,
                 scales = new object[]
                 {
                     new
@@ -61,7 +66,6 @@ public sealed class ProductPricingApiTests
                         toUnit = 50,
                         discount = 15m,
                         restriction = "packaging_unit",
-                        packagingUnit = 12,
                         finalUsd = 85m,
                         finalCop = 340000m
                     }
@@ -87,9 +91,9 @@ public sealed class ProductPricingApiTests
         Assert.Equal(3, multipleScale.Multiple);
         Assert.Equal(95m, multipleScale.FinalUsd);
 
-        var packagingScale = Assert.Single(
-            fetched.PriceScales, scale => scale.Restriction == "packaging_unit");
-        Assert.Equal(12, packagingScale.PackagingUnit);
+        Assert.Single(fetched.PriceScales, scale => scale.Restriction == "packaging_unit");
+        // El empaque es del producto, no de la escala (2026-10-01).
+        Assert.Equal([12], fetched.PackagingUnits);
 
         // El listado pasa por SearchAsync, un camino distinto de FindAsync — ambos necesitan
         // su propio Include.
@@ -144,6 +148,7 @@ public sealed class ProductPricingApiTests
                 {
                     baseUsd = 100m,
                     finalUsd = 100m,
+                    packagingUnits = SixPack,
                     scales = new object[]
                     {
                         new
@@ -152,7 +157,6 @@ public sealed class ProductPricingApiTests
                             toUnit = 40,
                             discount = 0m,
                             restriction = "packaging_unit",
-                            packagingUnit = 6,
                             finalUsd = 100m
                         }
                     }
@@ -162,7 +166,7 @@ public sealed class ProductPricingApiTests
 
         var onlyScale = Assert.Single(updated.PriceScales);
         Assert.Equal(20, onlyScale.FromUnit);
-        Assert.Equal(6, onlyScale.PackagingUnit);
+        Assert.Equal([6], updated.PackagingUnits);
 
         // Releído de la base: si el Update hubiera dejado la escala vieja huérfana, esto
         // volvería con dos filas en vez de una.
@@ -227,12 +231,13 @@ public sealed class ProductPricingApiTests
             pricing = new
             {
                 baseCop = 100_000m,
+                packagingUnits = TwelvePack,
                 scales = new object[]
                 {
                     new
                     {
                         fromUnit = 1, toUnit = 999, discount = 0m,
-                        restriction = "packaging_unit", packagingUnit = 12,
+                        restriction = "packaging_unit",
                         finalCop = 100_000m, allowGrouping = true
                     }
                 }
@@ -244,6 +249,131 @@ public sealed class ProductPricingApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(problem);
         Assert.Equal("catalog.product.price_scale.grouping_not_allowed", problem.Code);
+    }
+
+    // ---- Empaques del producto (2026-10-01) ----
+
+    private static readonly int[] DuplicatedPackagingUnits = [100, 100];
+    private static readonly int[] UnsortedPackagingUnits = [150, 100];
+
+    // Una escala packaging_unit ya no trae número: sin empaques en el producto, el dominio la
+    // rechaza con su propio código y el formulario sabe qué campo pedir.
+    [Fact]
+    public async Task CreateProductRejectsAPackagingScaleWithoutPackagingUnits()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Keratina 120 ml",
+            code = "KR-120",
+            pricing = new
+            {
+                baseCop = 100_000m,
+                scales = new object[]
+                {
+                    new
+                    {
+                        fromUnit = 100, toUnit = 999, discount = 0m,
+                        restriction = "packaging_unit", finalCop = 100_000m
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("catalog.product.packaging_units_required", problem.Code);
+    }
+
+    [Fact]
+    public async Task CreateProductRejectsDuplicatedPackagingUnits()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Keratina 120 ml",
+            code = "KR-120",
+            pricing = new { baseCop = 100_000m, packagingUnits = DuplicatedPackagingUnits }
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(problem);
+        Assert.Equal("catalog.product.packaging_units.duplicated", problem.Code);
+    }
+
+    // Ida y vuelta contra Postgres: el integer[] se guarda ordenado, vuelve igual en el GET y en
+    // el listado, y un PUT sin empaques lo deja vacío — vacío y no ausente, porque la pantalla
+    // repinta lo que llega.
+    [Fact]
+    public async Task PackagingUnitsRoundTripThroughTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
+        {
+            name = "Keratina 120 ml",
+            code = "KR-120",
+            pricing = new
+            {
+                baseCop = 100_000m,
+                packagingUnits = UnsortedPackagingUnits,
+                scales = new object[]
+                {
+                    new
+                    {
+                        fromUnit = 100, toUnit = 999, discount = 0m,
+                        restriction = "packaging_unit", finalCop = 100_000m
+                    }
+                }
+            }
+        }));
+        Assert.Equal([100, 150], created.PackagingUnits);
+
+        var fetched = await ReadProductAsync(await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            TestContext.Current.CancellationToken));
+        Assert.Equal([100, 150], fetched.PackagingUnits);
+
+        var list = await client.GetFromJsonAsync<ProductsResponse>(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(list);
+        Assert.Equal([100, 150], Assert.Single(list.Items).PackagingUnits);
+
+        await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand(
+                "SELECT packaging_units FROM catalog.products WHERE id = @id", connection);
+            command.Parameters.AddWithValue("id", created.Id);
+            var stored = (int[])(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+            Assert.Equal([100, 150], stored);
+        }
+
+        var cleared = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            new
+            {
+                name = "Keratina 120 ml",
+                code = "KR-120",
+                pricing = new { baseCop = 100_000m }
+            },
+            TestContext.Current.CancellationToken);
+        var body = await cleared.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(cleared.IsSuccessStatusCode, body);
+        Assert.Contains("\"packagingUnits\":[]", body, StringComparison.Ordinal);
     }
 
     private static Task<HttpResponseMessage> CreateProductAsync(

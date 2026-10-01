@@ -57,8 +57,14 @@ public enum QuotationPriceScaleRestriction
 /// (<see cref="QuotationProductPricingResolver"/>), pero una cotización que ya lo tenía se sigue
 /// pudiendo leer.</param>
 /// <param name="Multiple">Poblado sólo cuando <paramref name="Restriction"/> es
-/// <c>Multiple</c>; el dominio de Catalog garantiza la exclusión mutua con
-/// <paramref name="PackagingUnit"/>.</param>
+/// <c>Multiple</c>. La exclusión mutua con <paramref name="PackagingUnits"/> la garantiza el
+/// adaptador de <c>Bootstrapper</c> (<c>QuotationPriceScaleMapping</c>), que sólo copia los
+/// empaques del producto en las escalas <c>PackagingUnit</c>; Catalog ya no la ve, porque los
+/// empaques dejaron de ser de la escala.</param>
+/// <param name="PackagingUnits">Los empaques del **producto**, no de la escala: Catalog los
+/// guarda una vez por producto desde el 2026-10-01, y el adaptador de <c>Bootstrapper</c> los
+/// copia en cada escala <c>PackagingUnit</c> para que la regla no necesite el producto. Vacío en
+/// cualquier otra restricción.</param>
 /// <param name="AllowGrouping">Si las cantidades de varias líneas que caen en esta misma escala
 /// se suman para validar el múltiplo. Siempre <c>false</c> con <c>PackagingUnit</c>: lo hace
 /// cumplir Catalog. Último y con default para no tocar las construcciones que ya existen.</param>
@@ -68,5 +74,5 @@ public sealed record QuotationPriceScaleRef(
     decimal Discount,
     QuotationPriceScaleRestriction? Restriction,
     int? Multiple,
-    int? PackagingUnit,
+    IReadOnlyList<int> PackagingUnits,
     bool AllowGrouping = false);

@@ -14,6 +14,9 @@ internal sealed record CatalogSeedProduct(
     string Name,
     decimal? PriceCop,
     decimal? PriceUsd,
+    // Los empaques son del producto, no de la escala: una escala "packaging_unit" usa estos.
+    // Nullable porque un producto sin empaques puede omitir la clave; el seeder lo lee como vacío.
+    IReadOnlyList<int>? PackagingUnits,
     IReadOnlyList<CatalogSeedScale> Scales);
 
 // Restriction viaja como texto ("multiple" | "packaging_unit") y lo traduce CatalogSeeder al
@@ -26,5 +29,4 @@ internal sealed record CatalogSeedScale(
     decimal Discount,
     string Restriction,
     int? Multiple,
-    int? PackagingUnit,
     bool AllowGrouping);

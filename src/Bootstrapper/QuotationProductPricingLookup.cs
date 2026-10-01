@@ -28,7 +28,7 @@ internal sealed class QuotationProductPricingLookup(
         }
 
         var scales = product.PriceScales
-            .Select(scale => scale.ToQuotationRef())
+            .Select(scale => scale.ToQuotationRef(product.PackagingUnits))
             .ToArray();
 
         // RN-013: la tasa de impuesto es del producto, no de la cotización — TaxRate.cs (Catalog)
@@ -89,7 +89,7 @@ internal sealed class QuotationProductPricingLookup(
                 product.PriceBaseCop,
                 product.PriceBaseUsd,
                 product.PriceScales
-                    .Select(scale => scale.ToQuotationRef())
+                    .Select(scale => scale.ToQuotationRef(product.PackagingUnits))
                     .ToArray(),
                 product.TaxRateId is { } id && taxPercentages.TryGetValue(id, out var percentage)
                     ? percentage
