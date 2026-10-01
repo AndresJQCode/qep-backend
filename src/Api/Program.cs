@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Threading.RateLimiting;
 using Api;
 using Bootstrapper;
@@ -46,10 +47,22 @@ builder.Services.AddQepForwardedHeaders(builder.Configuration);
 // Superficies públicas/sin autenticar: ventana fija por IP del cliente —la que deja
 // UseForwardedHeaders detrás del ingress, no la del nodo—, generosa para tráfico real
 // pero acotada contra el abuso. Hoy está atada al documento OpenAPI y a la referencia de
-// API de Scalar; atarla a todo endpoint público de lectura o webhook que se agregue.
+// API de Scalar; atarla a todo endpoint público de lectura o webhook que se agregue. El login y
+// el registro de tenant tienen su propia política, más estricta (ver RateLimiterPolicies).
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // El 429 le dice al cliente cuándo volver: lo que le falta a la ventana fija, en segundos.
+    options.OnRejected = (context, _) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+        }
+
+        return ValueTask.CompletedTask;
+    };
     static FixedWindowRateLimiterOptions FixedWindow(string _) => new()
     {
         PermitLimit = 120,
@@ -61,6 +74,17 @@ builder.Services.AddRateLimiter(options =>
         httpContext => RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: FixedWindow));
+    static FixedWindowRateLimiterOptions AuthenticationWindow(string _) => new()
+    {
+        PermitLimit = 10,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+    };
+    options.AddPolicy(
+        RateLimiterPolicies.Authentication,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: AuthenticationWindow));
 });
 
 var app = builder.Build();
