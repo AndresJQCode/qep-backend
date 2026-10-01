@@ -14,9 +14,10 @@ public sealed record ApproveOrderCommand(Guid TenantId, Guid OrderId)
 /// sus comprobantes, y quien controla los revisa y aprueba. Mientras esa revisión no ocurre el
 /// pedido queda <c>Pending</c>, y ese estado es justamente lo que hace visible el paso.
 ///
-/// Hoy exige el mismo permiso que registrar (<see cref="OrdersPermissions.OrderManage"/>): separar
-/// los dos roles es una decisión de permisos que este slice no toma. Cuando exista el permiso
-/// propio de aprobación, se cambia acá y en ningún otro lado.
+/// Por eso exige su propio permiso (<see cref="OrdersPermissions.OrderApprove"/>) y no el de
+/// registrar (<see cref="OrdersPermissions.OrderManage"/>): la asesora necesita gestionar pedidos
+/// para convertir y editar, pero no puede darse el visto bueno a sí misma. De fábrica lo tienen
+/// admin y facturación.
 /// </summary>
 public sealed class ApproveOrderHandler(
     IOrderRepository repository,
@@ -32,7 +33,7 @@ public sealed class ApproveOrderHandler(
         CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(
-            executionContext, command.TenantId, OrdersPermissions.OrderManage);
+            executionContext, command.TenantId, OrdersPermissions.OrderApprove);
 
         // Por el id del pedido: quien aprueba llega desde el listado de pedidos, no desde la
         // cotización. Un id que no es de este tenant es el mismo "no encontrado" de GET /orders/{id}.

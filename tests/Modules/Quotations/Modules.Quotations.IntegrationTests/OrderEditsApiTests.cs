@@ -82,7 +82,7 @@ public sealed class OrderEditsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var (quotation, order, _) = await CreatePendingOrderAsync(client, factory, tenantId);
         Assert.True(order.Version >= 1);
@@ -274,7 +274,7 @@ public sealed class OrderEditsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         var approve = await client.PostAsync(
@@ -478,7 +478,7 @@ public sealed class OrderEditsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         (await client.PostAsync(

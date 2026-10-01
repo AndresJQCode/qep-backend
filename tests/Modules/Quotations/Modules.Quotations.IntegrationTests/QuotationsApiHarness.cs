@@ -124,6 +124,12 @@ internal static class QuotationsApiHarness
         CompaniesPermissions.CompanyManage
     ];
 
+    /// <summary>Lo de <see cref="ManagerPermissions"/> más aprobar pedidos. Aparte porque aprobar
+    /// tiene permiso propio: quien registra el pedido (gestión) no es quien lo revisa, y una prueba
+    /// que sólo convierte no tiene por qué poder aprobar.</summary>
+    public static readonly string[] ApproverPermissions =
+        [.. ManagerPermissions, OrdersPermissions.OrderApprove];
+
     /// <summary>Registra un tenant nuevo (signup publico) para conseguir una Membership de dueño
     /// ya en estado Active, y devuelve un cliente autenticado como ese dueño con los permisos
     /// pedidos.</summary>

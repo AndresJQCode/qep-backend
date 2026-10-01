@@ -605,6 +605,9 @@ public static class QepServiceCollectionExtensions
                 QuotationsPermissions.QuotationManage,
                 OrdersPermissions.OrderRead,
                 OrdersPermissions.OrderManage,
+                // Aprobar es de quien revisa, no de quien registra: admin y facturación, nunca el
+                // asesor. El rol vive en código, así que no hay migración de datos.
+                OrdersPermissions.OrderApprove,
                 // Sólo admin (spec 2026-09-16, decisión 5): anular deshace también un pedido ya
                 // aprobado. El rol vive en código, así que no hay migración de datos.
                 OrdersPermissions.OrderCancel,
@@ -660,7 +663,8 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileUpload,
                 StoragePermissions.FileRead,
                 // Convertir una cotizacion aprobada en pedido (US-13 a US-16) es la continuacion
-                // natural de cotizar, no una operacion separada que administre otro rol.
+                // natural de cotizar, no una operacion separada que administre otro rol. Aprobar
+                // (OrderApprove) queda afuera a proposito: quien registra el pedido no lo revisa.
                 OrdersPermissions.OrderRead,
                 OrdersPermissions.OrderManage,
                 // Solo los dos reportes de su trabajo diario. Cambios de precio y padron de
@@ -678,11 +682,14 @@ public static class QepServiceCollectionExtensions
                 TenancyPermissions.SettingsRead,
                 CustomersPermissions.CustomerRead,
                 // Los tres tercios del alcance de negocio pedido para este rol ("ver clientes,
-                // cotizaciones y pedidos") ya existen. Sólo lectura en los tres: facturar necesita
-                // ver el estado del pago y los comprobantes, no aprobar conversiones ni editar
-                // cotizaciones -- eso sigue siendo trabajo de la asesora.
+                // cotizaciones y pedidos") ya existen. Sólo lectura en los tres, salvo aprobar
+                // pedidos (abajo): facturar necesita ver el estado del pago y los comprobantes, no
+                // convertir ni editar cotizaciones -- eso sigue siendo trabajo de la asesora.
                 QuotationsPermissions.QuotationRead,
                 OrdersPermissions.OrderRead,
+                // Dar el visto bueno al pedido: facturación revisa el pago y los comprobantes antes
+                // de facturar, y es quien aprueba lo que la asesora registró.
+                OrdersPermissions.OrderApprove,
                 // Ver los comprobantes desde el detalle del pedido: el pedido sólo guarda el fileId,
                 // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
                 // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
@@ -839,6 +846,13 @@ public static class QepServiceCollectionExtensions
             OrdersPermissions.OrderManage,
             "Gestionar pedidos",
             "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
+            "Quotations",
+            "medium"));
+        // Aparte de OrderManage: quien registra el pedido (el asesor) no es quien lo revisa.
+        services.AddSingleton(new PermissionDefinition(
+            OrdersPermissions.OrderApprove,
+            "Aprobar pedidos",
+            "Permite dar el visto bueno a un pedido pendiente.",
             "Quotations",
             "medium"));
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
@@ -1089,13 +1103,16 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 QuotationsPermissions.QuotationManage,
                 policy => AddPermissionRequirement(policy, QuotationsPermissions.QuotationManage))
-            // La otra mitad del permiso, para los dos de Orders -- mismo gotcha.
+            // La otra mitad del permiso, para los de Orders -- mismo gotcha.
             .AddPolicy(
                 OrdersPermissions.OrderRead,
                 policy => AddPermissionRequirement(policy, OrdersPermissions.OrderRead))
             .AddPolicy(
                 OrdersPermissions.OrderManage,
                 policy => AddPermissionRequirement(policy, OrdersPermissions.OrderManage))
+            .AddPolicy(
+                OrdersPermissions.OrderApprove,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderApprove))
             .AddPolicy(
                 OrdersPermissions.OrderCancel,
                 policy => AddPermissionRequirement(policy, OrdersPermissions.OrderCancel))

@@ -229,7 +229,7 @@ public sealed class OrderPaymentProofPublicationApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);
         var firstFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);

@@ -196,7 +196,7 @@ public sealed class OrderApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -800,7 +800,7 @@ public sealed class OrderApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -914,7 +914,7 @@ public sealed class OrderApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -1001,7 +1001,7 @@ public sealed class OrderApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -1129,7 +1129,7 @@ public sealed class OrderApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -1221,7 +1221,8 @@ public sealed class OrderApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. CancellerPermissions, OrdersPermissions.OrderApprove]);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -1245,6 +1246,63 @@ public sealed class OrderApiTests
         Assert.Equal(approved.ApprovedAt, cancelled.ApprovedAt);
         Assert.Equal(approved.ApprovedBy, cancelled.ApprovedBy);
         Assert.Equal("Aprobado por error", cancelled.CancellationReason);
+    }
+
+    // Aprobar tiene permiso propio: la asesora registra el pedido con quotations.order.manage, y
+    // con eso no puede darse el visto bueno a sí misma.
+    [Fact]
+    public async Task ApproveWithOnlyTheManagePermissionIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+
+        var response = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var order = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.Equal("Pending", order.Status);
+    }
+
+    // La otra mitad: quien revisa aprueba con quotations.order.approve aunque no tenga el de
+    // gestión. Mismo usuario, otro juego de permisos -- el stub de desarrollo los toma del header.
+    [Fact]
+    public async Task ApproveWithTheApprovePermissionSucceedsWithoutTheManagePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+        using var approver = CreateClient(
+            factory, ownerUserId.ToString(), tenantId.ToString(), OrdersPermissions.OrderApprove);
+
+        var approved = await ReadOrderAsync(await approver.PostAsync(
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
+            content: null,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("Approved", approved.Status);
+        Assert.NotNull(approved.ApprovedAt);
     }
 
     // Decisión 5: gestionar pedidos no alcanza para anularlos.
