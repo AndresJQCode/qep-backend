@@ -41,6 +41,9 @@ public static class PriceScaleCopy
         {
             BaseUsd = target.PriceBaseUsd,
             BaseCop = target.PriceBaseCop,
+            // Los del destino, igual que los precios base: el empaque es de cómo se vende cada
+            // producto, así que tampoco se copia.
+            PackagingUnits = target.PackagingUnits,
             // Ordenadas por rango, igual que el histórico: sin esto el orden de las filas nuevas
             // lo decide el orden en que EF materializó las del origen, y dos copias del mismo
             // origen podrían quedar distintas sin que nadie toque nada.
@@ -58,7 +61,6 @@ public static class PriceScaleCopy
         scale.Discount,
         Restriction: null,
         Multiple: null,
-        PackagingUnit: null,
         PriceScale.FinalFor(target.PriceBaseUsd, scale.Discount),
         PriceScale.FinalFor(target.PriceBaseCop, scale.Discount),
         AllowGrouping: false);

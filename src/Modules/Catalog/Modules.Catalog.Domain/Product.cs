@@ -97,6 +97,18 @@ public sealed class Product
     public IReadOnlyCollection<PriceScale> PriceScales => _priceScales;
 
     /// <summary>
+    /// Los empaques en que viene el producto, en unidades: una keratina que llega en cajas de 100
+    /// y de 150 guarda <c>[100, 150]</c>. Mayores que cero, sin repetidos y en orden ascendente.
+    ///
+    /// Son del producto y no de la escala desde el 2026-10-01: antes cada escala guardaba un solo
+    /// número, y un producto con dos empaques no tenía cómo decirlo. La escala conserva la
+    /// restricción <see cref="PriceScaleRestriction.PackagingUnit"/>, que ahora significa "usa
+    /// estos empaques". Por eso no pueden estar vacíos mientras una escala la use; al revés sí
+    /// vale — un producto puede declarar sus empaques sin que ninguna escala los exija.
+    /// </summary>
+    public IReadOnlyList<int> PackagingUnits { get; private set; } = [];
+
+    /// <summary>
     /// Token de concurrencia optimista, como en <c>Tenant</c> y <c>Membership</c>. Cada mutación
     /// lo incrementa, y la infraestructura lo mapea con <c>IsConcurrencyToken()</c>, de modo que
     /// el <c>UPDATE</c> lleve la versión leída en su <c>WHERE</c>.
@@ -168,8 +180,45 @@ public sealed class Product
 
         PriceBaseUsd = pricing.BaseUsd;
         PriceBaseCop = pricing.BaseCop;
+        PackagingUnits = NormalizePackagingUnits(pricing.PackagingUnits);
 
         ReplaceScales(pricing.Scales);
+
+        // Después de las escalas y no antes: un error propio de una escala (rango, descuento,
+        // múltiplo) dice más que éste, que sólo aplica si la escala ya es válida por su cuenta.
+        if (PackagingUnits.Count == 0
+            && _priceScales.Any(scale => scale.Restriction == PriceScaleRestriction.PackagingUnit))
+        {
+            throw new CatalogDomainException(
+                "catalog.product.packaging_units_required",
+                "A price scale restricted to the packaging unit requires the product to have at least one packaging unit.");
+        }
+    }
+
+    // Rechaza en vez de corregir: un cero, un negativo o un repetido es un error de tipeo, y
+    // descartarlo en silencio le guardaría al usuario algo distinto de lo que cree haber cargado.
+    // Ordenar sí se hace acá — el orden no cambia el significado del conjunto.
+    private static int[] NormalizePackagingUnits(IReadOnlyCollection<int> packagingUnits)
+    {
+        if (packagingUnits.Any(unit => unit <= 0))
+        {
+            throw new CatalogDomainException(
+                "catalog.product.packaging_units.invalid",
+                "Every packaging unit must be greater than zero.");
+        }
+
+        var sorted = packagingUnits.Order().ToArray();
+        for (var index = 1; index < sorted.Length; index++)
+        {
+            if (sorted[index] == sorted[index - 1])
+            {
+                throw new CatalogDomainException(
+                    "catalog.product.packaging_units.duplicated",
+                    "The packaging units cannot repeat a value.");
+            }
+        }
+
+        return sorted;
     }
 
     /// <summary>

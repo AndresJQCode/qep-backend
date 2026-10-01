@@ -276,7 +276,6 @@ public sealed class ProductPriceChangeDetectorTests
             discount,
             PriceScaleRestriction.Multiple,
             Multiple: 1,
-            PackagingUnit: null,
             FinalUsd: Math.Round(
                 baseUsd * (1 - discount / 100m), 2, MidpointRounding.AwayFromZero),
             FinalCop: null);

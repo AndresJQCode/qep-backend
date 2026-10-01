@@ -11,17 +11,17 @@ public sealed class QuotationScaleGroupPricingTests
 
     private static QuotationPriceScaleRef Scale(
         bool allowGrouping, int multiple = 3, decimal discount = 5m, int fromUnit = 5, int toUnit = 48) =>
-        new(fromUnit, toUnit, discount, QuotationPriceScaleRestriction.Multiple, multiple, null,
+        new(fromUnit, toUnit, discount, QuotationPriceScaleRestriction.Multiple, multiple, [],
             allowGrouping);
 
     private static QuotationPriceScaleRef Packages(int packagingUnit = 12) =>
-        new(1, 999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, packagingUnit);
+        new(1, 999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, [packagingUnit]);
 
     // El tramo "de mil": de a 1 por defecto, asi que ninguna cantidad falla el multiplo salvo
     // que la prueba lo pida explicitamente.
     private static QuotationPriceScaleRef Thousand(
         int multiple = 1, decimal discount = 12m, int fromUnit = 1000, int toUnit = 5000) =>
-        new(fromUnit, toUnit, discount, QuotationPriceScaleRestriction.Multiple, multiple, null);
+        new(fromUnit, toUnit, discount, QuotationPriceScaleRestriction.Multiple, multiple, []);
 
     // Agrupa por producto: el piso global necesita productos con mas de una escala, y la version
     // anterior de este helper tiraba con la clave repetida.
@@ -278,7 +278,7 @@ public sealed class QuotationScaleGroupPricingTests
 
         var result = QuotationScaleGroupPricing.Resolve(
             [new QuotationPricingLine(item, ProductA, 6m)],
-            Catalog((ProductA, new QuotationPriceScaleRef(5, 48, 5m, null, null, null))));
+            Catalog((ProductA, new QuotationPriceScaleRef(5, 48, 5m, null, null, []))));
 
         var line = For(result, item);
         Assert.Equal(0m, line.DiscountPercentage);
@@ -301,9 +301,9 @@ public sealed class QuotationScaleGroupPricingTests
     // tercero para volumen y sin agrupar.
     private static QuotationPriceScaleRef[] Tiers() =>
     [
-        new(1, 5, 0m, QuotationPriceScaleRestriction.Multiple, 1, null, false),
-        new(6, 48, 5m, QuotationPriceScaleRestriction.Multiple, 3, null, true),
-        new(49, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, null, false)
+        new(1, 5, 0m, QuotationPriceScaleRestriction.Multiple, 1, [], false),
+        new(6, 48, 5m, QuotationPriceScaleRestriction.Multiple, 3, [], true),
+        new(49, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
     ];
 
     // El caso que pidió el owner: dos productos con 3 unidades cada uno, los dos con el mismo
@@ -371,7 +371,7 @@ public sealed class QuotationScaleGroupPricingTests
         var itemIds = quantities.Select(_ => Guid.NewGuid()).ToArray();
 
         var seeded = new QuotationPriceScaleRef(
-            6, 48, 15m, QuotationPriceScaleRestriction.Multiple, 3, null, true);
+            6, 48, 15m, QuotationPriceScaleRestriction.Multiple, 3, [], true);
 
         var result = QuotationScaleGroupPricing.Resolve(
             itemIds.Select((id, i) => new QuotationPricingLine(id, products[i], quantities[i]))
@@ -604,7 +604,7 @@ public sealed class QuotationScaleGroupPricingTests
         var result = QuotationScaleGroupPricing.Resolve(
             [new QuotationPricingLine(a, ProductA, 25m)],
             Catalog((ProductA, new QuotationPriceScaleRef(
-                1000, 5000, 12m, QuotationPriceScaleRestriction.PackagingUnit, null, 12))),
+                1000, 5000, 12m, QuotationPriceScaleRestriction.PackagingUnit, null, [12]))),
             globalFloor: 1000);
 
         Assert.Equal(0m, For(result, a).DiscountPercentage);
@@ -621,7 +621,7 @@ public sealed class QuotationScaleGroupPricingTests
         var result = QuotationScaleGroupPricing.Resolve(
             [new QuotationPricingLine(a, ProductA, 3m)],
             Catalog((ProductA, new QuotationPriceScaleRef(
-                1000, 5000, 12m, Restriction: null, Multiple: null, PackagingUnit: null))),
+                1000, 5000, 12m, Restriction: null, Multiple: null, PackagingUnits: []))),
             globalFloor: 1000);
 
         Assert.Equal(0m, For(result, a).DiscountPercentage);

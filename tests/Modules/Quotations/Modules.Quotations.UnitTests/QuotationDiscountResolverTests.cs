@@ -9,9 +9,9 @@ public sealed class QuotationDiscountResolverTests
     // cantidad, que es lo que estas pruebas quieren aislar.
     private static readonly QuotationPriceScaleRef[] Scales =
     [
-        new(1, 9, 0m, QuotationPriceScaleRestriction.Multiple, 1, null),
-        new(10, 19, 5m, QuotationPriceScaleRestriction.Multiple, 1, null),
-        new(20, int.MaxValue, 10m, QuotationPriceScaleRestriction.Multiple, 1, null)
+        new(1, 9, 0m, QuotationPriceScaleRestriction.Multiple, 1, []),
+        new(10, 19, 5m, QuotationPriceScaleRestriction.Multiple, 1, []),
+        new(20, int.MaxValue, 10m, QuotationPriceScaleRestriction.Multiple, 1, [])
     ];
 
     [Theory]
@@ -31,7 +31,7 @@ public sealed class QuotationDiscountResolverTests
     public void ResolveReturnsZeroWhenNoScaleCoversTheQuantity()
     {
         QuotationPriceScaleRef[] gapScales =
-            [new(10, 19, 5m, QuotationPriceScaleRestriction.Multiple, 1, null)];
+            [new(10, 19, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])];
 
         Assert.Null(QuotationDiscountResolver.Resolve(gapScales, 3m));
     }

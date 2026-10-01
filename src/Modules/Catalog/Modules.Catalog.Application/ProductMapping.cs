@@ -23,6 +23,7 @@ internal static class ProductMapping
         product.TaxRateId?.Value,
         product.PriceBaseUsd,
         product.PriceBaseCop,
+        product.PackagingUnits.ToArray(),
         // Ordered here, and not left to whatever order the aggregate or the database hands
         // over: the grid paints the tiers from the smallest up, and neither the write order
         // nor the row order the database returns is a contract it can rely on. Same criterion
@@ -39,7 +40,6 @@ internal static class ProductMapping
         scale.Discount,
         scale.Restriction?.ToWireValue(),
         scale.Multiple,
-        scale.PackagingUnit,
         scale.FinalUsd,
         scale.FinalCop,
         scale.AllowGrouping);

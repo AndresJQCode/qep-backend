@@ -14,7 +14,8 @@ internal static class ProductPricingMapping
     {
         BaseUsd = request.BaseUsd,
         BaseCop = request.BaseCop,
-        Scales = (request.Scales ?? []).Select(ToDomain).ToArray()
+        Scales = (request.Scales ?? []).Select(ToDomain).ToArray(),
+        PackagingUnits = (request.PackagingUnits ?? []).ToArray()
     };
 
     private static PriceScaleInput ToDomain(PriceScaleRequest request) => new(
@@ -23,7 +24,6 @@ internal static class ProductPricingMapping
         request.Discount,
         ParseRestriction(request.Restriction),
         request.Multiple,
-        request.PackagingUnit,
         request.FinalUsd,
         request.FinalCop,
         request.AllowGrouping ?? false);

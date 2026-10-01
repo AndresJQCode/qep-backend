@@ -6,10 +6,11 @@ namespace Modules.Quotations.UnitTests;
 public sealed class QuotationScaleRestrictionRuleTests
 {
     private static QuotationPriceScaleRef MultipleOf(int multiple, int fromUnit = 5) =>
-        new(fromUnit, 48, 5m, QuotationPriceScaleRestriction.Multiple, multiple, null);
+        new(fromUnit, 48, 5m, QuotationPriceScaleRestriction.Multiple, multiple, []);
 
-    private static QuotationPriceScaleRef PackagesOf(int packagingUnit) =>
-        new(1, 999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, packagingUnit);
+    // Los empaques son del producto desde el 2026-10-01; la escala los recibe todos.
+    private static QuotationPriceScaleRef PackagesOf(params int[] packagingUnits) =>
+        new(1, 999_999, 5m, QuotationPriceScaleRestriction.PackagingUnit, null, packagingUnits);
 
     // El multiplo se cuenta DESDE FromUnit: en una escala 5-48 de a 3 las cantidades validas son
     // 5, 8, 11 ... 47. Decision del developer el 2026-09-21, que revierte el criterio crudo del
@@ -56,7 +57,7 @@ public sealed class QuotationScaleRestrictionRuleTests
     public void MultipleFollowsTheFloorOfTheScale(decimal quantity, bool satisfied)
     {
         var scale = new QuotationPriceScaleRef(
-            50, 98, 5m, QuotationPriceScaleRestriction.Multiple, 6, null);
+            50, 98, 5m, QuotationPriceScaleRestriction.Multiple, 6, []);
 
         Assert.Equal(satisfied, QuotationScaleRestrictionRule.Evaluate(scale, quantity).IsSatisfied);
     }
@@ -161,12 +162,136 @@ public sealed class QuotationScaleRestrictionRuleTests
         Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(packagingUnit), 7m).IsSatisfied);
     }
 
+    // ---- Varios empaques por producto (2026-10-01) ----
+
+    // La keratina de 120 ml viene en cajas de 100 y de 150: vale toda cantidad que se arme con
+    // cajas enteras de cualquiera de los dos, mezcladas. 250 = 100 + 150, 300 = 3x100 o 2x150.
+    [Theory]
+    [InlineData(100)]
+    [InlineData(150)]
+    [InlineData(200)]
+    [InlineData(250)]
+    [InlineData(300)]
+    [InlineData(1050)]
+    public void PackagingUnitsAcceptAnyCombinationOfWholePackages(decimal quantity)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(100, 150), quantity);
+
+        Assert.True(result.IsSatisfied);
+        Assert.Null(result.Code);
+        Assert.Equal(0m, result.Shortfall);
+    }
+
+    // El faltante es la distancia a la siguiente cantidad que sí se arma: a 120 le faltan 30
+    // para 150, a 260 le faltan 40 para 300 (250 ya quedó atrás), a 50 le faltan 50 para 100.
+    [Theory]
+    [InlineData(50, 50)]
+    [InlineData(120, 30)]
+    [InlineData(260, 40)]
+    [InlineData(1001, 49)]
+    public void PackagingUnitsReportTheDistanceToTheNextCombination(
+        decimal quantity, decimal shortfall)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(100, 150), quantity);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal("quotation.item.quantity_not_packaging_unit", result.Code);
+        Assert.Equal(quantity, result.EvaluatedQuantity);
+        Assert.Equal(shortfall, result.Shortfall);
+    }
+
+    // Con empaques coprimos el hueco se cierra: con 3 y 5 vale todo desde 8, pero 7 no se arma
+    // (le falta 1 para 8) y 4 tampoco (le falta 1 para 5). El orden en que llegan no importa.
+    [Theory]
+    [InlineData(3, true, 0)]
+    [InlineData(4, false, 1)]
+    [InlineData(7, false, 1)]
+    [InlineData(8, true, 0)]
+    [InlineData(11, true, 0)]
+    public void CoprimePackagingUnitsCloseTheGap(decimal quantity, bool satisfied, decimal shortfall)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(5, 3), quantity);
+
+        Assert.Equal(satisfied, result.IsSatisfied);
+        Assert.Equal(shortfall, result.Shortfall);
+    }
+
+    // Una cantidad con decimales nunca son cajas enteras. El faltante se mide hasta la siguiente
+    // cantidad que sí se arma: de 149,5 a 150 falta 0,5.
+    [Fact]
+    public void AFractionalQuantityIsNeverAWholeNumberOfPackages()
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(100, 150), 149.5m);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal(0.5m, result.Shortfall);
+    }
+
+    // Un solo empaque se comporta exactamente como antes del cambio, faltante incluido.
+    [Theory]
+    [InlineData(12, true, 0)]
+    [InlineData(13, false, 11)]
+    [InlineData(25, false, 11)]
+    [InlineData(12.5, false, 11.5)]
+    [InlineData(120, true, 0)]
+    public void ASinglePackagingUnitBehavesAsBefore(decimal quantity, bool satisfied, decimal shortfall)
+    {
+        var result = QuotationScaleRestrictionRule.Evaluate(PackagesOf(12), quantity);
+
+        Assert.Equal(satisfied, result.IsSatisfied);
+        Assert.Equal(shortfall, result.Shortfall);
+    }
+
+    // La cuenta no recorre las cantidades hasta la pedida: trabaja sobre los restos módulo el
+    // empaque menor, así que una cantidad enorme cuesta lo mismo que una chica.
+    [Fact]
+    public void AHugeQuantityIsResolvedWithoutWalkingUpToIt()
+    {
+        var satisfied = QuotationScaleRestrictionRule.Evaluate(
+            PackagesOf(100, 150), 1_000_000_000_050m);
+        var missing = QuotationScaleRestrictionRule.Evaluate(
+            PackagesOf(100, 150), 1_000_000_000_060m);
+
+        Assert.True(satisfied.IsSatisfied);
+        Assert.False(missing.IsSatisfied);
+        Assert.Equal(40m, missing.Shortfall);
+    }
+
+    // Catalog exige empaques > 0, y no vacíos cuando hay escala de empaque. Si una fila lo
+    // desmiente, la línea no pierde su descuento por un dato que nadie corrige desde acá.
+    [Fact]
+    public void AnEmptySetOfPackagingUnitsDoesNotBlock()
+    {
+        Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(), 7m).IsSatisfied);
+    }
+
+    [Fact]
+    public void ANonPositivePackagingUnitAmongOthersDoesNotBlock()
+    {
+        Assert.True(QuotationScaleRestrictionRule.Evaluate(PackagesOf(100, 0), 7m).IsSatisfied);
+    }
+
+    // El piso global evalúa desde cero, y el empaque ya contaba crudo: las dos lecturas
+    // coinciden también con varios empaques.
+    [Theory]
+    [InlineData(120)]
+    [InlineData(250)]
+    [InlineData(260)]
+    public void EvaluateFromZeroMatchesEvaluateForPackagingUnits(decimal quantity)
+    {
+        var scale = PackagesOf(100, 150);
+
+        Assert.Equal(
+            QuotationScaleRestrictionRule.Evaluate(scale, quantity),
+            QuotationScaleRestrictionRule.EvaluateFromZero(scale, quantity));
+    }
+
     // Una escala copiada de otro producto llega sin restricción. No hay contra qué evaluarla, y
     // darla por cumplida —lo que hacía el `_ =>` de Evaluate— regalaba su descuento.
     [Fact]
     public void AnIncompleteScaleIsNeverSatisfied()
     {
-        var incomplete = new QuotationPriceScaleRef(5, 48, 5m, null, null, null);
+        var incomplete = new QuotationPriceScaleRef(5, 48, 5m, null, null, []);
 
         var result = QuotationScaleRestrictionRule.Evaluate(incomplete, 6m);
 

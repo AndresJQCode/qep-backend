@@ -34,7 +34,7 @@ internal static class QuotationGlobalScaleFloorMiss
         var atFloor = scales.Where(scale => scale.FromUnit == floor).ToArray();
         if (atFloor.Length == 0)
         {
-            return new GlobalScaleFloorMissResponse("no_tier", null);
+            return new GlobalScaleFloorMissResponse("no_tier", null, []);
         }
 
         // El tramo que el piso le habría dado: el mejor de los que mejoran lo que ya tiene.
@@ -55,9 +55,9 @@ internal static class QuotationGlobalScaleFloorMiss
         return candidate.Restriction switch
         {
             QuotationPriceScaleRestriction.PackagingUnit =>
-                new GlobalScaleFloorMissResponse("packaging_unit", candidate.PackagingUnit),
+                new GlobalScaleFloorMissResponse("packaging_unit", null, candidate.PackagingUnits),
             QuotationPriceScaleRestriction.Multiple =>
-                new GlobalScaleFloorMissResponse("multiple", candidate.Multiple),
+                new GlobalScaleFloorMissResponse("multiple", candidate.Multiple, []),
             // Una escala incompleta (la que deja la copia de escalas) nunca aplica, pero no hay
             // un paso que decirle al asesor: el problema está en el catálogo, no en la cantidad.
             _ => null
