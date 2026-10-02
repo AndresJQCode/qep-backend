@@ -21,6 +21,8 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 public sealed class GlobalScaleDiscountApiTests
 {
+    private static readonly int[] FiftyPack = [50];
+
     private static string QuotationUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}";
 
@@ -346,9 +348,10 @@ public sealed class GlobalScaleDiscountApiTests
                 new
                 {
                     fromUnit = 100, toUnit = 999_999, discount = 25m,
-                    restriction = "packaging_unit", packagingUnit = 50, finalCop = 75_000m
+                    restriction = "packaging_unit", finalCop = 75_000m
                 }
-            ]);
+            ],
+            packagingUnits: FiftyPack);
         var created = await CreateQuotationAsync(client, tenantId, clientId);
         var added = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, created.Id)}/items",
@@ -367,7 +370,9 @@ public sealed class GlobalScaleDiscountApiTests
         Assert.Equal(0m, line.DiscountPercentage);
         Assert.NotNull(line.GlobalScaleFloorMiss);
         Assert.Equal("packaging_unit", line.GlobalScaleFloorMiss.Reason);
-        Assert.Equal(50, line.GlobalScaleFloorMiss.Step);
+        // Los empaques del producto, no un único paso: Step queda sólo para "multiple".
+        Assert.Equal([50], line.GlobalScaleFloorMiss.PackagingUnits);
+        Assert.Null(line.GlobalScaleFloorMiss.Step);
     }
 
     // 6 unidades caen en el tramo 1-9 (0%) y no llegan solas al que arranca en 20. Seis y no

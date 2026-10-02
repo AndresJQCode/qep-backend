@@ -17,6 +17,10 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 public sealed class QuotationItemApiTests
 {
+    // Los empaques son del producto desde el 2026-10-01: viajan en su precio, no en la escala.
+    private static readonly int[] TwelvePack = [12];
+    private static readonly int[] BoxesOfHundredAndHundredFifty = [100, 150];
+
     [Fact]
     public async Task AddItemAppliesTheScaleDiscountAndRecalculatesTotals()
     {
@@ -363,7 +367,8 @@ public sealed class QuotationItemApiTests
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(
             client, tenantId, baseCop: 100_000m,
-            scales: PackagesOfTwelve(100_000m, discount: 15m));
+            scales: PackagesOfTwelve(100_000m, discount: 15m),
+            packagingUnits: TwelvePack);
         var quotation = await CreateQuotationAsync(client, tenantId, clientId);
         var withItem = await ReadQuotationAsync(await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
@@ -408,7 +413,7 @@ public sealed class QuotationItemApiTests
         var scale = Assert.Single(Assert.Single(created.Items).PriceScales);
         Assert.Equal("multiple", scale.Restriction);
         Assert.Equal(3, scale.Multiple);
-        Assert.Null(scale.PackagingUnit);
+        Assert.Empty(scale.PackagingUnits);
     }
 
     // Un producto con escalas copiadas de otro queda incompleto y no se cotiza hasta que alguien
@@ -546,6 +551,45 @@ public sealed class QuotationItemApiTests
         }
     ];
 
+    // Varios empaques por producto, de punta a punta: Catalog guarda [100, 150], el adaptador de
+    // Bootstrapper los pasa a la escala, y la regla acepta 250 (100 + 150) pero no 120. La
+    // respuesta trae la lista para que la pantalla pueda explicar el motivo.
+    [Fact]
+    public async Task AQuantityBuiltFromSeveralPackagingUnitsKeepsTheDiscount()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, baseCop: 100_000m,
+            scales:
+            [
+                new
+                {
+                    fromUnit = 1, toUnit = 999, discount = 15m,
+                    restriction = "packaging_unit", finalCop = 85_000m
+                }
+            ],
+            packagingUnits: BoxesOfHundredAndHundredFifty);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var combined = await ReadQuotationAsync(await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 250m),
+            TestContext.Current.CancellationToken));
+        var line = Assert.Single(combined.Items);
+        Assert.Equal(15m, line.DiscountPercentage);
+        Assert.Equal([100, 150], Assert.Single(line.PriceScales).PackagingUnits);
+
+        var partial = await ReadQuotationAsync(await client.PutAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{line.Id}",
+            new UpdateQuotationItemRequest(120m),
+            TestContext.Current.CancellationToken));
+        Assert.Equal(0m, Assert.Single(partial.Items).DiscountPercentage);
+    }
+
     /// <summary>
     /// Una sola escala 1-999 por empaques de 12. Sin descuento salvo que se pida uno: los casos
     /// que solo ejercen la restriccion no lo necesitan, y el que verifica que una cantidad
@@ -556,7 +600,7 @@ public sealed class QuotationItemApiTests
         new
         {
             fromUnit = 1, toUnit = 999, discount,
-            restriction = "packaging_unit", packagingUnit = 12,
+            restriction = "packaging_unit",
             finalCop = baseCop * (1m - discount / 100m)
         }
     ];

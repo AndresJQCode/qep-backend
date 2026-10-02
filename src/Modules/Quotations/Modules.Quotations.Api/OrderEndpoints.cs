@@ -75,9 +75,10 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // US-13 a US-16: el visto bueno de quien revisa. Ruta propia y no un campo del POST de
-        // conversión: es otra persona, en otro momento -- ver ApproveOrderHandler.
+        // conversión: es otra persona, en otro momento. Política propia y no OrderManage, que
+        // tiene la asesora -- ver ApproveOrderHandler.
         collection.MapPost("/{orderId:guid}/approve", ApproveOrderAsync)
-            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .RequireAuthorization(OrdersPermissions.OrderApprove)
             .Produces<OrderResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)

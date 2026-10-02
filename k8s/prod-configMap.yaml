@@ -21,6 +21,15 @@ data:
   # categoría a Warning mantiene visibles los fallos de SQL y elimina el ruido del sondeo.
   # Queda fuera de appsettings.json a propósito: las ejecuciones locales sí muestran SQL.
   Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command: "Warning"
+  # Redes en las que se confía para tomar la IP del cliente de X-Real-IP: el $remote_addr de nginx,
+  # que resuelve CF-Connecting-IP sólo para pares de Cloudflare. X-Forwarded-For se ignora: su
+  # entrada de más a la derecha es el borde de Cloudflare, no el cliente (ver AddQepForwardedHeaders).
+  # Los nodos corren ingress-nginx con hostNetwork, y bajo Cilium el origen que ve el pod puede ser
+  # la IP del nodo o la de cilium_host, que sale del pod CIDR: hacen falta las dos. Sin ellas, el
+  # rate limiter `public` mete a todo internet en el bucket de uno o dos nodos, y la sesión y la
+  # auditoría guardan la IP del nodo.
+  ForwardedHeaders__KnownNetworks__0: "10.50.0.0/24"
+  ForwardedHeaders__KnownNetworks__1: "10.244.0.0/16"
   # Variables OTLP estándar que el exportador del SDK lee directamente, no a través de
   # IConfiguration — ver src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
   # No definir OpenTelemetry__Endpoint acá: tendría precedencia sobre estas.

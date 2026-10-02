@@ -46,7 +46,7 @@ public sealed class AuthorizationCatalogApiTests
     /// Lo que la pantalla de roles muestra de los permisos de pedidos (spec 2026-09-14): códigos
     /// nuevos, textos en masculino y con tilde, y los mismos permisos efectivos en los tres roles
     /// de fábrica que antes tenían los de pedidos. Anular (spec 2026-09-16) es permiso propio y
-    /// sólo de admin.
+    /// sólo de admin; aprobar también es propio, de admin y facturación.
     /// </summary>
     [Fact]
     public async Task TheCatalogNamesTheOrderPermissions()
@@ -62,6 +62,8 @@ public sealed class AuthorizationCatalogApiTests
         Assert.NotNull(catalog);
         CatalogPermissionPayload[] expected =
         [
+            new("quotations.order.approve", "Aprobar pedidos",
+                "Permite dar el visto bueno a un pedido pendiente.", "Quotations", "medium"),
             new("quotations.order.cancel", "Anular pedidos",
                 "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.", "Quotations", "high"),
             new("quotations.order.manage", "Gestionar pedidos",
@@ -78,18 +80,26 @@ public sealed class AuthorizationCatalogApiTests
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
         Assert.DoesNotContain(
             catalog.Permissions, permission => permission.Permission.Contains("sale", StringComparison.Ordinal));
-        // Spec 2026-09-16, decisión 5: anular es sólo de admin. Asesor y facturación quedan igual.
+        // Spec 2026-09-16, decisión 5: anular es sólo de admin. Aprobar es de admin y facturación,
+        // nunca del asesor: quien registra el pedido no es quien lo revisa.
         Assert.Equal(
-            ["quotations.order.cancel", "quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
+            [
+                "quotations.order.approve", "quotations.order.cancel", "quotations.order.manage",
+                "quotations.order.read", "reporting.orders.read",
+            ],
             OrderPermissionsOf(catalog, "admin"));
         Assert.Equal(
             ["quotations.order.manage", "quotations.order.read", "reporting.orders.read"],
             OrderPermissionsOf(catalog, "advisor"));
-        Assert.Equal(["quotations.order.read"], OrderPermissionsOf(catalog, "billing"));
+        Assert.Equal(
+            ["quotations.order.approve", "quotations.order.read"], OrderPermissionsOf(catalog, "billing"));
         // Facturación abre los comprobantes de pago desde el detalle del pedido, y ese enlace sale
         // de POST /files/{id}/download-url, que exige storage.file.read. Sólo lectura: subir,
         // borrar y publicar archivos siguen fuera del rol.
         Assert.Equal(["storage.file.read"], PermissionsOf(catalog, "billing", "storage."));
+        // Facturación no ve cotizaciones (decisión del owner, 2026-10-01): ve clientes y pedidos, y
+        // aprueba pedidos. Ningún permiso de quotations.quotation.*, ni siquiera el de lectura.
+        Assert.Empty(PermissionsOf(catalog, "billing", "quotations.quotation."));
     }
 
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>

@@ -32,7 +32,10 @@ public static class RegistrationEndpoints
         // y QepServiceCollectionExtensions.AddAuthentication).
         var registerTenant = endpoints.MapPost("/api/v1/auth/register-tenant", RegisterAsync);
         registerTenant.RequireGoogleBearerOrDevStub(endpoints.ServiceProvider);
+        // Mismo límite y mismo bucket por IP que /auth/session: acota el costo del camino de
+        // aprovisionamiento, incluso con el flag apagado (el 403 también se cobra).
         registerTenant
+            .RequireRateLimiting(RateLimiterPolicies.Authentication)
             .WithTags("Authentication")
             .Produces<RegisterTenantResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status401Unauthorized)

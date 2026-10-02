@@ -35,7 +35,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
         // Precios base distintos del origen a propósito: es el caso que el lote del navegador no
         // podía resolver, porque arrastraba el precio final del origen.
         var first = await CreateProductAsync(client, "Vela de cera", "VC-001", 50m);
@@ -78,7 +78,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
         var target = await CreateProductAsync(client, "Vela de cera", "VC-001", 100m);
 
         var response = await CopyAsync(client, source.Id, [target.Id]);
@@ -90,7 +90,6 @@ public sealed class CopyPriceScalesApiTests
         {
             Assert.Null(scale.Restriction);
             Assert.Null(scale.Multiple);
-            Assert.Null(scale.PackagingUnit);
             Assert.False(scale.AllowGrouping);
         });
         Assert.Contains(reloaded.PriceScales, scale => scale is { FromUnit: 1, Discount: 10m });
@@ -106,7 +105,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
         var target = await CreateProductAsync(
             client, "Vela de cera", "VC-001", 100m, OneScale(fromUnit: 100, toUnit: 200));
 
@@ -128,7 +127,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
         var target = await CreateProductAsync(client, "Vela de cera", "VC-001", 100m);
 
         var response = await CopyAsync(client, source.Id, [target.Id, Guid.NewGuid()]);
@@ -169,7 +168,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
         var target = await CreateProductAsync(client, "Vela de cera", "VC-001", 100m);
 
         var deactivated = await client.PostAsync(
@@ -192,7 +191,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
 
         var response = await CopyAsync(client, source.Id, [source.Id]);
 
@@ -208,7 +207,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
 
         var response = await CopyAsync(client, source.Id, []);
 
@@ -225,7 +224,7 @@ public sealed class CopyPriceScalesApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var manager = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var source = await CreateProductAsync(manager, "Vela de soja", "VS-001", 100m, TwoScales());
+        var source = await CreateProductAsync(manager, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
         var target = await CreateProductAsync(manager, "Vela de cera", "VC-001", 100m);
 
         using var reader = CreateClient(factory, SubjectId, TenantId, ReadOnlyPermissions);
@@ -235,6 +234,10 @@ public sealed class CopyPriceScalesApiTests
     }
 
     // ---- Helpers ----
+
+    // El empaque de la escala packaging_unit de TwoScales: es del producto desde el 2026-10-01,
+    // así que viaja en el precio y no dentro de la escala.
+    private static readonly int[] TwelvePack = [12];
 
     private static object[] TwoScales() =>
     [
@@ -253,7 +256,6 @@ public sealed class CopyPriceScalesApiTests
             toUnit = 50,
             discount = 20m,
             restriction = "packaging_unit",
-            packagingUnit = 12,
             finalUsd = 80m
         }
     ];
@@ -276,7 +278,8 @@ public sealed class CopyPriceScalesApiTests
         string name,
         string code,
         decimal baseUsd,
-        object[]? scales = null)
+        object[]? scales = null,
+        int[]? packagingUnits = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
@@ -284,7 +287,7 @@ public sealed class CopyPriceScalesApiTests
             {
                 name,
                 code,
-                pricing = new { baseUsd, scales = scales ?? [] }
+                pricing = new { baseUsd, scales = scales ?? [], packagingUnits = packagingUnits ?? [] }
             },
             TestContext.Current.CancellationToken);
 

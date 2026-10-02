@@ -44,10 +44,15 @@ public sealed record QuotationScaleRestrictionResult(
 /// sembrado. De ahí que el alcance real del cambio dependa de qué pares
 /// <c>FromUnit</c>/<c>Multiple</c> tenga cargado cada tenant.
 ///
-/// **<c>PackagingUnit</c> sigue contando crudo**, y no por omisión: un paquete de 12 son 12
-/// unidades enteras empiece donde empiece el tramo, así que correrlo al piso daría por bueno un
-/// sobrante. Es el motivo por el que <c>EvaluateStep</c> recibe el piso en vez de leerlo de la
-/// escala.
+/// **<c>PackagingUnit</c> es un conjunto de empaques del producto** desde el 2026-10-01: la
+/// keratina de 120 ml viene en cajas de 100 y de 150, y vale toda cantidad que se arme con cajas
+/// enteras de cualquiera de ellos, mezcladas — 100, 150, 200, 250, 300 … sí; 50 y 120 no. Con un
+/// solo empaque es exactamente la regla de antes.
+///
+/// **El empaque se cuenta crudo, desde cero**, y no desde <c>FromUnit</c>: una combinación de
+/// cajas enteras son unidades enteras empiece donde empiece el tramo, así que correrla al piso
+/// daría por bueno un sobrante. Por eso tiene su propia cuenta (<see cref="EvaluatePackaging"/>),
+/// que no recibe piso, y <c>EvaluateStep</c> —que sí lo recibe— quedó sólo para el múltiplo.
 /// </summary>
 internal static class QuotationScaleRestrictionRule
 {
@@ -69,10 +74,9 @@ internal static class QuotationScaleRestrictionRule
             QuotationPriceScaleRestriction.Multiple => EvaluateStep(
                 scale.Multiple, quantity, scale.FromUnit,
                 "quotation.item.quantity_not_multiple"),
-            // Piso 0: el empaque se cuenta crudo. Ver el resumen del tipo.
-            QuotationPriceScaleRestriction.PackagingUnit => EvaluateStep(
-                scale.PackagingUnit, quantity, 0,
-                "quotation.item.quantity_not_packaging_unit"),
+            // Sin piso: el empaque se cuenta crudo, desde cero. Ver el resumen del tipo.
+            QuotationPriceScaleRestriction.PackagingUnit => EvaluatePackaging(
+                scale.PackagingUnits, quantity),
             null => new QuotationScaleRestrictionResult(false, IncompleteScalesCode, quantity, 0m),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(scale), scale.Restriction, "Unknown price scale restriction.")
@@ -94,8 +98,8 @@ internal static class QuotationScaleRestrictionRule
     /// tramo. Por encima manda <see cref="Evaluate"/>, o el global terminaría aflojando una
     /// restricción que la línea ya alcanzaba sola.
     ///
-    /// Para <c>PackagingUnit</c> es idéntica a <see cref="Evaluate"/>: el empaque ya contaba
-    /// crudo.
+    /// Para <c>PackagingUnit</c> es idéntica a <see cref="Evaluate"/>: el empaque ya cuenta
+    /// crudo, desde cero.
     /// </summary>
     public static QuotationScaleRestrictionResult EvaluateFromZero(
         QuotationPriceScaleRef scale, decimal quantity) =>
@@ -103,9 +107,8 @@ internal static class QuotationScaleRestrictionRule
         {
             QuotationPriceScaleRestriction.Multiple => EvaluateStep(
                 scale.Multiple, quantity, 0, "quotation.item.quantity_not_multiple"),
-            QuotationPriceScaleRestriction.PackagingUnit => EvaluateStep(
-                scale.PackagingUnit, quantity, 0,
-                "quotation.item.quantity_not_packaging_unit"),
+            QuotationPriceScaleRestriction.PackagingUnit => EvaluatePackaging(
+                scale.PackagingUnits, quantity),
             null => new QuotationScaleRestrictionResult(false, IncompleteScalesCode, quantity, 0m),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(scale), scale.Restriction, "Unknown price scale restriction.")
@@ -130,13 +133,164 @@ internal static class QuotationScaleRestrictionRule
             "Complete them in the catalog before quoting it.");
     }
 
+    /// <summary>
+    /// Por encima de este empaque menor no se arma la tabla por restos (un <c>long</c> por resto:
+    /// unos 800 KB en el tope) y se cae a <see cref="NextMultipleOfAny"/>, que mira cada empaque
+    /// por separado. Ese atajo es a propósito con pérdida —puede negar una mezcla válida, nunca
+    /// regalar un descuento— y en la práctica es inalcanzable: Catalog no acepta empaques por
+    /// encima de 100000 (<c>Product.MaxPackagingUnitValue</c>, mismo número; aquí no se puede
+    /// referenciar). Queda sólo como red defensiva por si una fila desmiente ese tope.
+    /// </summary>
+    private const int MaxSmallestPackagingUnit = 100_000;
+
+    /// <summary>
+    /// Si la cantidad se arma con cajas enteras de los empaques del producto, mezcladas, y si no,
+    /// cuánto le falta para la siguiente que sí.
+    ///
+    /// No recorre las cantidades hasta la pedida —una línea de un millón haría un millón de
+    /// pasos—. Trabaja sobre los restos módulo el empaque menor <c>m</c>: para cada resto
+    /// calcula la menor cantidad armable que lo tiene (<see cref="LowestByResidue"/>), y como
+    /// sumarle <c>m</c> sigue siendo armable, una cantidad lo es si y sólo si no queda por debajo
+    /// de la menor de su resto. Cuesta O(empaques × m), sin importar la cantidad.
+    ///
+    /// Los defensivos son los de <see cref="EvaluateStep"/>: un conjunto vacío o con un empaque
+    /// menor o igual a cero contradice lo que Catalog hace cumplir, y la línea no pierde el
+    /// descuento por un dato que nadie puede corregir desde la cotización.
+    /// </summary>
+    private static QuotationScaleRestrictionResult EvaluatePackaging(
+        IReadOnlyList<int> packagingUnits, decimal quantity)
+    {
+        const string code = "quotation.item.quantity_not_packaging_unit";
+
+        if (packagingUnits.Count == 0 || packagingUnits.Any(unit => unit <= 0))
+        {
+            return QuotationScaleRestrictionResult.Satisfied(quantity);
+        }
+
+        if (quantity < 0)
+        {
+            return new QuotationScaleRestrictionResult(false, code, quantity, 0m);
+        }
+
+        // Una cantidad con decimales nunca son cajas enteras: se busca desde el entero siguiente.
+        var target = decimal.Ceiling(quantity);
+        var smallest = packagingUnits.Min();
+        var next = smallest > MaxSmallestPackagingUnit
+            ? NextMultipleOfAny(packagingUnits, target)
+            : NextRepresentable(LowestByResidue(packagingUnits, smallest), smallest, target);
+
+        return next == quantity
+            ? QuotationScaleRestrictionResult.Satisfied(quantity)
+            : new QuotationScaleRestrictionResult(false, code, quantity, next - quantity);
+    }
+
+    /// <summary>
+    /// Para cada resto <c>r</c> módulo <paramref name="smallest"/>, la menor cantidad armable con
+    /// los empaques que deja ese resto; <see cref="long.MaxValue"/> si ninguna lo deja (con 100 y
+    /// 150 sólo se alcanzan los restos 0 y 50).
+    ///
+    /// Es el algoritmo "round robin" de Böcker y Lipták: por cada empaque recorre los ciclos que
+    /// forma sumarlo módulo <paramref name="smallest"/>, arrancando cada uno desde su mínimo para
+    /// que una sola vuelta alcance.
+    /// </summary>
+    private static long[] LowestByResidue(IReadOnlyList<int> packagingUnits, int smallest)
+    {
+        var lowest = new long[smallest];
+        Array.Fill(lowest, long.MaxValue);
+        lowest[0] = 0;
+
+        foreach (var unit in packagingUnits.Distinct())
+        {
+            if (unit == smallest)
+            {
+                continue;
+            }
+
+            var cycles = GreatestCommonDivisor(unit, smallest);
+            var cycleLength = smallest / cycles;
+            var stride = unit % smallest;
+
+            for (var start = 0; start < cycles; start++)
+            {
+                // Primera pasada: busca el resto del ciclo con la menor cantidad conocida.
+                var cycleStartResidue = start;
+                var residue = start;
+                for (var step = 1; step < cycleLength; step++)
+                {
+                    residue = (residue + stride) % smallest;
+                    if (lowest[residue] < lowest[cycleStartResidue])
+                    {
+                        cycleStartResidue = residue;
+                    }
+                }
+
+                var current = lowest[cycleStartResidue];
+                if (current == long.MaxValue)
+                {
+                    continue;
+                }
+
+                // Segunda pasada: desde ese mínimo, suma el empaque una vuelta entera al ciclo y
+                // se queda en cada resto con la menor de las dos cantidades.
+                for (var step = 1; step < cycleLength; step++)
+                {
+                    current += unit;
+                    residue = (int)(current % smallest);
+                    current = Math.Min(current, lowest[residue]);
+                    lowest[residue] = current;
+                }
+            }
+        }
+
+        return lowest;
+    }
+
+    // La menor cantidad armable que no queda por debajo de target (entero, >= 0). Por cada resto
+    // alcanzable: su mínimo si ya llega a target; si no, el primer valor de ese resto desde target.
+    private static decimal NextRepresentable(long[] lowest, int smallest, decimal target)
+    {
+        var targetResidue = (int)(target % smallest);
+        var best = decimal.MaxValue;
+
+        for (var residue = 0; residue < smallest; residue++)
+        {
+            if (lowest[residue] == long.MaxValue)
+            {
+                continue;
+            }
+
+            var candidate = lowest[residue] >= target
+                ? lowest[residue]
+                : target + ((residue - targetResidue + smallest) % smallest);
+            best = Math.Min(best, candidate);
+        }
+
+        return best;
+    }
+
+    // El atajo para un empaque menor absurdo (ver MaxSmallestPackagingUnit): mira cada empaque
+    // por separado, sin combinarlos. Es con pérdida a propósito: puede negar una mezcla válida,
+    // nunca dar por buena una que no lo es — y con un solo empaque es la regla exacta.
+    private static decimal NextMultipleOfAny(IReadOnlyList<int> packagingUnits, decimal target) =>
+        packagingUnits.Min(unit => target + ((unit - (target % unit)) % unit));
+
+    private static int GreatestCommonDivisor(int left, int right)
+    {
+        while (right != 0)
+        {
+            (left, right) = (right, left % right);
+        }
+
+        return left;
+    }
+
     // Catalog exige un paso > 0 al crear la escala. Si una fila lo desmiente, la línea no se
     // castiga con un dato que nadie puede corregir desde la cotización — y sobre todo no se
     // divide por cero.
     //
-    // <paramref name="floor"/> es el origen del conteo: <c>FromUnit</c> para el múltiplo, 0 para
-    // el empaque. Se pasa y no se deduce de la escala porque la diferencia entre las dos
-    // restricciones es justamente esa.
+    // <paramref name="floor"/> es el origen del conteo: <c>FromUnit</c> en Evaluate, 0 en
+    // EvaluateFromZero. Sólo lo usa el múltiplo desde el 2026-10-01: el empaque pasó a ser un
+    // conjunto y tiene su propia cuenta (EvaluatePackaging), que siempre arranca en cero.
     private static QuotationScaleRestrictionResult EvaluateStep(
         int? step, decimal quantity, int floor, string code)
     {

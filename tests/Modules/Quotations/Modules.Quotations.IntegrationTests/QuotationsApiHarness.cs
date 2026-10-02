@@ -124,6 +124,12 @@ internal static class QuotationsApiHarness
         CompaniesPermissions.CompanyManage
     ];
 
+    /// <summary>Lo de <see cref="ManagerPermissions"/> más aprobar pedidos. Aparte porque aprobar
+    /// tiene permiso propio: quien registra el pedido (gestión) no es quien lo revisa, y una prueba
+    /// que sólo convierte no tiene por qué poder aprobar.</summary>
+    public static readonly string[] ApproverPermissions =
+        [.. ManagerPermissions, OrdersPermissions.OrderApprove];
+
     /// <summary>Registra un tenant nuevo (signup publico) para conseguir una Membership de dueño
     /// ya en estado Active, y devuelve un cliente autenticado como ese dueño con los permisos
     /// pedidos.</summary>
@@ -355,14 +361,17 @@ internal static class QuotationsApiHarness
     /// Da de alta un producto activo con precio base en COP y, salvo que se pidan escalas
     /// propias, las tres del ejemplo del propio documento (1-9 sin descuento, 10-19 5%, 20+ 10%).
     /// <paramref name="taxRateId"/> es opcional -- un producto sin tasa de impuesto asignada
-    /// cotiza con 0% (RN-013).
+    /// cotiza con 0% (RN-013). <paramref name="packagingUnits"/> son los empaques del producto:
+    /// desde el 2026-10-01 una escala "packaging_unit" no trae numero propio y usa estos, asi que
+    /// toda escala de empaque necesita que se pasen.
     /// </summary>
     public static async Task<Guid> CreateProductWithScalesAsync(
         HttpClient client,
         Guid tenantId,
         decimal baseCop = 100_000m,
         object[]? scales = null,
-        Guid? taxRateId = null)
+        Guid? taxRateId = null,
+        int[]? packagingUnits = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -374,7 +383,8 @@ internal static class QuotationsApiHarness
                 pricing = new
                 {
                     baseCop,
-                    scales = scales ?? DefaultScales(baseCop)
+                    scales = scales ?? DefaultScales(baseCop),
+                    packagingUnits = packagingUnits ?? []
                 }
             },
             TestContext.Current.CancellationToken);

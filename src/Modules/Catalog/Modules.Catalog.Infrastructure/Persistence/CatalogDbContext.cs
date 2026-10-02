@@ -79,6 +79,13 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasPrecision(18, 2);
         product.Navigation(value => value.PriceScales)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
+        // integer[] de PostgreSQL y no una tabla hija: es un puñado de números sin identidad
+        // propia, que se reemplaza entero con el producto y nunca se consulta por separado.
+        // Default '{}' para que las filas existentes nazcan sin empaques y no con null.
+        product.PrimitiveCollection(value => value.PackagingUnits)
+            .HasColumnName("packaging_units")
+            .IsRequired()
+            .HasDefaultValueSql("'{}'");
         product.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
@@ -161,7 +168,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasConversion<string>()
             .HasMaxLength(20);
         scale.Property(value => value.Multiple).HasColumnName("multiple");
-        scale.Property(value => value.PackagingUnit).HasColumnName("packaging_unit");
         scale.Property(value => value.AllowGrouping).HasColumnName("allow_grouping");
         scale.Property(value => value.FinalUsd).HasColumnName("final_usd").HasPrecision(18, 2);
         scale.Property(value => value.FinalCop).HasColumnName("final_cop").HasPrecision(18, 2);

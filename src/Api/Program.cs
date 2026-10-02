@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.Threading.RateLimiting;
 using Api;
 using Bootstrapper;
 using Bootstrapper.Authentication;
 using Bootstrapper.Csrf;
 using Bootstrapper.Health;
+using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Modules.Audit.Infrastructure;
@@ -40,13 +42,27 @@ builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
 builder.Services.AddQepHealthChecks(builder.Configuration);
+builder.Services.AddQepForwardedHeaders(builder.Configuration);
 
-// Superficies públicas/sin autenticar: ventana fija por IP, generosa para tráfico real
+// Superficies públicas/sin autenticar: ventana fija por IP del cliente —la que deja
+// UseForwardedHeaders detrás del ingress, no la del nodo—, generosa para tráfico real
 // pero acotada contra el abuso. Hoy está atada al documento OpenAPI y a la referencia de
-// API de Scalar; atarla a todo endpoint público de lectura o webhook que se agregue.
+// API de Scalar; atarla a todo endpoint público de lectura o webhook que se agregue. El login y
+// el registro de tenant tienen su propia política, más estricta (ver RateLimiterPolicies).
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // El 429 le dice al cliente cuándo volver: lo que le falta a la ventana fija, en segundos.
+    options.OnRejected = (context, _) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+        }
+
+        return ValueTask.CompletedTask;
+    };
     static FixedWindowRateLimiterOptions FixedWindow(string _) => new()
     {
         PermitLimit = 120,
@@ -58,9 +74,27 @@ builder.Services.AddRateLimiter(options =>
         httpContext => RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: FixedWindow));
+    static FixedWindowRateLimiterOptions AuthenticationWindow(string _) => new()
+    {
+        PermitLimit = 10,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+    };
+    options.AddPolicy(
+        RateLimiterPolicies.Authentication,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: AuthenticationWindow));
 });
 
 var app = builder.Build();
+// Primero de todo, a propósito: reemplaza RemoteIpAddress por la IP del cliente que nginx anota en
+// X-Real-IP (sólo si el par directo está en ForwardedHeaders:KnownNetworks; X-Forwarded-For se
+// ignora), y todo lo que venga después tiene que ver esa y no la del nodo del ingress — la
+// partición del rate limiter, la IP de la sesión y la de la auditoría del registro. Si la pusieras
+// debajo del rate limiter, todo internet volvería a caer en el bucket de uno o dos nodos. Ver
+// AddQepForwardedHeaders.
+app.UseForwardedHeaders();
 app.UseExceptionHandler();
 // Afuera de autenticacion y autorizacion a proposito: es la unica posicion desde la que se puede
 // ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el

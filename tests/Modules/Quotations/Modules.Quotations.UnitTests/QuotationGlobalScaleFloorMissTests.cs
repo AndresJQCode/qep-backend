@@ -11,11 +11,15 @@ public sealed class QuotationGlobalScaleFloorMissTests
 {
     // El tramo "de mil" del catálogo real: 35%, paquetes de 50.
     private static readonly QuotationPriceScaleRef ThousandByPackages =
-        new(1000, 999_999, 35m, QuotationPriceScaleRestriction.PackagingUnit, null, 50);
+        new(1000, 999_999, 35m, QuotationPriceScaleRestriction.PackagingUnit, null, [50]);
+
+    // El mismo tramo con dos empaques, como la keratina de 120 ml en cajas de 100 y de 150.
+    private static readonly QuotationPriceScaleRef ThousandByTwoPackages =
+        new(1000, 999_999, 35m, QuotationPriceScaleRestriction.PackagingUnit, null, [100, 150]);
 
     // El tramo 50 del catálogo real: 20%, de a 6.
     private static readonly QuotationPriceScaleRef FiftyByMultiples =
-        new(50, 98, 20m, QuotationPriceScaleRestriction.Multiple, 6, null);
+        new(50, 98, 20m, QuotationPriceScaleRestriction.Multiple, 6, []);
 
     [Fact]
     public void ALineThatIsNotAWholeNumberOfPackagesSaysHowBigThePackageIs()
@@ -26,7 +30,32 @@ public sealed class QuotationGlobalScaleFloorMissTests
 
         Assert.NotNull(miss);
         Assert.Equal("packaging_unit", miss.Reason);
-        Assert.Equal(50, miss.Step);
+        Assert.Equal([50], miss.PackagingUnits);
+        Assert.Null(miss.Step);
+    }
+
+    // Con dos empaques no hay un único tamaño que decir: viaja la lista entera, y Step queda en
+    // null para que nadie lo lea como "el" paquete.
+    [Fact]
+    public void ALineThatCannotBeBuiltFromWholePackagesListsEveryPackage()
+    {
+        var miss = QuotationGlobalScaleFloorMiss.Explain(
+            quantity: 120, discountPercentage: 15m, discountOrigin: "Own",
+            scales: [ThousandByTwoPackages], globalScaleFloor: 1000);
+
+        Assert.NotNull(miss);
+        Assert.Equal("packaging_unit", miss.Reason);
+        Assert.Equal([100, 150], miss.PackagingUnits);
+        Assert.Null(miss.Step);
+    }
+
+    // 250 = 100 + 150: con los dos empaques se arma, así que no hay nada que explicar.
+    [Fact]
+    public void ALineBuiltFromACombinationOfPackagesHasNothingToExplain()
+    {
+        Assert.Null(QuotationGlobalScaleFloorMiss.Explain(
+            quantity: 250, discountPercentage: 15m, discountOrigin: "Own",
+            scales: [ThousandByTwoPackages], globalScaleFloor: 1000));
     }
 
     [Fact]
@@ -39,6 +68,7 @@ public sealed class QuotationGlobalScaleFloorMissTests
         Assert.NotNull(miss);
         Assert.Equal("multiple", miss.Reason);
         Assert.Equal(6, miss.Step);
+        Assert.Empty(miss.PackagingUnits);
     }
 
     [Fact]
