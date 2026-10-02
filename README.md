@@ -108,7 +108,7 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
-| `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para las políticas del rate limiter, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
+| `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
 | `Authentication:UseDevelopmentStub`                    | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque                                |
 | `Authentication:Authority`                             | ausente (cae a `https://accounts.google.com`)                                                 | Emisor OIDC; sólo se define para pisar el de Google                                                                 |
 | `Authentication:Audience`                              | ausente                                                                                       | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId`                      |
@@ -1083,20 +1083,6 @@ las puede escribir cualquiera. `X-Real-IP` es el `$remote_addr` de nginx, que
 resuelve `CF-Connecting-IP` sólo cuando el par es de Cloudflare
 (`set_real_ip_from`), así que no se falsifica desde afuera. `X-Forwarded-For` se
 ignora por completo.
-
-El rate limiter tiene dos políticas (`RateLimiterPolicies`), las dos de ventana fija
-de un minuto por IP del cliente y sin cola:
-
-| Política         | Límite      | Endpoints                                                                      |
-| ---------------- | ----------- | ------------------------------------------------------------------------------ |
-| `public`         | 120 por min | `/openapi/v1.json`, `/scalar/v1`, `GET /api/v1/invitations/{token}`            |
-| `authentication` | 10 por min  | `POST /api/v1/auth/session`, `POST /api/v1/auth/register-tenant`               |
-
-Son presupuestos separados: agotar uno no toca el otro. Los dos endpoints de
-`authentication` comparten el bucket de la IP, así que martillar `register-tenant`
-también gasta el del login. Como el limitador va antes de la autenticación, una
-ráfaga se corta con `429` sin validar el token de Google. Todo `429` lleva
-`Retry-After` con los segundos que le faltan a la ventana.
 
 `ApiExceptionHandler` (`IExceptionHandler`) centraliza el mapeo de excepciones
 a `ProblemDetails` (RFC 7807):

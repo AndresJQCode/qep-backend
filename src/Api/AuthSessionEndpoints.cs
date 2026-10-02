@@ -31,10 +31,7 @@ public static class AuthSessionEndpoints
     {
         var establishSession = endpoints.MapPost("/api/v1/auth/session", EstablishAsync);
         establishSession.RequireGoogleBearerOrDevStub(endpoints.ServiceProvider);
-        // El limitador corre antes que la autenticación: una ráfaga se corta con 429 sin llegar
-        // a validar el token de Google. Comparte bucket por IP con register-tenant.
         establishSession
-            .RequireRateLimiting(RateLimiterPolicies.Authentication)
             .WithTags("Authentication")
             .Produces<SessionResponse>()
             .ProducesProblem(StatusCodes.Status401Unauthorized)
