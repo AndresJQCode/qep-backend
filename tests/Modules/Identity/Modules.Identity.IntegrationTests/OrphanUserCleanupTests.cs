@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Catalog.Domain;
+using Modules.Catalog.Infrastructure.Persistence;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Storage.Domain;
@@ -27,8 +29,8 @@ namespace Modules.Identity.IntegrationTests;
 ///
 /// Las huellas que retienen al usuario las declara cada módulo por <c>IUserReferenceProbe</c>:
 /// una membresía viva en otro tenant (Tenancy), una cotización/pedido que referencia alguna de
-/// sus membresías (Quotations) o un archivo del que es dueño (Storage). Auditoría y
-/// notificaciones no retienen: son append-only y guardan snapshot.
+/// sus membresías (Quotations), un archivo del que es dueño (Storage) o un cambio de precio que
+/// hizo (Catalog). Auditoría y notificaciones no retienen: son append-only y guardan snapshot.
 ///
 /// Cuando nada lo retiene, antes de borrarlo se purgan sus membresías quitadas o vencidas
 /// (<c>IUserReferencePurger</c>, spec 2026-10-02), lo que libera su código de asesor.
@@ -325,6 +327,37 @@ public sealed class OrphanUserCleanupTests
         await WaitUntilAsync(async () => await CountInboxAsync(connection, member.Id) == 1);
 
         Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
+    }
+
+    /// <summary>
+    /// El histórico de precios es permanente y el reporte de cambios muestra el correo de quien
+    /// cambió el precio (<c>product_price_changes.changed_by</c>, un id de usuario y no de
+    /// membresía). Quien lo cambió tiene historia: ni su usuario ni su membresía quitada se
+    /// borran, y su código de asesor sigue ocupado (D4).
+    /// </summary>
+    [Fact]
+    public async Task AuthoringAProductPriceChangeKeepsTheUserAndItsRemovedMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail(), advisorCode: 7);
+        await ActivateMembershipAsync(connectionString, member.Id);
+        await SeedPriceChangeAsync(factory, Guid.Parse(tenantId), changedByUserId: member.UserId);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, member.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
+        Assert.Equal(1, await CountMembershipsAsync(connection, member.UserId));
+        Assert.Equal(0, await CountAuditAsync(connection, member.Id, "tenancy.membership.purged"));
+        var other = await SendInviteAsync(ownerClient, tenantId, NewEmail(), advisorCode: 7);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, other.StatusCode);
     }
 
     /// <summary>
@@ -672,6 +705,35 @@ public sealed class OrphanUserCleanupTests
             1024,
             $"staging/{Guid.NewGuid():N}",
             DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Por el DbContext, misma razón que SeedQuotationAsync: llegar por HTTP exige el permiso de
+    // catálogo en el stub y un PUT completo. Lo que importa acá es changed_by. El producto existe
+    // sólo porque product_price_changes.product_id tiene FK, y la fila la arma
+    // ProductPriceChangeDetector, que es el único que puede crearla (sus fábricas son internal).
+    private static async Task SeedPriceChangeAsync(
+        QepApiFactory factory,
+        Guid tenantId,
+        Guid changedByUserId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        var occurredAt = DateTimeOffset.UtcNow;
+        var product = Product.Create(
+            ProductId.New(),
+            tenantId,
+            "Vela de soja",
+            $"VS-{Guid.NewGuid():N}"[..12],
+            ProductDetails.Empty,
+            new ProductPricing { BaseUsd = 100m },
+            occurredAt);
+        dbContext.Products.Add(product);
+        dbContext.ProductPriceChanges.AddRange(ProductPriceChangeDetector.Detect(
+            product,
+            new ProductPricing { BaseUsd = 120m },
+            changedByUserId,
+            occurredAt));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 

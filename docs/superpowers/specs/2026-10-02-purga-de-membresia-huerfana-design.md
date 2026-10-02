@@ -1,7 +1,7 @@
 # Purga de la membresía huérfana
 
 **Fecha:** 2026-10-02
-**Módulos:** Identity, Tenancy, BuildingBlocks (backend)
+**Módulos:** Identity, Tenancy, BuildingBlocks, Catalog, Quotations (backend)
 **Estado:** aprobado por el owner; enmienda D4 del spec
 [`2026-09-24-codigo-de-asesor-design.md`](2026-09-24-codigo-de-asesor-design.md)
 
@@ -9,7 +9,7 @@
 
 Cuando quitas a un miembro, `Membership.Remove` no borra la fila: la pasa a `Removed` y emite
 `tenancy.membership-removed.v1`. `OrphanUserCleanupWorker` consume ese evento y, si ninguna
-`IUserReferenceProbe` retiene al usuario (Tenancy, Quotations, Storage), lo borra físicamente
+`IUserReferenceProbe` retiene al usuario (Tenancy, Quotations, Storage, Catalog), lo borra físicamente
 bajo el advisory lock de `UserLifecycleLockKey`.
 
 Las membresías `Removed` y `Expired` de ese usuario se quedaban en `tenancy.memberships`,
@@ -27,8 +27,8 @@ siempre:
 **Cuando el usuario se borra por no tener historia, sus membresías `Removed` y `Expired` se
 borran físicamente con él**, y su código de asesor queda libre (aprobado por el owner).
 
-D4 sigue en pie para quien tiene historia. Si una cotización, un pedido o un archivo retiene al
-usuario, el worker no lo borra, no se purga nada y la membresía quitada sigue bloqueando el
+D4 sigue en pie para quien tiene historia. Si una cotización, un pedido, un archivo o un cambio
+de precio retiene al usuario, el worker no lo borra, no se purga nada y la membresía quitada sigue bloqueando el
 código. Eso no cambia: la purga sólo corre en la rama donde el usuario ya se iba a borrar.
 
 ## Cómo
@@ -144,8 +144,8 @@ D4 decía: "Una membresía en `Removed` mantiene el código y lo sigue bloqueand
 > usuario se borra por no tener historia, la membresía se purga y el código queda libre.
 
 La razón de D4 —no mezclar en el sistema externo los registros de dos personas— supone que el
-código ya quedó atado a un historial. Sin cotizaciones, pedidos ni archivos no hay historial que
-mezclar.
+código ya quedó atado a un historial. Sin cotizaciones, pedidos, archivos ni cambios de precio no
+hay historial que mezclar.
 
 ## Pruebas (TDD, RED antes que GREEN)
 
@@ -163,6 +163,74 @@ mezclar.
 - Pruebas existentes que quitan a alguien sin historia y después miran la fila quitada (D4,
   re-invitación sobre la misma fila, quitar dos veces) corrían contra el worker: ahora retienen
   al usuario con una invitación viva en otro tenant, que es el caso que de verdad ejercitan.
+- Integración (`OrphanUserCleanupTests`): quien quitas después de cambiar el precio de un producto
+  conserva su usuario, su membresía quitada y su código de asesor (ver «Columnas con id de usuario
+  sin sonda», abajo).
+
+## Columnas con id de usuario sin sonda
+
+Al cerrar este spec quedaban dos columnas que guardan el id de `identity.users` —no una
+membresía— y que ninguna sonda miraba, así que borrar un usuario las dejaba colgando. La regla
+para decidir es la misma para las dos: **el worker evalúa a cada usuario una sola vez por baja**.
+Una sonda retiene para siempre; por eso sólo va donde la fila es historia permanente.
+
+### `catalog.product_price_changes.changed_by` → sonda
+
+El histórico de precios es append-only y no se purga nunca (`ProductPriceChange`), y el reporte
+de cambios de precio resuelve `changed_by` a un correo (`ReportingPeopleLookup.EmailsByUserIdAsync`):
+con el usuario borrado, el autor del cambio salía vacío. Es historia, igual que una cotización.
+
+`ProductPriceChangeUserReferenceProbe` (Catalog.Infrastructure, `Source => "catalog"`) responde
+`AnyAsync(change => change.ChangedBy == userId)`, sin pasar por membresías ni filtrar por tenant:
+la columna guarda el `SubjectId` tal cual (`UpdateProductHandler`, `CopyPriceScalesHandler`). Se
+registra en `CatalogInfrastructureExtensions`, como las demás.
+
+**Sin índice sobre `changed_by`.** El worker consulta una vez por membresía quitada, y las sondas
+de Quotations ya recorren sin índice columnas de tablas más grandes (`quotation_history.member_id`,
+`quotations.created_by`). Un índice lo pagaría cada cambio de precio —incluida la copia masiva de
+escalas— para acelerar una consulta rara. Si la sonda llegara a pesar, el índice es una migración
+de Catalog sin otro cambio.
+
+### `quotations.export_jobs.requested_by` → nada
+
+Una sonda acá es justamente el error: retendría al usuario para siempre por una fila que se borra
+sola. Y no hace falta un purgador, porque nada se rompe con el usuario ausente:
+
+- **Quién lee la columna.** El límite de pendientes (`ExportJobQueue.CountPendingAsync`), que sólo
+  cuenta y que un usuario borrado ya no puede alcanzar; la auditoría del runner
+  (`ExportJobRunner`, `actor_id`), que es snapshot; y los eventos `quotations.export-ready.v1` y
+  `quotations.export-failed.v1` (`ExportJobEventPublisher`), cuyo `subjectId` resuelve
+  Notifications. No hay listado de "mis exportaciones" ni descarga autenticada: el enlace viaja
+  prefirmado en el correo.
+- **Un job pendiente de un usuario borrado** se procesa igual —el runner no mira al usuario— y su
+  correo no sale: `OutboxDeliveryWorker.ResolveRecipientAsync` no encuentra la dirección, guarda la
+  notificación en `Failed` con `recipient_email_unavailable` y cierra el inbox, sin reintentos.
+  Es lo que debe pasar: nadie recibe datos del tenant después de su baja.
+- **El archivo** no es un `FileResource` de Storage ni tiene dueño: es un objeto bajo
+  `exports/tenants/{tenant}/jobs/{job}.xlsx` (`ExportFileStorage.KeyFor`) que vence la regla de
+  lifecycle `expire-exports` del bucket. `PurgeFinishedBeforeAsync` sólo borra filas.
+- **La retención.** Todo job termina —completo o fallido en cuatro intentos, unos 21 minutos— y
+  `ExportJobWorker` borra una vez por día los terminados hace más de `ExportJob.Retention` (30
+  días). La fila colgada dura eso como mucho.
+
+No hay cambio de código; el razonamiento queda en `ExportJob.RequestedBy`.
+
+### Las demás columnas con id de usuario
+
+Barrido de toda asignación de `IExecutionContext.SubjectId` a una entidad persistida y de toda
+columna con forma de id de usuario en los `DbContext`. Ninguna otra necesita sonda:
+
+- `audit.entries.actor_id`: append-only, snapshot.
+- `notifications.notifications.recipient_id`: append-only, guarda la dirección en
+  `recipient_address`.
+- `platform.request_failures.subject_id`: diagnóstico; `ListRequestFailures` lo devuelve crudo, sin
+  resolverlo, y `DELETE /request-log` borra lo que pasó los 7 días de
+  `PurgeRequestFailuresHandler.RetentionDays`.
+- Customers, Companies, Geography, Authorization y el resto de Catalog sólo usan el `SubjectId`
+  para auditar o para el evento de su exportación (outbox, transitorio); sus tablas no guardan
+  ids de usuario.
+- `storage.file_resources.owner_id`, las columnas `MemberId` de Quotations y
+  `tenancy.memberships.user_id` ya tenían su sonda.
 
 ## Pendientes
 
@@ -173,9 +241,6 @@ mezclar.
 
 ## Fuera de alcance
 
-- `catalog.product_price_changes.changed_by` y `quotations.export_jobs.requested_by` guardan ids
-  de usuario y no tienen sonda: borrar un usuario ya los deja colgando hoy, con o sin esta purga.
-  Decidir si retienen al usuario, se purgan o pueden colgar es otro slice.
 - `tenants.owner_membership_id` no se toca: la membresía del owner nunca llega a `Removed`
   (`EnsureNotOwner`).
 - La auditoría (`audit.entries.resource_id`) queda apuntando a membresías y usuarios borrados a

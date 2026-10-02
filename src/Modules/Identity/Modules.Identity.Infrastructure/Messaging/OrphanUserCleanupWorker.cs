@@ -20,9 +20,11 @@ namespace Modules.Identity.Infrastructure.Messaging;
 // para armar su respuesta, así que borrar en el handler rompería la respuesta del remove.
 //
 // Qué retiene al usuario lo decide cada módulo por IUserReferenceProbe (BuildingBlocks): este
-// worker no conoce a Tenancy, Quotations ni Storage, sólo recorre las sondas registradas y se
-// detiene en la primera que responde true. Una sonda nueva se registra en su módulo y entra
-// sola. Auditoría y notificaciones no registran sonda: son append-only y guardan snapshot.
+// worker no conoce a Tenancy, Quotations, Storage ni Catalog, sólo recorre las sondas registradas
+// y se detiene en la primera que responde true. Una sonda nueva se registra en su módulo y entra
+// sola. Auditoría y notificaciones no registran sonda: son append-only y guardan snapshot. Las
+// exportaciones de Quotations tampoco: son filas transitorias que se borran solas (spec
+// 2026-10-02), y una sonda retendría al usuario para siempre por algo que desaparece.
 //
 // Lo que un módulo guarda del usuario sin retenerlo —las membresías quitadas o vencidas de
 // Tenancy— se borra antes que el usuario, por IUserReferencePurger (spec 2026-10-02). Son dos
