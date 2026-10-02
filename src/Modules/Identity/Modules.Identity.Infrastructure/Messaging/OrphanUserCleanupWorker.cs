@@ -24,6 +24,16 @@ namespace Modules.Identity.Infrastructure.Messaging;
 // detiene en la primera que responde true. Una sonda nueva se registra en su módulo y entra
 // sola. Auditoría y notificaciones no registran sonda: son append-only y guardan snapshot.
 //
+// Lo que un módulo guarda del usuario sin retenerlo —las membresías quitadas o vencidas de
+// Tenancy— se borra antes que el usuario, por IUserReferencePurger (spec 2026-10-02). Son dos
+// DbContexts y dos commits, así que no es atómico; por eso el orden: primero cada purgador
+// commitea lo suyo y recién después se borra y commitea el usuario. Si algo falla después de la
+// purga, en el tick siguiente el usuario sigue ahí, las sondas siguen diciendo que no, los
+// purgadores no encuentran nada y el usuario se borra. Al revés, un fallo dejaría filas
+// apuntando a un usuario que ya no existe y ningún mensaje que las vuelva a mirar. Los
+// purgadores corren con el lock de abajo tomado y no pueden volver a pedirlo: están en otra
+// conexión y esperarían para siempre.
+//
 // El borrado corre bajo el advisory lock de UserLifecycleLockKey (BuildingBlocks), el mismo
 // que InviteMemberHandler toma antes de aprovisionar e insertar su membresía. Las sondas se
 // consultan recién con el lock tomado: una invitación que lo ganó ya commiteó su membresía y
@@ -35,6 +45,12 @@ namespace Modules.Identity.Infrastructure.Messaging;
 // SessionRevocationWorker corre en paralelo sobre el mismo evento y las revoca; si los dos
 // tocan la misma fila a la vez, uno pierde con una excepción de concurrencia y reintenta en el
 // tick siguiente, donde ya no encuentra nada que hacer. Ninguno de los dos depende del otro.
+//
+// Cada mensaje corre en su propio scope de DI, y por lo tanto con sus propios DbContexts: el de
+// Identity y los que usan sondas y purgadores (el de Tenancy, entre otros). Con un scope por
+// lote, un mensaje que fallaba a mitad de camino dejaba entidades rastreadas en un contexto que
+// este worker no puede limpiar —no conoce el de Tenancy—, y el SaveChanges del mensaje siguiente
+// las commiteaba como si fueran suyas: borraba la membresía de un usuario que nunca se borró.
 internal sealed partial class OrphanUserCleanupWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<OrphanUserCleanupWorker> logger) : BackgroundService
@@ -85,24 +101,34 @@ internal sealed partial class OrphanUserCleanupWorker(
 
     private async Task ProcessBatchAsync(CancellationToken cancellationToken)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
-        var users = scope.ServiceProvider.GetRequiredService<IUserRepository>();
-        var probes = scope.ServiceProvider.GetServices<IUserReferenceProbe>().ToList();
-
-        var pending = await dbContext.Outbox
-            .Where(record => record.EventName == RemovedEvent)
-            .Where(record => !dbContext.Inbox.Any(entry =>
-                entry.Consumer == Consumer && entry.MessageId == record.Id))
-            .OrderBy(record => record.OccurredAt)
-            .Take(BatchSize)
-            .ToListAsync(cancellationToken);
+        List<OutboxRecord> pending;
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+            pending = await dbContext.Outbox
+                .AsNoTracking()
+                .Where(record => record.EventName == RemovedEvent)
+                .Where(record => !dbContext.Inbox.Any(entry =>
+                    entry.Consumer == Consumer && entry.MessageId == record.Id))
+                .OrderBy(record => record.OccurredAt)
+                .Take(BatchSize)
+                .ToListAsync(cancellationToken);
+        }
 
         foreach (var record in pending)
         {
+            // Una unidad de trabajo por mensaje: ver el comentario del encabezado.
+            await using var recordScope = scopeFactory.CreateAsyncScope();
+            var services = recordScope.ServiceProvider;
             try
             {
-                await CleanupAsync(dbContext, users, probes, record, cancellationToken);
+                await CleanupAsync(
+                    services.GetRequiredService<IdentityDbContext>(),
+                    services.GetRequiredService<IUserRepository>(),
+                    services.GetServices<IUserReferenceProbe>().ToList(),
+                    services.GetServices<IUserReferencePurger>().ToList(),
+                    record,
+                    cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -110,11 +136,11 @@ internal sealed partial class OrphanUserCleanupWorker(
             }
             catch (Exception exception)
             {
-                // Un mensaje que falla (una sonda caída, un conflicto de concurrencia con
-                // SessionRevocationWorker) no puede frenar a los demás del lote ni al loop: se
-                // descarta lo que quedó rastreado y se sigue. Sin inbox, vuelve en el próximo tick.
+                // Un mensaje que falla (una sonda o un purgador caídos, un conflicto de
+                // concurrencia con SessionRevocationWorker) no puede frenar a los demás del lote
+                // ni al loop. Lo que dejó rastreado muere con su scope, así que no hay nada que
+                // limpiar. Sin inbox, vuelve en el próximo tick.
                 LogMessageFailed(logger, exception, record.Id);
-                dbContext.ChangeTracker.Clear();
             }
         }
     }
@@ -123,6 +149,7 @@ internal sealed partial class OrphanUserCleanupWorker(
         IdentityDbContext dbContext,
         IUserRepository users,
         IReadOnlyList<IUserReferenceProbe> probes,
+        IReadOnlyList<IUserReferencePurger> purgers,
         OutboxRecord record,
         CancellationToken cancellationToken)
     {
@@ -146,6 +173,12 @@ internal sealed partial class OrphanUserCleanupWorker(
             var retainedBy = await FindRetainingSourceAsync(probes, userId, cancellationToken);
             if (retainedBy is null)
             {
+                // Antes que el usuario: ver el comentario del encabezado.
+                foreach (var purger in purgers)
+                {
+                    await purger.PurgeAsync(userId, cancellationToken);
+                }
+
                 var sessions = await dbContext.Sessions
                     .Where(session => session.UserId == new UserId(userId))
                     .ToListAsync(cancellationToken);

@@ -38,6 +38,11 @@ Una membresía en `Removed` mantiene el código y lo sigue bloqueando. En el sis
 código queda atado al historial de esa persona; reasignarlo mezclaría los registros de dos
 personas. El índice de D3 no filtra por estado.
 
+> **Enmienda 2026-10-02.** D4 sigue valiendo para quien tiene historia: su usuario no se borra y
+> su membresía quitada sigue bloqueando el código. Para quien no la tiene, `OrphanUserCleanupWorker`
+> borra el usuario y, antes, purga sus membresías quitadas o vencidas, con lo que el código queda
+> libre. Ver [`2026-10-02-purga-de-membresia-huerfana-design.md`](2026-10-02-purga-de-membresia-huerfana-design.md).
+
 ### D5 — Columna en `memberships`, no tabla aparte
 
 "Asesor" no es un tipo de miembro en el modelo: `QuotationAdvisorResolver` toma como asesor de

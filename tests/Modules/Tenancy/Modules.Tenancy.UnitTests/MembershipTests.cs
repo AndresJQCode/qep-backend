@@ -1002,6 +1002,87 @@ public sealed class MembershipTests
         Assert.Equal(12, membership.AdvisorCode);
     }
 
+    // Spec 2026-10-02: sólo una membresía que ya no da ni promete acceso se puede borrar
+    // físicamente. Las que todavía cuentan para MembershipUserReferenceProbe no.
+    [Theory]
+    [InlineData(MembershipState.Invited)]
+    [InlineData(MembershipState.Active)]
+    [InlineData(MembershipState.Suspended)]
+    public void EnsurePurgeableRejectsAMembershipThatStillGivesOrPromisesAccess(MembershipState state)
+    {
+        var membership = InState(state);
+
+        var error = Assert.Throws<TenantDomainException>(() => membership.EnsurePurgeable());
+
+        Assert.Equal("tenancy.membership.not_purgeable", error.Code);
+        Assert.Equal(state, membership.State);
+    }
+
+    [Theory]
+    [InlineData(MembershipState.Removed)]
+    [InlineData(MembershipState.Expired)]
+    public void EnsurePurgeableAcceptsARemovedOrExpiredMembership(MembershipState state)
+    {
+        var membership = InState(state);
+
+        membership.EnsurePurgeable();
+
+        Assert.Equal(state, membership.State);
+    }
+
+    public static TheoryData<MembershipState> AllStates => new(Enum.GetValues<MembershipState>());
+
+    // Una sola frontera para la sonda y para la purga: GrantsOrPromisesAccess. Recorre todos los
+    // estados del enum, así que uno nuevo entra solo y la prueba exige que las dos reglas lo
+    // clasifiquen igual (InState lanza si nadie le enseñó a llegar a él).
+    [Theory]
+    [MemberData(nameof(AllStates))]
+    public void EnsurePurgeableThrowsExactlyWhenTheMembershipGrantsOrPromisesAccess(MembershipState state)
+    {
+        var membership = InState(state);
+
+        var error = Record.Exception(() => membership.EnsurePurgeable());
+
+        if (membership.GrantsOrPromisesAccess)
+        {
+            Assert.Equal(
+                "tenancy.membership.not_purgeable",
+                Assert.IsType<TenantDomainException>(error).Code);
+        }
+        else
+        {
+            Assert.Null(error);
+        }
+    }
+
+    // Llega a cada estado por las transiciones del agregado, nunca escribiendo el campo.
+    private static Membership InState(MembershipState state)
+    {
+        var membership = Invite(Guid.CreateVersion7(), advisorCode: 12);
+        switch (state)
+        {
+            case MembershipState.Invited:
+                break;
+            case MembershipState.Active:
+                membership.Accept(InvitedAt.AddHours(1));
+                break;
+            case MembershipState.Suspended:
+                membership.Accept(InvitedAt.AddHours(1));
+                membership.Suspend(TenantOwnedByAnother(), InvitedAt.AddHours(2));
+                break;
+            case MembershipState.Removed:
+                membership.Remove(TenantOwnedByAnother(), InvitedAt.AddHours(1));
+                break;
+            case MembershipState.Expired:
+                Assert.True(membership.Expire(InvitedAt + Ttl + TimeSpan.FromSeconds(1)));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(state), state, null);
+        }
+
+        return membership;
+    }
+
     private static Membership Invite(Guid userId, int? advisorCode = null) =>
         Membership.Invite(
             MembershipId.New(),

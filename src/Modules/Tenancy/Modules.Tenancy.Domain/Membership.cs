@@ -88,7 +88,9 @@ public sealed class Membership
     /// significa "no tiene código allá". Entero positivo (D2), así que <c>0012</c> y <c>12</c> son
     /// el mismo. La unicidad por tenant (D3) no vive acá —una membresía no ve a las demás—: la
     /// sostiene el índice único parcial de la base, con un chequeo previo en los handlers para
-    /// responder claro. Una membresía quitada lo conserva y lo sigue bloqueando (D4).
+    /// responder claro. Una membresía quitada lo conserva y lo sigue bloqueando (D4) mientras la
+    /// fila exista: si su usuario se borra por no tener historia, la fila se purga y el código
+    /// queda libre (spec 2026-10-02, <see cref="EnsurePurgeable"/>).
     /// </summary>
     public int? AdvisorCode { get; private set; }
 
@@ -112,6 +114,21 @@ public sealed class Membership
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    /// <summary>
+    /// ¿La membresía todavía le da o le promete acceso a la persona?
+    /// <see cref="MembershipState.Invited"/> lo promete, <see cref="MembershipState.Active"/> lo da
+    /// y <see cref="MembershipState.Suspended"/> lo puede volver a dar con <see cref="Reactivate"/>.
+    /// </summary>
+    /// <remarks>
+    /// Es la única frontera entre las membresías que retienen al usuario ante el borrado de
+    /// huérfanos (<c>MembershipUserReferenceProbe</c>) y las que se pueden purgar con él
+    /// (<see cref="EnsurePurgeable"/>, spec 2026-10-02). Escrita una sola vez para que un estado
+    /// nuevo no quede clasificado distinto en cada lado: si la sonda lo soltara y la purga lo
+    /// rechazara, el worker fallaría con el mismo mensaje en cada tick, para siempre.
+    /// </remarks>
+    public bool GrantsOrPromisesAccess =>
+        State is MembershipState.Invited or MembershipState.Active or MembershipState.Suspended;
 
     public IReadOnlyCollection<string> Roles => _roles.AsReadOnly();
 
@@ -303,7 +320,9 @@ public sealed class Membership
     /// El código de asesor no viaja igual que el nombre: uno en el cuerpo reemplaza al que había,
     /// pero un cuerpo sin código lo conserva (spec 2026-09-24, Application y API). Así una quitada
     /// que vuelve no pierde ni libera su código (D4); borrarlo es sólo por
-    /// <see cref="UpdateProfile"/>. La unicidad la revisa el handler antes de llamar acá.
+    /// <see cref="UpdateProfile"/>. La unicidad la revisa el handler antes de llamar acá. Una
+    /// quitada que ya se purgó con su usuario (spec 2026-10-02) no llega acá: no hay fila que
+    /// renovar.
     /// </remarks>
     public void Reinvite(
         string displayName,
@@ -434,7 +453,9 @@ public sealed class Membership
     /// desde <see cref="MembershipState.Invited"/>, <see cref="MembershipState.Active"/> o
     /// <see cref="MembershipState.Suspended"/>. No es permanente: volver a invitar a la persona
     /// reutiliza esta fila y la devuelve a <see cref="MembershipState.Invited"/>
-    /// (<see cref="Reinvite"/>), así que tiene que aceptar de nuevo.
+    /// (<see cref="Reinvite"/>), así que tiene que aceptar de nuevo. Eso vale mientras la fila
+    /// exista: si la persona no tiene historia, Identity borra su usuario y esta fila se purga con
+    /// él (spec 2026-10-02), y la próxima invitación crea una membresía nueva.
     /// </summary>
     public void Remove(Tenant tenant, DateTimeOffset occurredAt)
     {
@@ -456,6 +477,28 @@ public sealed class Membership
             Id,
             TenantId,
             UserId));
+    }
+
+    /// <summary>
+    /// Rechaza el borrado físico de una membresía que todavía da o promete acceso. Sólo una
+    /// <see cref="MembershipState.Removed"/> o una <see cref="MembershipState.Expired"/> se pueden
+    /// purgar, y sólo cuando Identity está por borrar a su usuario por no tener historia (spec
+    /// 2026-10-02).
+    /// </summary>
+    /// <remarks>
+    /// La frontera es <see cref="GrantsOrPromisesAccess"/>, la misma que usa
+    /// <c>MembershipUserReferenceProbe</c> para decidir que el usuario es huérfano. Se revisa acá
+    /// para que el purgador no tenga que confiar en que la sonda ya la miró. No hay transición: la
+    /// fila desaparece, y lo que queda de ella es la auditoría.
+    /// </remarks>
+    public void EnsurePurgeable()
+    {
+        if (GrantsOrPromisesAccess)
+        {
+            throw new TenantDomainException(
+                "tenancy.membership.not_purgeable",
+                "Only a removed or expired membership can be purged.");
+        }
     }
 
     public void ChangeRoles(Tenant tenant, IEnumerable<string> roles, DateTimeOffset occurredAt)

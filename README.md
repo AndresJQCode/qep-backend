@@ -746,7 +746,10 @@ caracteres. Sin él responde `422 validation.failed` con `errors.DisplayName`.
 (ERP, contabilidad) identifica a la persona. Se guarda como `integer`, así que `0012` y `12` son
 el mismo. Un valor que no sea un entero mayor que cero responde `422 validation.failed` con
 `errors.AdvisorCode`; uno que ya tenga otra membresía del tenant —incluida una quitada, que
-conserva el suyo—, `422 tenancy.membership.advisor_code_taken`.
+conserva el suyo—, `422 tenancy.membership.advisor_code_taken`. Una quitada deja de bloquear
+cuando su usuario se borra por no tener historia: `OrphanUserCleanupWorker` purga sus membresías
+quitadas o vencidas antes de borrarlo (spec 2026-10-02), y desde ahí el código queda libre, también
+para la misma persona si la vuelves a invitar.
 
 Una invitación viva o una membresía activa ignoran el nombre y el código del cuerpo. Renovar una
 invitación vencida o una membresía quitada reescribe el nombre y, si el cuerpo trae
@@ -798,8 +801,8 @@ Invoke-RestMethod `
 `428 precondition.if_match_required`; con una versión vieja, `412`; con un nombre vacío o de más
 de 150 caracteres, `422 validation.failed` con `errors.DisplayName`; con un código que no sea un
 entero mayor que cero, `422 validation.failed` con `errors.AdvisorCode`; con un código que ya
-tiene otra membresía del tenant —incluida una quitada, que conserva el suyo—,
-`422 tenancy.membership.advisor_code_taken`. El mismo código en otro tenant es válido.
+tiene otra membresía del tenant —incluida una quitada que todavía no se purgó, que conserva el
+suyo—, `422 tenancy.membership.advisor_code_taken`. El mismo código en otro tenant es válido.
 
 El código de asesor llega al sistema externo por el Excel de pedidos: la columna `Cod. Asesor`,
 después de `Email`, numérica y repetida en cada línea del pedido. Se resuelve al exportar desde la

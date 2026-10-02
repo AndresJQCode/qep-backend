@@ -4,11 +4,13 @@ using System.Net.Http.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Storage.Domain;
 using Modules.Storage.Infrastructure.Persistence;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -27,6 +29,9 @@ namespace Modules.Identity.IntegrationTests;
 /// una membresía viva en otro tenant (Tenancy), una cotización/pedido que referencia alguna de
 /// sus membresías (Quotations) o un archivo del que es dueño (Storage). Auditoría y
 /// notificaciones no retienen: son append-only y guardan snapshot.
+///
+/// Cuando nada lo retiene, antes de borrarlo se purgan sus membresías quitadas o vencidas
+/// (<c>IUserReferencePurger</c>, spec 2026-10-02), lo que libera su código de asesor.
 /// </summary>
 public sealed class OrphanUserCleanupTests
 {
@@ -55,6 +60,98 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(0, await CountSessionsAsync(connection, member.UserId));
         Assert.Equal(1, await CountInboxAsync(connection, member.Id));
         Assert.Equal(1, await CountAuditAsync(connection, member.UserId, "identity.user.deleted"));
+    }
+
+    /// <summary>
+    /// Spec 2026-10-02: cuando el usuario se borra por no tener historia, su membresía quitada se
+    /// borra con él y su código de asesor queda libre. Antes la fila quedaba apuntando a un usuario
+    /// inexistente y bloqueaba el código para siempre (D4).
+    /// </summary>
+    [Fact]
+    public async Task RemovingAMemberWithoutHistoryPurgesItsMembershipAndFreesItsAdvisorCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail(), advisorCode: 7);
+        await ActivateMembershipAsync(connectionString, member.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () =>
+            await CountUsersAsync(connection, member.UserId) == 0 &&
+            await CountMembershipsAsync(connection, member.UserId) == 0);
+
+        Assert.Equal(1, await CountAuditAsync(connection, member.Id, "tenancy.membership.purged"));
+        var other = await SendInviteAsync(ownerClient, tenantId, NewEmail(), advisorCode: 7);
+        Assert.Equal(HttpStatusCode.Created, other.StatusCode);
+    }
+
+    /// <summary>
+    /// D4 sigue en pie para quien tiene historia: la cotización retiene al usuario, así que ni él
+    /// ni su membresía quitada se borran, y el código sigue ocupado.
+    /// </summary>
+    [Fact]
+    public async Task AMemberWithHistoryKeepsItsRemovedMembershipAndItsAdvisorCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail(), advisorCode: 7);
+        await ActivateMembershipAsync(connectionString, member.Id);
+        await SeedQuotationAsync(factory, Guid.Parse(tenantId), advisorMembershipId: member.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, member.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
+        Assert.Equal(1, await CountMembershipsAsync(connection, member.UserId));
+        Assert.Equal(0, await CountAuditAsync(connection, member.Id, "tenancy.membership.purged"));
+        var other = await SendInviteAsync(ownerClient, tenantId, NewEmail(), advisorCode: 7);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, other.StatusCode);
+        var problem = await other.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.advisor_code_taken", problem!.Code);
+    }
+
+    /// <summary>
+    /// La misma persona vuelve después de la purga: como su usuario ya no existe, la invitación
+    /// crea un usuario y una membresía nuevos, y esa membresía puede tomar su código de antes.
+    /// </summary>
+    [Fact]
+    public async Task ReinvitingTheSameEmailAfterThePurgeTakesItsOldAdvisorCodeBack()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var email = NewEmail();
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, email, advisorCode: 7);
+        await ActivateMembershipAsync(connectionString, member.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () =>
+            await CountUsersAsync(connection, member.UserId) == 0 &&
+            await CountMembershipsAsync(connection, member.UserId) == 0);
+
+        var returning = await InviteAsync(ownerClient, tenantId, email, advisorCode: 7);
+        Assert.NotEqual(member.Id, returning.Id);
+        Assert.NotEqual(member.UserId, returning.UserId);
+        Assert.Equal("Invited", returning.State);
+        Assert.Equal(7, returning.AdvisorCode);
     }
 
     [Fact]
@@ -318,6 +415,48 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(0, await CountAuditAsync(connection, member.UserId, "identity.user.deleted"));
     }
 
+    /// <summary>
+    /// Un mensaje que falla no puede dejarle estado rastreado al siguiente. Un purgador de prueba,
+    /// registrado antes que el de Tenancy, marca como borrada la membresía de A en el
+    /// <c>TenancyDbContext</c> de su scope —sin guardar— y lanza. Si el scope fuera uno por lote,
+    /// el <c>SaveChanges</c> de la purga de B se llevaría también la fila de A, aunque A nunca se
+    /// borró. Como A falla siempre, en cada tick su mensaje va primero que el de B en el mismo
+    /// lote, así que el resultado no depende de en qué tick caigan las dos bajas.
+    /// </summary>
+    [Fact]
+    public async Task AFailedMessageDoesNotLeakTrackedChangesIntoTheNextOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var fault = new PurgeFault();
+        using var factory = new QepApiFactory(connectionString, services =>
+        {
+            services.AddSingleton(fault);
+            // Primero en la lista: GetServices devuelve en orden de registro, y tiene que correr
+            // antes que MembershipUserReferencePurger, que si no commitearía la purga de A.
+            services.Insert(0, ServiceDescriptor.Scoped<IUserReferencePurger, FaultyPurger>());
+        });
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var first = await InviteAsync(ownerClient, tenantId, NewEmail());
+        var second = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, first.Id);
+        await ActivateMembershipAsync(connectionString, second.Id);
+        fault.UserId = first.UserId;
+
+        Assert.Equal(HttpStatusCode.OK, (await RemoveAsync(ownerClient, tenantId, first.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await RemoveAsync(ownerClient, tenantId, second.Id)).StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () =>
+            await CountUsersAsync(connection, second.UserId) == 0 &&
+            await CountMembershipsAsync(connection, second.UserId) == 0);
+
+        Assert.Equal(1, await CountUsersAsync(connection, first.UserId));
+        Assert.Equal(1, await CountMembershipsAsync(connection, first.UserId));
+        Assert.Equal(0, await CountInboxAsync(connection, first.Id));
+    }
+
     private static string NewEmail() => $"member-{Guid.NewGuid():N}@example.com";
 
     private static string NewSlug() => $"org-{Guid.NewGuid():N}"[..12];
@@ -358,20 +497,36 @@ public sealed class OrphanUserCleanupTests
     private static async Task<MembershipPayload> InviteAsync(
         HttpClient client,
         string tenantId,
-        string email)
+        string email,
+        int? advisorCode = null)
     {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"/api/v1/tenants/{tenantId}/memberships")
-        {
-            Content = JsonContent.Create(new { email, displayName = "Ana Pérez", roles = AdvisorRoles })
-        };
-        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var response = await SendInviteAsync(client, tenantId, email, advisorCode);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var membership = await response.Content.ReadFromJsonAsync<MembershipPayload>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(membership);
         return membership!;
+    }
+
+    private static async Task<HttpResponseMessage> SendInviteAsync(
+        HttpClient client,
+        string tenantId,
+        string email,
+        int? advisorCode = null)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/tenants/{tenantId}/memberships")
+        {
+            Content = JsonContent.Create(new
+            {
+                email,
+                displayName = "Ana Pérez",
+                roles = AdvisorRoles,
+                advisorCode,
+            }),
+        };
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
     private static async Task<HttpResponseMessage> RemoveAsync(
@@ -523,6 +678,14 @@ public sealed class OrphanUserCleanupTests
     private static Task<long> CountUsersAsync(NpgsqlConnection connection, Guid userId) =>
         ScalarAsync(connection, "SELECT COUNT(*) FROM identity.users WHERE id = @id", ("id", userId));
 
+    // Sin FK desde tenancy.memberships a identity.users: lo único que borra estas filas es la
+    // purga que el worker pide antes de borrar al usuario.
+    private static Task<long> CountMembershipsAsync(NpgsqlConnection connection, Guid userId) =>
+        ScalarAsync(
+            connection,
+            "SELECT COUNT(*) FROM tenancy.memberships WHERE user_id = @id",
+            ("id", userId));
+
     private static Task<long> CountSessionsAsync(NpgsqlConnection connection, Guid userId) =>
         ScalarAsync(
             connection,
@@ -557,11 +720,11 @@ public sealed class OrphanUserCleanupTests
             ("consumer", Consumer),
             ("membershipId", membershipId.ToString()));
 
-    private static Task<long> CountAuditAsync(NpgsqlConnection connection, Guid userId, string action) =>
+    private static Task<long> CountAuditAsync(NpgsqlConnection connection, Guid resourceId, string action) =>
         ScalarAsync(
             connection,
             "SELECT COUNT(*) FROM audit.entries WHERE resource_id = @id AND action = @action",
-            ("id", userId.ToString()),
+            ("id", resourceId.ToString()),
             ("action", action));
 
     private static async Task ExecuteAsync(
@@ -647,13 +810,50 @@ public sealed class OrphanUserCleanupTests
 
     private sealed record RegisterPayload(Guid TenantId, Guid OwnerUserId);
 
-    private sealed record MembershipPayload(Guid Id, Guid UserId, string State);
+    private sealed record MembershipPayload(Guid Id, Guid UserId, string State, int? AdvisorCode);
 
-    private sealed class QepApiFactory(string connectionString)
+    private sealed record ProblemPayload(string Code);
+
+    /// <summary>A quién le falla la purga. Se fija después de invitar, antes de quitar.</summary>
+    private sealed class PurgeFault
+    {
+        public Guid? UserId { get; set; }
+    }
+
+    // Deja rastreado, en el TenancyDbContext del scope, el borrado de la membresía del usuario de
+    // PurgeFault y lanza sin guardar: es lo que dejaría un SaveChanges caído a mitad de purga.
+    private sealed class FaultyPurger(PurgeFault fault, TenancyDbContext dbContext)
+        : IUserReferencePurger
+    {
+        public string Source => "test-fault";
+
+        public async Task PurgeAsync(Guid userId, CancellationToken cancellationToken)
+        {
+            if (userId != fault.UserId)
+            {
+                return;
+            }
+
+            var memberships = await dbContext.Memberships
+                .Where(membership => membership.UserId == userId)
+                .ToListAsync(cancellationToken);
+            dbContext.Memberships.RemoveRange(memberships);
+            throw new InvalidOperationException("Simulated purge failure.");
+        }
+    }
+
+    private sealed class QepApiFactory(
+        string connectionString,
+        Action<IServiceCollection>? configureServices = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            if (configureServices is not null)
+            {
+                builder.ConfigureServices(configureServices);
+            }
+
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);

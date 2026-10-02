@@ -330,6 +330,8 @@ public sealed class InvitationServiceTests
             Task.FromResult(false);
 
         public void Add(Membership membership) => _memberships.Add(membership);
+
+        public void Remove(Membership membership) => _memberships.Remove(membership);
     }
 
     private sealed class TenantRepo(params Tenant[] tenants) : ITenantRepository

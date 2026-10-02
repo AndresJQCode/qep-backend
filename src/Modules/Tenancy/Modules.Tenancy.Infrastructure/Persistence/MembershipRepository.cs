@@ -97,7 +97,7 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
         CancellationToken cancellationToken)
     {
         // Sin filtro por estado a propósito (D4): una quitada conserva su código y lo sigue
-        // bloqueando, igual que el índice.
+        // bloqueando, igual que el índice, hasta que se purga con su usuario (spec 2026-10-02).
         var query = dbContext.Memberships.Where(membership =>
             membership.TenantId == tenantId && membership.AdvisorCode == advisorCode);
         if (exceptMembershipId is { } except)
@@ -109,4 +109,6 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
     }
 
     public void Add(Membership membership) => dbContext.Memberships.Add(membership);
+
+    public void Remove(Membership membership) => dbContext.Memberships.Remove(membership);
 }

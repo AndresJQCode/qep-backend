@@ -42,6 +42,8 @@ public static class TenancyInfrastructureExtensions
         services.AddScoped<IOutboxWriter, OutboxWriter>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, MembershipUserReferenceProbe>();
+        // Y lo que ese worker le pide borrar cuando la sonda no lo retiene (spec 2026-10-02).
+        services.AddScoped<IUserReferencePurger, MembershipUserReferencePurger>();
 
         services.AddScoped<IIntegrationEventHandler, TenantSettingsChangeLogProjection>();
         services.AddScoped<IIntegrationEventDispatcher, IntegrationEventDispatcher>();
