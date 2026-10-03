@@ -2,6 +2,7 @@ using System.Threading.RateLimiting;
 using Api;
 using Bootstrapper;
 using Bootstrapper.Authentication;
+using Bootstrapper.Cors;
 using Bootstrapper.Csrf;
 using Bootstrapper.Health;
 using Bootstrapper.ReverseProxy;
@@ -42,6 +43,7 @@ builder.Services.AddQepPlatform(
     builder.Environment);
 builder.Services.AddQepHealthChecks(builder.Configuration);
 builder.Services.AddQepForwardedHeaders(builder.Configuration);
+builder.Services.AddQepCors(builder.Configuration);
 
 // Superficies públicas/sin autenticar: ventana fija por IP del cliente —la que deja
 // UseForwardedHeaders detrás del ingress, no la del nodo—, generosa para tráfico real
@@ -72,6 +74,13 @@ var app = builder.Build();
 // AddQepForwardedHeaders.
 app.UseForwardedHeaders();
 app.UseExceptionHandler();
+// CORS para la SPA (Cors:AllowedOrigins; sin orígenes no se registra). Antes de la defensa CSRF,
+// de autenticación y de autorización, a propósito: el preflight se contesta acá sin llegar a
+// ellas, y las respuestas reales llevan Access-Control-Allow-Origin aunque sean un 401, un 403 o
+// un 422 — sin ese header el navegador le esconde el cuerpo del error a la SPA. Los headers se
+// aplican al empezar la respuesta, así que sobreviven a que UseExceptionHandler la limpie. Ver
+// CorsSettings.
+app.UseQepCors();
 // Afuera de autenticacion y autorizacion a proposito: es la unica posicion desde la que se puede
 // ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el
 // manejador de excepciones porque no tiran nada. Ver RequestFailureLoggingMiddleware.

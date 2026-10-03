@@ -116,6 +116,47 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
     }
 
+    // La importación de clientes lleva DisableAntiforgery —lo exige el binding de IFormFile—, y eso
+    // apaga los tokens de antiforgery de ASP.NET, no la defensa por header. Un multipart POST es un
+    // request simple, sin preflight: desde una app hermana bajo *.qcode.co, que es el mismo sitio,
+    // viajaría con la cookie SameSite=Lax. Sólo X-Qep-Client lo frena. Sin sesión alcanza: la
+    // defensa CSRF corre antes de la autenticación.
+    [Fact]
+    public async Task MultipartImportWithoutCsrfHeaderIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var url = $"/api/v1/tenants/{Guid.NewGuid()}/customers/import";
+
+        using var withoutHeader = new HttpRequestMessage(HttpMethod.Post, url) { Content = ImportUpload() };
+        var rejected = await client.SendAsync(withoutHeader, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
+        var problem = await rejected.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Missing required client header.", problem?.Title);
+
+        using var withHeader = new HttpRequestMessage(HttpMethod.Post, url) { Content = ImportUpload() };
+        withHeader.Headers.Add("X-Qep-Client", "web");
+        var passed = await client.SendAsync(withHeader, TestContext.Current.CancellationToken);
+
+        // Pasó la defensa CSRF y la frenó la autenticación: no hay sesión.
+        Assert.Equal(HttpStatusCode.Unauthorized, passed.StatusCode);
+    }
+
+    private static MultipartFormDataContent ImportUpload()
+    {
+        var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(new byte[32]);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        content.Add(file, "file", "clientes.xlsx");
+        return content;
+    }
+
+    private sealed record ProblemPayload(string? Title);
+
     [Fact]
     public async Task LogoutRevokesTheSessionCookie()
     {

@@ -94,7 +94,8 @@ Las claves obligatorias no se deducen de ese archivo sino de los validadores que
 corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
 `AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator`,
-`PaymentProofsOptionsValidator` y `ForwardedHeadersSettingsValidator`): si algo
+`PaymentProofsOptionsValidator`, `ForwardedHeadersSettingsValidator` y
+`CorsSettingsValidator`): si algo
 falta o está mal escrito, la API **no arranca**.
 
 `ConnectionStrings:QepDatabase` **no está en `appsettings.json`**, a propósito:
@@ -109,6 +110,7 @@ local y por variable de entorno en k8s
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
 | `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
+| `Cors:AllowedOrigins`                                  | ausente (sin CORS: en local la SPA va por el proxy de Vite)                                   | Orígenes exactos desde los que el navegador llama a la API con la cookie de sesión. Cada uno `https://host[:puerto]`, sin barra final, path ni comodín; uno inválido ⇒ la API no inicia. La defensa CSRF depende de que sea exacta: un comodín —ni siquiera `*.qcode.co`, donde corren otras apps— la desactiva (ver [Pipeline HTTP](#pipeline-http-programcs)). En k8s: `https://qep.qcode.co` |
 | `Authentication:UseDevelopmentStub`                    | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque                                |
 | `Authentication:Authority`                             | ausente (cae a `https://accounts.google.com`)                                                 | Emisor OIDC; sólo se define para pisar el de Google                                                                 |
 | `Authentication:Audience`                              | ausente                                                                                       | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId`                      |
@@ -1138,8 +1140,8 @@ AWS SDK para S3 (usado contra Cloudflare R2 en Storage).
 ### Pipeline HTTP (`Program.cs`)
 
 ```
-UseForwardedHeaders → UseExceptionHandler → RequestFailureLoggingMiddleware → UseRateLimiter
-  → CSRF (sin el stub) → UseAuthentication → UseAuthorization → endpoints
+UseForwardedHeaders → UseExceptionHandler → CORS (con orígenes) → RequestFailureLoggingMiddleware
+  → UseRateLimiter → CSRF (sin el stub) → UseAuthentication → UseAuthorization → endpoints
 ```
 
 `UseForwardedHeaders` va primero para que todo lo que lee `RemoteIpAddress` —la
@@ -1155,6 +1157,24 @@ las puede escribir cualquiera. `X-Real-IP` es el `$remote_addr` de nginx, que
 resuelve `CF-Connecting-IP` sólo cuando el par es de Cloudflare
 (`set_real_ip_from`), así que no se falsifica desde afuera. `X-Forwarded-For` se
 ignora por completo.
+
+CORS existe para la SPA en `https://qep.qcode.co`, que llama directo a
+`https://qep-api.qcode.co`: mismo sitio —la cookie `SameSite=Lax` viaja— pero
+otro origen. La política (`AddQepCors`) permite sólo los orígenes exactos de
+`Cors:AllowedOrigins`, con credenciales, los métodos `GET`, `POST`, `PUT`,
+`PATCH` y `DELETE`, los headers `Content-Type`, `Authorization`, `X-Qep-Client`,
+`X-Tenant-Id` e `If-Match`, sin headers expuestos y con el preflight cacheado 10
+minutos. Va antes de CSRF, autenticación y autorización para que el preflight se
+conteste sin llegar a ellas y para que un 401, 403 o 422 lleve
+`Access-Control-Allow-Origin`: sin él, el navegador le esconde el cuerpo del
+error a la SPA. Con la lista vacía el middleware no se registra: registrado sin
+orígenes no es neutro, contesta `204` a todo preflight.
+
+La defensa CSRF (`RequireCsrfHeaderMiddleware`, header `X-Qep-Client: web`) se
+apoya en esa lista: el navegador sólo manda un header custom desde otro origen
+si el preflight pasó. Por eso nunca va un comodín, un origen reflejado ni
+`SetIsOriginAllowed`; `CorsSettingsValidator` rechaza al arrancar `*`, `http` y
+cualquier cosa que no sea un origen exacto.
 
 `ApiExceptionHandler` (`IExceptionHandler`) centraliza el mapeo de excepciones
 a `ProblemDetails` (RFC 7807):

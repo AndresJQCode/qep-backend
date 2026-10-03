@@ -30,6 +30,13 @@ data:
   # auditoría guardan la IP del nodo.
   ForwardedHeaders__KnownNetworks__0: "10.50.0.0/24"
   ForwardedHeaders__KnownNetworks__1: "10.244.0.0/16"
+  # Origen exacto de la SPA, que llama directo a qep-api.qcode.co en lugar de pasar por el rewrite
+  # de Vercel (con el rewrite la API veía la IP de salida de Vercel y no la del usuario). Los dos
+  # hosts son el mismo sitio —la cookie viaja— pero orígenes distintos, así que hace falta CORS con
+  # credenciales. OJO: la defensa CSRF depende de que esta lista sea exacta. Nunca un comodín ni un
+  # *.qcode.co: bajo ese dominio corren otras apps, y cualquiera que entre a la lista puede mutar con
+  # la sesión del usuario. Sin la clave no hay CORS y la SPA en ese dominio no puede llamar a la API.
+  Cors__AllowedOrigins__0: "https://qep.qcode.co"
   # Variables OTLP estándar que el exportador del SDK lee directamente, no a través de
   # IConfiguration — ver src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
   # No definir OpenTelemetry__Endpoint acá: tendría precedencia sobre estas.
