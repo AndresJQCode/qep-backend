@@ -447,8 +447,9 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 41 del catálogo + 1 fija − 2 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
-        // (ajuste 2026-10-02), que nace oculta y el PUT devuelve tal como la recibió del GET.
+        // 46 del catálogo + 1 fija − 7 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
+        // (ajuste 2026-10-02) y las cinco "Forma de pago N" (ajuste 2026-10-03), que nacen ocultas y
+        // el PUT devuelve tal como las recibió del GET.
         Assert.Equal(40, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
@@ -457,6 +458,7 @@ public sealed class OrderExportApiTests
         Assert.DoesNotContain("EMPRESA", header);
         Assert.DoesNotContain("Email", header);
         Assert.DoesNotContain("Ciudad Coordinadora", header);
+        Assert.DoesNotContain("Forma de pago 1", header);
         Assert.Equal("NIT Empresa", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
@@ -578,7 +580,8 @@ public sealed class OrderExportApiTests
         Assert.Equal(row[4], row[26]);
         Assert.Equal("Verde Esencial S.A.S.", row[6]);
         // "Forma de pago 1" y "Forma de pago 2" (ajuste 2026-09-26): el banco y el número de cuenta de
-        // CreateCompanyWithBankAccountAsync —siempre Bancolombia, número al azar— con un espacio.
+        // CreateCompanyWithBankAccountAsync —siempre Bancolombia, número al azar— con un espacio. Las
+        // dos llenas porque el pedido tiene dos comprobantes (ajuste 2026-10-03).
         Assert.Matches(@"^Bancolombia \S+$", row[10]);
         Assert.Equal(row[10], row[12]);
         // Dos comprobantes de AddProofAsync, de 5.000 cada uno: uno por "V. Consignacion N" y el
@@ -621,6 +624,30 @@ public sealed class OrderExportApiTests
         Assert.True(sheet.NumericCells[1][14]);
         Assert.False(sheet.NumericCells[1][1]);
         Assert.False(sheet.NumericCells[1][30]);
+    }
+
+    // Ajuste 2026-10-03, de punta a punta: con el layout de la semilla, un pedido con un solo
+    // comprobante deja vacía "Forma de pago 2", igual que "V. Consignacion 2". Antes las dos
+    // formas de pago leían "bank_account", que es del pedido, y la 2 salía llena.
+    [Fact]
+    public async Task TheSeededLayoutLeavesFormaDePagoTwoEmptyWithASingleProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        await AddProofAsync(client, factory, tenantId, order.Id);
+        await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var row = sheet.Rows[1];
+        Assert.Matches(@"^Bancolombia \S+$", row[headers.IndexOf("Forma de pago 1")]);
+        Assert.Equal(5_000m, decimal.Parse(row[headers.IndexOf("V. Consignacion 1")], CultureInfo.InvariantCulture));
+        Assert.Equal(string.Empty, row[headers.IndexOf("Forma de pago 2")]);
+        Assert.Equal(string.Empty, row[headers.IndexOf("V. Consignacion 2")]);
     }
 
     /// <summary>El layout de la prueba: una fija "Tipo Doc" = "FV" primero, "Email" renombrada

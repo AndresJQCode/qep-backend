@@ -1081,6 +1081,99 @@ public sealed class OrdersExportProcessorTests
         Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText(string.Empty), cells[NitEmpresaIndex]));
     }
 
+    // Ajuste 2026-10-03: "Forma de pago N" lleva el banco con la cuenta sólo si el pedido tiene el
+    // comprobante N. "bank_account" es del pedido, así que repetida bajo "Forma de pago 1" y
+    // "Forma de pago 2" llenaba las dos aunque hubiera un solo comprobante. Las dos de primeras,
+    // para leerlas en las celdas 0 y 1.
+    private static InMemoryOrdersExportLayoutRepository PaymentMethodsVisibleFirst() =>
+        StoredLayout(
+            OrdersExportColumnSetting.Catalog("payment_method_1", "Forma de pago 1", visible: true),
+            OrdersExportColumnSetting.Catalog("payment_method_2", "Forma de pago 2", visible: true));
+
+    private static readonly QuotationBillingAccount Bancolombia7542 = new()
+    {
+        CompanyId = CompanyId,
+        BankName = "BANCOLOMBIA",
+        AccountNumber = "7542",
+        Currency = "COP",
+    };
+
+    [Fact]
+    public async Task FormaDePagoTwoIsEmptyWhenTheOrderHasASingleProof()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            billingAccount: Bancolombia7542,
+            proofs: [(10_000m, "payment-proofs/a.pdf")],
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: PaymentMethodsVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new ExportColumn[] { new("Forma de pago 1", 36), new("Forma de pago 2", 36) },
+            writer.Columns.Take(2));
+        Assert.Equal(2, writer.Rows.Count);
+        foreach (var cells in writer.Rows)
+        {
+            Assert.Equal(ExportCell.OfText("BANCOLOMBIA 7542"), cells[0]);
+            Assert.Equal(ExportCell.OfText(string.Empty), cells[1]);
+        }
+    }
+
+    [Fact]
+    public async Task FormaDePagoIsEmptyEverywhereWhenTheOrderHasNoProofs()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: Bancolombia7542)),
+                writer,
+                layouts: PaymentMethodsVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(ExportCell.OfText(string.Empty), cells[0]);
+        Assert.Equal(ExportCell.OfText(string.Empty), cells[1]);
+    }
+
+    [Fact]
+    public async Task FormaDePagoFillsOnePerProofWhenTheOrderHasTwo()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            billingAccount: Bancolombia7542,
+            proofs: [(10_000m, "payment-proofs/a.pdf"), (20_000m, null)]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: PaymentMethodsVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(ExportCell.OfText("BANCOLOMBIA 7542"), cells[0]);
+        Assert.Equal(ExportCell.OfText("BANCOLOMBIA 7542"), cells[1]);
+    }
+
+    // Ocultas por defecto: el Excel de un tenant que no las prende no cambia.
+    [Fact]
+    public async Task WithoutALayoutThatShowsThemFormaDePagoColumnsAreNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", proofs: [(10_000m, "payment-proofs/a.pdf")])),
+                writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header.StartsWith("Forma de pago", StringComparison.Ordinal));
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
+
     private static QuotationBillingAccount BillingAccountOfCompany() => new()
     {
         CompanyId = CompanyId,

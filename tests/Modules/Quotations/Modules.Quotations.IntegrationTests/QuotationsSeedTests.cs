@@ -124,11 +124,19 @@ public sealed class QuotationsSeedTests
         var tax = Assert.Single(layout.Columns, column => column.Key == "tax");
         Assert.False(tax.Visible);
         Assert.Equal("IVA", tax.Header);
-        // Ajuste 2026-09-26: el ERP exige las dos formas de pago llenas, aunque sean la misma, y lee
-        // en ellas el banco con el número de cuenta. "bank" queda oculta, con su nombre por defecto.
+        // Ajuste 2026-09-26: el ERP lee en las dos formas de pago el banco con el número de cuenta.
+        // "bank" queda oculta, con su nombre por defecto. Ajuste 2026-10-03: cada forma de pago con
+        // su comprobante —"payment_method_N"—, no "bank_account", que es del pedido y llenaba la 2
+        // con una sola consignación; "bank_account" queda oculta, con su nombre por defecto.
         Assert.Equal(
-            ["Forma de pago 1", "Forma de pago 2"],
-            layout.Columns.Where(column => column.Key == "bank_account").Select(column => column.Header));
+            "payment_method_1",
+            Assert.Single(layout.Columns, column => column.Header == "Forma de pago 1").Key);
+        Assert.Equal(
+            "payment_method_2",
+            Assert.Single(layout.Columns, column => column.Header == "Forma de pago 2").Key);
+        var bankAccount = Assert.Single(layout.Columns, column => column.Key == "bank_account");
+        Assert.False(bankAccount.Visible);
+        Assert.Equal("Banco y cuenta", bankAccount.Header);
         var bank = Assert.Single(layout.Columns, column => column.Key == "bank");
         Assert.False(bank.Visible);
         Assert.Equal("Banco", bank.Header);

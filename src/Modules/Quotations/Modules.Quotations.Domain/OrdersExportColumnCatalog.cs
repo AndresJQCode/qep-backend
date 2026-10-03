@@ -21,7 +21,8 @@ public sealed record OrdersExportCatalogColumn(string Key, string DefaultHeader,
 public static class OrdersExportColumnCatalog
 {
     /// <summary>Cuántas fechas de pago tienen columna propia (ajuste 2026-09-20), y con ellas
-    /// cuántos pares «V. Comprobante N» / «URL Comprobante N».</summary>
+    /// cuántos pares «V. Comprobante N» / «URL Comprobante N» y cuántas «Forma de pago N» (ajuste
+    /// 2026-10-03).</summary>
     public const int PaymentDateColumns = 5;
 
     public static readonly IReadOnlyList<OrdersExportCatalogColumn> Columns =
@@ -79,6 +80,14 @@ public static class OrdersExportColumnCatalog
         // nombre del DANE y otro tenant puede estar leyéndolo. Oculta por defecto porque el owner
         // pidió que no apareciera en los Excel que ya existen hasta que un tenant la prenda.
         new("coordinadora_city", "Ciudad Coordinadora", 30, DefaultVisible: false),
+        // Ajuste 2026-10-03: el banco con la cuenta, una por comprobante. "bank_account" es del
+        // pedido, así que repetida bajo "Forma de pago 1" y "Forma de pago 2" llenaba las dos aunque
+        // el pedido tuviera un solo comprobante; "payment_method_N" sólo se llena si existe el
+        // comprobante N. No reemplaza a "bank_account": otros ERP pueden estar leyéndolo. Ocultas
+        // por defecto para que ningún Excel que ya existe cambie, y al final por lo mismo.
+        .. Enumerable.Range(1, PaymentDateColumns)
+            .Select(number => new OrdersExportCatalogColumn(
+                $"payment_method_{number}", $"Forma de pago {number}", 36, DefaultVisible: false)),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
