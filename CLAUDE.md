@@ -172,17 +172,16 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Subir de banda el SDK toca tres archivos, y `rollForward` no ayuda.** `global.json` pide
   `latestPatch`, que sólo rueda **dentro** de la misma banda de feature: de `10.0.4xx` a
   `10.0.4xx` sí, de `4xx` a `5xx` no. Se mueven juntos `global.json`, el tag del `FROM` del
-  `Dockerfile` —clavado a la banda, nunca al flotante `10.0`— y el requisito del README. CI
-  no, que usa `global-json-file`. Si el `Dockerfile` queda atrás, el `docker build` muere con
+  `Dockerfile` —clavado a la banda, nunca al flotante `10.0`— y el requisito del README. Si el `Dockerfile` queda atrás, el `docker build` muere con
   `SDK not found` y exit 155 sin que nadie haya tocado el repositorio. Las rutas de SDK del
   allowlist en `.claude/settings.json` llevan comodín a propósito, para que no sean un cuarto
   lugar que se olvida.
 - **Cambiar `Directory.Packages.props` sin regenerar los lock files no rompe tu máquina: rompe
-  CI y el `docker build`.** Los 74 `packages.lock.json` —uno por `.csproj`, activados por
+  el `docker build`.** Los 74 `packages.lock.json` —uno por `.csproj`, activados por
   `RestorePackagesWithLockFile` en `Directory.Build.props`— se regeneran con
   `dotnet restore --force-evaluate` y se commitean **junto** con el props. En local un `restore`
-  normal los actualiza solo y no protesta; CI y el `Dockerfile` corren `--locked-mode`, donde
-  NuGet no resuelve nada sino que exige que el grafo coincida exacto, y fallan con `NU1004`. El
+  normal los actualiza solo y no protesta; el `Dockerfile` corre `--locked-mode`, donde NuGet
+  no resuelve nada sino que exige que el grafo coincida exacto, y falla con `NU1004`. El
   diff de los locks es además el único lugar donde se ve el arrastre transitivo: el parche de
   .NET del 2026-09-05 movió `Microsoft.IdentityModel.*` de `8.0.1` a `8.19.2`, que no está
   declarado en el props y por lo tanto no aparece en su diff.
