@@ -78,6 +78,54 @@ public sealed class OrdersExportLayoutEffectiveTests
         Assert.True(effective[2].Visible);
     }
 
+    // Ajuste 2026-10-02: una llave con DefaultVisible = false se completa oculta, sin y con layout
+    // guardado; las demás siguen saliendo visibles.
+    private static readonly IReadOnlyList<OrdersExportCatalogColumn> CatalogWithAHiddenByDefaultKey =
+    [
+        new("company", "EMPRESA", 30),
+        new("city", "Ciudad", 20),
+        new("coordinadora_city", "Ciudad Coordinadora", 30, DefaultVisible: false),
+    ];
+
+    [Fact]
+    public void AKeyHiddenByDefaultIsCompletedHiddenWithoutAStoredLayout()
+    {
+        var effective = OrdersExportLayout.Effective([], CatalogWithAHiddenByDefaultKey);
+
+        Assert.Equal(["company", "city", "coordinadora_city"], effective.Select(column => column.Key));
+        Assert.Equal([true, true, false], effective.Select(column => column.Visible));
+        Assert.Equal("Ciudad Coordinadora", effective[2].Header);
+    }
+
+    [Fact]
+    public void AKeyHiddenByDefaultIsAppendedHiddenToAStoredLayout()
+    {
+        var stored = new[]
+        {
+            OrdersExportColumnSetting.Catalog("city", "Ciudad (P4)", visible: true),
+        };
+
+        var effective = OrdersExportLayout.Effective(stored, CatalogWithAHiddenByDefaultKey);
+
+        Assert.Equal(["city", "company", "coordinadora_city"], effective.Select(column => column.Key));
+        Assert.Equal([true, true, false], effective.Select(column => column.Visible));
+    }
+
+    // Lo guardado manda sobre el defecto: el tenant que la prendió la sigue viendo.
+    [Fact]
+    public void AStoredKeyHiddenByDefaultKeepsTheVisibilityTheTenantSaved()
+    {
+        var stored = new[]
+        {
+            OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad", visible: true),
+        };
+
+        var effective = OrdersExportLayout.Effective(stored, CatalogWithAHiddenByDefaultKey);
+
+        Assert.Equal("coordinadora_city", effective[0].Key);
+        Assert.True(effective[0].Visible);
+    }
+
     [Fact]
     public void AStoredKeyThatLeftTheCatalogIsDropped()
     {

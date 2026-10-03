@@ -31,6 +31,18 @@ public sealed class City
 
     public DepartmentId DepartmentId { get; private set; }
 
+    /// <summary>
+    /// El nombre del municipio tal como lo escribe la transportadora Coordinadora: en mayúscula,
+    /// casi siempre sin tildes (la Ñ sí la conserva) y con la abreviatura del departamento entre
+    /// paréntesis ("ABEJORRAL (ANT)"). Lo
+    /// usa la columna "Ciudad Coordinadora" del Excel de pedidos, que el tenant importa en su ERP
+    /// para generar la guía: Coordinadora no reconoce el nombre del DANE ("ABEJORRAL") y no hay
+    /// regla que convierta uno en el otro, así que se guarda el suyo. Null cuando Coordinadora no
+    /// lista el municipio o lo lista inactivo. Lo fija el importador en cada arranque, desde el
+    /// snapshot embebido (ver <c>GeographySeeder</c>).
+    /// </summary>
+    public string? CoordinadoraName { get; private set; }
+
     public static City Create(CityId id, string divipolaCode, string name, DepartmentId departmentId)
     {
         EnsureValidCode(divipolaCode);
@@ -43,6 +55,15 @@ public sealed class City
     public void Rename(string name)
     {
         Name = EnsureValidName(name);
+    }
+
+    // Usado por el importador en cada arranque. Vacío o sólo espacios cuenta como "Coordinadora no
+    // lo lista": queda null y no una cadena vacía, para que "sin nombre" tenga una sola forma.
+    public void SetCoordinadoraName(string? coordinadoraName)
+    {
+        CoordinadoraName = string.IsNullOrWhiteSpace(coordinadoraName)
+            ? null
+            : coordinadoraName.Trim();
     }
 
     private static void EnsureValidCode(string divipolaCode)

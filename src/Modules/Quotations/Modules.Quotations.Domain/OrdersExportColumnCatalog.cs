@@ -1,8 +1,10 @@
 namespace Modules.Quotations.Domain;
 
 /// <summary>Una columna del catálogo del Excel de pedidos: la llave estable con la que el tenant la
-/// homologa, el encabezado por defecto —el de hoy, sin cambios— y el ancho de la hoja.</summary>
-public sealed record OrdersExportCatalogColumn(string Key, string DefaultHeader, double Width);
+/// homologa, el encabezado por defecto —el de hoy, sin cambios—, el ancho de la hoja y si sale
+/// visible cuando el tenant no dijo nada de ella. <c>DefaultVisible</c> es <c>true</c> salvo en
+/// una columna que no debe aparecer sola en los Excel que ya existen (ajuste 2026-10-02).</summary>
+public sealed record OrdersExportCatalogColumn(string Key, string DefaultHeader, double Width, bool DefaultVisible = true);
 
 /// <summary>
 /// Las columnas que el Excel de pedidos sabe producir, en su orden (spec 2026-09-24, homologación
@@ -72,6 +74,11 @@ public static class OrdersExportColumnCatalog
         // "company"—, que el ERP del tenant importa en "Nit". Antes era una fija con el NIT escrito a
         // mano, que dejaba de ser cierto en cuanto la cotización se facturaba por otra empresa.
         new("company_tax_id", "NIT Empresa", 18),
+        // Ajuste 2026-10-02: la ciudad como la escribe Coordinadora ("ABEJORRAL (ANT)"), que el
+        // tenant importa en su ERP para generar la guía de envío. No reemplaza a "city", que es el
+        // nombre del DANE y otro tenant puede estar leyéndolo. Oculta por defecto porque el owner
+        // pidió que no apareciera en los Excel que ya existen hasta que un tenant la prenda.
+        new("coordinadora_city", "Ciudad Coordinadora", 30, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

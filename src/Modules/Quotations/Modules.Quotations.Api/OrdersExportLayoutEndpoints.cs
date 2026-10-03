@@ -89,6 +89,7 @@ public static class OrdersExportLayoutEndpoints
                     column.Key,
                     column.DefaultHeader,
                     column.DefaultPosition,
+                    column.DefaultVisible,
                     column.Header,
                     column.Value,
                     column.Visible))
@@ -133,14 +134,17 @@ public sealed record OrdersExportLayoutResponse(
     IReadOnlyList<OrdersExportColumnResponse> Columns,
     long Version);
 
-/// <summary>`DefaultHeader` y `DefaultPosition` (1-based) viajan por columna (regla BFF): la
-/// pantalla los necesita como placeholder, para "restaurar" una sola y para "restaurar todo" sin
-/// conocer el catálogo. Nulos en una fija.</summary>
+/// <summary>`DefaultHeader`, `DefaultPosition` (1-based) y `DefaultVisible` viajan por columna
+/// (regla BFF): la pantalla los necesita como placeholder, para "restaurar" una sola y para
+/// "restaurar todo" sin conocer el catálogo. `DefaultVisible` (ajuste 2026-10-02) porque ya no
+/// toda columna nace visible: sin él, "restaurar" prendería "coordinadora_city". Nulos en una
+/// fija.</summary>
 public sealed record OrdersExportColumnResponse(
     string Kind,
     string? Key,
     string? DefaultHeader,
     int? DefaultPosition,
+    bool? DefaultVisible,
     string Header,
     string? Value,
     bool Visible);

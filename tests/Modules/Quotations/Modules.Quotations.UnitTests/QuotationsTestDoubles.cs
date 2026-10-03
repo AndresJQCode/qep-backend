@@ -868,11 +868,32 @@ internal sealed class StubQuotationCompanyLookup(
         Task.FromResult(companies.GetValueOrDefault(companyId));
 }
 
+/// <summary>Los nombres del DANE en <paramref name="cityNames"/> y los de Coordinadora en
+/// <paramref name="coordinadoraNames"/>: dos diccionarios porque son dos datos distintos, y una
+/// ciudad puede tener el primero sin el segundo.</summary>
 internal sealed class StubQuotationGeographyLookup(
-    IReadOnlyDictionary<Guid, string> cityNames) : IQuotationGeographyLookup
+    IReadOnlyDictionary<Guid, string> cityNames,
+    IReadOnlyDictionary<Guid, string>? coordinadoraNames = null) : IQuotationGeographyLookup
 {
+    private readonly IReadOnlyDictionary<Guid, string> _coordinadoraNames =
+        coordinadoraNames ?? new Dictionary<Guid, string>();
+
+    /// <summary>Cuántas veces se pidieron nombres de Coordinadora: uno por lote es la aserción.</summary>
+    public int FindCoordinadoraCityNamesCalls { get; private set; }
+
+    public IReadOnlyCollection<Guid> LastCoordinadoraRequestedIds { get; private set; } = [];
+
     public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             cityIds.Where(cityNames.ContainsKey).Distinct().ToDictionary(id => id, id => cityNames[id]));
+
+    public Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+    {
+        FindCoordinadoraCityNamesCalls++;
+        LastCoordinadoraRequestedIds = cityIds;
+        return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            cityIds.Where(_coordinadoraNames.ContainsKey).Distinct().ToDictionary(id => id, id => _coordinadoraNames[id]));
+    }
 }

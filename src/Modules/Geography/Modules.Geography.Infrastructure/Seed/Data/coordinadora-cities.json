@@ -1,0 +1,4074 @@
+[
+  {
+    "code": "05001",
+    "name": "MEDELLIN (ANT)"
+  },
+  {
+    "code": "05002",
+    "name": "ABEJORRAL (ANT)"
+  },
+  {
+    "code": "05004",
+    "name": "ABRIAQUI (ANT)"
+  },
+  {
+    "code": "05021",
+    "name": "ALEJANDRIA (ANT)"
+  },
+  {
+    "code": "05030",
+    "name": "AMAGA (ANT)"
+  },
+  {
+    "code": "05031",
+    "name": "AMALFI (ANT)"
+  },
+  {
+    "code": "05034",
+    "name": "ANDES (ANT)"
+  },
+  {
+    "code": "05036",
+    "name": "ANGELOPOLIS (ANT)"
+  },
+  {
+    "code": "05038",
+    "name": "ANGOSTURA (ANT)"
+  },
+  {
+    "code": "05040",
+    "name": "ANORI (ANT)"
+  },
+  {
+    "code": "05042",
+    "name": "SANTA FE DE ANTIOQUIA (ANT)"
+  },
+  {
+    "code": "05044",
+    "name": "ANZA (ANT)"
+  },
+  {
+    "code": "05045",
+    "name": "APARTADO (ANT)"
+  },
+  {
+    "code": "05051",
+    "name": "ARBOLETES (ANT)"
+  },
+  {
+    "code": "05055",
+    "name": "ARGELIA (ANT)"
+  },
+  {
+    "code": "05059",
+    "name": "ARMENIA MANTEQUILLA (ANT)"
+  },
+  {
+    "code": "05079",
+    "name": "BARBOSA (ANT)"
+  },
+  {
+    "code": "05086",
+    "name": "BELMIRA (ANT)"
+  },
+  {
+    "code": "05088",
+    "name": "BELLO (ANT)"
+  },
+  {
+    "code": "05091",
+    "name": "BETANIA (ANT)"
+  },
+  {
+    "code": "05093",
+    "name": "BETULIA (ANT)"
+  },
+  {
+    "code": "05101",
+    "name": "CIUDAD BOLIVAR (ANT)"
+  },
+  {
+    "code": "05107",
+    "name": "BRICEÑO (ANT)"
+  },
+  {
+    "code": "05113",
+    "name": "BURITICA (ANT)"
+  },
+  {
+    "code": "05120",
+    "name": "CACERES (ANT)"
+  },
+  {
+    "code": "05125",
+    "name": "CAICEDO (ANT)"
+  },
+  {
+    "code": "05129",
+    "name": "CALDAS (ANT)"
+  },
+  {
+    "code": "05134",
+    "name": "CAMPAMENTO (ANT)"
+  },
+  {
+    "code": "05138",
+    "name": "CAÑASGORDAS (ANT)"
+  },
+  {
+    "code": "05142",
+    "name": "CARACOLI (ANT)"
+  },
+  {
+    "code": "05145",
+    "name": "CARAMANTA (ANT)"
+  },
+  {
+    "code": "05147",
+    "name": "CAREPA (ANT)"
+  },
+  {
+    "code": "05148",
+    "name": "EL CARMEN DE VIBORAL (ANT)"
+  },
+  {
+    "code": "05150",
+    "name": "CAROLINA DEL PRINCIPE (ANT)"
+  },
+  {
+    "code": "05154",
+    "name": "CAUCASIA (ANT)"
+  },
+  {
+    "code": "05172",
+    "name": "CHIGORODO (ANT)"
+  },
+  {
+    "code": "05190",
+    "name": "CISNEROS (ANT)"
+  },
+  {
+    "code": "05197",
+    "name": "COCORNA (ANT)"
+  },
+  {
+    "code": "05206",
+    "name": "CONCEPCION (ANT)"
+  },
+  {
+    "code": "05209",
+    "name": "CONCORDIA (ANT)"
+  },
+  {
+    "code": "05212",
+    "name": "COPACABANA (ANT)"
+  },
+  {
+    "code": "05234",
+    "name": "DABEIBA (ANT)"
+  },
+  {
+    "code": "05237",
+    "name": "DON MATIAS (ANT)"
+  },
+  {
+    "code": "05240",
+    "name": "EBEJICO (ANT)"
+  },
+  {
+    "code": "05250",
+    "name": "EL BAGRE (ANT)"
+  },
+  {
+    "code": "05264",
+    "name": "ENTRERRIOS (ANT)"
+  },
+  {
+    "code": "05266",
+    "name": "ENVIGADO (ANT)"
+  },
+  {
+    "code": "05282",
+    "name": "FREDONIA (ANT)"
+  },
+  {
+    "code": "05284",
+    "name": "FRONTINO (ANT)"
+  },
+  {
+    "code": "05306",
+    "name": "GIRALDO (ANT)"
+  },
+  {
+    "code": "05308",
+    "name": "GIRARDOTA (ANT)"
+  },
+  {
+    "code": "05310",
+    "name": "GOMEZ PLATA (ANT)"
+  },
+  {
+    "code": "05313",
+    "name": "GRANADA (ANT)"
+  },
+  {
+    "code": "05315",
+    "name": "GUADALUPE (ANT)"
+  },
+  {
+    "code": "05318",
+    "name": "GUARNE (ANT)"
+  },
+  {
+    "code": "05321",
+    "name": "GUATAPE (ANT)"
+  },
+  {
+    "code": "05347",
+    "name": "HELICONIA (ANT)"
+  },
+  {
+    "code": "05353",
+    "name": "HISPANIA (ANT)"
+  },
+  {
+    "code": "05360",
+    "name": "ITAGUI (ANT)"
+  },
+  {
+    "code": "05361",
+    "name": "ITUANGO (ANT)"
+  },
+  {
+    "code": "05364",
+    "name": "JARDIN SUROESTE (ANT)"
+  },
+  {
+    "code": "05368",
+    "name": "JERICO (ANT)"
+  },
+  {
+    "code": "05376",
+    "name": "LA CEJA (ANT)"
+  },
+  {
+    "code": "05380",
+    "name": "LA ESTRELLA (ANT)"
+  },
+  {
+    "code": "05390",
+    "name": "LA PINTADA (ANT)"
+  },
+  {
+    "code": "05400",
+    "name": "LA UNION (ANT)"
+  },
+  {
+    "code": "05411",
+    "name": "LIBORINA (ANT)"
+  },
+  {
+    "code": "05425",
+    "name": "MACEO (ANT)"
+  },
+  {
+    "code": "05440",
+    "name": "MARINILLA (ANT)"
+  },
+  {
+    "code": "05467",
+    "name": "MONTEBELLO (ANT)"
+  },
+  {
+    "code": "05475",
+    "name": "MURINDO (ANT)"
+  },
+  {
+    "code": "05480",
+    "name": "MUTATA (ANT)"
+  },
+  {
+    "code": "05483",
+    "name": "NARIÑO (ANT)"
+  },
+  {
+    "code": "05490",
+    "name": "NECOCLI (ANT)"
+  },
+  {
+    "code": "05495",
+    "name": "NECHI (ANT)"
+  },
+  {
+    "code": "05501",
+    "name": "OLAYA (ANT)"
+  },
+  {
+    "code": "05541",
+    "name": "EL PEÑOL (ANT)"
+  },
+  {
+    "code": "05543",
+    "name": "PEQUE (ANT)"
+  },
+  {
+    "code": "05576",
+    "name": "PUEBLORRICO (ANT)"
+  },
+  {
+    "code": "05579",
+    "name": "PUERTO BERRIO (ANT)"
+  },
+  {
+    "code": "05585",
+    "name": "PUERTO NARE (ANT)"
+  },
+  {
+    "code": "05591",
+    "name": "PUERTO TRIUNFO (ANT)"
+  },
+  {
+    "code": "05604",
+    "name": "REMEDIOS (ANT)"
+  },
+  {
+    "code": "05607",
+    "name": "RETIRO (ANT)"
+  },
+  {
+    "code": "05615",
+    "name": "RIONEGRO (ANT)"
+  },
+  {
+    "code": "05628",
+    "name": "SABANALARGA (ANT)"
+  },
+  {
+    "code": "05631",
+    "name": "SABANETA (ANT)"
+  },
+  {
+    "code": "05642",
+    "name": "SALGAR (ANT)"
+  },
+  {
+    "code": "05647",
+    "name": "SAN ANDRES DE CUERQUIA (ANT)"
+  },
+  {
+    "code": "05649",
+    "name": "SAN CARLOS (ANT)"
+  },
+  {
+    "code": "05652",
+    "name": "SAN FRANCISCO (ANT)"
+  },
+  {
+    "code": "05656",
+    "name": "SAN JERONIMO (ANT)"
+  },
+  {
+    "code": "05658",
+    "name": "SAN JOSE DE LA MONTAÑA (ANT)"
+  },
+  {
+    "code": "05659",
+    "name": "SAN JUAN DE URABA (ANT)"
+  },
+  {
+    "code": "05660",
+    "name": "SAN LUIS (ANT)"
+  },
+  {
+    "code": "05664",
+    "name": "SAN PEDRO DE LOS MILAGROS (ANT)"
+  },
+  {
+    "code": "05665",
+    "name": "SAN PEDRO DE URABA (ANT)"
+  },
+  {
+    "code": "05667",
+    "name": "SAN RAFAEL (ANT)"
+  },
+  {
+    "code": "05670",
+    "name": "SAN ROQUE (ANT)"
+  },
+  {
+    "code": "05674",
+    "name": "SAN VICENTE (ANT)"
+  },
+  {
+    "code": "05679",
+    "name": "SANTA BARBARA (ANT)"
+  },
+  {
+    "code": "05686",
+    "name": "SANTA ROSA DE OSOS (ANT)"
+  },
+  {
+    "code": "05690",
+    "name": "SANTO DOMINGO (ANT)"
+  },
+  {
+    "code": "05697",
+    "name": "EL SANTUARIO (ANT)"
+  },
+  {
+    "code": "05736",
+    "name": "SEGOVIA (ANT)"
+  },
+  {
+    "code": "05756",
+    "name": "SONSON (ANT)"
+  },
+  {
+    "code": "05761",
+    "name": "SOPETRAN (ANT)"
+  },
+  {
+    "code": "05789",
+    "name": "TAMESIS (ANT)"
+  },
+  {
+    "code": "05790",
+    "name": "TARAZA (ANT)"
+  },
+  {
+    "code": "05792",
+    "name": "TARSO (ANT)"
+  },
+  {
+    "code": "05809",
+    "name": "TITIRIBI (ANT)"
+  },
+  {
+    "code": "05819",
+    "name": "TOLEDO (ANT)"
+  },
+  {
+    "code": "05837",
+    "name": "TURBO (ANT)"
+  },
+  {
+    "code": "05842",
+    "name": "URAMITA (ANT)"
+  },
+  {
+    "code": "05847",
+    "name": "URRAO (ANT)"
+  },
+  {
+    "code": "05854",
+    "name": "VALDIVIA (ANT)"
+  },
+  {
+    "code": "05856",
+    "name": "VALPARAISO (ANT)"
+  },
+  {
+    "code": "05858",
+    "name": "VEGACHI (ANT)"
+  },
+  {
+    "code": "05861",
+    "name": "VENECIA (ANT)"
+  },
+  {
+    "code": "05885",
+    "name": "YALI (ANT)"
+  },
+  {
+    "code": "05887",
+    "name": "YARUMAL (ANT)"
+  },
+  {
+    "code": "05890",
+    "name": "YOLOMBO (ANT)"
+  },
+  {
+    "code": "05893",
+    "name": "YONDO CASABE (ANT)"
+  },
+  {
+    "code": "05895",
+    "name": "ZARAGOZA (ANT)"
+  },
+  {
+    "code": "08001",
+    "name": "BARRANQUILLA (ATL)"
+  },
+  {
+    "code": "08078",
+    "name": "BARANOA (ATL)"
+  },
+  {
+    "code": "08137",
+    "name": "CAMPO DE LA CRUZ (ATL)"
+  },
+  {
+    "code": "08141",
+    "name": "CANDELARIA (ATL)"
+  },
+  {
+    "code": "08296",
+    "name": "GALAPA (ATL)"
+  },
+  {
+    "code": "08372",
+    "name": "JUAN DE ACOSTA (ATL)"
+  },
+  {
+    "code": "08421",
+    "name": "LURUACO (ATL)"
+  },
+  {
+    "code": "08433",
+    "name": "MALAMBO (ATL)"
+  },
+  {
+    "code": "08436",
+    "name": "MANATI (ATL)"
+  },
+  {
+    "code": "08520",
+    "name": "PALMAR DE VARELA (ATL)"
+  },
+  {
+    "code": "08549",
+    "name": "PIOJO (ATL)"
+  },
+  {
+    "code": "08558",
+    "name": "POLONUEVO (ATL)"
+  },
+  {
+    "code": "08560",
+    "name": "PONEDERA (ATL)"
+  },
+  {
+    "code": "08573",
+    "name": "PUERTO COLOMBIA (ATL)"
+  },
+  {
+    "code": "08606",
+    "name": "REPELON (ATL)"
+  },
+  {
+    "code": "08634",
+    "name": "SABANAGRANDE (ATL)"
+  },
+  {
+    "code": "08638",
+    "name": "SABANALARGA (ATL)"
+  },
+  {
+    "code": "08675",
+    "name": "SANTA LUCIA (ATL)"
+  },
+  {
+    "code": "08685",
+    "name": "SANTO TOMAS (ATL)"
+  },
+  {
+    "code": "08758",
+    "name": "SOLEDAD (ATL)"
+  },
+  {
+    "code": "08770",
+    "name": "SUAN (ATL)"
+  },
+  {
+    "code": "08832",
+    "name": "TUBARA (ATL)"
+  },
+  {
+    "code": "08849",
+    "name": "USIACURI (ATL)"
+  },
+  {
+    "code": "11001",
+    "name": "BOGOTA (C/MARCA)"
+  },
+  {
+    "code": "13001",
+    "name": "CARTAGENA (BOL)"
+  },
+  {
+    "code": "13006",
+    "name": "ACHI (BOL)"
+  },
+  {
+    "code": "13042",
+    "name": "ARENAL (BOL)"
+  },
+  {
+    "code": "13052",
+    "name": "ARJONA (BOL)"
+  },
+  {
+    "code": "13074",
+    "name": "BARRANCO DE LOBA (BOL)"
+  },
+  {
+    "code": "13140",
+    "name": "CALAMAR (BOL)"
+  },
+  {
+    "code": "13160",
+    "name": "CANTAGALLO (BOL)"
+  },
+  {
+    "code": "13188",
+    "name": "CICUCO (BOL)"
+  },
+  {
+    "code": "13212",
+    "name": "CORDOBA (BOL)"
+  },
+  {
+    "code": "13222",
+    "name": "CLEMENCIA (BOL)"
+  },
+  {
+    "code": "13244",
+    "name": "EL CARMEN DE BOLIVAR (BOL)"
+  },
+  {
+    "code": "13248",
+    "name": "EL GUAMO (BOL)"
+  },
+  {
+    "code": "13300",
+    "name": "HATILLO DE LOBA (BOL)"
+  },
+  {
+    "code": "13430",
+    "name": "MAGANGUE (BOL)"
+  },
+  {
+    "code": "13433",
+    "name": "MAHATES (BOL)"
+  },
+  {
+    "code": "13440",
+    "name": "MARGARITA (BOL)"
+  },
+  {
+    "code": "13442",
+    "name": "MARIA LA BAJA (BOL)"
+  },
+  {
+    "code": "13458",
+    "name": "MONTECRISTO (BOL)"
+  },
+  {
+    "code": "13468",
+    "name": "MOMPOS (BOL)"
+  },
+  {
+    "code": "13473",
+    "name": "MORALES (BOL)"
+  },
+  {
+    "code": "13490",
+    "name": "NOROSI (BOL)"
+  },
+  {
+    "code": "13580",
+    "name": "REGIDOR (BOL)"
+  },
+  {
+    "code": "13600",
+    "name": "RIO VIEJO (BOL)"
+  },
+  {
+    "code": "13647",
+    "name": "SAN ESTANISLAO (BOL)"
+  },
+  {
+    "code": "13650",
+    "name": "SAN FERNANDO (BOL)"
+  },
+  {
+    "code": "13654",
+    "name": "SAN JACINTO (BOL)"
+  },
+  {
+    "code": "13657",
+    "name": "SAN JUAN NEPOMUCENO (BOL)"
+  },
+  {
+    "code": "13667",
+    "name": "SAN MARTIN DE LOBA (BOL)"
+  },
+  {
+    "code": "13670",
+    "name": "SAN PABLO (BOL)"
+  },
+  {
+    "code": "13673",
+    "name": "SANTA CATALINA (BOL)"
+  },
+  {
+    "code": "13688",
+    "name": "SANTA ROSA DEL SUR (BOL)"
+  },
+  {
+    "code": "13744",
+    "name": "SIMITI (BOL)"
+  },
+  {
+    "code": "13760",
+    "name": "SOPLAVIENTO (BOL)"
+  },
+  {
+    "code": "13780",
+    "name": "TALAIGUA NUEVO (BOL)"
+  },
+  {
+    "code": "13810",
+    "name": "PUERTO RICO TIQUISIO (BOL)"
+  },
+  {
+    "code": "13836",
+    "name": "TURBACO (BOL)"
+  },
+  {
+    "code": "13838",
+    "name": "TURBANA (BOL)"
+  },
+  {
+    "code": "13873",
+    "name": "VILLANUEVA (BOL)"
+  },
+  {
+    "code": "13894",
+    "name": "ZAMBRANO (BOL)"
+  },
+  {
+    "code": "15001",
+    "name": "TUNJA (BOY)"
+  },
+  {
+    "code": "15022",
+    "name": "ALMEIDA (BOY)"
+  },
+  {
+    "code": "15047",
+    "name": "AQUITANIA (BOY)"
+  },
+  {
+    "code": "15051",
+    "name": "ARCABUCO (BOY)"
+  },
+  {
+    "code": "15087",
+    "name": "BELEN (BOY)"
+  },
+  {
+    "code": "15090",
+    "name": "BERBEO (BOY)"
+  },
+  {
+    "code": "15092",
+    "name": "BETEITIVA (BOY)"
+  },
+  {
+    "code": "15097",
+    "name": "BOAVITA (BOY)"
+  },
+  {
+    "code": "15104",
+    "name": "BOYACA (BOY)"
+  },
+  {
+    "code": "15106",
+    "name": "BRICEÑO (BOY)"
+  },
+  {
+    "code": "15109",
+    "name": "BUENAVISTA (BOY)"
+  },
+  {
+    "code": "15114",
+    "name": "BUSBANZA (BOY)"
+  },
+  {
+    "code": "15131",
+    "name": "CALDAS (BOY)"
+  },
+  {
+    "code": "15135",
+    "name": "CAMPOHERMOSO (BOY)"
+  },
+  {
+    "code": "15162",
+    "name": "CERINZA (BOY)"
+  },
+  {
+    "code": "15172",
+    "name": "CHINAVITA (BOY)"
+  },
+  {
+    "code": "15176",
+    "name": "CHIQUINQUIRA (BOY)"
+  },
+  {
+    "code": "15180",
+    "name": "CHISCAS (BOY)"
+  },
+  {
+    "code": "15183",
+    "name": "CHITA (BOY)"
+  },
+  {
+    "code": "15185",
+    "name": "CHITARAQUE (BOY)"
+  },
+  {
+    "code": "15187",
+    "name": "CHIVATA (BOY)"
+  },
+  {
+    "code": "15189",
+    "name": "CIENEGA (BOY)"
+  },
+  {
+    "code": "15204",
+    "name": "COMBITA (BOY)"
+  },
+  {
+    "code": "15212",
+    "name": "COPER (BOY)"
+  },
+  {
+    "code": "15215",
+    "name": "CORRALES (BOY)"
+  },
+  {
+    "code": "15218",
+    "name": "COVARACHIA (BOY)"
+  },
+  {
+    "code": "15223",
+    "name": "CUBARA (BOY)"
+  },
+  {
+    "code": "15224",
+    "name": "CUCAITA (BOY)"
+  },
+  {
+    "code": "15226",
+    "name": "CUITIVA (BOY)"
+  },
+  {
+    "code": "15232",
+    "name": "CHIQUIZA (BOY)"
+  },
+  {
+    "code": "15236",
+    "name": "CHIVOR (BOY)"
+  },
+  {
+    "code": "15238",
+    "name": "DUITAMA (BOY)"
+  },
+  {
+    "code": "15244",
+    "name": "EL COCUY (BOY)"
+  },
+  {
+    "code": "15248",
+    "name": "EL ESPINO (BOY)"
+  },
+  {
+    "code": "15272",
+    "name": "FIRAVITOBA (BOY)"
+  },
+  {
+    "code": "15276",
+    "name": "FLORESTA (BOY)"
+  },
+  {
+    "code": "15293",
+    "name": "GACHANTIVA (BOY)"
+  },
+  {
+    "code": "15296",
+    "name": "GAMEZA (BOY)"
+  },
+  {
+    "code": "15299",
+    "name": "GARAGOA (BOY)"
+  },
+  {
+    "code": "15317",
+    "name": "GUACAMAYAS (BOY)"
+  },
+  {
+    "code": "15322",
+    "name": "GUATEQUE (BOY)"
+  },
+  {
+    "code": "15325",
+    "name": "GUAYATA (BOY)"
+  },
+  {
+    "code": "15332",
+    "name": "GUICAN (BOY)"
+  },
+  {
+    "code": "15362",
+    "name": "IZA (BOY)"
+  },
+  {
+    "code": "15367",
+    "name": "JENESANO (BOY)"
+  },
+  {
+    "code": "15368",
+    "name": "JERICO (BOY)"
+  },
+  {
+    "code": "15377",
+    "name": "LABRANZAGRANDE (BOY)"
+  },
+  {
+    "code": "15380",
+    "name": "LA CAPILLA (BOY)"
+  },
+  {
+    "code": "15401",
+    "name": "LA VICTORIA (BOY)"
+  },
+  {
+    "code": "15403",
+    "name": "LA UVITA (BOY)"
+  },
+  {
+    "code": "15407",
+    "name": "VILLA DE LEYVA (BOY)"
+  },
+  {
+    "code": "15425",
+    "name": "MACANAL (BOY)"
+  },
+  {
+    "code": "15442",
+    "name": "MARIPI (BOY)"
+  },
+  {
+    "code": "15455",
+    "name": "MIRAFLORES (BOY)"
+  },
+  {
+    "code": "15464",
+    "name": "MONGUA (BOY)"
+  },
+  {
+    "code": "15466",
+    "name": "MONGUI (BOY)"
+  },
+  {
+    "code": "15469",
+    "name": "MONIQUIRA (BOY)"
+  },
+  {
+    "code": "15476",
+    "name": "MOTAVITA (BOY)"
+  },
+  {
+    "code": "15480",
+    "name": "MUZO (BOY)"
+  },
+  {
+    "code": "15491",
+    "name": "NOBSA (BOY)"
+  },
+  {
+    "code": "15494",
+    "name": "NUEVO COLON (BOY)"
+  },
+  {
+    "code": "15500",
+    "name": "OICATA (BOY)"
+  },
+  {
+    "code": "15507",
+    "name": "OTANCHE (BOY)"
+  },
+  {
+    "code": "15511",
+    "name": "PACHAVITA (BOY)"
+  },
+  {
+    "code": "15514",
+    "name": "PAEZ (BOY)"
+  },
+  {
+    "code": "15516",
+    "name": "PAIPA (BOY)"
+  },
+  {
+    "code": "15518",
+    "name": "PAJARITO (BOY)"
+  },
+  {
+    "code": "15522",
+    "name": "PANQUEBA (BOY)"
+  },
+  {
+    "code": "15531",
+    "name": "PAUNA (BOY)"
+  },
+  {
+    "code": "15537",
+    "name": "PAZ DE RIO (BOY)"
+  },
+  {
+    "code": "15542",
+    "name": "PESCA (BOY)"
+  },
+  {
+    "code": "15572",
+    "name": "PUERTO BOYACA (BOY)"
+  },
+  {
+    "code": "15580",
+    "name": "QUIPAMA (BOY)"
+  },
+  {
+    "code": "15599",
+    "name": "RAMIRIQUI (BOY)"
+  },
+  {
+    "code": "15600",
+    "name": "RAQUIRA (BOY)"
+  },
+  {
+    "code": "15621",
+    "name": "RONDON (BOY)"
+  },
+  {
+    "code": "15632",
+    "name": "SABOYA (BOY)"
+  },
+  {
+    "code": "15638",
+    "name": "SACHICA (BOY)"
+  },
+  {
+    "code": "15646",
+    "name": "SAMACA (BOY)"
+  },
+  {
+    "code": "15660",
+    "name": "SAN EDUARDO (BOY)"
+  },
+  {
+    "code": "15664",
+    "name": "SAN JOSE DE PARE (BOY)"
+  },
+  {
+    "code": "15667",
+    "name": "SAN LUIS DE GACENO (BOY)"
+  },
+  {
+    "code": "15673",
+    "name": "SAN MATEO (BOY)"
+  },
+  {
+    "code": "15676",
+    "name": "SAN MIGUEL DE SEMA (BOY)"
+  },
+  {
+    "code": "15681",
+    "name": "SAN PABLO DE BORBUR (BOY)"
+  },
+  {
+    "code": "15686",
+    "name": "SANTANA (BOY)"
+  },
+  {
+    "code": "15690",
+    "name": "SANTA MARIA (BOY)"
+  },
+  {
+    "code": "15693",
+    "name": "SANTA ROSA DE VITERBO (BOY)"
+  },
+  {
+    "code": "15696",
+    "name": "SANTA SOFIA (BOY)"
+  },
+  {
+    "code": "15720",
+    "name": "SATIVANORTE (BOY)"
+  },
+  {
+    "code": "15723",
+    "name": "SATIVASUR (BOY)"
+  },
+  {
+    "code": "15740",
+    "name": "SIACHOQUE (BOY)"
+  },
+  {
+    "code": "15753",
+    "name": "SOATA (BOY)"
+  },
+  {
+    "code": "15755",
+    "name": "SOCOTA (BOY)"
+  },
+  {
+    "code": "15757",
+    "name": "SOCHA (BOY)"
+  },
+  {
+    "code": "15759",
+    "name": "SOGAMOSO (BOY)"
+  },
+  {
+    "code": "15761",
+    "name": "SOMONDOCO (BOY)"
+  },
+  {
+    "code": "15762",
+    "name": "SORA (BOY)"
+  },
+  {
+    "code": "15763",
+    "name": "SOTAQUIRÁ (BOY)"
+  },
+  {
+    "code": "15764",
+    "name": "SORACA (BOY)"
+  },
+  {
+    "code": "15774",
+    "name": "SUSACON (BOY)"
+  },
+  {
+    "code": "15776",
+    "name": "SUTAMARCHAN (BOY)"
+  },
+  {
+    "code": "15778",
+    "name": "SUTATENZA (BOY)"
+  },
+  {
+    "code": "15790",
+    "name": "TASCO (BOY)"
+  },
+  {
+    "code": "15798",
+    "name": "TENZA (BOY)"
+  },
+  {
+    "code": "15804",
+    "name": "TIBANA (BOY)"
+  },
+  {
+    "code": "15806",
+    "name": "TIBASOSA (BOY)"
+  },
+  {
+    "code": "15808",
+    "name": "TINJACA (BOY)"
+  },
+  {
+    "code": "15810",
+    "name": "TIPACOQUE (BOY)"
+  },
+  {
+    "code": "15814",
+    "name": "TOCA (BOY)"
+  },
+  {
+    "code": "15816",
+    "name": "TOGUI (BOY)"
+  },
+  {
+    "code": "15820",
+    "name": "TOPAGA (BOY)"
+  },
+  {
+    "code": "15822",
+    "name": "TOTA (BOY)"
+  },
+  {
+    "code": "15832",
+    "name": "TUNUNGUA (BOY)"
+  },
+  {
+    "code": "15835",
+    "name": "TURMEQUE (BOY)"
+  },
+  {
+    "code": "15837",
+    "name": "TUTA (BOY)"
+  },
+  {
+    "code": "15839",
+    "name": "TUTAZA (BOY)"
+  },
+  {
+    "code": "15842",
+    "name": "UMBITA (BOY)"
+  },
+  {
+    "code": "15861",
+    "name": "VENTAQUEMADA (BOY)"
+  },
+  {
+    "code": "15879",
+    "name": "VIRACACHA (BOY)"
+  },
+  {
+    "code": "15897",
+    "name": "ZETAQUIRA (BOY)"
+  },
+  {
+    "code": "17001",
+    "name": "MANIZALES (CDAS)"
+  },
+  {
+    "code": "17013",
+    "name": "AGUADAS (CDAS)"
+  },
+  {
+    "code": "17042",
+    "name": "ANSERMA (CDAS)"
+  },
+  {
+    "code": "17050",
+    "name": "ARANZAZU (CDAS)"
+  },
+  {
+    "code": "17088",
+    "name": "BELALCAZAR (CDAS)"
+  },
+  {
+    "code": "17174",
+    "name": "CHINCHINA (CDAS)"
+  },
+  {
+    "code": "17272",
+    "name": "FILADELFIA (CDAS)"
+  },
+  {
+    "code": "17380",
+    "name": "LA DORADA (CDAS)"
+  },
+  {
+    "code": "17388",
+    "name": "LA MERCED (CDAS)"
+  },
+  {
+    "code": "17433",
+    "name": "MANZANARES (CDAS)"
+  },
+  {
+    "code": "17442",
+    "name": "MARMATO (CDAS)"
+  },
+  {
+    "code": "17444",
+    "name": "MARQUETALIA (CDAS)"
+  },
+  {
+    "code": "17446",
+    "name": "MARULANDA (CDAS)"
+  },
+  {
+    "code": "17486",
+    "name": "NEIRA (CDAS)"
+  },
+  {
+    "code": "17495",
+    "name": "NORCASIA (CDAS)"
+  },
+  {
+    "code": "17513",
+    "name": "PACORA (CDAS)"
+  },
+  {
+    "code": "17524",
+    "name": "PALESTINA (CDAS)"
+  },
+  {
+    "code": "17541",
+    "name": "PENSILVANIA (CDAS)"
+  },
+  {
+    "code": "17614",
+    "name": "RIOSUCIO (CDAS)"
+  },
+  {
+    "code": "17616",
+    "name": "RISARALDA (CDAS)"
+  },
+  {
+    "code": "17653",
+    "name": "SALAMINA (CDAS)"
+  },
+  {
+    "code": "17662",
+    "name": "SAMANA (CDAS)"
+  },
+  {
+    "code": "17665",
+    "name": "SAN JOSE (CDAS)"
+  },
+  {
+    "code": "17777",
+    "name": "SUPIA (CDAS)"
+  },
+  {
+    "code": "17867",
+    "name": "VICTORIA (CDAS)"
+  },
+  {
+    "code": "17873",
+    "name": "VILLAMARIA (CDAS)"
+  },
+  {
+    "code": "17877",
+    "name": "VITERBO (CDAS)"
+  },
+  {
+    "code": "18001",
+    "name": "FLORENCIA (CAQ)"
+  },
+  {
+    "code": "18029",
+    "name": "ALBANIA (CAQ)"
+  },
+  {
+    "code": "18094",
+    "name": "BELEN DE LOS ANDAQUIES (CAQ)"
+  },
+  {
+    "code": "18150",
+    "name": "CARTAGENA DEL CHAIRA (CAQ)"
+  },
+  {
+    "code": "18205",
+    "name": "CURILLO (CAQ)"
+  },
+  {
+    "code": "18247",
+    "name": "EL DONCELLO (CAQ)"
+  },
+  {
+    "code": "18256",
+    "name": "EL PAUJIL (CAQ)"
+  },
+  {
+    "code": "18410",
+    "name": "LA MONTAÑITA (CAQ)"
+  },
+  {
+    "code": "18479",
+    "name": "MORELIA (CAQ)"
+  },
+  {
+    "code": "18592",
+    "name": "PUERTO RICO (CAQ)"
+  },
+  {
+    "code": "18610",
+    "name": "SAN JOSE DEL FRAGUA (CAQ)"
+  },
+  {
+    "code": "18753",
+    "name": "SAN VICENTE DEL CAGUAN (CAQ)"
+  },
+  {
+    "code": "18785",
+    "name": "SOLITA (CAQ)"
+  },
+  {
+    "code": "18860",
+    "name": "VALPARAISO (CAQ)"
+  },
+  {
+    "code": "19001",
+    "name": "POPAYAN (CAU)"
+  },
+  {
+    "code": "19022",
+    "name": "ALMAGUER (CAU)"
+  },
+  {
+    "code": "19050",
+    "name": "ARGELIA (CAU)"
+  },
+  {
+    "code": "19075",
+    "name": "BALBOA (CAU)"
+  },
+  {
+    "code": "19100",
+    "name": "BOLIVAR (CAU)"
+  },
+  {
+    "code": "19110",
+    "name": "BUENOS AIRES (CAU)"
+  },
+  {
+    "code": "19130",
+    "name": "CAJIBIO (CAU)"
+  },
+  {
+    "code": "19137",
+    "name": "CALDONO (CAU)"
+  },
+  {
+    "code": "19142",
+    "name": "CALOTO (CAU)"
+  },
+  {
+    "code": "19212",
+    "name": "CORINTO (CAU)"
+  },
+  {
+    "code": "19256",
+    "name": "EL TAMBO (CAU)"
+  },
+  {
+    "code": "19290",
+    "name": "FLORENCIA (CAU)"
+  },
+  {
+    "code": "19300",
+    "name": "GUACHENE (CAU)"
+  },
+  {
+    "code": "19318",
+    "name": "GUAPI (CAU)"
+  },
+  {
+    "code": "19355",
+    "name": "INZA (CAU)"
+  },
+  {
+    "code": "19364",
+    "name": "JAMBALO (CAU)"
+  },
+  {
+    "code": "19392",
+    "name": "LA SIERRA (CAU)"
+  },
+  {
+    "code": "19397",
+    "name": "LA VEGA (CAU)"
+  },
+  {
+    "code": "19418",
+    "name": "LOPEZ DE MICAY (CAU)"
+  },
+  {
+    "code": "19450",
+    "name": "MERCADERES (CAU)"
+  },
+  {
+    "code": "19455",
+    "name": "MIRANDA (CAU)"
+  },
+  {
+    "code": "19473",
+    "name": "MORALES (CAU)"
+  },
+  {
+    "code": "19513",
+    "name": "PADILLA (CAU)"
+  },
+  {
+    "code": "19517",
+    "name": "BELALCAZAR PAEZ (CAU)"
+  },
+  {
+    "code": "19532",
+    "name": "EL BORDO (CAU)"
+  },
+  {
+    "code": "19548",
+    "name": "PIENDAMO (CAU)"
+  },
+  {
+    "code": "19573",
+    "name": "PUERTO TEJADA (CAU)"
+  },
+  {
+    "code": "19585",
+    "name": "COCONUCO (CAU)"
+  },
+  {
+    "code": "19622",
+    "name": "ROSAS (CAU)"
+  },
+  {
+    "code": "19693",
+    "name": "SAN SEBASTIAN (CAU)"
+  },
+  {
+    "code": "19698",
+    "name": "SANTANDER DE QUILICHAO (CAU)"
+  },
+  {
+    "code": "19743",
+    "name": "SILVIA (CAU)"
+  },
+  {
+    "code": "19760",
+    "name": "PAISPAMBA SOTARA (CAU)"
+  },
+  {
+    "code": "19780",
+    "name": "SUAREZ (CAU)"
+  },
+  {
+    "code": "19807",
+    "name": "TIMBIO (CAU)"
+  },
+  {
+    "code": "19809",
+    "name": "TIMBIQUI (CAU)"
+  },
+  {
+    "code": "19821",
+    "name": "TORIBIO (CAU)"
+  },
+  {
+    "code": "19824",
+    "name": "TOTORO (CAU)"
+  },
+  {
+    "code": "19845",
+    "name": "VILLA RICA (CAU)"
+  },
+  {
+    "code": "20001",
+    "name": "VALLEDUPAR (CES)"
+  },
+  {
+    "code": "20011",
+    "name": "AGUACHICA (CES)"
+  },
+  {
+    "code": "20013",
+    "name": "CODAZZI AGUSTIN"
+  },
+  {
+    "code": "20032",
+    "name": "ASTREA (CES)"
+  },
+  {
+    "code": "20045",
+    "name": "BECERRIL (CES)"
+  },
+  {
+    "code": "20060",
+    "name": "BOSCONIA (CES)"
+  },
+  {
+    "code": "20175",
+    "name": "CHIMICHAGUA (CES)"
+  },
+  {
+    "code": "20178",
+    "name": "CHIRIGUANA (CES)"
+  },
+  {
+    "code": "20228",
+    "name": "CURUMANI (CES)"
+  },
+  {
+    "code": "20238",
+    "name": "EL COPEY (CES)"
+  },
+  {
+    "code": "20250",
+    "name": "EL PASO (CES)"
+  },
+  {
+    "code": "20295",
+    "name": "GAMARRA (CES)"
+  },
+  {
+    "code": "20310",
+    "name": "GONZALEZ (CES)"
+  },
+  {
+    "code": "20383",
+    "name": "LA GLORIA (CES)"
+  },
+  {
+    "code": "20400",
+    "name": "LA JAGUA DE IBIRICO (CES)"
+  },
+  {
+    "code": "20443",
+    "name": "MANAURE BALCON DEL CESAR (CES)"
+  },
+  {
+    "code": "20517",
+    "name": "PAILITAS (CES)"
+  },
+  {
+    "code": "20550",
+    "name": "PELAYA (CES)"
+  },
+  {
+    "code": "20570",
+    "name": "PUEBLO BELLO (CES)"
+  },
+  {
+    "code": "20614",
+    "name": "RIO DE ORO (CES)"
+  },
+  {
+    "code": "20621",
+    "name": "LA PAZ (CES)"
+  },
+  {
+    "code": "20710",
+    "name": "SAN ALBERTO (CES)"
+  },
+  {
+    "code": "20750",
+    "name": "SAN DIEGO (CES)"
+  },
+  {
+    "code": "20770",
+    "name": "SAN MARTIN (CES)"
+  },
+  {
+    "code": "20787",
+    "name": "TAMALAMEQUE (CES)"
+  },
+  {
+    "code": "23001",
+    "name": "MONTERIA (CORD)"
+  },
+  {
+    "code": "23068",
+    "name": "AYAPEL (CORD)"
+  },
+  {
+    "code": "23079",
+    "name": "BUENA VISTA (CORD)"
+  },
+  {
+    "code": "23090",
+    "name": "CANALETE (CORD)"
+  },
+  {
+    "code": "23162",
+    "name": "CERETE (CORD)"
+  },
+  {
+    "code": "23168",
+    "name": "CHIMA (CORD)"
+  },
+  {
+    "code": "23182",
+    "name": "CHINU (CORD)"
+  },
+  {
+    "code": "23189",
+    "name": "CIENAGA DE ORO (CORD)"
+  },
+  {
+    "code": "23300",
+    "name": "COTORRA (CORD)"
+  },
+  {
+    "code": "23350",
+    "name": "LA APARTADA (CORD)"
+  },
+  {
+    "code": "23417",
+    "name": "LORICA (CORD)"
+  },
+  {
+    "code": "23419",
+    "name": "LOS CORDOBAS (CORD)"
+  },
+  {
+    "code": "23464",
+    "name": "MOMIL (CORD)"
+  },
+  {
+    "code": "23466",
+    "name": "MONTELIBANO (CORD)"
+  },
+  {
+    "code": "23500",
+    "name": "MOÑITOS (CORD)"
+  },
+  {
+    "code": "23555",
+    "name": "PLANETA RICA (CORD)"
+  },
+  {
+    "code": "23570",
+    "name": "PUEBLO NUEVO (CORD)"
+  },
+  {
+    "code": "23574",
+    "name": "PUERTO ESCONDIDO (CORD)"
+  },
+  {
+    "code": "23580",
+    "name": "PUERTO LIBERTADOR (CORD)"
+  },
+  {
+    "code": "23586",
+    "name": "PURISIMA (CORD)"
+  },
+  {
+    "code": "23660",
+    "name": "SAHAGUN (CORD)"
+  },
+  {
+    "code": "23670",
+    "name": "SAN ANDRES DE SOTAVENTO (CORD)"
+  },
+  {
+    "code": "23672",
+    "name": "SAN ANTERO (CORD)"
+  },
+  {
+    "code": "23675",
+    "name": "SAN BERNARDO DEL VIENTO (CORD)"
+  },
+  {
+    "code": "23678",
+    "name": "SAN CARLOS (CORD)"
+  },
+  {
+    "code": "23682",
+    "name": "SAN JOSE DE URE (CORD)"
+  },
+  {
+    "code": "23686",
+    "name": "SAN PELAYO (CORD)"
+  },
+  {
+    "code": "23807",
+    "name": "TIERRA ALTA (CORD)"
+  },
+  {
+    "code": "23815",
+    "name": "TUCHIN (CORD)"
+  },
+  {
+    "code": "23855",
+    "name": "VALENCIA (CORD)"
+  },
+  {
+    "code": "25001",
+    "name": "AGUA DE DIOS (C/MARCA)"
+  },
+  {
+    "code": "25019",
+    "name": "ALBAN (C/MARCA)"
+  },
+  {
+    "code": "25035",
+    "name": "ANAPOIMA (C/MARCA)"
+  },
+  {
+    "code": "25040",
+    "name": "ANOLAIMA (C/MARCA)"
+  },
+  {
+    "code": "25053",
+    "name": "ARBELAEZ (C/MARCA)"
+  },
+  {
+    "code": "25095",
+    "name": "BITUIMA (C/MARCA)"
+  },
+  {
+    "code": "25099",
+    "name": "BOJACA (C/MARCA)"
+  },
+  {
+    "code": "25120",
+    "name": "CABRERA (C/MARCA)"
+  },
+  {
+    "code": "25123",
+    "name": "CACHIPAY (C/MARCA)"
+  },
+  {
+    "code": "25126",
+    "name": "CAJICA (C/MARCA)"
+  },
+  {
+    "code": "25148",
+    "name": "CAPARRAPI (C/MARCA)"
+  },
+  {
+    "code": "25151",
+    "name": "CAQUEZA (C/MARCA)"
+  },
+  {
+    "code": "25154",
+    "name": "CARMEN DE CARUPA (C/MARCA)"
+  },
+  {
+    "code": "25168",
+    "name": "CHAGUANI (C/MARCA)"
+  },
+  {
+    "code": "25175",
+    "name": "CHIA (C/MARCA)"
+  },
+  {
+    "code": "25178",
+    "name": "CHIPAQUE (C/MARCA)"
+  },
+  {
+    "code": "25181",
+    "name": "CHOACHI (C/MARCA)"
+  },
+  {
+    "code": "25183",
+    "name": "CHOCONTA (C/MARCA)"
+  },
+  {
+    "code": "25200",
+    "name": "COGUA (C/MARCA)"
+  },
+  {
+    "code": "25214",
+    "name": "COTA (C/MARCA)"
+  },
+  {
+    "code": "25224",
+    "name": "CUCUNUBA (C/MARCA)"
+  },
+  {
+    "code": "25245",
+    "name": "EL COLEGIO MESITAS (C/MARCA)"
+  },
+  {
+    "code": "25258",
+    "name": "EL PEÑÓN (C/MARCA)"
+  },
+  {
+    "code": "25260",
+    "name": "EL ROSAL (C/MARCA)"
+  },
+  {
+    "code": "25269",
+    "name": "FACATATIVA (C/MARCA)"
+  },
+  {
+    "code": "25279",
+    "name": "FOMEQUE (C/MARCA)"
+  },
+  {
+    "code": "25281",
+    "name": "FOSCA (C/MARCA)"
+  },
+  {
+    "code": "25286",
+    "name": "FUNZA (C/MARCA)"
+  },
+  {
+    "code": "25288",
+    "name": "FUQUENE (C/MARCA)"
+  },
+  {
+    "code": "25290",
+    "name": "FUSAGASUGA (C/MARCA)"
+  },
+  {
+    "code": "25293",
+    "name": "GACHALA (C/MARCA)"
+  },
+  {
+    "code": "25295",
+    "name": "GACHANCIPA (C/MARCA)"
+  },
+  {
+    "code": "25297",
+    "name": "GACHETA (C/MARCA)"
+  },
+  {
+    "code": "25299",
+    "name": "GAMA (C/MARCA)"
+  },
+  {
+    "code": "25307",
+    "name": "GIRARDOT (C/MARCA)"
+  },
+  {
+    "code": "25312",
+    "name": "GRANADA (C/MARCA)"
+  },
+  {
+    "code": "25317",
+    "name": "GUACHETA (C/MARCA)"
+  },
+  {
+    "code": "25320",
+    "name": "GUADUAS (C/MARCA)"
+  },
+  {
+    "code": "25322",
+    "name": "GUASCA (C/MARCA)"
+  },
+  {
+    "code": "25324",
+    "name": "GUATAQUI (C/MARCA)"
+  },
+  {
+    "code": "25326",
+    "name": "GUATAVITA (C/MARCA)"
+  },
+  {
+    "code": "25328",
+    "name": "GUAYABAL DE SIQUIMA (C/MARCA)"
+  },
+  {
+    "code": "25335",
+    "name": "GUAYABETAL (C/MARCA)"
+  },
+  {
+    "code": "25339",
+    "name": "GUTIERREZ (C/MARCA)"
+  },
+  {
+    "code": "25368",
+    "name": "JERUSALEN (C/MARCA)"
+  },
+  {
+    "code": "25372",
+    "name": "JUNIN (C/MARCA)"
+  },
+  {
+    "code": "25377",
+    "name": "LA CALERA (C/MARCA)"
+  },
+  {
+    "code": "25386",
+    "name": "LA MESA (C/MARCA)"
+  },
+  {
+    "code": "25394",
+    "name": "LA PALMA (C/MARCA)"
+  },
+  {
+    "code": "25398",
+    "name": "LA PEÑA (C/MARCA)"
+  },
+  {
+    "code": "25402",
+    "name": "LA VEGA (C/MARCA)"
+  },
+  {
+    "code": "25407",
+    "name": "LENGUAZAQUE (C/MARCA)"
+  },
+  {
+    "code": "25426",
+    "name": "MACHETA (C/MARCA)"
+  },
+  {
+    "code": "25430",
+    "name": "MADRID (C/MARCA)"
+  },
+  {
+    "code": "25436",
+    "name": "MANTA (C/MARCA)"
+  },
+  {
+    "code": "25438",
+    "name": "MEDINA (C/MARCA)"
+  },
+  {
+    "code": "25473",
+    "name": "MOSQUERA (C/MARCA)"
+  },
+  {
+    "code": "25483",
+    "name": "NARIÑO (C/MARCA)"
+  },
+  {
+    "code": "25486",
+    "name": "NEMOCON (C/MARCA)"
+  },
+  {
+    "code": "25488",
+    "name": "NILO (C/MARCA)"
+  },
+  {
+    "code": "25489",
+    "name": "NIMAIMA (C/MARCA)"
+  },
+  {
+    "code": "25491",
+    "name": "NOCAIMA (C/MARCA)"
+  },
+  {
+    "code": "25506",
+    "name": "VENECIA (C/MARCA)"
+  },
+  {
+    "code": "25513",
+    "name": "PACHO (C/MARCA)"
+  },
+  {
+    "code": "25518",
+    "name": "PAIME (C/MARCA)"
+  },
+  {
+    "code": "25524",
+    "name": "PANDI (C/MARCA)"
+  },
+  {
+    "code": "25530",
+    "name": "PARATEBUENO (C/MARCA)"
+  },
+  {
+    "code": "25535",
+    "name": "PASCA (C/MARCA)"
+  },
+  {
+    "code": "25572",
+    "name": "PUERTO SALGAR (C/MARCA)"
+  },
+  {
+    "code": "25580",
+    "name": "PULI (C/MARCA)"
+  },
+  {
+    "code": "25592",
+    "name": "QUEBRADANEGRA (C/MARCA)"
+  },
+  {
+    "code": "25594",
+    "name": "QUETAME (C/MARCA)"
+  },
+  {
+    "code": "25596",
+    "name": "QUIPILE (C/MARCA)"
+  },
+  {
+    "code": "25599",
+    "name": "APULO (C/MARCA)"
+  },
+  {
+    "code": "25612",
+    "name": "RICAURTE (C/MARCA)"
+  },
+  {
+    "code": "25645",
+    "name": "SAN ANT DE TEQUEN (C/MARCA)"
+  },
+  {
+    "code": "25649",
+    "name": "SAN BERNARDO (C/MARCA)"
+  },
+  {
+    "code": "25658",
+    "name": "SAN FRANCISCO (C/MARCA)"
+  },
+  {
+    "code": "25662",
+    "name": "SAN JUAN DE RIOSECO (C/MARCA)"
+  },
+  {
+    "code": "25718",
+    "name": "SASAIMA (C/MARCA)"
+  },
+  {
+    "code": "25736",
+    "name": "SESQUILE (C/MARCA)"
+  },
+  {
+    "code": "25740",
+    "name": "SIBATE (C/MARCA)"
+  },
+  {
+    "code": "25743",
+    "name": "SILVANIA (C/MARCA)"
+  },
+  {
+    "code": "25745",
+    "name": "SIMIJACA (C/MARCA)"
+  },
+  {
+    "code": "25754",
+    "name": "SOACHA (C/MARCA)"
+  },
+  {
+    "code": "25758",
+    "name": "SOPO (C/MARCA)"
+  },
+  {
+    "code": "25769",
+    "name": "SUBACHOQUE (C/MARCA)"
+  },
+  {
+    "code": "25772",
+    "name": "SUESCA (C/MARCA)"
+  },
+  {
+    "code": "25777",
+    "name": "SUPATA (C/MARCA)"
+  },
+  {
+    "code": "25779",
+    "name": "SUSA (C/MARCA)"
+  },
+  {
+    "code": "25781",
+    "name": "SUTATAUSA (C/MARCA)"
+  },
+  {
+    "code": "25785",
+    "name": "TABIO (C/MARCA)"
+  },
+  {
+    "code": "25793",
+    "name": "TAUSA (C/MARCA)"
+  },
+  {
+    "code": "25797",
+    "name": "TENA (C/MARCA)"
+  },
+  {
+    "code": "25799",
+    "name": "TENJO (C/MARCA)"
+  },
+  {
+    "code": "25805",
+    "name": "TIBACUY (C/MARCA)"
+  },
+  {
+    "code": "25807",
+    "name": "TIBIRITA (C/MARCA)"
+  },
+  {
+    "code": "25815",
+    "name": "TOCAIMA (C/MARCA)"
+  },
+  {
+    "code": "25817",
+    "name": "TOCANCIPA (C/MARCA)"
+  },
+  {
+    "code": "25823",
+    "name": "TOPAIPI (C/MARCA)"
+  },
+  {
+    "code": "25839",
+    "name": "UBALA (C/MARCA)"
+  },
+  {
+    "code": "25841",
+    "name": "UBAQUE (C/MARCA)"
+  },
+  {
+    "code": "25843",
+    "name": "UBATE (C/MARCA)"
+  },
+  {
+    "code": "25845",
+    "name": "UNE (C/MARCA)"
+  },
+  {
+    "code": "25851",
+    "name": "UTICA (C/MARCA)"
+  },
+  {
+    "code": "25862",
+    "name": "VERGARA (C/MARCA)"
+  },
+  {
+    "code": "25867",
+    "name": "VIANI (C/MARCA)"
+  },
+  {
+    "code": "25871",
+    "name": "VILLAGOMEZ (C/MARCA)"
+  },
+  {
+    "code": "25873",
+    "name": "VILLAPINZON (C/MARCA)"
+  },
+  {
+    "code": "25875",
+    "name": "VILLETA (C/MARCA)"
+  },
+  {
+    "code": "25878",
+    "name": "VIOTA (C/MARCA)"
+  },
+  {
+    "code": "25885",
+    "name": "YACOPI (C/MARCA)"
+  },
+  {
+    "code": "25898",
+    "name": "ZIPACON (C/MARCA)"
+  },
+  {
+    "code": "25899",
+    "name": "ZIPAQUIRA (C/MARCA)"
+  },
+  {
+    "code": "27001",
+    "name": "QUIBDO (CHOCO)"
+  },
+  {
+    "code": "27006",
+    "name": "ACANDI (CHOCO)"
+  },
+  {
+    "code": "27025",
+    "name": "ALTO BAUDO (CHOCO)"
+  },
+  {
+    "code": "27050",
+    "name": "YUTO (CHOCO)"
+  },
+  {
+    "code": "27075",
+    "name": "BAHIA SOLANO MUTIS (CHOCO)"
+  },
+  {
+    "code": "27077",
+    "name": "BAJO BAUDO PIZARRO (CHOCO)"
+  },
+  {
+    "code": "27099",
+    "name": "BOJAYA (CHOCO)"
+  },
+  {
+    "code": "27160",
+    "name": "CERTEGUI (CHOCO)"
+  },
+  {
+    "code": "27205",
+    "name": "CONDOTO (CHOCO)"
+  },
+  {
+    "code": "27245",
+    "name": "EL CARMEN DE ATRATO (CHOCO)"
+  },
+  {
+    "code": "27361",
+    "name": "ISTMINA (CHOCO)"
+  },
+  {
+    "code": "27372",
+    "name": "JURADO (CHOCO)"
+  },
+  {
+    "code": "27413",
+    "name": "LLORO (CHOCO)"
+  },
+  {
+    "code": "27450",
+    "name": "ANDAGOYA (CHOCO)"
+  },
+  {
+    "code": "27491",
+    "name": "NOVITA (CHOCO)"
+  },
+  {
+    "code": "27495",
+    "name": "NUQUI (CHOCO)"
+  },
+  {
+    "code": "27615",
+    "name": "RIOSUCIO (CHOCO)"
+  },
+  {
+    "code": "27745",
+    "name": "SIPI (CHOCO)"
+  },
+  {
+    "code": "27787",
+    "name": "TADO (CHOCO)"
+  },
+  {
+    "code": "27800",
+    "name": "UNGUIA (CHOCO)"
+  },
+  {
+    "code": "27810",
+    "name": "ANIMAS (CHOCO)"
+  },
+  {
+    "code": "41001",
+    "name": "NEIVA (HLA)"
+  },
+  {
+    "code": "41006",
+    "name": "ACEVEDO (HLA)"
+  },
+  {
+    "code": "41013",
+    "name": "AGRADO (HLA)"
+  },
+  {
+    "code": "41016",
+    "name": "AIPE (HLA)"
+  },
+  {
+    "code": "41020",
+    "name": "ALGECIRAS (HLA)"
+  },
+  {
+    "code": "41026",
+    "name": "ALTAMIRA (HLA)"
+  },
+  {
+    "code": "41078",
+    "name": "BARAYA (HLA)"
+  },
+  {
+    "code": "41132",
+    "name": "CAMPOALEGRE (HLA)"
+  },
+  {
+    "code": "41206",
+    "name": "COLOMBIA (HLA)"
+  },
+  {
+    "code": "41298",
+    "name": "GARZON (HLA)"
+  },
+  {
+    "code": "41306",
+    "name": "GIGANTE (HLA)"
+  },
+  {
+    "code": "41319",
+    "name": "GUADALUPE (HLA)"
+  },
+  {
+    "code": "41349",
+    "name": "HOBO (HLA)"
+  },
+  {
+    "code": "41357",
+    "name": "IQUIRA (HLA)"
+  },
+  {
+    "code": "41359",
+    "name": "SAN JOSE DE ISNOS (HLA)"
+  },
+  {
+    "code": "41378",
+    "name": "ARGENTINA (HLA)"
+  },
+  {
+    "code": "41396",
+    "name": "LA PLATA (HLA)"
+  },
+  {
+    "code": "41483",
+    "name": "NATAGA (HLA)"
+  },
+  {
+    "code": "41503",
+    "name": "OPORAPA (HLA)"
+  },
+  {
+    "code": "41518",
+    "name": "PAICOL (HLA)"
+  },
+  {
+    "code": "41524",
+    "name": "PALERMO (HLA)"
+  },
+  {
+    "code": "41530",
+    "name": "PALESTINA (HLA)"
+  },
+  {
+    "code": "41548",
+    "name": "PITAL (HLA)"
+  },
+  {
+    "code": "41551",
+    "name": "PITALITO (HLA)"
+  },
+  {
+    "code": "41615",
+    "name": "RIVERA (HLA)"
+  },
+  {
+    "code": "41660",
+    "name": "SALADO BLANCO (HLA)"
+  },
+  {
+    "code": "41668",
+    "name": "SAN AGUSTIN (HLA)"
+  },
+  {
+    "code": "41676",
+    "name": "SANTA MARIA (HLA)"
+  },
+  {
+    "code": "41770",
+    "name": "SUAZA (HLA)"
+  },
+  {
+    "code": "41791",
+    "name": "TARQUI (HLA)"
+  },
+  {
+    "code": "41797",
+    "name": "TESALIA (HLA)"
+  },
+  {
+    "code": "41799",
+    "name": "TELLO (HLA)"
+  },
+  {
+    "code": "41801",
+    "name": "TERUEL (HLA)"
+  },
+  {
+    "code": "41807",
+    "name": "TIMANA (HLA)"
+  },
+  {
+    "code": "41872",
+    "name": "VILLA VIEJA (HLA)"
+  },
+  {
+    "code": "41885",
+    "name": "YAGUARA (HLA)"
+  },
+  {
+    "code": "44001",
+    "name": "RIOHACHA (GUAJ)"
+  },
+  {
+    "code": "44035",
+    "name": "ALBANIA (GUAJ)"
+  },
+  {
+    "code": "44078",
+    "name": "BARRANCAS (GUAJ)"
+  },
+  {
+    "code": "44098",
+    "name": "DISTRACCION (GUAJ)"
+  },
+  {
+    "code": "44110",
+    "name": "EL MOLINO (GUAJ)"
+  },
+  {
+    "code": "44279",
+    "name": "FONSECA (GUAJ)"
+  },
+  {
+    "code": "44378",
+    "name": "HATO NUEVO (GUAJ)"
+  },
+  {
+    "code": "44420",
+    "name": "LA JAGUA DEL PILAR (GUAJ)"
+  },
+  {
+    "code": "44430",
+    "name": "MAICAO (GUAJ)"
+  },
+  {
+    "code": "44560",
+    "name": "MANAURE (GUAJ)"
+  },
+  {
+    "code": "44650",
+    "name": "SAN JUAN DEL CESAR (GUAJ)"
+  },
+  {
+    "code": "44847",
+    "name": "URIBIA (GUAJ)"
+  },
+  {
+    "code": "44855",
+    "name": "URUMITA (GUAJ)"
+  },
+  {
+    "code": "44874",
+    "name": "VILLANUEVA (GUAJ)"
+  },
+  {
+    "code": "47001",
+    "name": "SANTA MARTA (MG/LENA)"
+  },
+  {
+    "code": "47030",
+    "name": "ALGARROBO (MG/LENA)"
+  },
+  {
+    "code": "47053",
+    "name": "ARACATACA (MG/LENA)"
+  },
+  {
+    "code": "47058",
+    "name": "EL DIFICIL (MG/LENA)"
+  },
+  {
+    "code": "47161",
+    "name": "CERRO SAN ANTONIO (MG/LENA)"
+  },
+  {
+    "code": "47170",
+    "name": "CHIVOLO (MG/LENA)"
+  },
+  {
+    "code": "47189",
+    "name": "CIENAGA (MG/LENA)"
+  },
+  {
+    "code": "47245",
+    "name": "EL BANCO (MG/LENA)"
+  },
+  {
+    "code": "47258",
+    "name": "EL PIÑON (MG/LENA)"
+  },
+  {
+    "code": "47268",
+    "name": "EL RETEN (MG/LENA)"
+  },
+  {
+    "code": "47288",
+    "name": "FUNDACION (MG/LENA)"
+  },
+  {
+    "code": "47318",
+    "name": "GUAMAL (MG/LENA)"
+  },
+  {
+    "code": "47460",
+    "name": "NUEVA GRANADA (MG/LENA)"
+  },
+  {
+    "code": "47545",
+    "name": "PIJIÑO DEL CARMEN (MG/LENA)"
+  },
+  {
+    "code": "47551",
+    "name": "PIVIJAY (MG/LENA)"
+  },
+  {
+    "code": "47555",
+    "name": "PLATO (MG/LENA)"
+  },
+  {
+    "code": "47570",
+    "name": "PUEBLOVIEJO (MG/LENA)"
+  },
+  {
+    "code": "47605",
+    "name": "REMOLINO (MG/LENA)"
+  },
+  {
+    "code": "47660",
+    "name": "SABANAS DE SAN ANGEL (MG/LENA)"
+  },
+  {
+    "code": "47675",
+    "name": "SALAMINA (MG/LENA)"
+  },
+  {
+    "code": "47692",
+    "name": "SAN SEBAST DE BUENAVI (MG/LENA)"
+  },
+  {
+    "code": "47703",
+    "name": "SAN ZENON (MG/LENA)"
+  },
+  {
+    "code": "47707",
+    "name": "SANTA ANA (MG/LENA)"
+  },
+  {
+    "code": "47720",
+    "name": "SANTA BARBARA DE PINTO (MG/LENA)"
+  },
+  {
+    "code": "47745",
+    "name": "SITIO NUEVO (MG/LENA)"
+  },
+  {
+    "code": "47798",
+    "name": "TENERIFE (MG/LENA)"
+  },
+  {
+    "code": "47980",
+    "name": "PRADO SEVILLA (MG/LENA)"
+  },
+  {
+    "code": "50001",
+    "name": "VILLAVICENCIO (META)"
+  },
+  {
+    "code": "50006",
+    "name": "ACACIAS (META)"
+  },
+  {
+    "code": "50110",
+    "name": "BARRANCA DE UPIA (META)"
+  },
+  {
+    "code": "50150",
+    "name": "CASTILLA LA NUEVA (META)"
+  },
+  {
+    "code": "50223",
+    "name": "CUBARRAL SAN LUIS (META)"
+  },
+  {
+    "code": "50226",
+    "name": "CUMARAL (META)"
+  },
+  {
+    "code": "50287",
+    "name": "FUENTE DE ORO (META)"
+  },
+  {
+    "code": "50313",
+    "name": "GRANADA (META)"
+  },
+  {
+    "code": "50318",
+    "name": "GUAMAL (META)"
+  },
+  {
+    "code": "50350",
+    "name": "LA MACARENA (META)"
+  },
+  {
+    "code": "50370",
+    "name": "URIBE (META)"
+  },
+  {
+    "code": "50400",
+    "name": "LEJANIAS (META)"
+  },
+  {
+    "code": "50450",
+    "name": "PUERTO CONCORDIA (META)"
+  },
+  {
+    "code": "50568",
+    "name": "PUERTO GAITAN (META)"
+  },
+  {
+    "code": "50573",
+    "name": "PUERTO LOPEZ (META)"
+  },
+  {
+    "code": "50577",
+    "name": "PUERTO LLERAS (META)"
+  },
+  {
+    "code": "50590",
+    "name": "PUERTO RICO (META)"
+  },
+  {
+    "code": "50606",
+    "name": "RESTREPO (META)"
+  },
+  {
+    "code": "50680",
+    "name": "SAN CARLOS DE GUAROA (META)"
+  },
+  {
+    "code": "50683",
+    "name": "SAN JUAN DE ARAMA (META)"
+  },
+  {
+    "code": "50689",
+    "name": "SAN MARTIN (META)"
+  },
+  {
+    "code": "50711",
+    "name": "VISTA HERMOSA (META)"
+  },
+  {
+    "code": "52001",
+    "name": "PASTO (NAR)"
+  },
+  {
+    "code": "52019",
+    "name": "SAN JOSE DE ALBAN (NAR)"
+  },
+  {
+    "code": "52022",
+    "name": "ALDANA (NAR)"
+  },
+  {
+    "code": "52036",
+    "name": "ANCUYA (NAR)"
+  },
+  {
+    "code": "52051",
+    "name": "BERRUECOS ARBOLEDA (NAR)"
+  },
+  {
+    "code": "52079",
+    "name": "BARBACOAS (NAR)"
+  },
+  {
+    "code": "52083",
+    "name": "BELEN (NAR)"
+  },
+  {
+    "code": "52110",
+    "name": "BUESACO (NAR)"
+  },
+  {
+    "code": "52203",
+    "name": "GENOVA (NAR)"
+  },
+  {
+    "code": "52207",
+    "name": "CONSACA (NAR)"
+  },
+  {
+    "code": "52210",
+    "name": "CONTADERO (NAR)"
+  },
+  {
+    "code": "52215",
+    "name": "CORDOBA (NAR)"
+  },
+  {
+    "code": "52224",
+    "name": "CARLOSAMA  CUASPUD (NAR)"
+  },
+  {
+    "code": "52227",
+    "name": "CUMBAL (NAR)"
+  },
+  {
+    "code": "52233",
+    "name": "CUMBITARA (NAR)"
+  },
+  {
+    "code": "52240",
+    "name": "CHACHAGUI (NAR)"
+  },
+  {
+    "code": "52250",
+    "name": "EL CHARCO (NAR)"
+  },
+  {
+    "code": "52254",
+    "name": "EL PEÑOL (NAR)"
+  },
+  {
+    "code": "52256",
+    "name": "EL ROSARIO (NAR)"
+  },
+  {
+    "code": "52258",
+    "name": "EL TABLON DE GOMEZ (NAR)"
+  },
+  {
+    "code": "52260",
+    "name": "EL TAMBO (NAR)"
+  },
+  {
+    "code": "52287",
+    "name": "FUNES (NAR)"
+  },
+  {
+    "code": "52317",
+    "name": "GUACHUCAL (NAR)"
+  },
+  {
+    "code": "52320",
+    "name": "GUAITARILLA (NAR)"
+  },
+  {
+    "code": "52323",
+    "name": "GUALMATAN (NAR)"
+  },
+  {
+    "code": "52352",
+    "name": "ILES (NAR)"
+  },
+  {
+    "code": "52354",
+    "name": "IMUES (NAR)"
+  },
+  {
+    "code": "52356",
+    "name": "IPIALES (NAR)"
+  },
+  {
+    "code": "52378",
+    "name": "LA CRUZ (NAR)"
+  },
+  {
+    "code": "52381",
+    "name": "LA FLORIDA (NAR)"
+  },
+  {
+    "code": "52385",
+    "name": "LA LLANADA (NAR)"
+  },
+  {
+    "code": "52399",
+    "name": "LA UNION (NAR)"
+  },
+  {
+    "code": "52405",
+    "name": "LEIVA (NAR)"
+  },
+  {
+    "code": "52411",
+    "name": "LINARES (NAR)"
+  },
+  {
+    "code": "52418",
+    "name": "SOTOMAYOR (NAR)"
+  },
+  {
+    "code": "52435",
+    "name": "PIEDRAHANCHA (NAR)"
+  },
+  {
+    "code": "52480",
+    "name": "NARIÑO (NAR)"
+  },
+  {
+    "code": "52506",
+    "name": "OSPINA (NAR)"
+  },
+  {
+    "code": "52540",
+    "name": "POLICARPA (NAR)"
+  },
+  {
+    "code": "52560",
+    "name": "POTOSI (NAR)"
+  },
+  {
+    "code": "52565",
+    "name": "PROVIDENCIA (NAR)"
+  },
+  {
+    "code": "52573",
+    "name": "PUERRES (NAR)"
+  },
+  {
+    "code": "52585",
+    "name": "PUPIALES (NAR)"
+  },
+  {
+    "code": "52612",
+    "name": "RICAURTE (NAR)"
+  },
+  {
+    "code": "52678",
+    "name": "SAMANIEGO (NAR)"
+  },
+  {
+    "code": "52683",
+    "name": "SANDONA (NAR)"
+  },
+  {
+    "code": "52685",
+    "name": "SAN BERNARDO (NAR)"
+  },
+  {
+    "code": "52687",
+    "name": "SAN LORENZO (NAR)"
+  },
+  {
+    "code": "52693",
+    "name": "SAN PABLO (NAR)"
+  },
+  {
+    "code": "52694",
+    "name": "SAN PEDRO DE CARTAGO (NAR)"
+  },
+  {
+    "code": "52699",
+    "name": "GUACHAVEZ SAN CRUZ (NAR)"
+  },
+  {
+    "code": "52720",
+    "name": "SAPUYES (NAR)"
+  },
+  {
+    "code": "52786",
+    "name": "TAMINANGO (NAR)"
+  },
+  {
+    "code": "52788",
+    "name": "TANGUA (NAR)"
+  },
+  {
+    "code": "52835",
+    "name": "TUMACO (NAR)"
+  },
+  {
+    "code": "52838",
+    "name": "TUQUERRES (NAR)"
+  },
+  {
+    "code": "52885",
+    "name": "YACUANQUER (NAR)"
+  },
+  {
+    "code": "54001",
+    "name": "CUCUTA (N/STDER)"
+  },
+  {
+    "code": "54003",
+    "name": "ABREGO (N/STDER)"
+  },
+  {
+    "code": "54051",
+    "name": "ARBOLEDAS (N/STDER)"
+  },
+  {
+    "code": "54099",
+    "name": "BOCHALEMA (N/STDER)"
+  },
+  {
+    "code": "54109",
+    "name": "BUCARASICA (N/STDER)"
+  },
+  {
+    "code": "54125",
+    "name": "CACOTA (N/STDER)"
+  },
+  {
+    "code": "54128",
+    "name": "CACHIRA (N/STDER)"
+  },
+  {
+    "code": "54172",
+    "name": "CHINACOTA (N/STDER)"
+  },
+  {
+    "code": "54174",
+    "name": "CHITAGA (N/STDER)"
+  },
+  {
+    "code": "54206",
+    "name": "CONVENCION (N/STDER)"
+  },
+  {
+    "code": "54223",
+    "name": "CUCUTILLA (N/STDER)"
+  },
+  {
+    "code": "54239",
+    "name": "DURANIA (N/STDER)"
+  },
+  {
+    "code": "54245",
+    "name": "EL CARMEN (N/STDER)"
+  },
+  {
+    "code": "54261",
+    "name": "EL ZULIA (N/STDER)"
+  },
+  {
+    "code": "54313",
+    "name": "GRAMALOTE (N/STDER)"
+  },
+  {
+    "code": "54347",
+    "name": "HERRAN (N/STDER)"
+  },
+  {
+    "code": "54377",
+    "name": "LABATECA (N/STDER)"
+  },
+  {
+    "code": "54385",
+    "name": "LA ESPERANZA (N/STDER)"
+  },
+  {
+    "code": "54405",
+    "name": "LOS PATIOS (N/STDER)"
+  },
+  {
+    "code": "54418",
+    "name": "LOURDES (N/STDER)"
+  },
+  {
+    "code": "54480",
+    "name": "MUTISCUA (N/STDER)"
+  },
+  {
+    "code": "54498",
+    "name": "OCAÑA (N/STDER)"
+  },
+  {
+    "code": "54518",
+    "name": "PAMPLONA (N/STDER)"
+  },
+  {
+    "code": "54520",
+    "name": "PAMPLONITA (N/STDER)"
+  },
+  {
+    "code": "54553",
+    "name": "PUERTO SANTANDER (N/STDER)"
+  },
+  {
+    "code": "54599",
+    "name": "RAGONVALIA (N/STDER)"
+  },
+  {
+    "code": "54660",
+    "name": "SALAZAR (N/STDER)"
+  },
+  {
+    "code": "54670",
+    "name": "SAN CALIXTO (N/STDER)"
+  },
+  {
+    "code": "54673",
+    "name": "SAN CAYETANO (N/STDER)"
+  },
+  {
+    "code": "54680",
+    "name": "SANTIAGO (N/STDER)"
+  },
+  {
+    "code": "54720",
+    "name": "SARDINATA (N/STDER)"
+  },
+  {
+    "code": "54743",
+    "name": "SILOS (N/STDER)"
+  },
+  {
+    "code": "54800",
+    "name": "TEORAMA (N/STDER)"
+  },
+  {
+    "code": "54810",
+    "name": "TIBU (N/STDER)"
+  },
+  {
+    "code": "54820",
+    "name": "TOLEDO (N/STDER)"
+  },
+  {
+    "code": "54871",
+    "name": "VILLA CARO (N/STDER)"
+  },
+  {
+    "code": "54874",
+    "name": "VILLA DEL ROSARIO (N/STDER)"
+  },
+  {
+    "code": "63001",
+    "name": "ARMENIA (QDIO)"
+  },
+  {
+    "code": "63111",
+    "name": "BUENAVISTA (QDIO)"
+  },
+  {
+    "code": "63130",
+    "name": "CALARCA (QDIO)"
+  },
+  {
+    "code": "63190",
+    "name": "CIRCASIA (QDIO)"
+  },
+  {
+    "code": "63212",
+    "name": "CORDOBA (QDIO)"
+  },
+  {
+    "code": "63272",
+    "name": "FILANDIA (QDIO)"
+  },
+  {
+    "code": "63302",
+    "name": "GENOVA (QDIO)"
+  },
+  {
+    "code": "63401",
+    "name": "LA TEBAIDA (QDIO)"
+  },
+  {
+    "code": "63470",
+    "name": "MONTENEGRO (QDIO)"
+  },
+  {
+    "code": "63548",
+    "name": "PIJAO (QDIO)"
+  },
+  {
+    "code": "63594",
+    "name": "QUIMBAYA (QDIO)"
+  },
+  {
+    "code": "63690",
+    "name": "SALENTO (QDIO)"
+  },
+  {
+    "code": "66001",
+    "name": "PEREIRA (RS)"
+  },
+  {
+    "code": "66045",
+    "name": "APIA (RS)"
+  },
+  {
+    "code": "66075",
+    "name": "BALBOA (RS)"
+  },
+  {
+    "code": "66088",
+    "name": "BELEN DE UMBRIA (RS)"
+  },
+  {
+    "code": "66170",
+    "name": "DOSQUEBRADAS (RS)"
+  },
+  {
+    "code": "66318",
+    "name": "GUATICA (RS)"
+  },
+  {
+    "code": "66383",
+    "name": "LA CELIA (RS)"
+  },
+  {
+    "code": "66400",
+    "name": "LA VIRGINIA (RS)"
+  },
+  {
+    "code": "66440",
+    "name": "MARSELLA (RS)"
+  },
+  {
+    "code": "66456",
+    "name": "MISTRATO (RS)"
+  },
+  {
+    "code": "66572",
+    "name": "PUEBLO RICO (RS)"
+  },
+  {
+    "code": "66594",
+    "name": "QUINCHIA (RS)"
+  },
+  {
+    "code": "66682",
+    "name": "SANTA ROSA DE CABAL (RS)"
+  },
+  {
+    "code": "66687",
+    "name": "SANTUARIO (RS)"
+  },
+  {
+    "code": "68001",
+    "name": "BUCARAMANGA (STDER)"
+  },
+  {
+    "code": "68013",
+    "name": "AGUADA (STDER)"
+  },
+  {
+    "code": "68051",
+    "name": "ARATOCA (STDER)"
+  },
+  {
+    "code": "68077",
+    "name": "BARBOSA (STDER)"
+  },
+  {
+    "code": "68079",
+    "name": "BARICHARA (STDER)"
+  },
+  {
+    "code": "68081",
+    "name": "BARRANCABERMEJA (STDER)"
+  },
+  {
+    "code": "68092",
+    "name": "BETULIA (STDER)"
+  },
+  {
+    "code": "68101",
+    "name": "BOLIVAR (STDER)"
+  },
+  {
+    "code": "68147",
+    "name": "CAPITANEJO (STDER)"
+  },
+  {
+    "code": "68152",
+    "name": "CARCASI (STDER)"
+  },
+  {
+    "code": "68162",
+    "name": "CERRITO (STDER)"
+  },
+  {
+    "code": "68167",
+    "name": "CHARALA (STDER)"
+  },
+  {
+    "code": "68179",
+    "name": "CHIPATA (STDER)"
+  },
+  {
+    "code": "68190",
+    "name": "CIMITARRA (STDER)"
+  },
+  {
+    "code": "68207",
+    "name": "CONCEPCION (STDER)"
+  },
+  {
+    "code": "68211",
+    "name": "CONTRATACION (STDER)"
+  },
+  {
+    "code": "68229",
+    "name": "CURITI (STDER)"
+  },
+  {
+    "code": "68235",
+    "name": "EL CARMEN DE CHUCURI (STDER)"
+  },
+  {
+    "code": "68250",
+    "name": "EL PEÑON (STDER)"
+  },
+  {
+    "code": "68255",
+    "name": "EL PLAYON (STDER)"
+  },
+  {
+    "code": "68266",
+    "name": "ENCISO (STDER)"
+  },
+  {
+    "code": "68271",
+    "name": "FLORIAN (STDER)"
+  },
+  {
+    "code": "68276",
+    "name": "FLORIDABLANCA (STDER)"
+  },
+  {
+    "code": "68296",
+    "name": "GALAN (STDER)"
+  },
+  {
+    "code": "68298",
+    "name": "GAMBITA (STDER)"
+  },
+  {
+    "code": "68307",
+    "name": "GIRON (STDER)"
+  },
+  {
+    "code": "68318",
+    "name": "GUACA (STDER)"
+  },
+  {
+    "code": "68320",
+    "name": "GUADALUPE (STDER)"
+  },
+  {
+    "code": "68324",
+    "name": "GUAVATA (STDER)"
+  },
+  {
+    "code": "68327",
+    "name": "GUEPSA (STDER)"
+  },
+  {
+    "code": "68368",
+    "name": "JESUS MARIA (STDER)"
+  },
+  {
+    "code": "68377",
+    "name": "LA BELLEZA (STDER)"
+  },
+  {
+    "code": "68385",
+    "name": "LANDAZURI (STDER)"
+  },
+  {
+    "code": "68397",
+    "name": "LA PAZ (STDER)"
+  },
+  {
+    "code": "68406",
+    "name": "LEBRIJA (STDER)"
+  },
+  {
+    "code": "68418",
+    "name": "LOS SANTOS (STDER)"
+  },
+  {
+    "code": "68432",
+    "name": "MALAGA (STDER)"
+  },
+  {
+    "code": "68444",
+    "name": "MATANZA (STDER)"
+  },
+  {
+    "code": "68464",
+    "name": "MOGOTES (STDER)"
+  },
+  {
+    "code": "68468",
+    "name": "MOLAGAVITA (STDER)"
+  },
+  {
+    "code": "68500",
+    "name": "OIBA (STDER)"
+  },
+  {
+    "code": "68502",
+    "name": "ONZAGA (STDER)"
+  },
+  {
+    "code": "68533",
+    "name": "PARAMO (STDER)"
+  },
+  {
+    "code": "68547",
+    "name": "PIEDECUESTA (STDER)"
+  },
+  {
+    "code": "68549",
+    "name": "PINCHOTE (STDER)"
+  },
+  {
+    "code": "68572",
+    "name": "PUENTE NACIONAL (STDER)"
+  },
+  {
+    "code": "68573",
+    "name": "PUERTO PARRA (STDER)"
+  },
+  {
+    "code": "68575",
+    "name": "PUERTO WILCHES (STDER)"
+  },
+  {
+    "code": "68615",
+    "name": "RIONEGRO (STDER)"
+  },
+  {
+    "code": "68655",
+    "name": "SABANA DE TORRES (STDER)"
+  },
+  {
+    "code": "68669",
+    "name": "SAN ANDRES (STDER)"
+  },
+  {
+    "code": "68673",
+    "name": "SAN BENITO (STDER)"
+  },
+  {
+    "code": "68679",
+    "name": "SAN GIL (STDER)"
+  },
+  {
+    "code": "68682",
+    "name": "SAN JOAQUIN (STDER)"
+  },
+  {
+    "code": "68684",
+    "name": "SAN JOSE DE MIRANDA (STDER)"
+  },
+  {
+    "code": "68689",
+    "name": "SAN VICENTE DE CHUCURI (STDER)"
+  },
+  {
+    "code": "68720",
+    "name": "SANTA HELENA DEL OPON (STDER)"
+  },
+  {
+    "code": "68745",
+    "name": "SIMACOTA (STDER)"
+  },
+  {
+    "code": "68755",
+    "name": "SOCORRO (STDER)"
+  },
+  {
+    "code": "68770",
+    "name": "SUAITA (STDER)"
+  },
+  {
+    "code": "68773",
+    "name": "SUCRE (STDER)"
+  },
+  {
+    "code": "68855",
+    "name": "VALLE DE SAN JOSE (STDER)"
+  },
+  {
+    "code": "68861",
+    "name": "VELEZ (STDER)"
+  },
+  {
+    "code": "68872",
+    "name": "VILLANUEVA (STDER)"
+  },
+  {
+    "code": "68895",
+    "name": "ZAPATOCA (STDER)"
+  },
+  {
+    "code": "70001",
+    "name": "SINCELEJO (SUCRE)"
+  },
+  {
+    "code": "70124",
+    "name": "CAIMITO (SUCRE)"
+  },
+  {
+    "code": "70204",
+    "name": "RICAURTE -COLOSO (SUCRE)"
+  },
+  {
+    "code": "70215",
+    "name": "COROZAL (SUCRE)"
+  },
+  {
+    "code": "70221",
+    "name": "COVEÑAS (SUCRE)"
+  },
+  {
+    "code": "70235",
+    "name": "GALERAS (SUCRE)"
+  },
+  {
+    "code": "70265",
+    "name": "GUARANDA (SUCRE)"
+  },
+  {
+    "code": "70400",
+    "name": "LA UNION (SUCRE)"
+  },
+  {
+    "code": "70418",
+    "name": "LOS PALMITOS (SUCRE)"
+  },
+  {
+    "code": "70429",
+    "name": "MAJAGUAL (SUCRE)"
+  },
+  {
+    "code": "70473",
+    "name": "MORROA (SUCRE)"
+  },
+  {
+    "code": "70508",
+    "name": "OVEJAS (SUCRE)"
+  },
+  {
+    "code": "70670",
+    "name": "SAMPUES (SUCRE)"
+  },
+  {
+    "code": "70678",
+    "name": "SAN BENITO ABAD (SUCRE)"
+  },
+  {
+    "code": "70702",
+    "name": "SAN JUAN DE BETULIA (SUCRE)"
+  },
+  {
+    "code": "70708",
+    "name": "SAN MARCOS (SUCRE)"
+  },
+  {
+    "code": "70713",
+    "name": "SAN ONOFRE (SUCRE)"
+  },
+  {
+    "code": "70717",
+    "name": "SAN PEDRO (SUCRE)"
+  },
+  {
+    "code": "70742",
+    "name": "SINCE (SUCRE)"
+  },
+  {
+    "code": "70771",
+    "name": "SUCRE (SUCRE)"
+  },
+  {
+    "code": "70820",
+    "name": "TOLU (SUCRE)"
+  },
+  {
+    "code": "70823",
+    "name": "TOLU VIEJO (SUCRE)"
+  },
+  {
+    "code": "73001",
+    "name": "IBAGUE (TOL)"
+  },
+  {
+    "code": "73024",
+    "name": "ALPUJARRA (TOL)"
+  },
+  {
+    "code": "73026",
+    "name": "ALVARADO (TOL)"
+  },
+  {
+    "code": "73030",
+    "name": "AMBALEMA (TOL)"
+  },
+  {
+    "code": "73043",
+    "name": "ANZOATEGUI (TOL)"
+  },
+  {
+    "code": "73055",
+    "name": "ARMERO GUAYABAL (TOL)"
+  },
+  {
+    "code": "73067",
+    "name": "ATACO (TOL)"
+  },
+  {
+    "code": "73124",
+    "name": "CAJAMARCA (TOL)"
+  },
+  {
+    "code": "73148",
+    "name": "CARMEN DE APICALA (TOL)"
+  },
+  {
+    "code": "73152",
+    "name": "CASABIANCA (TOL)"
+  },
+  {
+    "code": "73168",
+    "name": "CHAPARRAL (TOL)"
+  },
+  {
+    "code": "73200",
+    "name": "COELLO (TOL)"
+  },
+  {
+    "code": "73217",
+    "name": "COYAIMA (TOL)"
+  },
+  {
+    "code": "73226",
+    "name": "CUNDAY (TOL)"
+  },
+  {
+    "code": "73236",
+    "name": "DOLORES (TOL)"
+  },
+  {
+    "code": "73268",
+    "name": "ESPINAL (TOL)"
+  },
+  {
+    "code": "73270",
+    "name": "FALAN (TOL)"
+  },
+  {
+    "code": "73275",
+    "name": "FLANDES (TOL)"
+  },
+  {
+    "code": "73283",
+    "name": "FRESNO (TOL)"
+  },
+  {
+    "code": "73319",
+    "name": "GUAMO (TOL)"
+  },
+  {
+    "code": "73347",
+    "name": "HERBEO (TOL)"
+  },
+  {
+    "code": "73349",
+    "name": "HONDA (TOL)"
+  },
+  {
+    "code": "73352",
+    "name": "ICONONZO (TOL)"
+  },
+  {
+    "code": "73408",
+    "name": "LERIDA (TOL)"
+  },
+  {
+    "code": "73411",
+    "name": "LIBANO (TOL)"
+  },
+  {
+    "code": "73443",
+    "name": "MARIQUITA (TOL)"
+  },
+  {
+    "code": "73449",
+    "name": "MELGAR (TOL)"
+  },
+  {
+    "code": "73461",
+    "name": "MURILLO (TOL)"
+  },
+  {
+    "code": "73483",
+    "name": "NATAGAIMA (TOL)"
+  },
+  {
+    "code": "73504",
+    "name": "ORTEGA (TOL)"
+  },
+  {
+    "code": "73520",
+    "name": "PALOCABILDO (TOL)"
+  },
+  {
+    "code": "73547",
+    "name": "PIEDRAS (TOL)"
+  },
+  {
+    "code": "73555",
+    "name": "PLANADAS (TOL)"
+  },
+  {
+    "code": "73563",
+    "name": "PRADO (TOL)"
+  },
+  {
+    "code": "73585",
+    "name": "PURIFICACION (TOL)"
+  },
+  {
+    "code": "73616",
+    "name": "RIOBLANCO (TOL)"
+  },
+  {
+    "code": "73622",
+    "name": "RONCESVALLES (TOL)"
+  },
+  {
+    "code": "73624",
+    "name": "ROVIRA (TOL)"
+  },
+  {
+    "code": "73671",
+    "name": "SALDANA (TOL)"
+  },
+  {
+    "code": "73675",
+    "name": "SAN ANTONIO (TOL)"
+  },
+  {
+    "code": "73678",
+    "name": "SAN LUIS (TOL)"
+  },
+  {
+    "code": "73686",
+    "name": "SANTA ISABEL (TOL)"
+  },
+  {
+    "code": "73770",
+    "name": "SUAREZ (TOL)"
+  },
+  {
+    "code": "73854",
+    "name": "VALLE DE SAN JUAN (TOL)"
+  },
+  {
+    "code": "73861",
+    "name": "VENADILLO (TOL)"
+  },
+  {
+    "code": "73870",
+    "name": "VILLAHERMOSA (TOL)"
+  },
+  {
+    "code": "73873",
+    "name": "VILLA RICA (TOL)"
+  },
+  {
+    "code": "76001",
+    "name": "CALI (VALLE)"
+  },
+  {
+    "code": "76020",
+    "name": "ALCALA (VALLE)"
+  },
+  {
+    "code": "76036",
+    "name": "ANDALUCIA (VALLE)"
+  },
+  {
+    "code": "76041",
+    "name": "ANSERMA NUEVO (VALLE)"
+  },
+  {
+    "code": "76054",
+    "name": "ARGELIA (VALLE)"
+  },
+  {
+    "code": "76100",
+    "name": "BOLIVAR (VALLE)"
+  },
+  {
+    "code": "76109",
+    "name": "BUENAVENTURA (VALLE)"
+  },
+  {
+    "code": "76111",
+    "name": "BUGA (VALLE)"
+  },
+  {
+    "code": "76113",
+    "name": "BUGA LA GRANDE (VALLE)"
+  },
+  {
+    "code": "76122",
+    "name": "CAICEDONIA (VALLE)"
+  },
+  {
+    "code": "76126",
+    "name": "DARIEN (VALLE)"
+  },
+  {
+    "code": "76130",
+    "name": "CANDELARIA (VALLE)"
+  },
+  {
+    "code": "76147",
+    "name": "CARTAGO (VALLE)"
+  },
+  {
+    "code": "76233",
+    "name": "DAGUA (VALLE)"
+  },
+  {
+    "code": "76243",
+    "name": "EL AGUILA (VALLE)"
+  },
+  {
+    "code": "76246",
+    "name": "EL CAIRO (VALLE)"
+  },
+  {
+    "code": "76248",
+    "name": "EL CERRITO (VALLE)"
+  },
+  {
+    "code": "76250",
+    "name": "EL DOVIO (VALLE)"
+  },
+  {
+    "code": "76275",
+    "name": "FLORIDA (VALLE)"
+  },
+  {
+    "code": "76306",
+    "name": "GINEBRA (VALLE)"
+  },
+  {
+    "code": "76318",
+    "name": "GUACARI (VALLE)"
+  },
+  {
+    "code": "76364",
+    "name": "JAMUNDI (VALLE)"
+  },
+  {
+    "code": "76377",
+    "name": "LA CUMBRE (VALLE)"
+  },
+  {
+    "code": "76400",
+    "name": "LA UNION (VALLE)"
+  },
+  {
+    "code": "76403",
+    "name": "LA VICTORIA (VALLE)"
+  },
+  {
+    "code": "76497",
+    "name": "OBANDO (VALLE)"
+  },
+  {
+    "code": "76520",
+    "name": "PALMIRA (VALLE)"
+  },
+  {
+    "code": "76563",
+    "name": "PRADERA (VALLE)"
+  },
+  {
+    "code": "76606",
+    "name": "RESTREPO (VALLE)"
+  },
+  {
+    "code": "76616",
+    "name": "RIO FRIO (VALLE)"
+  },
+  {
+    "code": "76622",
+    "name": "ROLDANILLO (VALLE)"
+  },
+  {
+    "code": "76670",
+    "name": "SAN PEDRO (VALLE)"
+  },
+  {
+    "code": "76736",
+    "name": "SEVILLA (VALLE)"
+  },
+  {
+    "code": "76823",
+    "name": "TORO (VALLE)"
+  },
+  {
+    "code": "76828",
+    "name": "TRUJILLO (VALLE)"
+  },
+  {
+    "code": "76834",
+    "name": "TULUA (VALLE)"
+  },
+  {
+    "code": "76845",
+    "name": "ULLOA (VALLE)"
+  },
+  {
+    "code": "76863",
+    "name": "VERSALLES (VALLE)"
+  },
+  {
+    "code": "76869",
+    "name": "VIJES (VALLE)"
+  },
+  {
+    "code": "76890",
+    "name": "YOTOCO (VALLE)"
+  },
+  {
+    "code": "76892",
+    "name": "YUMBO (VALLE)"
+  },
+  {
+    "code": "76895",
+    "name": "ZARZAL (VALLE)"
+  },
+  {
+    "code": "81001",
+    "name": "ARAUCA (ARAU)"
+  },
+  {
+    "code": "81065",
+    "name": "ARAUQUITA (ARAU)"
+  },
+  {
+    "code": "81220",
+    "name": "CRAVO NORTE (ARAU)"
+  },
+  {
+    "code": "81300",
+    "name": "FORTUL (ARAU)"
+  },
+  {
+    "code": "81591",
+    "name": "PUERTO RONDON (ARAU)"
+  },
+  {
+    "code": "81736",
+    "name": "SARAVENA (ARAU)"
+  },
+  {
+    "code": "81794",
+    "name": "TAME (ARAU)"
+  },
+  {
+    "code": "85001",
+    "name": "YOPAL (C/NARE)"
+  },
+  {
+    "code": "85010",
+    "name": "AGUAZUL (C/NARE)"
+  },
+  {
+    "code": "85125",
+    "name": "HATO COROZAL (C/NARE)"
+  },
+  {
+    "code": "85139",
+    "name": "MANI (C/NARE)"
+  },
+  {
+    "code": "85162",
+    "name": "MONTERREY (C/NARE)"
+  },
+  {
+    "code": "85225",
+    "name": "NUNCHIA (C/NARE)"
+  },
+  {
+    "code": "85230",
+    "name": "OROCUE (C/NARE)"
+  },
+  {
+    "code": "85250",
+    "name": "PAZ DE ARIPORO (C/NARE)"
+  },
+  {
+    "code": "85263",
+    "name": "PORE (C/NARE)"
+  },
+  {
+    "code": "85300",
+    "name": "SABANALARGA (C/NARE)"
+  },
+  {
+    "code": "85325",
+    "name": "SAN LUIS DE PALENQUE (C/NARE)"
+  },
+  {
+    "code": "85400",
+    "name": "TAMARA (C/NARE)"
+  },
+  {
+    "code": "85410",
+    "name": "TAURAMENA (C/NARE)"
+  },
+  {
+    "code": "85430",
+    "name": "TRINIDAD (C/NARE)"
+  },
+  {
+    "code": "85440",
+    "name": "VILLANUEVA (C/NARE)"
+  },
+  {
+    "code": "86001",
+    "name": "MOCOA (P/MAYO)"
+  },
+  {
+    "code": "86219",
+    "name": "COLON (P/MAYO)"
+  },
+  {
+    "code": "86320",
+    "name": "ORITO (P/MAYO)"
+  },
+  {
+    "code": "86568",
+    "name": "PUERTO ASIS (P/MAYO)"
+  },
+  {
+    "code": "86569",
+    "name": "PUERTO CAICEDO (P/MAYO)"
+  },
+  {
+    "code": "86571",
+    "name": "PUERTO GUZMAN (P/MAYO)"
+  },
+  {
+    "code": "86573",
+    "name": "PUERTO LEGUIZAMO (P/MAYO)"
+  },
+  {
+    "code": "86749",
+    "name": "SIBUNDOY (P/MAYO)"
+  },
+  {
+    "code": "86755",
+    "name": "SAN FRANCISCO (P/MAYO)"
+  },
+  {
+    "code": "86757",
+    "name": "LA DORADA SAN MIGUEL (P/MAYO)"
+  },
+  {
+    "code": "86760",
+    "name": "SANTIAGO (P/MAYO)"
+  },
+  {
+    "code": "86865",
+    "name": "LA HORMIGA - VALLE GUAMUEZ (P/MAYO)"
+  },
+  {
+    "code": "86885",
+    "name": "VILLAGARZON (P/MAYO)"
+  },
+  {
+    "code": "88001",
+    "name": "SAN ANDRES ISLA (S/ANDRES)"
+  },
+  {
+    "code": "88564",
+    "name": "PROVIDENCIA (S/ANDRES)"
+  },
+  {
+    "code": "91001",
+    "name": "LETICIA (AMAZ)"
+  },
+  {
+    "code": "94001",
+    "name": "INIRIDA (GUAI)"
+  },
+  {
+    "code": "95001",
+    "name": "SAN JOSE DEL GUAVIARE (G/VIARE)"
+  },
+  {
+    "code": "97001",
+    "name": "MITU (V/PES)"
+  },
+  {
+    "code": "99001",
+    "name": "PUERTO CARREÑO (VICH)"
+  },
+  {
+    "code": "99524",
+    "name": "LA PRIMAVERA (VICH)"
+  },
+  {
+    "code": "99624",
+    "name": "SANTA ROSALIA (VICH)"
+  },
+  {
+    "code": "99773",
+    "name": "CUMARIBO (VICH)"
+  }
+]

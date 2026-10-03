@@ -54,4 +54,38 @@ public sealed class CityTests
 
         Assert.Throws<GeographyDomainException>(() => city.Rename(""));
     }
+
+    [Fact]
+    public void ANewCityHasNoCoordinadoraName()
+    {
+        var city = City.Create(CityId.New(), "05002", "ABEJORRAL", DepartmentId.New());
+
+        Assert.Null(city.CoordinadoraName);
+    }
+
+    [Fact]
+    public void SetCoordinadoraNameKeepsItTrimmed()
+    {
+        var city = City.Create(CityId.New(), "05002", "ABEJORRAL", DepartmentId.New());
+
+        city.SetCoordinadoraName("  ABEJORRAL (ANT) ");
+
+        Assert.Equal("ABEJORRAL (ANT)", city.CoordinadoraName);
+    }
+
+    // Coordinadora no lista el municipio, o lo lista inactivo: el nombre se borra, no se conserva
+    // el de un arranque anterior.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void SetCoordinadoraNameWithoutANameClearsIt(string? name)
+    {
+        var city = City.Create(CityId.New(), "05002", "ABEJORRAL", DepartmentId.New());
+        city.SetCoordinadoraName("ABEJORRAL (ANT)");
+
+        city.SetCoordinadoraName(name);
+
+        Assert.Null(city.CoordinadoraName);
+    }
 }

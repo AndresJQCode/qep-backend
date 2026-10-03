@@ -13,4 +13,14 @@ public interface IQuotationGeographyLookup
 {
     Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El nombre de cada ciudad como lo escribe Coordinadora ("ABEJORRAL (ANT)"), para la columna
+    /// "Ciudad Coordinadora" del Excel de pedidos (ajuste 2026-10-02). Sólo trae las ciudades que
+    /// lo tienen: una que Coordinadora no lista, o un id que no existe, no aparece en el
+    /// diccionario. No hay respaldo al nombre del DANE a propósito, porque la transportadora no lo
+    /// reconoce.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken);
 }

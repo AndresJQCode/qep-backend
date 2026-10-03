@@ -35,6 +35,69 @@ public sealed class GeographySeedIntegrityTests
         Assert.Equal(1122, cityCount);
     }
 
+    // El nombre de Coordinadora sale del snapshot embebido en cada arranque. 05002 está en el
+    // snapshot; 13030 (ALTOS DEL ROSARIO) Coordinadora no lo lista, así que queda null.
+    [Fact]
+    public async Task ReseedingSetsTheCoordinadoraNameFromTheSnapshotWithoutChangingTheCityCount()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Fuerza a que el host arranque (y con él, la migración + el primer seed).
+        using var warmUpClient = factory.CreateClient();
+
+        await factory.Services.InitializeGeographyDatabaseAsync(
+            TestContext.Current.CancellationToken);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+        var cityCount = await dbContext.Cities.CountAsync(TestContext.Current.CancellationToken);
+        var abejorral = await dbContext.Cities.SingleAsync(
+            city => city.DivipolaCode == "05002", TestContext.Current.CancellationToken);
+        var altosDelRosario = await dbContext.Cities.SingleAsync(
+            city => city.DivipolaCode == "13030", TestContext.Current.CancellationToken);
+
+        Assert.Equal(1122, cityCount);
+        Assert.Equal("ABEJORRAL (ANT)", abejorral.CoordinadoraName);
+        Assert.Null(altosDelRosario.CoordinadoraName);
+    }
+
+    // Cada arranque reconcilia contra el snapshot: un nombre que alguien cambió a mano vuelve al
+    // del snapshot, y uno puesto en una ciudad que el snapshot no lista se borra.
+    [Fact]
+    public async Task ReseedingReconcilesCoordinadoraNamesThatDriftedFromTheSnapshot()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var warmUpClient = factory.CreateClient();
+
+        await using (var driftScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = driftScope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+            var abejorral = await dbContext.Cities.SingleAsync(
+                city => city.DivipolaCode == "05002", TestContext.Current.CancellationToken);
+            var altosDelRosario = await dbContext.Cities.SingleAsync(
+                city => city.DivipolaCode == "13030", TestContext.Current.CancellationToken);
+            abejorral.SetCoordinadoraName("OTRO NOMBRE");
+            altosDelRosario.SetCoordinadoraName("ALTOS DEL ROSARIO (BOL)");
+            await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await factory.Services.InitializeGeographyDatabaseAsync(
+            TestContext.Current.CancellationToken);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var reseeded = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+        var names = await reseeded.Cities
+            .Where(city => city.DivipolaCode == "05002" || city.DivipolaCode == "13030")
+            .ToDictionaryAsync(
+                city => city.DivipolaCode,
+                city => city.CoordinadoraName,
+                TestContext.Current.CancellationToken);
+
+        Assert.Equal("ABEJORRAL (ANT)", names["05002"]);
+        Assert.Null(names["13030"]);
+    }
+
     [Fact]
     public async Task InsertingTwoDepartmentsWithTheSameDivipolaCodeViolatesTheUniqueIndex()
     {
