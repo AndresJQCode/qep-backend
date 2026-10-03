@@ -108,9 +108,24 @@ public sealed class QuotationItem
         Quantity > 0 ? Round((Round(Quantity * UnitPrice) - DiscountAmount) / Quantity) : 0m;
 
     /// <summary>
+    /// El precio unitario neto: con el descuento ya aplicado y sin el IVA que trae adentro. Es lo
+    /// que el Excel de pedidos pone en "Valor Unit" (2026-10-03), lo que el ERP cobra por unidad.
+    ///
+    /// Sale de <see cref="Subtotal"/> / <see cref="Quantity"/> y no de restarle el descuento a
+    /// <see cref="UnitPriceWithoutTax"/>: el subtotal ya es la base sin IVA de la línea después del
+    /// descuento —el de la escala propia, el del grupo o el del piso global, que el recálculo deja
+    /// guardado en la línea—, así que <c>Quantity × DiscountedUnitPriceWithoutTax</c> reconstruye la
+    /// misma base sobre la que se calcularon <see cref="TaxAmount"/> y los totales, salvo el
+    /// redondeo a dos decimales por unidad. Derivado, no persistido, igual que sus vecinos; el
+    /// guardia de la cantidad es el mismo de <see cref="DiscountedUnitPrice"/>.
+    /// </summary>
+    public decimal DiscountedUnitPriceWithoutTax => Quantity > 0 ? Round(Subtotal / Quantity) : 0m;
+
+    /// <summary>
     /// El precio unitario bruto con el IVA que trae adentro quitado: <see cref="UnitPrice"/> se
     /// carga con IVA incluido (ver <see cref="Apply"/>), así que esto es la base por unidad, antes
-    /// de cualquier descuento. Lo pide el Excel de pedidos ("Valor Unit sin IVA", 2026-09-24).
+    /// de cualquier descuento. Lo pide el Excel de pedidos ("Valor Unit sin IVA", 2026-09-24); el
+    /// neto, con descuento, es <see cref="DiscountedUnitPriceWithoutTax"/>.
     ///
     /// Derivado, no persistido, igual que <see cref="DiscountedUnitPrice"/>: sin columna ni
     /// migración, y una línea vieja lo reporta igual. Misma familia de fórmula que

@@ -62,8 +62,8 @@ public sealed class OrdersExportProcessorTests
     }
 
     // 2026-09-24: "Valor Unit sin IVA" va al final, por la misma razón que "Cod. Asesor". Es el
-    // precio unitario con el IVA que trae adentro quitado; "Valor Unit" sigue siendo el precio con
-    // IVA, que es como se carga QuotationItem.UnitPrice. El descuento no entra en ninguno de los dos.
+    // precio unitario bruto con el IVA que trae adentro quitado, antes del descuento — distinto de
+    // "Valor Unit", que desde 2026-10-03 lleva el neto (con descuento y sin IVA).
     [Fact]
     public async Task ValorUnitSinIvaFollowsTheProofsWithTheVatRemovedFromTheUnitPrice()
     {
@@ -76,10 +76,34 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Valor Unit sin IVA", writer.Columns[ValorUnitSinIvaIndex].Header);
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
-        Assert.Equal(119_000m, cells[3].Number);
         Assert.Equal(100_000m, cells[ValorUnitSinIvaIndex].Number);
         Assert.Null(cells[ValorUnitSinIvaIndex].Text);
     }
+
+    // 2026-10-03: "Valor Unit" es lo que el ERP cobra por unidad: con el descuento ya aplicado y sin
+    // IVA, para que Cantidad × Valor Unit cuadre con el IVA y los totales del pedido. 3 × 119.000
+    // con 10% de descuento cobra 321.300, que sin el 19% de IVA son 270.000: 90.000 por unidad.
+    // "Descuento" sigue siendo el monto de la línea, informativo.
+    [Fact]
+    public async Task ValorUnitIsTheUnitPriceWithTheDiscountAppliedAndWithoutVat()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", items: [(ProductId, 3m, 119_000m, 10m, 19)]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Valor Unit", writer.Columns[ValorUnitIndex].Header);
+        Assert.Equal("Descuento", writer.Columns[DescuentoIndex].Header);
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(90_000m, cells[ValorUnitIndex].Number);
+        Assert.Null(cells[ValorUnitIndex].Text);
+        Assert.Equal(35_700m, cells[DescuentoIndex].Number);
+    }
+
+    private const int ValorUnitIndex = 3;
+
+    private const int DescuentoIndex = 5;
 
     private const int ValorUnitSinIvaIndex = 32;
 

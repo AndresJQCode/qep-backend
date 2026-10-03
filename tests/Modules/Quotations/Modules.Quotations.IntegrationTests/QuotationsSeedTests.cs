@@ -124,6 +124,15 @@ public sealed class QuotationsSeedTests
         var tax = Assert.Single(layout.Columns, column => column.Key == "tax");
         Assert.False(tax.Visible);
         Assert.Equal("IVA", tax.Header);
+        // Ajuste 2026-10-03: el ERP lee en "Valor Unit" el precio por unidad con el descuento ya
+        // aplicado y sin IVA, que es "unit_price". "unit_price_without_tax" (sin IVA, pero antes del
+        // descuento) queda oculta, con su nombre por defecto.
+        Assert.Equal(
+            "unit_price",
+            Assert.Single(layout.Columns, column => column.Visible && column.Header == "Valor Unit").Key);
+        var unitPriceWithoutTax = Assert.Single(layout.Columns, column => column.Key == "unit_price_without_tax");
+        Assert.False(unitPriceWithoutTax.Visible);
+        Assert.Equal("Valor Unit sin IVA", unitPriceWithoutTax.Header);
         // Ajuste 2026-09-26: el ERP lee en las dos formas de pago el banco con el número de cuenta.
         // "bank" queda oculta, con su nombre por defecto. Ajuste 2026-10-03: cada forma de pago con
         // su comprobante —"payment_method_N"—, no "bank_account", que es del pedido y llenaba la 2
