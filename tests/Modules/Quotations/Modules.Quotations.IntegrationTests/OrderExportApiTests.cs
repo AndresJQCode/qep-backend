@@ -589,6 +589,12 @@ public sealed class OrderExportApiTests
         Assert.Equal(10_000m, decimal.Parse(row[36], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][36]);
         Assert.Equal("Coordinadora", row[30]);
+        // "Ciudad (P4)" (ajuste 2026-10-02): la ciudad como la escribe Coordinadora, nunca la del
+        // DANE. El cliente del harness vive en EL ENCANTO (AMAZONAS), que Coordinadora no lista: la
+        // celda sale vacía, no "EL ENCANTO".
+        var ciudadP4 = sheet.Rows[0].ToList().IndexOf("Ciudad (P4)");
+        Assert.Equal(32, ciudadP4);
+        Assert.Equal(string.Empty, row[ciudadP4]);
         // "Documento (P5)" (ajuste 2026-09-26): el documento de identidad del cliente tal como lo
         // escribió en su ficha —Customers sólo lo recorta—, no el CUC.
         Assert.Equal("Documento (P5)", sheet.Rows[0][34]);

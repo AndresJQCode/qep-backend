@@ -965,7 +965,9 @@ facturación (`company_tax_id`) y no un NIT escrito a mano (2026-09-26). Su «IV
 sean la misma— y el total consignado (`proof_amount_total`) en «V. Consignacion (P7)»; `bank` queda
 oculto. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su
 `Documento (P5)` lleva el documento de identidad (`customer_identification`) y el CUC (`document`)
-queda oculto. Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
+queda oculto. Desde el 2026-10-02 su «Ciudad (P4)» lleva la ciudad como la escribe Coordinadora
+(`coordinadora_city`) —la hoja ya fija «Transportadora (P2)» = Coordinadora— y `city` queda oculta.
+Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
 y lo cambia desde su pantalla de configuración.
 
 | Método | Ruta                                                | Permiso                  |
