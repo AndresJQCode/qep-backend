@@ -54,8 +54,9 @@ public sealed class OrdersExportProcessor(
     /// Detalle" sale siempre vacía (no existe nota por línea); "Cod. Asesor" (D9 del spec del código
     /// de asesor) va después de "Email" para no mover lo que el ERP ya importa; "Banco", "Cuenta" y
     /// los pares "V. Comprobante N" / "URL Comprobante N" (2026-09-24) van al final por lo mismo; y
-    /// de última "Valor Unit sin IVA" (<see cref="QuotationItem.UnitPriceWithoutTax"/>), mientras
-    /// "Valor Unit" sigue llevando el precio con IVA incluido. Detrás, por lo mismo, las dos que pidió
+    /// de última "Valor Unit sin IVA" (<see cref="QuotationItem.UnitPriceWithoutTax"/>, el bruto sin
+    /// IVA), mientras "Valor Unit" lleva desde 2026-10-03 el neto, con descuento y sin IVA
+    /// (<see cref="QuotationItem.DiscountedUnitPriceWithoutTax"/>). Detrás, por lo mismo, las dos que pidió
     /// la hoja de importación del ERP (ajuste 2026-09-25): "Fecha Pedido" (<see cref="Order.CreatedAt"/>
     /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
     /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
@@ -310,7 +311,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(empresa),
                 ExportCell.OfText(QuotationItemProductLabel.CodeOf(item.ProductCode, product)),
                 ExportCell.OfNumber(item.Quantity),
-                ExportCell.OfNumber(item.UnitPrice),
+                ExportCell.OfNumber(item.DiscountedUnitPriceWithoutTax),
                 ExportCell.OfNumber(item.TaxAmount),
                 ExportCell.OfNumber(item.DiscountAmount),
                 ExportCell.OfText(string.Empty), // Nota Detalle: no existe nota por línea.

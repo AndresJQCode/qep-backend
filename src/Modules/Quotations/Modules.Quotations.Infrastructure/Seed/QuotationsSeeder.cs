@@ -107,7 +107,10 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("Bodega", "Principal", visible: true),
         OrdersExportColumnSetting.Fixed("U.Medida", "Und.", visible: true),
         OrdersExportColumnSetting.Catalog("quantity", "Cantidad", visible: true),
-        OrdersExportColumnSetting.Catalog("unit_price_without_tax", "Valor Unit", visible: true),
+        // Ajuste 2026-10-03: el ERP lee acá el precio por unidad con el descuento ya aplicado y sin
+        // IVA, que es "unit_price". "unit_price_without_tax" (sin IVA, pero antes del descuento)
+        // queda entre las ocultas.
+        OrdersExportColumnSetting.Catalog("unit_price", "Valor Unit", visible: true),
         // Ajuste 2026-09-26: la tasa de cada línea y no un 0.19 fijo, porque hay productos con otra
         // tarifa. "tax" (el monto) queda entre las ocultas.
         OrdersExportColumnSetting.Catalog("tax_rate", "IVA", visible: true),
@@ -151,11 +154,11 @@ public static class QuotationsSeeder
             visible: false)),
     ];
 
-    // Las del catálogo que la hoja no usa, con su nombre por defecto. "Valor Unit" e "IVA" chocan
-    // con dos visibles de la hoja, pero entre ocultas y visibles el encabezado puede repetirse.
+    // Las del catálogo que la hoja no usa, con su nombre por defecto. "IVA" choca con una visible
+    // de la hoja, pero entre ocultas y visibles el encabezado puede repetirse.
     private static IEnumerable<string> HiddenCatalogKeys() =>
     [
-        "unit_price",
+        "unit_price_without_tax",
         "tax",
         "document",
         "city",
