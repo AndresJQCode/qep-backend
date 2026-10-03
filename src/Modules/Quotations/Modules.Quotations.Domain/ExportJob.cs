@@ -50,6 +50,17 @@ public sealed class ExportJob
 
     /// <summary>El sujeto que la pidió: a quien va el correo y contra quien se cuenta el límite
     /// de pendientes.</summary>
+    /// <remarks>
+    /// Es el id de <c>identity.users</c> y puede quedar colgando a propósito (spec 2026-10-02):
+    /// <c>OrphanUserCleanupWorker</c> borra al usuario sin mirar esta tabla, y no hay sonda ni
+    /// purgador de Quotations para ella. Una sonda lo retendría para siempre por una fila que se
+    /// borra sola —el worker evalúa al usuario una sola vez por baja—, y nada de lo que lee esta
+    /// columna se rompe sin el usuario: el límite de pendientes sólo cuenta, la auditoría guarda el
+    /// id como snapshot, y el correo de Notifications no encuentra la dirección y queda en
+    /// <c>Failed</c> con <c>recipient_email_unavailable</c>, sin reintentos. El job termina igual
+    /// —completo o fallido— y <see cref="Retention"/> lo borra; el Excel vive bajo <c>exports/</c>
+    /// y lo vence la regla de lifecycle del bucket, no esta fila.
+    /// </remarks>
     public Guid RequestedBy { get; private set; }
 
     public ExportJobKind Kind { get; private set; }

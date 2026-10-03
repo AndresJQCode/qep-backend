@@ -55,9 +55,11 @@ public interface IMembershipRepository
         CancellationToken cancellationToken);
 
     // ¿Alguna membresía del tenant —en cualquier estado, quitadas incluidas (spec 2026-09-24, D4)—
-    // tiene este código de asesor? exceptMembershipId deja afuera a la propia membresía, para que
-    // editar o re-invitar sin cambiar el código no choque consigo mismo. Es el chequeo previo que
-    // responde claro; ante una carrera la autoridad es el índice único parcial.
+    // tiene este código de asesor? Una quitada bloquea mientras exista: la de alguien sin historia
+    // se purga junto con su usuario y deja de contar (spec 2026-10-02). exceptMembershipId deja
+    // afuera a la propia membresía, para que editar o re-invitar sin cambiar el código no choque
+    // consigo mismo. Es el chequeo previo que responde claro; ante una carrera la autoridad es el
+    // índice único parcial.
     Task<bool> IsAdvisorCodeTakenAsync(
         TenantId tenantId,
         int advisorCode,
@@ -65,4 +67,9 @@ public interface IMembershipRepository
         CancellationToken cancellationToken);
 
     void Add(Membership membership);
+
+    // Borrado físico. Lo usa sólo MembershipUserReferencePurger, cuando Identity está por borrar
+    // al usuario por no tener historia (spec 2026-10-02); quitar a un miembro es Membership.Remove,
+    // que cambia el estado y conserva la fila.
+    void Remove(Membership membership);
 }

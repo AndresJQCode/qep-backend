@@ -1064,7 +1064,9 @@ public sealed class MembershipApiTests
         Assert.Equal("tenancy.membership.advisor_code_taken", problem!.Code);
     }
 
-    // D4 / Review Focus 2: la quitada conserva su código y lo sigue bloqueando.
+    // D4 / Review Focus 2: la quitada conserva su código y lo sigue bloqueando. Vale para quien
+    // sobrevive a la baja; la de alguien sin historia se purga y libera el código (spec
+    // 2026-10-02, lo prueba OrphanUserCleanupTests).
     [Fact]
     public async Task ARemovedMembershipKeepsBlockingItsCode()
     {
@@ -1072,7 +1074,9 @@ public sealed class MembershipApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
-        var invited = await InviteAsync(client, TenantId, NewEmail(), advisorCode: 7);
+        var email = NewEmail();
+        await KeepTheUserAliveElsewhereAsync(factory, email);
+        var invited = await InviteAsync(client, TenantId, email, advisorCode: 7);
         var holder = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
             TestContext.Current.CancellationToken);
         var removal = await RemoveAsync(client, TenantId, holder!.Id);
@@ -1095,6 +1099,7 @@ public sealed class MembershipApiTests
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
+        await KeepTheUserAliveElsewhereAsync(factory, email);
         var invited = await InviteAsync(client, TenantId, email, advisorCode: 7);
         var holder = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
             TestContext.Current.CancellationToken);
@@ -1121,6 +1126,7 @@ public sealed class MembershipApiTests
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var email = NewEmail();
+        await KeepTheUserAliveElsewhereAsync(factory, email);
         var invited = await InviteAsync(client, TenantId, email, advisorCode: 7);
         var holder = await invited.Content.ReadFromJsonAsync<MembershipPayload>(
             TestContext.Current.CancellationToken);
@@ -1295,15 +1301,18 @@ public sealed class MembershipApiTests
     /// como membership — así el tenant nace con la autoridad que <c>Tenant.Create</c> exige, sin
     /// agregar una fila al roster que inflaría <c>Counts</c> en las pruebas de conteo.
     /// </summary>
-    private static async Task SeedSeededTenantAsync(QepApiFactory factory)
+    private static async Task SeedSeededTenantAsync(
+        QepApiFactory factory,
+        string tenantId = TenantId,
+        string slug = "qcode-demo")
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
         // Nombre completo del struct: el campo constante `TenantId` de esta clase tapa el tipo
         // `Modules.Tenancy.Domain.TenantId` para cualquier referencia sin calificar.
         dbContext.Tenants.Add(Tenant.Create(
-            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
-            "qcode-demo",
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId)),
+            slug,
             "QCode Demo",
             "es-CO",
             "America/Bogota",
@@ -1314,6 +1323,20 @@ public sealed class MembershipApiTests
     }
 
     private static string NewEmail() => $"invitee-{Guid.NewGuid():N}@example.com";
+
+    /// <summary>
+    /// Deja a la persona con una invitación viva en otro tenant, que la retiene ante
+    /// OrphanUserCleanupWorker (MembershipUserReferenceProbe). Sin eso, quitarla sin historia hace
+    /// que el worker borre su usuario y purgue su membresía quitada (spec 2026-10-02), y una
+    /// prueba que mira la fila quitada después del remove correría contra el worker.
+    /// </summary>
+    private static async Task KeepTheUserAliveElsewhereAsync(QepApiFactory factory, string email)
+    {
+        await SeedSeededTenantAsync(factory, OtherTenantId, "qcode-other");
+        using var otherClient = CreateClient(factory, OtherSubjectId, OtherTenantId);
+        var response = await InviteAsync(otherClient, OtherTenantId, email);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
 
     // El formulario marca el input leyendo las claves de `errors`, en PascalCase: es lo único
     // que se afirma del 422 de validación.

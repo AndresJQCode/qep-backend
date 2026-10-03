@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,8 @@ public static class CatalogInfrastructureExtensions
         services.AddScoped<IProductExportEventPublisher, ProductExportEventPublisher>();
         services.AddScoped<ICatalogUnitOfWork, CatalogUnitOfWork>();
         services.AddScoped<ICatalogAuditPublisher, CatalogAuditPublisher>();
+        // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
+        services.AddScoped<IUserReferenceProbe, ProductPriceChangeUserReferenceProbe>();
 
         return services;
     }
