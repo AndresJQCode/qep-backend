@@ -18,6 +18,7 @@ public sealed class OrdersExportProcessorTests
     private static readonly Guid OtherProductId = Guid.CreateVersion7();
     private static readonly Guid CompanyId = Guid.CreateVersion7();
     private static readonly Guid CityId = Guid.CreateVersion7();
+    private static readonly Guid CustomerCityId = Guid.CreateVersion7();
     private static readonly MemberId AdvisorId = new(Guid.CreateVersion7());
     private static readonly DateTimeOffset Now = new(2026, 9, 12, 15, 30, 0, TimeSpan.Zero);
     private static readonly DateOnly From = new(2026, 9, 1);
@@ -492,6 +493,140 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("6015550000", row[17].Text);
         Assert.Equal("bodega@ejemplo.co", row[18].Text);
     }
+
+    // Ajuste 2026-10-02: "Ciudad Coordinadora" sigue la misma precedencia que "Ciudad" (ContactFor):
+    // con parte de entrega, la ciudad de la parte; sin ella, la del cliente. Pero el nombre es el de
+    // Coordinadora, nunca el del DANE.
+    [Fact]
+    public async Task CiudadCoordinadoraIsTheShippingPartysCityAsCoordinadoraNamesIt()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: null,
+            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", CityId = CityId });
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
+        var geography = new StubQuotationGeographyLookup(
+            new Dictionary<Guid, string> { [CityId] = "Rionegro", [CustomerCityId] = "Abejorral" },
+            new Dictionary<Guid, string> { [CityId] = "RIONEGRO (ANT)", [CustomerCityId] = "ABEJORRAL (ANT)" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                writer,
+                customers: customers,
+                geography: geography,
+                layouts: CoordinadoraCityVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Ciudad Coordinadora", writer.Columns[0].Header);
+        Assert.Equal("RIONEGRO (ANT)", Assert.Single(writer.Rows)[0].Text);
+    }
+
+    [Fact]
+    public async Task CiudadCoordinadoraFallsBackToTheCustomersCityWithoutAShippingParty()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
+        var geography = new StubQuotationGeographyLookup(
+            new Dictionary<Guid, string>(),
+            new Dictionary<Guid, string> { [CustomerCityId] = "ABEJORRAL (ANT)" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: customers,
+                geography: geography,
+                layouts: CoordinadoraCityVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("ABEJORRAL (ANT)", Assert.Single(writer.Rows)[0].Text);
+    }
+
+    // Un municipio que Coordinadora no lista, o un cliente sin ciudad (extranjero): vacía. Nunca el
+    // nombre del DANE, que la transportadora no reconoce.
+    [Fact]
+    public async Task CiudadCoordinadoraIsEmptyWhenTheCityHasNoCoordinadoraName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
+        var geography = new StubQuotationGeographyLookup(
+            new Dictionary<Guid, string> { [CustomerCityId] = "Altos del Rosario" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: customers,
+                geography: geography,
+                layouts: CoordinadoraCityVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[0].Text);
+    }
+
+    // La parte de entrega manda aunque no tenga ciudad: igual que "Ciudad", no cae a la del cliente.
+    [Fact]
+    public async Task CiudadCoordinadoraIsEmptyWhenTheShippingPartyHasNoCity()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: null,
+            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", Address = "Zona Franca" });
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
+        var geography = new StubQuotationGeographyLookup(
+            new Dictionary<Guid, string>(),
+            new Dictionary<Guid, string> { [CustomerCityId] = "ABEJORRAL (ANT)" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                writer,
+                customers: customers,
+                geography: geography,
+                layouts: CoordinadoraCityVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[0].Text);
+    }
+
+    // Las ciudades de entrega y las de los clientes del lote en una sola consulta.
+    [Fact]
+    public async Task ResolvesTheCoordinadoraNamesOncePerBatchWithShippingAndCustomerCities()
+    {
+        var parties = new QuotationParties(
+            Billing: null,
+            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", CityId = CityId });
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
+        var geography = new StubQuotationGeographyLookup(new Dictionary<Guid, string>());
+
+        await NewProcessor(
+                new StubOrderListRepository(
+                    NewRow("PED-2026-0001", parties: parties),
+                    NewRow("PED-2026-0002", parties: QuotationParties.Empty)),
+                customers: customers,
+                geography: geography)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, geography.FindCoordinadoraCityNamesCalls);
+        Assert.Equal(
+            new[] { CityId, CustomerCityId }.Order(),
+            geography.LastCoordinadoraRequestedIds.Order());
+    }
+
+    // Oculta por defecto: el Excel de un tenant que no la prende no cambia.
+    [Fact]
+    public async Task WithoutALayoutThatShowsItCiudadCoordinadoraIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Ciudad Coordinadora");
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
+
+    // La columna nueva va oculta al final del efectivo: un layout que la pide visible la pone donde
+    // la guarda, acá de primera, para leerla en la celda 0.
+    private static InMemoryOrdersExportLayoutRepository CoordinadoraCityVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad Coordinadora", visible: true));
 
     [Fact]
     public async Task PaymentDatesFillFromTheProofsUploadedAtInTheTenantsLocalTime()

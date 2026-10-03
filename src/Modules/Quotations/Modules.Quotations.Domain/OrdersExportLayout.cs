@@ -150,9 +150,13 @@ public sealed class OrdersExportLayout
     /// <summary>
     /// D8, como función pura: las entradas guardadas en su orden —una llave que ya no está en el
     /// catálogo se descarta en silencio; una repetida se conserva cada vez, con su encabezado—, más
-    /// toda llave del catálogo que no aparezca ni una vez, al final, visible y con su nombre por
-    /// defecto. Así una columna nueva del backend aparece sola sin obligar al tenant a re-guardar,
-    /// un PUT no exige el catálogo entero, y sin fila guardada el efectivo es el catálogo tal cual.
+    /// toda llave del catálogo que no aparezca ni una vez, al final, con su nombre por defecto y
+    /// visible según su <see cref="OrdersExportCatalogColumn.DefaultVisible"/>. Así una columna
+    /// nueva del backend aparece sola sin obligar al tenant a re-guardar, un PUT no exige el
+    /// catálogo entero, y sin fila guardada el efectivo es el catálogo tal cual. Una columna con
+    /// <c>DefaultVisible = false</c> (ajuste 2026-10-02, "coordinadora_city") también se completa,
+    /// pero oculta: el tenant la ve en la pantalla y la prende si quiere, y ningún Excel que ya
+    /// existe la gana sin que nadie la haya pedido.
     /// </summary>
     public static IReadOnlyList<OrdersExportColumnSetting> Effective(
         IReadOnlyList<OrdersExportColumnSetting> stored,
@@ -181,7 +185,7 @@ public sealed class OrdersExportLayout
         {
             if (seen.Add(column.Key))
             {
-                effective.Add(OrdersExportColumnSetting.Catalog(column.Key, column.DefaultHeader, visible: true));
+                effective.Add(OrdersExportColumnSetting.Catalog(column.Key, column.DefaultHeader, column.DefaultVisible));
             }
         }
 

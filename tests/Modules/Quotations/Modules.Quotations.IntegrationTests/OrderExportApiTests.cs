@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Geography.Domain;
+using Modules.Geography.Infrastructure.Persistence;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
@@ -445,7 +447,8 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 40 del catálogo + 1 fija − 1 oculta.
+        // 41 del catálogo + 1 fija − 2 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
+        // (ajuste 2026-10-02), que nace oculta y el PUT devuelve tal como la recibió del GET.
         Assert.Equal(40, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
@@ -453,6 +456,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("Cantidad", header[3]);
         Assert.DoesNotContain("EMPRESA", header);
         Assert.DoesNotContain("Email", header);
+        Assert.DoesNotContain("Ciudad Coordinadora", header);
         Assert.Equal("NIT Empresa", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
@@ -461,6 +465,81 @@ public sealed class OrderExportApiTests
         Assert.NotEqual(string.Empty, row[2]);
         Assert.True(sheet.NumericCells[1][3]);
         Assert.Equal(1m, decimal.Parse(row[3], CultureInfo.InvariantCulture));
+    }
+
+    // Ajuste 2026-10-02, de punta a punta: "Ciudad Coordinadora" sale sólo si el layout la prende,
+    // con el nombre que Geography guarda para la ciudad del cliente, por el adaptador real. El
+    // cliente del harness vive en la primera ciudad del primer departamento (EL ENCANTO,
+    // AMAZONAS), que Coordinadora no lista: primero la celda sale vacía —y no con el nombre del
+    // DANE, que sí sale en "Ciudad"—; después se le pone nombre en la base y el siguiente archivo
+    // lo lleva.
+    [Fact]
+    public async Task TheCoordinadoraCityComesOutOnlyWhenTheLayoutShowsItWithTheNameGeographyKeeps()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, "tenancy.settings.read", "tenancy.settings.update"]);
+        using var _ = client;
+        await CreateOrderAsync(client, factory, tenantId);
+        var customerCityId = await EnsureCityIdAsync(client);
+
+        var hidden = await ExportOrdersSheetAsync(client, factory, tenantId);
+        Assert.DoesNotContain("Ciudad Coordinadora", hidden.Rows[0]);
+
+        await ShowCoordinadoraCityAsync(client, tenantId);
+        var withoutName = await ExportOrdersSheetAsync(client, factory, tenantId);
+        var headers = withoutName.Rows[0].ToList();
+        var column = headers.IndexOf("Ciudad Coordinadora");
+        var ciudad = headers.IndexOf("Ciudad");
+        Assert.Equal(headers.Count - 1, column);
+        Assert.NotEqual(string.Empty, withoutName.Rows[1][ciudad]);
+        Assert.Equal(string.Empty, withoutName.Rows[1][column]);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var geography = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+            var city = await geography.Cities.SingleAsync(
+                value => value.Id == new CityId(customerCityId), TestContext.Current.CancellationToken);
+            Assert.Null(city.CoordinadoraName);
+            city.SetCoordinadoraName("EL ENCANTO (AMAZ)");
+            await geography.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var withName = await ExportOrdersSheetAsync(client, factory, tenantId);
+        Assert.Equal("EL ENCANTO (AMAZ)", withName.Rows[1][column]);
+    }
+
+    private static async Task<ExportWorkbookSheet> ExportOrdersSheetAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId)
+    {
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}", content: null, TestContext.Current.CancellationToken);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+        return ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+    }
+
+    // El GET trae "coordinadora_city" oculta, al final; el PUT la devuelve visible y en su lugar.
+    private static async Task ShowCoordinadoraCityAsync(HttpClient client, Guid tenantId)
+    {
+        var url = $"/api/v1/tenants/{tenantId}/orders-export-layout";
+        var current = await client.GetFromJsonAsync<OrdersExportLayoutPayload>(url, TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+        var columns = current.Columns.ToList();
+        var coordinadora = columns.Single(column => column.Key == "coordinadora_city");
+        Assert.False(coordinadora.Visible);
+        columns[columns.IndexOf(coordinadora)] = coordinadora with { Visible = true };
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new { columns }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{current.Version}\"");
+        using var saved = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
     }
 
     // Ajuste 2026-09-25, de punta a punta: el layout de la semilla (la hoja MIGRACION 1 del ERP del
@@ -719,6 +798,7 @@ public sealed class OrderExportApiTests
 
     private sealed record OrdersExportLayoutPayload(IReadOnlyList<OrdersExportColumnPayload> Columns, long Version);
 
-    // Sólo lo que el PUT lee; el GET trae además defaultHeader/defaultPosition, que acá no importan.
+    // Sólo lo que el PUT lee; el GET trae además defaultHeader/defaultPosition/defaultVisible, que acá
+    // no importan.
     private sealed record OrdersExportColumnPayload(string Kind, string? Key, string Header, string? Value, bool Visible);
 }

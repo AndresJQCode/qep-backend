@@ -23,32 +23,73 @@ public sealed class GetOrdersExportLayoutHandlerTests
 
         Assert.Equal(TenantId, dto.TenantId);
         Assert.Equal(1, dto.Version);
-        Assert.Equal(40, dto.Columns.Count);
+        Assert.Equal(41, dto.Columns.Count);
         Assert.All(dto.Columns, column => Assert.Equal("Catalog", column.Kind));
-        Assert.All(dto.Columns, column => Assert.True(column.Visible));
+        // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
+        // (ajuste 2026-10-02), que nace oculta.
+        Assert.All(dto.Columns, column => Assert.Equal(column.DefaultVisible, column.Visible));
         Assert.All(dto.Columns, column => Assert.Null(column.Value));
-        Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, true), dto.Columns[0]);
+        Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), dto.Columns[0]);
         Assert.Equal(
-            new OrdersExportColumnDto("Catalog", "unit_price_without_tax", "Valor Unit sin IVA", 33, "Valor Unit sin IVA", null, true),
+            new OrdersExportColumnDto("Catalog", "unit_price_without_tax", "Valor Unit sin IVA", 33, true, "Valor Unit sin IVA", null, true),
             dto.Columns[32]);
         Assert.Equal(
-            new OrdersExportColumnDto("Catalog", "customer_name", "Cliente", 35, "Cliente", null, true),
+            new OrdersExportColumnDto("Catalog", "customer_name", "Cliente", 35, true, "Cliente", null, true),
             dto.Columns[34]);
         Assert.Equal(
-            new OrdersExportColumnDto("Catalog", "customer_identification", "Documento de identidad", 36, "Documento de identidad", null, true),
+            new OrdersExportColumnDto("Catalog", "customer_identification", "Documento de identidad", 36, true, "Documento de identidad", null, true),
             dto.Columns[35]);
         Assert.Equal(
-            new OrdersExportColumnDto("Catalog", "bank_account", "Banco y cuenta", 37, "Banco y cuenta", null, true),
+            new OrdersExportColumnDto("Catalog", "bank_account", "Banco y cuenta", 37, true, "Banco y cuenta", null, true),
             dto.Columns[36]);
         Assert.Equal(
-            new OrdersExportColumnDto("Catalog", "proof_amount_total", "Total consignado", 38, "Total consignado", null, true),
+            new OrdersExportColumnDto("Catalog", "proof_amount_total", "Total consignado", 38, true, "Total consignado", null, true),
             dto.Columns[37]);
         Assert.Equal(
-            new OrdersExportColumnDto("Catalog", "tax_rate", "Tasa IVA", 39, "Tasa IVA", null, true),
+            new OrdersExportColumnDto("Catalog", "tax_rate", "Tasa IVA", 39, true, "Tasa IVA", null, true),
             dto.Columns[38]);
         Assert.Equal(
-            new OrdersExportColumnDto("Catalog", "company_tax_id", "NIT Empresa", 40, "NIT Empresa", null, true),
+            new OrdersExportColumnDto("Catalog", "company_tax_id", "NIT Empresa", 40, true, "NIT Empresa", null, true),
             dto.Columns[39]);
+    }
+
+    // Ajuste 2026-10-02: DefaultVisible viaja por columna, como DefaultHeader y DefaultPosition,
+    // para que "restaurar" sepa que la de Coordinadora vuelve oculta. Nulo en una fija.
+    [Fact]
+    public async Task EachCatalogColumnCarriesItsDefaultVisibilityAndAFixedOneNone()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var layout = OrdersExportLayout.CreateDefault(TenantId, Now);
+        layout.Replace(
+            [
+                OrdersExportColumnSetting.Fixed("Tipo Doc", "FV", visible: true),
+                OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad (P4)", visible: true),
+            ],
+            Now);
+        repository.Add(layout);
+        var handler = NewHandler(repository);
+
+        var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
+
+        Assert.Null(dto.Columns[0].DefaultVisible);
+        Assert.Equal(
+            new OrdersExportColumnDto("Catalog", "coordinadora_city", "Ciudad Coordinadora", 41, false, "Ciudad (P4)", null, true),
+            dto.Columns[1]);
+        Assert.All(
+            dto.Columns.Skip(2),
+            column => Assert.Equal(true, column.DefaultVisible));
+    }
+
+    [Fact]
+    public async Task WithoutAStoredLayoutTheCoordinadoraCityComesLastAndHidden()
+    {
+        var handler = NewHandler(new InMemoryOrdersExportLayoutRepository());
+
+        var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new OrdersExportColumnDto("Catalog", "coordinadora_city", "Ciudad Coordinadora", 41, false, "Ciudad Coordinadora", null, false),
+            dto.Columns[^1]);
     }
 
     [Fact]
@@ -69,10 +110,11 @@ public sealed class GetOrdersExportLayoutHandlerTests
         var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dto.Version);
-        Assert.Equal(41, dto.Columns.Count);
-        Assert.Equal(new OrdersExportColumnDto("Fixed", null, null, null, "Tipo Doc", "FV", true), dto.Columns[0]);
-        Assert.Equal(new OrdersExportColumnDto("Catalog", "email", "Email", 19, "Correo", null, true), dto.Columns[1]);
-        Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, false), dto.Columns[2]);
+        // 41 del catálogo (desde el ajuste 2026-10-02) + 1 fija.
+        Assert.Equal(42, dto.Columns.Count);
+        Assert.Equal(new OrdersExportColumnDto("Fixed", null, null, null, null, "Tipo Doc", "FV", true), dto.Columns[0]);
+        Assert.Equal(new OrdersExportColumnDto("Catalog", "email", "Email", 19, true, "Correo", null, true), dto.Columns[1]);
+        Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), dto.Columns[2]);
         Assert.Equal("product_code", dto.Columns[3].Key);
     }
 

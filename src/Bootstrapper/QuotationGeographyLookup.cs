@@ -27,4 +27,19 @@ internal sealed class QuotationGeographyLookup(ICityRepository cityRepository)
         var cities = await cityRepository.ListByIdsAsync(distinctIds, cancellationToken);
         return cities.ToDictionary(city => city.Id.Value, city => city.Name);
     }
+
+    public async Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+    {
+        var distinctIds = cityIds.Distinct().Select(id => new CityId(id)).ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var cities = await cityRepository.ListByIdsAsync(distinctIds, cancellationToken);
+        return cities
+            .Where(city => city.CoordinadoraName is not null)
+            .ToDictionary(city => city.Id.Value, city => city.CoordinadoraName!);
+    }
 }
