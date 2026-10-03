@@ -607,8 +607,17 @@ public sealed class OrderExportApiTests
         // trae puntos y dígito de verificación, así que sale como texto.
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
+        // Ajuste 2026-10-03: "Valor Unit" es el precio por unidad con el descuento aplicado y sin
+        // IVA —la base sin IVA de la línea entre la cantidad—, no el precio de catálogo con IVA.
+        var line = Assert.Single(detail!.Quotation.Items);
+        Assert.Equal("Valor Unit", sheet.Rows[0][20]);
+        Assert.Equal(
+            Math.Round(line.Subtotal / line.Quantity, 2, MidpointRounding.AwayFromZero),
+            decimal.Parse(row[20], CultureInfo.InvariantCulture));
+        Assert.NotEqual(line.UnitPrice, decimal.Parse(row[20], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][20]);
         Assert.Equal("Nit", sheet.Rows[0][46]);
-        Assert.Equal(detail!.Quotation.BillingAccount!.CompanyTaxId, row[46]);
+        Assert.Equal(detail.Quotation.BillingAccount!.CompanyTaxId, row[46]);
         Assert.False(sheet.NumericCells[1][46]);
         // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en
         // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; las de texto

@@ -63,6 +63,7 @@ public sealed class QuotationsDbContextMappingTests
         var item = model.FindEntityType(typeof(QuotationItem))!;
 
         Assert.Null(item.FindProperty(nameof(QuotationItem.DiscountedUnitPrice)));
+        Assert.Null(item.FindProperty(nameof(QuotationItem.DiscountedUnitPriceWithoutTax)));
         Assert.NotNull(item.FindProperty(nameof(QuotationItem.DiscountAmount)));
     }
 
