@@ -914,7 +914,7 @@ es de dónde salen. Portada y escalas de la línea siguen siendo las de hoy.
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 41 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
+reordenar y ocultar las 46 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
 (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una fija cuyo valor es un número
 canónico en cultura invariante (`0.19`, `9999`, `-1`, `901851609`) sale como **número**, que un
 Excel en `es-CO` muestra `0,19` y el ERP lee como cifra; el resto (`02`, `PM`, `1,5`, `+1`, vacío)
@@ -951,22 +951,31 @@ regla que las fijas: sólo dígitos (`901851609`) sale como número; con puntos 
 verificación (`901851609-1`) sale como texto. Vacía sin cuenta de facturación o si la empresa no
 resuelve.
 
-La última (2026-10-02) es `Ciudad Coordinadora` (`coordinadora_city`): la ciudad de entrega como la
+Después (2026-10-02) va `Ciudad Coordinadora` (`coordinadora_city`): la ciudad de entrega como la
 escribe la transportadora Coordinadora (`ABEJORRAL (ANT)`), para la guía que genera el ERP. Sigue
 la misma precedencia que `Ciudad` —la ciudad de la parte de entrega propia si la hay, aunque no
 tenga ciudad; si no, la del cliente— pero nunca cae al nombre del DANE: queda **vacía** si el
 municipio no tiene nombre de Coordinadora (ver [Nombres de ciudad de
 Coordinadora](#nombres-de-ciudad-de-coordinadora)) o si el cliente no tiene ciudad. `Ciudad` (`city`)
-no cambia. Es la única columna que **nace oculta**: no aparece en ningún Excel, ni sin layout ni en
-un layout ya guardado, hasta que el tenant la prenda desde su configuración.
+no cambia. **Nace oculta**: no aparece en ningún Excel, ni sin layout ni en un layout ya guardado,
+hasta que el tenant la prenda desde su configuración.
+
+Las últimas (2026-10-03) son `Forma de pago 1` a `Forma de pago 5` (`payment_method_1` a
+`payment_method_5`): el mismo texto que `Banco y cuenta` —`BANCOLOMBIA 7542`—, pero sólo si el
+pedido tiene el comprobante N, en el mismo orden que `Fecha Pago N` y `V. Comprobante N`; sin ese
+comprobante, **vacía**, igual que `V. Comprobante N`. Existen porque `bank_account` es del pedido:
+repetida bajo dos encabezados llenaba la forma de pago 2 aunque hubiera una sola consignación.
+`Banco y cuenta` (`bank_account`) no cambia, porque otro ERP puede estar leyéndola. También **nacen
+ocultas**, por la misma razón que `coordinadora_city`.
 
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
 ERP, «MIGRACION 1»: 47 columnas visibles, 21 de ellas fijas. Su «Nit» es el de la empresa de
 facturación (`company_tax_id`) y no un NIT escrito a mano (2026-09-26). Su «IVA» es la tasa de cada línea
 (`tax_rate`) y no un `0.19` fijo, porque hay productos con otra tarifa; `tax` queda oculto. El banco con su cuenta
-(`bank_account`) va en «Forma de pago 1» y «Forma de pago 2» —el ERP exige las dos llenas aunque
-sean la misma— y el total consignado (`proof_amount_total`) en «V. Consignacion (P7)»; `bank` queda
-oculto. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su
+va en «Forma de pago 1» y «Forma de pago 2», cada una con su comprobante (`payment_method_1` y
+`payment_method_2`, desde el 2026-10-03; antes las dos leían `bank_account` y la 2 salía llena con
+una sola consignación), y el total consignado (`proof_amount_total`) en «V. Consignacion (P7)»;
+`bank` y `bank_account` quedan ocultos. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su
 `Documento (P5)` lleva el documento de identidad (`customer_identification`) y el CUC (`document`)
 queda oculto. Desde el 2026-10-02 su «Ciudad (P4)» lleva la ciudad como la escribe Coordinadora
 (`coordinadora_city`) —la hoja ya fija «Transportadora (P2)» = Coordinadora— y `city` queda oculta.
@@ -984,7 +993,7 @@ que no esté guardada, al final, con su nombre por defecto y visible u oculta se
 y ETag `"1"`. Cada columna viaja con `kind` (`Catalog` | `Fixed`), `key` y
 `defaultHeader`/`defaultPosition`/`defaultVisible` (sólo las del catálogo; `null` en las fijas),
 `header`, `value` (sólo las fijas) y `visible`. `defaultVisible` es `true` en todas menos en
-`coordinadora_city` (2026-10-02).
+`coordinadora_city` (2026-10-02) y las `payment_method_N` (2026-10-03).
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
 vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no

@@ -61,9 +61,9 @@ public sealed class OrdersExportProcessor(
     /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
     /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido).
     ///
-    /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02) está en el catálogo
-    /// pero oculta, así que sin layout guardado no sale, y esta lista sigue siendo el archivo de
-    /// siempre.
+    /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02) y las "Forma de pago
+    /// N" (ajuste 2026-10-03) están en el catálogo pero ocultas, así que sin layout guardado no
+    /// salen, y esta lista sigue siendo el archivo de siempre.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Where(column => column.DefaultVisible)
@@ -297,6 +297,9 @@ public sealed class OrdersExportProcessor(
             .SelectMany(index => ProofCells(proofs, index, publisher))
             .ToArray();
         var totalConsignado = ProofTotalCell(proofs);
+        var formasDePago = Enumerable.Range(0, PaymentDateColumns)
+            .Select(index => PaymentMethodCell(proofs, index, bancoYCuenta))
+            .ToArray();
 
         foreach (var item in items)
         {
@@ -334,9 +337,18 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfNumber(item.TaxPercentage / 100m),
                 nitEmpresa,
                 ExportCell.OfText(ciudadCoordinadora),
+                .. formasDePago,
             ];
         }
     }
+
+    // "Forma de pago N" (ajuste 2026-10-03): lo mismo que "Banco y cuenta", pero sólo si el pedido
+    // tiene el comprobante N, con el mismo índice que "Fecha Pago N" y "V. Comprobante N". Sin ese
+    // comprobante, vacía como "V. Comprobante N": "bank_account" repetida bajo dos encabezados
+    // llenaba la forma de pago 2 de un pedido con una sola consignación.
+    private static ExportCell PaymentMethodCell(
+        IReadOnlyList<OrderExportPaymentProof> proofs, int index, string bankAndAccount) =>
+        ExportCell.OfText(index < proofs.Count ? bankAndAccount : string.Empty);
 
     // "Banco y cuenta" (ajuste 2026-09-26): lo mismo que "Banco" y "Cuenta", en una celda y con un
     // solo espacio en medio. El dominio exige las dos mitades, pero si una llegara vacía sale la

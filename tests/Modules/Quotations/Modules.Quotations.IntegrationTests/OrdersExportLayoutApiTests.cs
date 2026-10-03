@@ -37,10 +37,11 @@ public sealed class OrdersExportLayoutApiTests
         Assert.NotNull(layout);
         Assert.Equal(tenantId, layout.TenantId);
         Assert.Equal(1, layout.Version);
-        Assert.Equal(41, layout.Columns.Count);
+        Assert.Equal(46, layout.Columns.Count);
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
-        // (ajuste 2026-10-02), que nace oculta y lo dice en defaultVisible.
+        // (ajuste 2026-10-02) y las "payment_method_N" (ajuste 2026-10-03), que nacen ocultas y lo
+        // dicen en defaultVisible.
         Assert.All(layout.Columns, column => Assert.Equal(column.DefaultVisible, column.Visible));
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true), layout.Columns[18]);
@@ -50,6 +51,12 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(
             new ColumnPayload("Catalog", "coordinadora_city", "Ciudad Coordinadora", 41, false, "Ciudad Coordinadora", null, false),
             layout.Columns[40]);
+        Assert.Equal(
+            new ColumnPayload("Catalog", "payment_method_1", "Forma de pago 1", 42, false, "Forma de pago 1", null, false),
+            layout.Columns[41]);
+        Assert.Equal(
+            new ColumnPayload("Catalog", "payment_method_5", "Forma de pago 5", 46, false, "Forma de pago 5", null, false),
+            layout.Columns[45]);
     }
 
     // D9: el primer PUT viaja con "1" y la fila nace en 2. El GET siguiente la devuelve tal cual.
@@ -72,8 +79,8 @@ public sealed class OrdersExportLayoutApiTests
         var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
         Assert.NotNull(saved);
         Assert.Equal(2, saved.Version);
-        // 41 del catálogo (desde el ajuste 2026-10-02) + 1 fija.
-        Assert.Equal(42, saved.Columns.Count);
+        // 46 del catálogo (desde el ajuste 2026-10-03) + 1 fija.
+        Assert.Equal(47, saved.Columns.Count);
         Assert.Equal(new ColumnPayload("Fixed", null, null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), saved.Columns[1]);
         Assert.Equal("Correo", saved.Columns[19].Header);
@@ -261,8 +268,8 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
         var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        // 41 del catálogo (desde el ajuste 2026-10-02) + la repetida.
-        Assert.Equal(42, layout!.Columns.Count);
+        // 46 del catálogo (desde el ajuste 2026-10-03) + la repetida.
+        Assert.Equal(47, layout!.Columns.Count);
         Assert.Equal(
             [
                 new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true),
@@ -416,7 +423,8 @@ public sealed class OrdersExportLayoutApiTests
     }
 
     // D8: un PUT no exige el catálogo entero; lo que falte va al final, con su nombre y visible
-    // según su defecto: "coordinadora_city" (ajuste 2026-10-02) se completa oculta.
+    // según su defecto: "coordinadora_city" (ajuste 2026-10-02) y las "payment_method_N" (ajuste
+    // 2026-10-03) se completan ocultas.
     [Fact]
     public async Task PutWithoutSomeCatalogKeysCompletesThemAtTheEnd()
     {
@@ -430,12 +438,14 @@ public sealed class OrdersExportLayoutApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var layout = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(41, layout!.Columns.Count);
+        Assert.Equal(46, layout!.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal("order_number", layout.Columns[1].Key);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[2]);
-        Assert.Equal("coordinadora_city", layout.Columns[^1].Key);
-        Assert.False(layout.Columns[^1].Visible);
+        Assert.Equal(
+            ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5"],
+            layout.Columns.TakeLast(6).Select(column => column.Key));
+        Assert.All(layout.Columns.TakeLast(6), column => Assert.False(column.Visible));
     }
 
     // D10: restaurar es un PUT con el catálogo en su orden y nombres, sin fijas. La fila queda.
@@ -458,7 +468,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
         Assert.Equal("\"3\"", restored.Headers.ETag?.Tag);
         var layout = await restored.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(41, layout!.Columns.Count);
+        Assert.Equal(46, layout!.Columns.Count);
         Assert.DoesNotContain(layout.Columns, column => column.Kind == "Fixed");
         Assert.Equal(defaults, layout.Columns);
     }

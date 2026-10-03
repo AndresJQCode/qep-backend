@@ -70,11 +70,12 @@ public static class QuotationsSeeder
     /// para el tenant (tipo de documento, bodega, transportadora...) va como fija, vacía
     /// cuando la hoja exige la columna pero no tiene qué ponerle.
     ///
-    /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento, y el banco con su cuenta
-    /// bajo las dos formas de pago —el ERP las exige llenas aunque sean la misma—: el ERP lee el
-    /// mismo dato con varios nombres. Al final, ocultas, las
-    /// llaves del catálogo que la hoja no usa — sin ellas <see cref="OrdersExportLayout.Effective(OrdersExportLayout?)"/>
-    /// las completaría visibles y la hoja tendría columnas que el ERP no espera.
+    /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento: el ERP lee el mismo dato
+    /// con varios nombres. El banco con su cuenta va en las dos formas de pago, pero cada una con su
+    /// comprobante (ajuste 2026-10-03): sin el comprobante N, la forma de pago N sale vacía. Al
+    /// final, ocultas, las llaves del catálogo que la hoja no usa — sin ellas
+    /// <see cref="OrdersExportLayout.Effective(OrdersExportLayout?)"/> las completaría visibles y la
+    /// hoja tendría columnas que el ERP no espera.
     ///
     /// Pasa por <see cref="OrdersExportLayout.Replace"/> y no se escribe el JSON a mano: un
     /// encabezado duplicado o una fija de más revientan con el código del dominio en el arranque.
@@ -92,10 +93,13 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("Doc. Externo", string.Empty, visible: true),
         OrdersExportColumnSetting.Catalog("order_date", "Bloq/act", visible: true),
         // Ajuste 2026-09-26: el ERP lee en las dos formas de pago el banco con el número de cuenta,
-        // no sólo el banco. "bank" queda entre las ocultas.
-        OrdersExportColumnSetting.Catalog("bank_account", "Forma de pago 1", visible: true),
+        // no sólo el banco. "bank" queda entre las ocultas. Ajuste 2026-10-03: cada una con su
+        // comprobante —"payment_method_N" va vacía si el pedido no tiene el comprobante N—, no
+        // "bank_account", que es del pedido y llenaba la 2 con una sola consignación. "bank_account"
+        // queda entre las ocultas.
+        OrdersExportColumnSetting.Catalog("payment_method_1", "Forma de pago 1", visible: true),
         OrdersExportColumnSetting.Catalog("proof_amount_1", "V. Consignacion 1", visible: true),
-        OrdersExportColumnSetting.Catalog("bank_account", "Forma de pago 2", visible: true),
+        OrdersExportColumnSetting.Catalog("payment_method_2", "Forma de pago 2", visible: true),
         OrdersExportColumnSetting.Catalog("proof_amount_2", "V. Consignacion 2", visible: true),
         OrdersExportColumnSetting.Fixed("Verificado", "-1", visible: true),
         OrdersExportColumnSetting.Fixed("Anulado", "0", visible: true),
@@ -160,6 +164,10 @@ public static class QuotationsSeeder
         "account",
         .. Enumerable.Range(1, OrdersExportColumnCatalog.PaymentDateColumns).Select(number => $"proof_url_{number}"),
         .. Enumerable.Range(3, OrdersExportColumnCatalog.PaymentDateColumns - 2).Select(number => $"proof_amount_{number}"),
+        "bank_account",
+        // Nacen ocultas y Effective las completaría así, pero la lista las nombra igual: que la hoja
+        // diga en un solo lugar todo lo que no usa.
+        .. Enumerable.Range(3, OrdersExportColumnCatalog.PaymentDateColumns - 2).Select(number => $"payment_method_{number}"),
     ];
 
     /// <summary>
