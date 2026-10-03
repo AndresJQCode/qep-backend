@@ -468,6 +468,53 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Nombres de ciudad de Coordinadora
+
+Las ciudades de `geography` son los municipios del DANE (`localities.json`), y se importan en cada
+arranque sin depender de `Seed:Enabled`. En ese mismo arranque, cada ciudad toma además su nombre
+como lo escribe la transportadora Coordinadora (`ABEJORRAL (ANT)` en vez de `ABEJORRAL`), que es lo
+que lleva la columna `coordinadora_city` del Excel de pedidos. Sale de un snapshot embebido,
+[`coordinadora-cities.json`](src/Modules/Geography/Modules.Geography.Infrastructure/Seed/Data/coordinadora-cities.json),
+y no de una consulta en vivo: el arranque no puede depender de que `ws.coordinadora.com` responda.
+
+Cada arranque reconcilia contra el archivo: la ciudad que está toma su nombre, y la que no queda
+en `null` (104 de los 1122 municipios con el snapshot actual: Coordinadora no los lista o los
+lista inactivos). Un código del
+snapshot que no sea de ninguna ciudad se ignora al arrancar, pero la prueba unitaria
+`EveryCodeOfTheEmbeddedCoordinadoraSnapshotIsASeededMunicipality` lo frena en CI.
+
+Para regenerarlo cuando Coordinadora cambie su lista, desde la raíz del repo:
+
+```powershell
+$data = "src\Modules\Geography\Modules.Geography.Infrastructure\Seed\Data"
+'{"jsonrpc":"2.0","method":"Cotizador.ciudades","params":{},"id":1}' | Set-Content -Encoding Ascii req.json
+curl.exe -s https://ws.coordinadora.com/ags/1.5/server.php -H "Content-Type: application/json" -d "@req.json" -o coordinadora-raw.json
+$raw = Get-Content coordinadora-raw.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$cities = $raw.result |
+    Where-Object { $_.codigo -match '^[0-9]{5}000$' -and $_.estado -eq 'activo' } |
+    ForEach-Object { [pscustomobject]@{ code = $_.codigo.Substring(0, 5); name = $_.nombre.Trim() } } |
+    Sort-Object code
+$entries = $cities | ForEach-Object {
+    if ($_.name -match '[\x22\x5C]') { throw "Nombre con comilla o barra invertida: $($_.name)" }
+    "  {`n    `"code`": `"$($_.code)`",`n    `"name`": `"$($_.name)`"`n  }"
+}
+$json = "[`n" + ($entries -join ",`n") + "`n]`n"
+[System.IO.File]::WriteAllText("$PWD\$data\coordinadora-cities.json", $json, (New-Object System.Text.UTF8Encoding $false))
+Remove-Item req.json, coordinadora-raw.json
+$cities.Count
+```
+
+El filtro es la regla del snapshot, no un detalle del script:
+
+- **Sólo municipios.** Coordinadora usa códigos de 8 dígitos: los 5 primeros son el código DIVIPOLA
+  y el sufijo `000` es el municipio. Lo demás son centros poblados, que `geography` tampoco importa.
+- **Sólo `estado` = `activo`.** Los inactivos se excluyen a propósito y su ciudad queda en `null`.
+- **Sin México.** Sus códigos empiezan por `MX` y el patrón numérico los deja fuera.
+
+El cuerpo va a archivo porque PowerShell rompe las comillas dobles al pasarlas a `curl.exe`. Se
+escribe en UTF-8 sin BOM y con el mismo formato del archivo, así que el diff muestra sólo los
+municipios que cambiaron. Después corre `Modules.Geography.UnitTests` antes de commitear.
+
 ## Numeración de documentos por tenant
 
 El número de cotización y el de pedido salen de un formato **por tenant y por tipo de documento**,
