@@ -41,8 +41,10 @@ public sealed class MembershipUserReferencePurgerTests
         var someoneElse = Removed(Guid.CreateVersion7());
         var memberships = new InMemoryMembershipRepository(removed, expired, someoneElse);
 
-        await Purger(memberships).PurgeAsync(userId, TestContext.Current.CancellationToken);
+        var purged = await Purger(memberships).PurgeAsync(userId, TestContext.Current.CancellationToken);
 
+        // La cantidad es lo que el worker escribe en su log: una por membresía borrada.
+        Assert.Equal(2, purged);
         Assert.Equal([someoneElse], memberships.All);
         Assert.Equal(1, _unitOfWork.Commits);
         Assert.Equal(2, _audit.Entries.Count);
@@ -66,8 +68,10 @@ public sealed class MembershipUserReferencePurgerTests
     {
         var memberships = new InMemoryMembershipRepository(Removed(Guid.CreateVersion7()));
 
-        await Purger(memberships).PurgeAsync(Guid.CreateVersion7(), TestContext.Current.CancellationToken);
+        var purged = await Purger(memberships).PurgeAsync(
+            Guid.CreateVersion7(), TestContext.Current.CancellationToken);
 
+        Assert.Equal(0, purged);
         Assert.Single(memberships.All);
         Assert.Equal(0, _unitOfWork.Commits);
         Assert.Empty(_steps);

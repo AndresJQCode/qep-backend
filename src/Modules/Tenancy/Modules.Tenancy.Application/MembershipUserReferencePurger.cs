@@ -19,6 +19,8 @@ namespace Modules.Tenancy.Application;
 /// otra conexión esperaría para siempre (ver <see cref="IUserReferencePurger"/>).</para>
 /// <para>No emite eventos de outbox: nadie consume un borrado de membresía, y quitarla ya emitió
 /// el suyo. Lo que queda de la fila es la auditoría, una entrada por membresía.</para>
+/// <para>Devuelve cuántas membresías borró, y <c>0</c> en el reintento sin nada que purgar. No
+/// loguea: el log de la purga lo escribe el worker, en un solo lugar para todos los purgadores.</para>
 /// </remarks>
 public sealed class MembershipUserReferencePurger(
     IMembershipRepository membershipRepository,
@@ -29,13 +31,13 @@ public sealed class MembershipUserReferencePurger(
 {
     public string Source => "tenancy";
 
-    public async Task PurgeAsync(Guid userId, CancellationToken cancellationToken)
+    public async Task<int> PurgeAsync(Guid userId, CancellationToken cancellationToken)
     {
         var memberships = await membershipRepository.ListByUserAsync(userId, cancellationToken);
         // Idempotente: en el reintento después de una falla a mitad de camino ya no hay nada.
         if (memberships.Count == 0)
         {
-            return;
+            return 0;
         }
 
         // Defensivo: la sonda ya garantizó que no hay vivas, pero si aparece una se corta antes
@@ -64,5 +66,6 @@ public sealed class MembershipUserReferencePurger(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        return memberships.Count;
     }
 }

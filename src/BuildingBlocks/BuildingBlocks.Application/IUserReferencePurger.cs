@@ -17,8 +17,10 @@ namespace BuildingBlocks.Application;
 /// <para>Commitea su propia unidad de trabajo: Identity no puede escribir en las tablas de otro
 /// módulo, y las dos confirmaciones no son atómicas. Por eso tiene que ser idempotente —sin nada
 /// que purgar, no hace nada—: si el borrado del usuario falla después de la purga, el worker
-/// reintenta el mensaje entero en el tick siguiente y la purga vuelve a correr sobre lo que ya
-/// borró.</para>
+/// reintenta el mensaje entero cuando vence su espera y la purga vuelve a correr sobre lo que ya
+/// borró. Una implementación que falla siempre no bloquea a nadie: el worker espera cada vez más
+/// entre intentos —hasta 15 minutos—, lo loguea en Error desde el cuarto, y el mensaje se procesa
+/// solo en el primer reintento después de que la falla se arregle.</para>
 /// <para>Igual que la sonda, vive en BuildingBlocks para que Identity resuelva
 /// <c>IEnumerable&lt;IUserReferencePurger&gt;</c> sin referenciar a ningún módulo de negocio. Un
 /// módulo que no guarda nada que haya que borrar con el usuario simplemente no registra
@@ -29,5 +31,11 @@ public interface IUserReferencePurger
     /// <summary>Nombre del módulo que purga, igual que <see cref="IUserReferenceProbe.Source"/>.</summary>
     string Source { get; }
 
-    Task PurgeAsync(Guid userId, CancellationToken cancellationToken);
+    /// <summary>Borra y commitea lo que el módulo guarda del usuario.</summary>
+    /// <returns>
+    /// Cuántas filas borró: <c>0</c> cuando no había nada, que es el caso del reintento. El worker
+    /// lo escribe en su log, junto a <see cref="Source"/>, al borrar al usuario; el purgador no
+    /// loguea nada por su cuenta.
+    /// </returns>
+    Task<int> PurgeAsync(Guid userId, CancellationToken cancellationToken);
 }

@@ -42,9 +42,12 @@ que, sin retenerlo, todavía lo nombra.
 public interface IUserReferencePurger
 {
     string Source { get; }
-    Task PurgeAsync(Guid userId, CancellationToken cancellationToken);
+    Task<int> PurgeAsync(Guid userId, CancellationToken cancellationToken);
 }
 ```
+
+`PurgeAsync` devuelve cuántas filas borró (`0` sin nada que purgar). El worker lo escribe en su
+log; el purgador no loguea (ver «Reintentos y log de la purga»).
 
 Vive en BuildingBlocks por la misma razón que la sonda: Identity resuelve
 `IEnumerable<IUserReferencePurger>` sin referenciar a ningún módulo de negocio, y cada módulo
@@ -71,7 +74,7 @@ miembro sigue siendo `Membership.Remove`, que cambia el estado y conserva la fil
 
 ### `MembershipUserReferencePurger` (Tenancy.Application)
 
-1. `ListByUserAsync(userId)`; si no hay nada, vuelve sin commitear.
+1. `ListByUserAsync(userId)`; si no hay nada, devuelve `0` sin commitear.
 2. `EnsurePurgeable()` sobre **todas** antes de borrar ninguna: si aparece una viva, corta sin
    dejar nada a medias.
 3. Por cada una: `Remove` y una entrada de auditoría `tenancy.membership.purged`, recurso
@@ -80,6 +83,7 @@ miembro sigue siendo `Membership.Remove`, que cambia el estado y conserva la fil
    `identity.user.deleted` en el worker.
 4. Un solo `SaveChangesAsync`. No emite eventos de outbox: nadie consume un borrado de
    membresía, y quitarla ya emitió el suyo.
+5. Devuelve cuántas membresías borró.
 
 Se registra en `TenancyInfrastructureExtensions`, junto a la sonda y con el mismo ciclo de vida.
 
@@ -108,9 +112,9 @@ conoce; con un scope por mensaje, lo rastreado muere con él.
 Son dos `DbContext` y dos commits —primero Tenancy, después Identity—, así que la operación no
 es atómica. El orden es lo que la hace recuperable:
 
-- **Falla después de la purga y antes del commit de Identity:** el inbox no se marca, así que el
-  mensaje vuelve en el tick siguiente. El usuario sigue existiendo, las sondas siguen diciendo
-  que no, el purgador no encuentra nada (no-op) y el usuario se borra.
+- **Falla después de la purga y antes del commit de Identity:** el inbox no se marca como
+  procesado, así que el mensaje vuelve en su reintento. El usuario sigue existiendo, las sondas
+  siguen diciendo que no, el purgador no encuentra nada (no-op) y el usuario se borra.
 - **Al revés** (usuario primero, membresías después), una falla entre los dos commits dejaría
   filas apuntando a un usuario inexistente, y el mensaje ya marcado: nada las volvería a mirar.
 
@@ -120,7 +124,7 @@ Por eso el purgador tiene que ser idempotente: sin nada que purgar, no hace nada
 vivo sin sus filas `Removed`/`Expired`, y su código de asesor ya está libre. Se acepta porque ese
 usuario no tiene historia y no puede generarla: no tiene acceso, y la única forma de volver es
 una invitación, que se serializa con el mismo lock de ciclo de vida. Esa invitación encuentra al
-usuario, no encuentra membresía y crea una nueva. El tick siguiente borra al usuario si para
+usuario, no encuentra membresía y crea una nueva. El reintento borra al usuario si para
 entonces nada lo retiene.
 
 ## La trampa: no volver a tomar el lock
@@ -166,6 +170,17 @@ hay historial que mezclar.
 - Integración (`OrphanUserCleanupTests`): quien quitas después de cambiar el precio de un producto
   conserva su usuario, su membresía quitada y su código de asesor (ver «Columnas con id de usuario
   sin sonda», abajo).
+- Integración (`OrphanUserCleanupTests`, ver «Reintentos y log de la purga»): un mensaje cuyo
+  purgador falla siempre queda con un intento y no se reintenta antes de que venza su espera —una
+  baja sana procesada en el medio prueba que hubo otro tick—; con el reloj de la prueba avanzando
+  cada espera llega a seis intentos sin quedar nunca procesado, la espera se queda en 15 minutos
+  y no se retoma antes; cuando la falla se arregla, el reintento siguiente borra al usuario y su
+  membresía y termina el mensaje. Veinte mensajes envenenados, más viejos que una baja sana, no la dejan
+  sin turno. La prueba de no filtrar estado rastreado ahora escribe las dos bajas en un solo
+  commit: con backoff, A ya no vuelve en cada tick, y por la API nada garantiza que las dos caigan
+  en el mismo lote.
+- Unitarias de `MembershipUserReferencePurger`: devuelve cuántas membresías borró, y `0` sin nada
+  que purgar.
 
 ## Columnas con id de usuario sin sonda
 
@@ -232,12 +247,89 @@ columna con forma de id de usuario en los `DbContext`. Ninguna otra necesita son
 - `storage.file_resources.owner_id`, las columnas `MemberId` de Quotations y
   `tenancy.memberships.user_id` ya tenían su sonda.
 
+## Reintentos y log de la purga
+
+Eran los dos pendientes de este spec. Quedaron resueltos así.
+
+### Reintentos con backoff, sin abandono
+
+**Problema.** Un mensaje que fallaba siempre —un purgador que lanza
+`tenancy.membership.not_purgeable`, una sonda caída— se reintentaba cada 3 s, sin tope ni espera,
+con un Error y su stack trace en cada tick. Y como el lote se ordena por `OccurredAt`, ocupaba
+un lugar en la cabeza para siempre: veinte así dejaban sin turno a todo mensaje más nuevo.
+
+**Qué patrón se copió.** El repositorio ya tenía cuatro formas de consumir con reintento:
+
+| Dónde | Qué hace ante un fallo |
+| --- | --- |
+| `OutboxProcessor` (Tenancy, `OutboxProcessor.cs:53-57`) | suma `attempts` y guarda `last_error` en `platform.outbox_messages`, pero no tiene tope ni espera ni filtra por intentos: reintenta en cada tick para siempre. Es el mismo problema. |
+| `PaymentProofMoveProcessor` y `PaymentProofDetachProcessor` (Storage, `:95-102` y `:128-135`) | sin fila en el inbox, vuelve en el tick siguiente. Mismo problema. |
+| `OutboxDeliveryWorker` + `InboxClaims` (Notifications, `OutboxDeliveryWorker.cs:29-41,106-117,197-213`; `InboxClaims.cs:18-43`) | **reclamo con lease en el inbox propio**: una sentencia `INSERT ... ON CONFLICT DO UPDATE ... RETURNING attempts` que se commitea sola, suma el intento y deja la fila reclamada hasta `claimed_until`. El lote excluye lo procesado y lo reclamado con lease vivo. Pasado `MaxAttempts = 3`, cierra el mensaje sin procesarlo. Lease fijo de 2 minutos. |
+| `ExportJob` (Quotations, `ExportJob.cs:22,39-40,145-159`) | `Attempts`, `NextAttemptAt` y la única curva de espera del repositorio: `RetryDelays = [1, 5, 15]` minutos con `MaxAttempts = 4` (D11). |
+
+Se copió **el reclamo de Notifications**, que es el caso más parecido: un consumidor del Outbox de
+plataforma con inbox propio de clave (consumidor, id de mensaje). Y como su lease es fijo —es un
+lease, no una espera—, la curva sale de **`ExportJob` (D11)**. El tope de los dos no se copió (ver
+abajo).
+
+**Cómo queda.**
+
+- `identity.inbox_messages` suma `attempts` (default 1) y `claimed_until`, y `processed_at` pasa a
+  nullable: migración `20261003010629_AddInboxClaims` de Identity, igual columna por columna a la
+  de Notifications. Las filas que ya existen quedan procesadas con un intento.
+- `IdentityInboxClaims.TryClaimAsync` es `InboxClaims` copiado —ningún módulo referencia la
+  infraestructura de otro— con una diferencia: el lease del reclamo número n es
+  `RetryDelays[min(n, 3) - 1]`, así que es a la vez el lease de quien procesa y la espera antes del
+  reintento. Esperas de 1, 5 y 15 minutos, y 15 en cada intento siguiente.
+- El worker reclama antes de procesar. Como el reclamo se commitea solo, el intento queda contado
+  aunque la unidad de trabajo del mensaje falle y su scope se descarte entero: no hace falta
+  escribir el fallo después, en otro contexto.
+- El lote filtra lo procesado y lo que espera su reintento (`processed_at IS NOT NULL OR
+  claimed_until >= now`), igual que Notifications. Un mensaje envenenado deja de ocupar lugar y el
+  lote se llena con lo que sí toca.
+- **Sin tope: un mensaje nunca se abandona.** Cada reclamo procesa; después del tercero la espera
+  queda en 15 minutos para siempre. Una falla con intento menor a `ErrorAfterAttempts = 4` es un
+  Warning; desde el cuarto, un Error. Los dos llevan la excepción, el id del mensaje, el del
+  usuario y el número de intento. Así un mensaje trabado aparece en Error cada 15 minutos hasta
+  que se arregle la causa, y el primer reintento después lo procesa solo. Si lo que falla es el
+  reclamo mismo (la base, por ejemplo), no se contó ningún intento: se loguea aparte, en
+  Warning, y el mensaje vuelve en el tick siguiente.
+- Lo que no cambió: el advisory lock, un scope por mensaje, y el éxito marca el inbox
+  (`processed_at`) en el mismo `SaveChanges` y la misma transacción que el borrado.
+- El "ahora" del worker sale de `IClock`, como en Notifications: las pruebas vencen las esperas
+  avanzando el reloj, sin dormir minutos.
+- El `Down` de la migración borra las filas reclamadas y sin terminar antes de volver a hacer
+  `processed_at` obligatorio. Sin eso, el rollback las sellaría con `0001-01-01` y el worker de
+  antes las daría por procesadas; borradas, el mensaje vuelve a la cola.
+
+**Por qué se aparta de Notifications y no abandona.** El tope venía copiado de Notifications,
+donde un correo que llega con media hora de atraso ya no sirve. Borrar a un usuario huérfano no
+tiene plazo. Abandonar convertía una falla pasajera de un módulo —una sonda o un purgador caídos
+unos 36 minutos, por un deploy malo— en residuo permanente: usuarios que nunca se limpian y que
+sólo se recuperan con SQL a mano. Lo que había que resolver eran dos cosas, el ruido en el log y
+el lote acaparado, y el backoff solo ya las resuelve.
+
+### Log de la purga
+
+`IUserReferencePurger.PurgeAsync` devuelve `Task<int>`: cuántas filas borró. El worker arma, una
+sola vez y en una variable, el resumen por fuente (`tenancy=1`, o `none` sin purgadores) y lo suma a
+la línea Information del borrado: `User {UserId} deleted after membership removal: no module
+references it. Purged rows by source: {PurgedRows}.` Armarlo dentro de la llamada al logger es lo
+que rechaza CA1873. Los purgadores no loguean: el log de la purga vive en un solo lugar.
+
 ## Pendientes
 
-- El worker reintenta un mensaje que falla cada 3 s, sin tope ni backoff. Es el patrón que ya
-  tenía; la purga le suma una fuente de falla más.
-- No hay línea de log con la cantidad de membresías purgadas: la auditoría
-  (`tenancy.membership.purged`, una entrada por membresía) es el rastro.
+- **`SessionRevocationWorker` tiene la exposición de antes, y peor.** Corre sobre el mismo evento
+  (y sobre `tenancy.membership-suspended.v1`) con un solo scope por lote y **sin catch por
+  mensaje** (`SessionRevocationWorker.cs:70-73`): un mensaje que lanza corta el lote entero, que
+  termina en `LogTickFailed` (`:49-52`), y como el lote se ordena por `OccurredAt` (`:66`), ese
+  mensaje queda primero en cada tick y **ninguna revocación posterior a él se procesa nunca**.
+  Tampoco tiene tope ni backoff. Hoy sus fuentes de fallo son un payload ilegible
+  (`ParsePayload`, `:117-121`), que Tenancy no escribe, y un conflicto de concurrencia con este
+  worker al borrar las mismas sesiones, que se resuelve solo en el tick siguiente. No se corrigió
+  acá porque es un worker de seguridad —revoca sesiones— y su arreglo (catch y scope por mensaje,
+  más el mismo reclamo) merece su propio cambio y sus pruebas. Ya puede usar
+  `IdentityInboxClaims`: la tabla tiene las columnas.
 
 ## Fuera de alcance
 

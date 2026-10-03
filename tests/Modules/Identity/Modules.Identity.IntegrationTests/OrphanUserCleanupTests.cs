@@ -6,8 +6,10 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
+using Modules.Identity.Infrastructure.Messaging;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Storage.Domain;
@@ -453,8 +455,12 @@ public sealed class OrphanUserCleanupTests
     /// registrado antes que el de Tenancy, marca como borrada la membresía de A en el
     /// <c>TenancyDbContext</c> de su scope —sin guardar— y lanza. Si el scope fuera uno por lote,
     /// el <c>SaveChanges</c> de la purga de B se llevaría también la fila de A, aunque A nunca se
-    /// borró. Como A falla siempre, en cada tick su mensaje va primero que el de B en el mismo
-    /// lote, así que el resultado no depende de en qué tick caigan las dos bajas.
+    /// borró.
+    ///
+    /// Las dos bajas entran a la base en un solo commit, A primero, para que el worker las vea en
+    /// el mismo lote. Por la API no se puede garantizar: si el worker toma a A en un tick en que B
+    /// todavía no existe, A queda esperando su reintento y B se procesa sola, en un lote donde no
+    /// hay nada que filtrar, y la prueba pasaría sin probar nada.
     /// </summary>
     [Fact]
     public async Task AFailedMessageDoesNotLeakTrackedChangesIntoTheNextOne()
@@ -476,8 +482,7 @@ public sealed class OrphanUserCleanupTests
         await ActivateMembershipAsync(connectionString, second.Id);
         fault.UserId = first.UserId;
 
-        Assert.Equal(HttpStatusCode.OK, (await RemoveAsync(ownerClient, tenantId, first.Id)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await RemoveAsync(ownerClient, tenantId, second.Id)).StatusCode);
+        await RemoveInOneCommitAsync(connectionString, first, second);
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -488,6 +493,127 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, first.UserId));
         Assert.Equal(1, await CountMembershipsAsync(connection, first.UserId));
         Assert.Equal(0, await CountInboxAsync(connection, first.Id));
+        // A sí se intentó, y falló: está reclamado, esperando su reintento.
+        Assert.Equal(1, await InboxAttemptsAsync(connection, first.Id));
+    }
+
+    /// <summary>
+    /// Un mensaje que falla siempre no se reintenta en cada tick: queda reclamado hasta su próximo
+    /// intento, con esperas que crecen (<see cref="OrphanUserCleanupWorker.LeaseFor"/>) hasta la
+    /// última y se quedan ahí. Nunca se abandona: cuando la falla se arregla, el reintento siguiente
+    /// borra al usuario. El reloj es de la prueba: avanzarlo es lo que vence cada espera, así que la
+    /// prueba no duerme minutos.
+    /// </summary>
+    [Fact]
+    public async Task AFailingMessageKeepsBeingRetriedWithACappedBackoff()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var fault = new PurgeFault();
+        var clock = new MutableClock(DateTimeOffset.UtcNow);
+        using var factory = new QepApiFactory(connectionString, services =>
+        {
+            services.AddSingleton(fault);
+            services.Insert(0, ServiceDescriptor.Scoped<IUserReferencePurger, FaultyPurger>());
+            services.RemoveAll<IClock>();
+            services.AddSingleton<IClock>(clock);
+        });
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var poisoned = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, poisoned.Id);
+        fault.UserId = poisoned.UserId;
+        Assert.Equal(HttpStatusCode.OK, (await RemoveAsync(ownerClient, tenantId, poisoned.Id)).StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await InboxAttemptsAsync(connection, poisoned.Id) == 1);
+
+        // Una baja sana que se procesa después del primer fallo prueba que corrió al menos un tick
+        // más, y en ese tick el mensaje fallido no se volvió a intentar: su espera no venció.
+        await RemoveAMemberAndWaitForItsCleanupAsync(connectionString, connection, ownerClient, tenantId);
+        Assert.Equal(1, await InboxAttemptsAsync(connection, poisoned.Id));
+
+        // Más allá del cuarto intento, que es donde antes se abandonaba: sigue sin terminar.
+        const int lastFailedAttempt = 6;
+        for (var attempt = 2; attempt <= lastFailedAttempt; attempt++)
+        {
+            var expected = attempt;
+            clock.Advance(OrphanUserCleanupWorker.LeaseFor(attempt - 1) + TimeSpan.FromSeconds(1));
+            await WaitUntilAsync(async () => await InboxAttemptsAsync(connection, poisoned.Id) == expected);
+            Assert.Equal(0, await CountInboxAsync(connection, poisoned.Id));
+        }
+
+        // La espera se satura en la última de la curva: el reclamo vigente dura 15 minutos desde
+        // que se tomó, que es el instante congelado del reloj.
+        var longestWait = OrphanUserCleanupWorker.RetryDelays[^1];
+        Assert.Equal(clock.UtcNow + longestWait, await ClaimedUntilAsync(connection, poisoned.Id));
+
+        // Antes de que venza, otro tick no lo retoma.
+        clock.Advance(longestWait - TimeSpan.FromMinutes(1));
+        await RemoveAMemberAndWaitForItsCleanupAsync(connectionString, connection, ownerClient, tenantId);
+        Assert.Equal(lastFailedAttempt, await InboxAttemptsAsync(connection, poisoned.Id));
+
+        // Se arregla la falla: el reintento siguiente borra al usuario y su membresía, y termina el
+        // mensaje. Abandonarlo habría dejado ese residuo para siempre.
+        fault.UserId = null;
+        clock.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
+        await WaitUntilAsync(async () =>
+            await CountUsersAsync(connection, poisoned.UserId) == 0 &&
+            await CountMembershipsAsync(connection, poisoned.UserId) == 0);
+
+        Assert.Equal(1, await CountInboxAsync(connection, poisoned.Id));
+        Assert.Equal(lastFailedAttempt + 1, await InboxAttemptsAsync(connection, poisoned.Id));
+        Assert.Equal(1, await CountAuditAsync(connection, poisoned.UserId, "identity.user.deleted"));
+    }
+
+    /// <summary>
+    /// Mensajes que fallan siempre no pueden ocupar el lote para siempre. Se siembran tantos como
+    /// entran en un lote, todos más viejos que una baja sana: sin backoff, cada tick tomaba esos
+    /// mismos, en orden de llegada, fallaban, y la baja sana no llegaba nunca al lote. Con backoff,
+    /// cada uno queda reclamado hasta su reintento y el tick siguiente llena el lote con lo que sí
+    /// toca.
+    /// </summary>
+    [Fact]
+    public async Task MessagesThatKeepFailingDoNotStarveANewerOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var fault = new PurgeFault();
+        using var factory = new QepApiFactory(connectionString, services =>
+        {
+            services.AddSingleton(fault);
+            services.Insert(0, ServiceDescriptor.Scoped<IUserReferencePurger, FaultyPurger>());
+        });
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var poisoned = await InviteAsync(ownerClient, tenantId, NewEmail());
+        // Quitada y no activa: con una membresía viva la sonda de Tenancy retendría al usuario y el
+        // mensaje terminaría bien, sin llegar al purgador que falla.
+        await SetMembershipStateAsync(connectionString, poisoned.Id, "Removed");
+        fault.UserId = poisoned.UserId;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        // En un solo commit: el primer tick que los ve, los ve a todos.
+        await using (var transaction = await connection.BeginTransactionAsync(
+            TestContext.Current.CancellationToken))
+        {
+            var occurredAt = DateTimeOffset.UtcNow.AddHours(-1);
+            for (var index = 0; index < OrphanUserCleanupWorker.BatchSize; index++)
+            {
+                await InsertRemovedEventAsync(
+                    connection, poisoned.UserId, poisoned.Id, occurredAt.AddSeconds(index));
+            }
+
+            await transaction.CommitAsync(TestContext.Current.CancellationToken);
+        }
+
+        var healthy = await RemoveAMemberAndWaitForItsCleanupAsync(
+            connectionString, connection, ownerClient, tenantId);
+
+        Assert.Equal(1, await CountInboxAsync(connection, healthy.Id));
+        Assert.Equal(1, await CountUsersAsync(connection, poisoned.UserId));
+        Assert.Equal(0, await CountInboxAsync(connection, poisoned.Id));
+        Assert.Equal(OrphanUserCleanupWorker.BatchSize, await CountPendingClaimsAsync(connection, poisoned.Id));
     }
 
     private static string NewEmail() => $"member-{Guid.NewGuid():N}@example.com";
@@ -755,7 +881,8 @@ public sealed class OrphanUserCleanupTests
             ("id", userId));
 
     // El id del mensaje de outbox es el EventId del evento de dominio, que no se conoce desde
-    // afuera; se llega por el payload, que lleva el membershipId.
+    // afuera; se llega por el payload, que lleva el membershipId. Cuenta sólo los terminados: un
+    // mensaje reclamado y sin terminar ya tiene su fila, con processed_at en null.
     private static Task<long> CountInboxAsync(NpgsqlConnection connection, Guid membershipId) =>
         ScalarAsync(
             connection,
@@ -763,11 +890,121 @@ public sealed class OrphanUserCleanupTests
             SELECT COUNT(*) FROM identity.inbox_messages inbox
             JOIN platform.outbox_messages outbox ON outbox.id = inbox.message_id
             WHERE inbox.consumer = @consumer
+              AND inbox.processed_at IS NOT NULL
               AND outbox.event_name = 'tenancy.membership-removed.v1'
               AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
             """,
             ("consumer", Consumer),
             ("membershipId", membershipId.ToString()));
+
+    // Los intentos del mensaje de esa baja, terminado o no; 0 si nunca se reclamó.
+    private static Task<long> InboxAttemptsAsync(NpgsqlConnection connection, Guid membershipId) =>
+        ScalarAsync(
+            connection,
+            """
+            SELECT COALESCE(SUM(inbox.attempts), 0)::bigint FROM identity.inbox_messages inbox
+            JOIN platform.outbox_messages outbox ON outbox.id = inbox.message_id
+            WHERE inbox.consumer = @consumer
+              AND outbox.event_name = 'tenancy.membership-removed.v1'
+              AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
+            """,
+            ("consumer", Consumer),
+            ("membershipId", membershipId.ToString()));
+
+    // Hasta cuándo está reclamado el mensaje de esa baja, que es cuándo le toca el reintento.
+    private static async Task<DateTimeOffset> ClaimedUntilAsync(NpgsqlConnection connection, Guid membershipId)
+    {
+        await using var command = CreateCommand(
+            connection,
+            """
+            SELECT inbox.claimed_until FROM identity.inbox_messages inbox
+            JOIN platform.outbox_messages outbox ON outbox.id = inbox.message_id
+            WHERE inbox.consumer = @consumer
+              AND outbox.event_name = 'tenancy.membership-removed.v1'
+              AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
+            """,
+            [("consumer", Consumer), ("membershipId", membershipId.ToString())]);
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return new DateTimeOffset((DateTime)result!, TimeSpan.Zero);
+    }
+
+    // Mensajes de esa baja reclamados una vez y sin terminar: fallaron y esperan su reintento.
+    private static Task<long> CountPendingClaimsAsync(NpgsqlConnection connection, Guid membershipId) =>
+        ScalarAsync(
+            connection,
+            """
+            SELECT COUNT(*) FROM identity.inbox_messages inbox
+            JOIN platform.outbox_messages outbox ON outbox.id = inbox.message_id
+            WHERE inbox.consumer = @consumer
+              AND inbox.processed_at IS NULL
+              AND inbox.attempts = 1
+              AND outbox.event_name = 'tenancy.membership-removed.v1'
+              AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
+            """,
+            ("consumer", Consumer),
+            ("membershipId", membershipId.ToString()));
+
+    // Un tenancy.membership-removed.v1 escrito a mano, con lo único que el worker y estas pruebas
+    // leen del payload. Va con processed_at para que el publicador de Tenancy no lo despache: lo
+    // que se prueba es el consumidor de Identity, que lee el outbox sin mirar esa columna.
+    private static Task InsertRemovedEventAsync(
+        NpgsqlConnection connection,
+        Guid userId,
+        Guid membershipId,
+        DateTimeOffset occurredAt) =>
+        ExecuteAsync(
+            connection,
+            """
+            INSERT INTO platform.outbox_messages
+                (id, event_name, payload, correlation_id, occurred_at, processed_at, attempts)
+            VALUES (@id, 'tenancy.membership-removed.v1',
+                    jsonb_build_object(
+                        'membershipId', jsonb_build_object('value', @membershipId::text),
+                        'userId', @userId::text),
+                    'orphan-user-cleanup-tests', @occurredAt, now(), 0)
+            """,
+            ("id", Guid.CreateVersion7()),
+            ("membershipId", membershipId),
+            ("userId", userId),
+            ("occurredAt", occurredAt));
+
+    // Quita las membresías y escribe sus eventos en un solo commit, en el orden recibido: el
+    // worker las ve todas en el mismo lote, o ninguna.
+    private static async Task RemoveInOneCommitAsync(
+        string connectionString,
+        params MembershipPayload[] members)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(
+            TestContext.Current.CancellationToken);
+        var occurredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        foreach (var member in members)
+        {
+            await ExecuteAsync(
+                connection,
+                "UPDATE tenancy.memberships SET state = 'Removed' WHERE id = @id",
+                ("id", member.Id));
+            await InsertRemovedEventAsync(connection, member.UserId, member.Id, occurredAt);
+            occurredAt = occurredAt.AddSeconds(1);
+        }
+
+        await transaction.CommitAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Una baja sana, de punta a punta, para saber que el worker corrió otro tick.
+    private static async Task<MembershipPayload> RemoveAMemberAndWaitForItsCleanupAsync(
+        string connectionString,
+        NpgsqlConnection connection,
+        HttpClient ownerClient,
+        string tenantId)
+    {
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, member.Id);
+        Assert.Equal(HttpStatusCode.OK, (await RemoveAsync(ownerClient, tenantId, member.Id)).StatusCode);
+        await WaitUntilAsync(async () => await CountUsersAsync(connection, member.UserId) == 0);
+        return member;
+    }
 
     private static Task DeleteInboxAsync(NpgsqlConnection connection, Guid membershipId) =>
         ExecuteAsync(
@@ -889,11 +1126,11 @@ public sealed class OrphanUserCleanupTests
     {
         public string Source => "test-fault";
 
-        public async Task PurgeAsync(Guid userId, CancellationToken cancellationToken)
+        public async Task<int> PurgeAsync(Guid userId, CancellationToken cancellationToken)
         {
             if (userId != fault.UserId)
             {
-                return;
+                return 0;
             }
 
             var memberships = await dbContext.Memberships
@@ -902,6 +1139,18 @@ public sealed class OrphanUserCleanupTests
             dbContext.Memberships.RemoveRange(memberships);
             throw new InvalidOperationException("Simulated purge failure.");
         }
+    }
+
+    // Reloj que sólo avanza cuando la prueba lo pide: así se vence la espera de un reintento sin
+    // dormir minutos. Arranca truncado a microsegundos, igual que SystemClock, para que lo que se
+    // guarda en timestamptz vuelva igual.
+    private sealed class MutableClock(DateTimeOffset start) : IClock
+    {
+        private long _ticks = start.UtcTicks - (start.UtcTicks % TimeSpan.TicksPerMicrosecond);
+
+        public DateTimeOffset UtcNow => new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
+
+        public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
     }
 
     private sealed class QepApiFactory(
