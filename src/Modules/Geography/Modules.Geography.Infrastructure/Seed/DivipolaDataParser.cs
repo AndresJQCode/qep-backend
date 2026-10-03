@@ -6,6 +6,8 @@ internal sealed record DivipolaDepartmentRecord(string Code, string Name);
 
 internal sealed record DivipolaCityRecord(string DivipolaCode, string Name, string DepartmentCode);
 
+internal sealed record CoordinadoraCityRecord(string DivipolaCode, string Name);
+
 /// <summary>
 /// Parsea y valida el JSON fuente de DIVIPOLA antes de que <see cref="GeographySeeder"/> toque la
 /// base. El archivo de localidades trae dos niveles bajo el mismo array, planos: municipios
@@ -85,6 +87,39 @@ internal static class DivipolaDataParser
             }
 
             records.Add(new DivipolaCityRecord(code, name, departmentCode));
+        }
+
+        return records;
+    }
+
+    /// <summary>
+    /// El snapshot de los nombres de Coordinadora (Seed/Data/coordinadora-cities.json). Es un
+    /// snapshot y no una llamada en vivo a <c>ws.coordinadora.com</c> a propósito: el arranque de
+    /// la app no puede depender de que un servicio de un tercero responda. Cómo regenerarlo y qué
+    /// se filtra está en README § Nombres de ciudad de Coordinadora.
+    ///
+    /// A diferencia de <see cref="ParseCities"/>, un código que no sea de 5 dígitos no se descarta
+    /// sino que revienta: el snapshot ya viene filtrado a municipios, así que un código de centro
+    /// poblado es una regeneración mal hecha y no un dato que el archivo traiga a propósito.
+    /// </summary>
+    public static IReadOnlyList<CoordinadoraCityRecord> ParseCoordinadoraNames(Stream stream)
+    {
+        var raw = JsonSerializer.Deserialize<List<CoordinadoraJsonCity>>(stream, JsonOptions)
+            ?? [];
+
+        var seenCodes = new HashSet<string>(StringComparer.Ordinal);
+        var records = new List<CoordinadoraCityRecord>(raw.Count);
+        foreach (var entry in raw)
+        {
+            var code = RequireCityCode(entry.Code);
+            var name = RequireName(entry.Name, "Coordinadora city");
+            if (!seenCodes.Add(code))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate Coordinadora city DIVIPOLA code '{code}' in the source file.");
+            }
+
+            records.Add(new CoordinadoraCityRecord(code, name));
         }
 
         return records;

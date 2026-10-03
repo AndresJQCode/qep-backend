@@ -154,6 +154,15 @@ public sealed class QuotationsSeedTests
         var document = Assert.Single(layout.Columns, column => column.Key == "document");
         Assert.False(document.Visible);
         Assert.Equal("Documento", document.Header);
+        // Ajuste 2026-10-02: la hoja ya fija "Transportadora (P2)" = Coordinadora, así que
+        // "Ciudad (P4)" es la ciudad como la escribe Coordinadora. "city" (el nombre del DANE) queda
+        // en la lista, oculta y con su nombre por defecto.
+        Assert.Equal(
+            "coordinadora_city",
+            Assert.Single(layout.Columns, column => column.Header == "Ciudad (P4)").Key);
+        var city = Assert.Single(layout.Columns, column => column.Key == "city");
+        Assert.False(city.Visible);
+        Assert.Equal("Ciudad", city.Header);
         // Todo el catálogo está en la lista, visible o no: si una llave faltara, Effective la
         // completaría visible al final y la hoja tendría una columna que el ERP no espera.
         Assert.Empty(OrdersExportColumnCatalog.Columns

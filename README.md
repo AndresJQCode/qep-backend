@@ -108,7 +108,7 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
-| `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para las políticas del rate limiter, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
+| `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
 | `Authentication:UseDevelopmentStub`                    | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque                                |
 | `Authentication:Authority`                             | ausente (cae a `https://accounts.google.com`)                                                 | Emisor OIDC; sólo se define para pisar el de Google                                                                 |
 | `Authentication:Audience`                              | ausente                                                                                       | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId`                      |
@@ -468,6 +468,53 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Nombres de ciudad de Coordinadora
+
+Las ciudades de `geography` son los municipios del DANE (`localities.json`), y se importan en cada
+arranque sin depender de `Seed:Enabled`. En ese mismo arranque, cada ciudad toma además su nombre
+como lo escribe la transportadora Coordinadora (`ABEJORRAL (ANT)` en vez de `ABEJORRAL`), que es lo
+que lleva la columna `coordinadora_city` del Excel de pedidos. Sale de un snapshot embebido,
+[`coordinadora-cities.json`](src/Modules/Geography/Modules.Geography.Infrastructure/Seed/Data/coordinadora-cities.json),
+y no de una consulta en vivo: el arranque no puede depender de que `ws.coordinadora.com` responda.
+
+Cada arranque reconcilia contra el archivo: la ciudad que está toma su nombre, y la que no queda
+en `null` (104 de los 1122 municipios con el snapshot actual: Coordinadora no los lista o los
+lista inactivos). Un código del
+snapshot que no sea de ninguna ciudad se ignora al arrancar, pero la prueba unitaria
+`EveryCodeOfTheEmbeddedCoordinadoraSnapshotIsASeededMunicipality` lo frena en CI.
+
+Para regenerarlo cuando Coordinadora cambie su lista, desde la raíz del repo:
+
+```powershell
+$data = "src\Modules\Geography\Modules.Geography.Infrastructure\Seed\Data"
+'{"jsonrpc":"2.0","method":"Cotizador.ciudades","params":{},"id":1}' | Set-Content -Encoding Ascii req.json
+curl.exe -s https://ws.coordinadora.com/ags/1.5/server.php -H "Content-Type: application/json" -d "@req.json" -o coordinadora-raw.json
+$raw = Get-Content coordinadora-raw.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$cities = $raw.result |
+    Where-Object { $_.codigo -match '^[0-9]{5}000$' -and $_.estado -eq 'activo' } |
+    ForEach-Object { [pscustomobject]@{ code = $_.codigo.Substring(0, 5); name = $_.nombre.Trim() } } |
+    Sort-Object code
+$entries = $cities | ForEach-Object {
+    if ($_.name -match '[\x22\x5C]') { throw "Nombre con comilla o barra invertida: $($_.name)" }
+    "  {`n    `"code`": `"$($_.code)`",`n    `"name`": `"$($_.name)`"`n  }"
+}
+$json = "[`n" + ($entries -join ",`n") + "`n]`n"
+[System.IO.File]::WriteAllText("$PWD\$data\coordinadora-cities.json", $json, (New-Object System.Text.UTF8Encoding $false))
+Remove-Item req.json, coordinadora-raw.json
+$cities.Count
+```
+
+El filtro es la regla del snapshot, no un detalle del script:
+
+- **Sólo municipios.** Coordinadora usa códigos de 8 dígitos: los 5 primeros son el código DIVIPOLA
+  y el sufijo `000` es el municipio. Lo demás son centros poblados, que `geography` tampoco importa.
+- **Sólo `estado` = `activo`.** Los inactivos se excluyen a propósito y su ciudad queda en `null`.
+- **Sin México.** Sus códigos empiezan por `MX` y el patrón numérico los deja fuera.
+
+El cuerpo va a archivo porque PowerShell rompe las comillas dobles al pasarlas a `curl.exe`. Se
+escribe en UTF-8 sin BOM y con el mismo formato del archivo, así que el diff muestra sólo los
+municipios que cambiaron. Después corre `Modules.Geography.UnitTests` antes de commitear.
+
 ## Numeración de documentos por tenant
 
 El número de cotización y el de pedido salen de un formato **por tenant y por tipo de documento**,
@@ -746,7 +793,10 @@ caracteres. Sin él responde `422 validation.failed` con `errors.DisplayName`.
 (ERP, contabilidad) identifica a la persona. Se guarda como `integer`, así que `0012` y `12` son
 el mismo. Un valor que no sea un entero mayor que cero responde `422 validation.failed` con
 `errors.AdvisorCode`; uno que ya tenga otra membresía del tenant —incluida una quitada, que
-conserva el suyo—, `422 tenancy.membership.advisor_code_taken`.
+conserva el suyo—, `422 tenancy.membership.advisor_code_taken`. Una quitada deja de bloquear
+cuando su usuario se borra por no tener historia: `OrphanUserCleanupWorker` purga sus membresías
+quitadas o vencidas antes de borrarlo (spec 2026-10-02), y desde ahí el código queda libre, también
+para la misma persona si la vuelves a invitar.
 
 Una invitación viva o una membresía activa ignoran el nombre y el código del cuerpo. Renovar una
 invitación vencida o una membresía quitada reescribe el nombre y, si el cuerpo trae
@@ -798,8 +848,8 @@ Invoke-RestMethod `
 `428 precondition.if_match_required`; con una versión vieja, `412`; con un nombre vacío o de más
 de 150 caracteres, `422 validation.failed` con `errors.DisplayName`; con un código que no sea un
 entero mayor que cero, `422 validation.failed` con `errors.AdvisorCode`; con un código que ya
-tiene otra membresía del tenant —incluida una quitada, que conserva el suyo—,
-`422 tenancy.membership.advisor_code_taken`. El mismo código en otro tenant es válido.
+tiene otra membresía del tenant —incluida una quitada que todavía no se purgó, que conserva el
+suyo—, `422 tenancy.membership.advisor_code_taken`. El mismo código en otro tenant es válido.
 
 El código de asesor llega al sistema externo por el Excel de pedidos: la columna `Cod. Asesor`,
 después de `Email`, numérica y repetida en cada línea del pedido. Se resuelve al exportar desde la
@@ -864,7 +914,7 @@ es de dónde salen. Portada y escalas de la línea siguen siendo las de hoy.
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 40 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
+reordenar y ocultar las 41 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
 (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una fija cuyo valor es un número
 canónico en cultura invariante (`0.19`, `9999`, `-1`, `901851609`) sale como **número**, que un
 Excel en `es-CO` muestra `0,19` y el ERP lee como cifra; el resto (`02`, `PM`, `1,5`, `+1`, vacío)
@@ -895,11 +945,20 @@ como número —19 % sale `0.19`, 0 % sale `0`—, tomada de la foto que la lín
 al agregarse (`QuotationItem.TaxPercentage`), no de la tarifa de hoy. `IVA` (`tax`) sigue siendo el
 monto.
 
-La última (2026-09-26) es `NIT Empresa` (`company_tax_id`): el NIT de la empresa por la que se
+Después (2026-09-26) va `NIT Empresa` (`company_tax_id`): el NIT de la empresa por la que se
 factura la cotización, la misma que nombra `EMPRESA`, tal como está hoy en Companies. Con la misma
 regla que las fijas: sólo dígitos (`901851609`) sale como número; con puntos o dígito de
 verificación (`901851609-1`) sale como texto. Vacía sin cuenta de facturación o si la empresa no
 resuelve.
+
+La última (2026-10-02) es `Ciudad Coordinadora` (`coordinadora_city`): la ciudad de entrega como la
+escribe la transportadora Coordinadora (`ABEJORRAL (ANT)`), para la guía que genera el ERP. Sigue
+la misma precedencia que `Ciudad` —la ciudad de la parte de entrega propia si la hay, aunque no
+tenga ciudad; si no, la del cliente— pero nunca cae al nombre del DANE: queda **vacía** si el
+municipio no tiene nombre de Coordinadora (ver [Nombres de ciudad de
+Coordinadora](#nombres-de-ciudad-de-coordinadora)) o si el cliente no tiene ciudad. `Ciudad` (`city`)
+no cambia. Es la única columna que **nace oculta**: no aparece en ningún Excel, ni sin layout ni en
+un layout ya guardado, hasta que el tenant la prenda desde su configuración.
 
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
 ERP, «MIGRACION 1»: 47 columnas visibles, 21 de ellas fijas. Su «Nit» es el de la empresa de
@@ -909,7 +968,9 @@ facturación (`company_tax_id`) y no un NIT escrito a mano (2026-09-26). Su «IV
 sean la misma— y el total consignado (`proof_amount_total`) en «V. Consignacion (P7)»; `bank` queda
 oculto. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su
 `Documento (P5)` lleva el documento de identidad (`customer_identification`) y el CUC (`document`)
-queda oculto. Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
+queda oculto. Desde el 2026-10-02 su «Ciudad (P4)» lleva la ciudad como la escribe Coordinadora
+(`coordinadora_city`) —la hoja ya fija «Transportadora (P2)» = Coordinadora— y `city` queda oculta.
+Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
 y lo cambia desde su pantalla de configuración.
 
 | Método | Ruta                                                | Permiso                  |
@@ -918,10 +979,12 @@ y lo cambia desde su pantalla de configuración.
 | `PUT`  | `/api/v1/tenants/{tenantId}/orders-export-layout`   | `tenancy.settings.update`|
 
 El `GET` devuelve el layout **efectivo**: lo guardado en su orden más toda columna del catálogo
-que no esté guardada, al final, visible y con su nombre por defecto; sin nada guardado es el
-catálogo tal cual (el Excel de siempre) con `version: 1` y ETag `"1"`. Cada columna viaja con
-`kind` (`Catalog` | `Fixed`), `key` y `defaultHeader`/`defaultPosition` (sólo las del catálogo),
-`header`, `value` (sólo las fijas) y `visible`.
+que no esté guardada, al final, con su nombre por defecto y visible u oculta según su
+`defaultVisible`; sin nada guardado es el catálogo tal cual (el Excel de siempre) con `version: 1`
+y ETag `"1"`. Cada columna viaja con `kind` (`Catalog` | `Fixed`), `key` y
+`defaultHeader`/`defaultPosition`/`defaultVisible` (sólo las del catálogo; `null` en las fijas),
+`header`, `value` (sólo las fijas) y `visible`. `defaultVisible` es `true` en todas menos en
+`coordinadora_city` (2026-10-02).
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
 vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no
@@ -932,7 +995,7 @@ con prefijo `quotations.orders_export_layout.`: `columns_invalid` (llave vacía 
 repetida es válida desde el 2026-09-25), `header_duplicated` (dos **visibles** con el mismo
 encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` (más de 40). Audita
 `quotations.orders_export_layout.updated` sólo si algo cambió. No hay `DELETE`: restaurar es un
-`PUT` con el catálogo en su orden y nombres, sin fijas.
+`PUT` con el catálogo en su orden, nombres y visibilidad por defecto, sin fijas.
 
 Un layout guardado se aplica en la siguiente exportación de pedidos; el de cotizaciones no cambia.
 
@@ -1083,20 +1146,6 @@ las puede escribir cualquiera. `X-Real-IP` es el `$remote_addr` de nginx, que
 resuelve `CF-Connecting-IP` sólo cuando el par es de Cloudflare
 (`set_real_ip_from`), así que no se falsifica desde afuera. `X-Forwarded-For` se
 ignora por completo.
-
-El rate limiter tiene dos políticas (`RateLimiterPolicies`), las dos de ventana fija
-de un minuto por IP del cliente y sin cola:
-
-| Política         | Límite      | Endpoints                                                                      |
-| ---------------- | ----------- | ------------------------------------------------------------------------------ |
-| `public`         | 120 por min | `/openapi/v1.json`, `/scalar/v1`, `GET /api/v1/invitations/{token}`            |
-| `authentication` | 10 por min  | `POST /api/v1/auth/session`, `POST /api/v1/auth/register-tenant`               |
-
-Son presupuestos separados: agotar uno no toca el otro. Los dos endpoints de
-`authentication` comparten el bucket de la IP, así que martillar `register-tenant`
-también gasta el del login. Como el limitador va antes de la autenticación, una
-ráfaga se corta con `429` sin validar el token de Google. Todo `429` lleva
-`Retry-After` con los segundos que le faltan a la ventana.
 
 `ApiExceptionHandler` (`IExceptionHandler`) centraliza el mapeo de excepciones
 a `ProblemDetails` (RFC 7807):

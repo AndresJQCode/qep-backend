@@ -53,6 +53,9 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
             .HasColumnName("name")
             .HasMaxLength(120)
             .IsRequired();
+        city.Property(value => value.CoordinadoraName)
+            .HasColumnName("coordinadora_name")
+            .HasMaxLength(120);
         city.Property(value => value.DepartmentId)
             .HasColumnName("department_id")
             .HasConversion(id => id.Value, value => new DepartmentId(value));

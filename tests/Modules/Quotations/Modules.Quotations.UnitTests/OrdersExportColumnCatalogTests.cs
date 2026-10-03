@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 40 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 41 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -19,7 +19,7 @@ public sealed class OrdersExportColumnCatalogTests
         "proof_amount_1", "proof_url_1", "proof_amount_2", "proof_url_2", "proof_amount_3", "proof_url_3",
         "proof_amount_4", "proof_url_4", "proof_amount_5", "proof_url_5",
         "unit_price_without_tax", "order_date", "customer_name", "customer_identification",
-        "bank_account", "proof_amount_total", "tax_rate", "company_tax_id",
+        "bank_account", "proof_amount_total", "tax_rate", "company_tax_id", "coordinadora_city",
     ];
 
     private static readonly string[] Headers =
@@ -33,13 +33,13 @@ public sealed class OrdersExportColumnCatalogTests
         "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
         "V. Comprobante 5", "URL Comprobante 5",
         "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-        "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
+        "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Ciudad Coordinadora",
     ];
 
     [Fact]
-    public void HasTheFortyColumnsOfTheSpecInItsOrder()
+    public void HasTheFortyOneColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(40, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(41, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -93,14 +93,31 @@ public sealed class OrdersExportColumnCatalogTests
     }
 
     // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la misma de "EMPRESA"—, que el
-    // ERP del tenant importa en "Nit". Detrás de todas, como toda columna nueva.
+    // ERP del tenant importa en "Nit". Detrás de todas, como toda columna nueva; desde el ajuste
+    // 2026-10-02 la sigue "coordinadora_city".
     [Fact]
     public void CompanyTaxIdIsAppendedAtTheEnd()
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("company_tax_id", "NIT Empresa", 18),
-            OrdersExportColumnCatalog.Columns[^1]);
+            OrdersExportColumnCatalog.Columns[39]);
         Assert.Equal(39, OrdersExportColumnCatalog.IndexOf("company_tax_id"));
+    }
+
+    // Ajuste 2026-10-02: la ciudad como la escribe Coordinadora, para la guía. Detrás de todas, y la
+    // única oculta por defecto: el owner pidió que no apareciera en los Excel que ya existen hasta
+    // que un tenant la prenda. "city" sigue siendo el nombre del DANE.
+    [Fact]
+    public void CoordinadoraCityIsAppendedAtTheEndHiddenByDefault()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("coordinadora_city", "Ciudad Coordinadora", 30, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[^1]);
+        Assert.Equal(40, OrdersExportColumnCatalog.IndexOf("coordinadora_city"));
+        Assert.Equal(12, OrdersExportColumnCatalog.IndexOf("city"));
+        Assert.Equal(
+            ["coordinadora_city"],
+            OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 
     // Las llaves son identificadores: únicas, y el tenant no puede inventar ni repetir una.
@@ -114,12 +131,16 @@ public sealed class OrdersExportColumnCatalogTests
 
     // Encabezado y ancho son los del processor de hoy, en el mismo orden: sin layout guardado el
     // archivo no cambia. Cuando Task 8 derive Columns del catálogo, esta prueba sigue siendo la red.
+    // Sólo las visibles por defecto (ajuste 2026-10-02): la oculta no está en el archivo de siempre.
     [Fact]
     public void MatchesTheProcessorColumnsHeaderByHeaderAndWidthByWidth()
     {
         Assert.Equal(
-            OrdersExportColumnCatalog.Columns.Select(column => new ExportColumn(column.DefaultHeader, column.Width)),
+            OrdersExportColumnCatalog.Columns
+                .Where(column => column.DefaultVisible)
+                .Select(column => new ExportColumn(column.DefaultHeader, column.Width)),
             OrdersExportProcessor.Columns);
+        Assert.Equal(40, OrdersExportProcessor.Columns.Count);
     }
 
     // Review Focus 5: la llave se compara ordinal. "Company" no existe.

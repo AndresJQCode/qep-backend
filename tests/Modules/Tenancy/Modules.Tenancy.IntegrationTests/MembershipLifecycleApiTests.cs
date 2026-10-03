@@ -166,13 +166,19 @@ public sealed class MembershipLifecycleApiTests
         Assert.Equal("Removed", membership!.State);
     }
 
+    // La invitación viva en el otro tenant retiene al usuario (MembershipUserReferenceProbe): sin
+    // ella OrphanUserCleanupWorker puede purgar la fila quitada entre los dos POST (spec
+    // 2026-10-02), y el segundo respondería 404 en vez del 422 que esta prueba fija.
     [Fact]
     public async Task RemoveAlreadyRemovedMembershipIsRejected()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
-        var invitedId = await InviteAsync(ownerClient, tenantId, NewEmail());
+        var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var email = NewEmail();
+        var invitedId = await InviteAsync(ownerClient, tenantId, email);
+        await InviteAsync(otherOwnerClient, otherTenantId, email);
         await SendActionAsync(ownerClient, tenantId, invitedId, "remove");
 
         var response = await SendActionAsync(ownerClient, tenantId, invitedId, "remove");
@@ -187,7 +193,8 @@ public sealed class MembershipLifecycleApiTests
     /// Hasta este cambio respondía 422 tenancy.membership.not_reinvitable.
     ///
     /// Sólo pasa por Reinvite si el usuario de Identity sobrevive a la baja: si
-    /// OrphanUserCleanupWorker lo borra, la invitación crea un usuario y una membresía nuevos.
+    /// OrphanUserCleanupWorker lo borra, también purga esta fila (spec 2026-10-02) y la invitación
+    /// crea un usuario y una membresía nuevos.
     /// La invitación viva en el otro tenant lo retiene (MembershipUserReferenceProbe), así que el
     /// resultado no depende de cuándo corra el worker. En producción lo retiene eso mismo, o una
     /// cotización que la persona ya hizo.
@@ -693,15 +700,20 @@ public sealed class MembershipLifecycleApiTests
     }
 
     // D4 y el chequeo previo: una quitada sigue ocupando su código, la propia membresía no se
-    // cuenta a sí misma, y otro tenant tiene su propio espacio de códigos (D3).
+    // cuenta a sí misma, y otro tenant tiene su propio espacio de códigos (D3). La quitada tiene
+    // que ser de alguien que sobrevive —acá, por la invitación viva en el otro tenant—: la de un
+    // usuario sin historia la purga OrphanUserCleanupWorker (spec 2026-10-02) y la consulta
+    // correría contra el worker.
     [Fact]
     public async Task IsAdvisorCodeTakenSeesRemovedMembersSkipsTheExcludedOneAndIgnoresOtherTenants()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
-        var (otherTenantId, _, _, _) = await RegisterTenantWithOwnerAsync(factory);
-        var holder = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var email = NewEmail();
+        var holder = await InviteAsync(ownerClient, tenantId, email, AdvisorRoles);
+        await InviteAsync(otherOwnerClient, otherTenantId, email, AdvisorRoles);
         await SetAdvisorCodeThroughTheAggregateAsync(factory, tenantId, holder, 7);
         var removal = await SendActionAsync(ownerClient, tenantId, holder, "remove");
         Assert.Equal(HttpStatusCode.OK, removal.StatusCode);

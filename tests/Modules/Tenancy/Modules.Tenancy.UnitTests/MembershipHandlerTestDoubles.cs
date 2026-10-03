@@ -13,6 +13,16 @@ internal sealed class InMemoryMembershipRepository(params Membership[] membershi
 {
     private readonly List<Membership> _memberships = [.. memberships];
 
+    /// <summary>Lo que queda guardado, para afirmar qué borró una purga.</summary>
+    public IReadOnlyList<Membership> All => _memberships;
+
+    public Task<IReadOnlyList<Membership>> ListByUserAsync(
+        Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Membership>>(
+            _memberships.Where(membership => membership.UserId == userId).ToList());
+
+    public void Remove(Membership membership) => _memberships.Remove(membership);
+
     public Task<IReadOnlyList<Membership>> ListByTenantAsync(
         TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<Membership>>(
@@ -52,10 +62,6 @@ internal sealed class InMemoryMembershipRepository(params Membership[] membershi
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<ActiveTenantSummary>> ListActiveTenantSummariesByUserAsync(
-        Guid userId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<IReadOnlyList<Membership>> ListByUserAsync(
         Guid userId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
