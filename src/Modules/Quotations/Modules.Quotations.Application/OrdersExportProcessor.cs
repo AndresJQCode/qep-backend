@@ -60,8 +60,13 @@ public sealed class OrdersExportProcessor(
     /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
     /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
     /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido).
+    ///
+    /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02) está en el catálogo
+    /// pero oculta, así que sin layout guardado no sale, y esta lista sigue siendo el archivo de
+    /// siempre.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
+        .Where(column => column.DefaultVisible)
         .Select(column => new ExportColumn(column.DefaultHeader, column.Width))
         .ToArray();
 
@@ -152,8 +157,8 @@ public sealed class OrdersExportProcessor(
     /// no pida nada por fila: líneas y partes por cotización, comprobantes por pedido, productos y
     /// empresas por id, ciudades de las partes de entrega, la ficha de cada cliente del lote —
     /// la necesitan tanto "Documento" (siempre) como el respaldo de "los mismos datos del cliente"
-    /// cuando el pedido no tiene una parte de entrega propia— y la asesora de cada cotización, por
-    /// su código.</summary>
+    /// cuando el pedido no tiene una parte de entrega propia—, la asesora de cada cotización, por
+    /// su código, y el nombre de Coordinadora de las ciudades de entrega y de los clientes.</summary>
     private readonly record struct BatchContext(
         IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>> ItemsByQuotation,
         IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>> PartiesByQuotation,
@@ -162,7 +167,8 @@ public sealed class OrdersExportProcessor(
         IReadOnlyDictionary<Guid, QuotationCompanyRef> Companies,
         IReadOnlyDictionary<Guid, string> CityNames,
         IReadOnlyDictionary<Guid, QuotationCustomerRef> Customers,
-        IReadOnlyDictionary<Guid, QuotationAdvisor> Advisors);
+        IReadOnlyDictionary<Guid, QuotationAdvisor> Advisors,
+        IReadOnlyDictionary<Guid, string> CoordinadoraCityNames);
 
     private async Task<BatchContext> LoadBatchContextAsync(
         Guid tenantId, IReadOnlyList<OrderWithQuotation> batch, CancellationToken cancellationToken)
@@ -219,6 +225,16 @@ public sealed class OrdersExportProcessor(
         var clientIds = batch.Select(row => row.Quotation.ClientId).Distinct().ToArray();
         var customers = await customerLookup.FindManyAsync(tenantId, clientIds, cancellationToken);
 
+        // "Ciudad Coordinadora" (ajuste 2026-10-02): las ciudades de entrega y las de los clientes
+        // del lote en una sola consulta. Se pide aunque la columna esté oculta, como todas las del
+        // catálogo: RowsFor arma una celda por columna y la proyección decide cuáles salen.
+        var coordinadoraCityIds = shippingCityIds
+            .Concat(customers.Values.Where(customer => customer.CityId is not null).Select(customer => customer.CityId!.Value))
+            .Distinct()
+            .ToArray();
+        var coordinadoraCityNames = await geographyLookup.FindCoordinadoraCityNamesAsync(
+            coordinadoraCityIds, cancellationToken);
+
         // "Cod. Asesor" (D9): Quotation.AdvisorId → membresía → código de hoy, en una consulta
         // por lote con las asesoras distintas, que en un lote son una o dos.
         var advisorIds = batch.Select(row => row.Quotation.AdvisorId.Value).Distinct().ToArray();
@@ -226,7 +242,7 @@ public sealed class OrdersExportProcessor(
 
         return new BatchContext(
             itemsByQuotation, partiesByQuotation, proofsByOrder, products, companies, cityNames, customers,
-            advisors);
+            advisors, coordinadoraCityNames);
     }
 
     private static IEnumerable<ExportCell[]> RowsFor(
@@ -266,6 +282,7 @@ public sealed class OrdersExportProcessor(
         var shipping = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping);
         var billingParty = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);
         var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
+        var ciudadCoordinadora = CoordinadoraCityFor(shipping, customer, context.CoordinadoraCityNames);
         var cliente = BilledNameFor(quotation, billingParty, customer);
         var documentoIdentidad = BilledIdentificationFor(quotation, billingParty, customer);
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -316,6 +333,7 @@ public sealed class OrdersExportProcessor(
                 // pedido ya se cobró con ésa.
                 ExportCell.OfNumber(item.TaxPercentage / 100m),
                 nitEmpresa,
+                ExportCell.OfText(ciudadCoordinadora),
             ];
         }
     }
@@ -406,6 +424,22 @@ public sealed class OrdersExportProcessor(
             customer?.Address ?? string.Empty,
             customer?.Phone ?? string.Empty,
             customer?.Email ?? string.Empty);
+    }
+
+    // "Ciudad Coordinadora" (ajuste 2026-10-02): la misma precedencia que "Ciudad" en ContactFor
+    // —con parte de entrega manda su ciudad, aunque no tenga; sin ella, la del cliente—, pero con
+    // el nombre que escribe Coordinadora. Vacía si esa ciudad no lo tiene (Coordinadora no lista el
+    // municipio, o el cliente es del exterior y no tiene ciudad): nunca el nombre del DANE, que la
+    // transportadora no reconoce.
+    private static string CoordinadoraCityFor(
+        QuotationParty? shipping,
+        QuotationCustomerRef? customer,
+        IReadOnlyDictionary<Guid, string> coordinadoraCityNames)
+    {
+        var cityId = shipping is not null ? shipping.CityId : customer?.CityId;
+        return cityId is { } id && coordinadoraCityNames.TryGetValue(id, out var name)
+            ? name
+            : string.Empty;
     }
 
     // "Cod. Asesor" (D9): numérica, para que el ERP la lea como el número que es. Vacía si la

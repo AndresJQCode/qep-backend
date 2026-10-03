@@ -117,7 +117,10 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Catalog("payment_date_1", "Fecha Pago (P1)", visible: true),
         OrdersExportColumnSetting.Fixed("Transportadora (P2)", "Coordinadora", visible: true),
         OrdersExportColumnSetting.Fixed("Flete (P3)", "CONTRAENTREGA", visible: true),
-        OrdersExportColumnSetting.Catalog("city", "Ciudad (P4)", visible: true),
+        // Ajuste 2026-10-02: la hoja ya fija "Transportadora (P2)" = Coordinadora, así que la ciudad
+        // va como la escribe Coordinadora ("ABEJORRAL (ANT)"), no con el nombre del DANE. "city"
+        // queda entre las ocultas.
+        OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad (P4)", visible: true),
         OrdersExportColumnSetting.Fixed("Tipo Envio", string.Empty, visible: true),
         // Ajuste 2026-09-26: el ERP lee acá el documento de identidad de quien se factura, no el
         // CUC. "document" (el CUC) queda entre las ocultas.
@@ -151,6 +154,7 @@ public static class QuotationsSeeder
         "unit_price",
         "tax",
         "document",
+        "city",
         .. Enumerable.Range(2, OrdersExportColumnCatalog.PaymentDateColumns - 1).Select(number => $"payment_date_{number}"),
         "bank",
         "account",

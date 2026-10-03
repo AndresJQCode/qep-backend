@@ -11,16 +11,25 @@ namespace Modules.Geography.Infrastructure.Seed;
 /// aplicar las migraciones) y hace upsert por <c>DivipolaCode</c> contra los dos JSON embebidos.
 /// No es <c>HasData</c> de migración a propósito: DIVIPOLA cambia de año a año — el archivo fuente
 /// ya se llama "2026" — así que esto es un importador de datos de referencia, no un fixture fijo.
+///
+/// Después de las ciudades fija <see cref="City.CoordinadoraName"/> desde un tercer JSON, el
+/// snapshot de Coordinadora: el nombre de cada municipio como lo escribe la transportadora, que el
+/// Excel de pedidos necesita y el DANE no da. Es un snapshot embebido y no una consulta en vivo a
+/// <c>ws.coordinadora.com</c> porque el arranque no puede depender de que un tercero responda; se
+/// regenera a mano cuando Coordinadora cambie su lista (README § Nombres de ciudad de
+/// Coordinadora). Mismo criterio que las ciudades: cada arranque reconcilia todo contra el archivo.
 /// </summary>
 internal sealed class GeographySeeder(GeographyDbContext dbContext)
 {
-    private const string DepartmentsResourceSuffix = "Seed.Data.departments.json";
-    private const string CitiesResourceSuffix = "Seed.Data.localities.json";
+    internal const string DepartmentsResourceSuffix = "Seed.Data.departments.json";
+    internal const string CitiesResourceSuffix = "Seed.Data.localities.json";
+    internal const string CoordinadoraCitiesResourceSuffix = "Seed.Data.coordinadora-cities.json";
 
     public async Task SeedAsync(CancellationToken cancellationToken)
     {
         var departmentsByCode = await SeedDepartmentsAsync(cancellationToken);
-        await SeedCitiesAsync(departmentsByCode, cancellationToken);
+        var citiesByCode = await SeedCitiesAsync(departmentsByCode, cancellationToken);
+        SeedCoordinadoraNames(citiesByCode);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -51,7 +60,9 @@ internal sealed class GeographySeeder(GeographyDbContext dbContext)
         return departmentsByCode;
     }
 
-    private async Task SeedCitiesAsync(
+    // Devuelve todas las ciudades del archivo por código, las que ya estaban y las creadas en este
+    // arranque, para que el paso de Coordinadora alcance también a las recién creadas.
+    private async Task<Dictionary<string, City>> SeedCitiesAsync(
         Dictionary<string, DepartmentId> departmentsByCode, CancellationToken cancellationToken)
     {
         var records = DivipolaDataParser.ParseCities(OpenResource(CitiesResourceSuffix));
@@ -59,6 +70,7 @@ internal sealed class GeographySeeder(GeographyDbContext dbContext)
         var existing = await dbContext.Cities
             .ToDictionaryAsync(city => city.DivipolaCode, cancellationToken);
 
+        var citiesByCode = new Dictionary<string, City>(existing, StringComparer.Ordinal);
         foreach (var record in records)
         {
             if (!departmentsByCode.TryGetValue(record.DepartmentCode, out var departmentId))
@@ -78,11 +90,32 @@ internal sealed class GeographySeeder(GeographyDbContext dbContext)
                 var created = City.Create(
                     CityId.New(), record.DivipolaCode, record.Name, departmentId);
                 dbContext.Cities.Add(created);
+                citiesByCode[record.DivipolaCode] = created;
             }
+        }
+
+        return citiesByCode;
+    }
+
+    // Toda ciudad toma el nombre del snapshot, o null si el snapshot no la trae: así una ciudad que
+    // Coordinadora deja de listar pierde el nombre en el siguiente arranque. Un código del snapshot
+    // que no sea de ninguna ciudad se ignora en vez de tumbar el arranque; lo que impide que eso
+    // llegue a producción es la prueba unitaria que cruza el snapshot con localities.json.
+    private static void SeedCoordinadoraNames(Dictionary<string, City> citiesByCode)
+    {
+        var namesByCode = DivipolaDataParser
+            .ParseCoordinadoraNames(OpenResource(CoordinadoraCitiesResourceSuffix))
+            .ToDictionary(record => record.DivipolaCode, record => record.Name, StringComparer.Ordinal);
+
+        foreach (var (code, city) in citiesByCode)
+        {
+            city.SetCoordinadoraName(namesByCode.GetValueOrDefault(code));
         }
     }
 
-    private static Stream OpenResource(string nameSuffix)
+    // Internal y no private: la prueba unitaria que cruza el snapshot de Coordinadora contra
+    // localities.json abre los mismos recursos embebidos que el arranque, no una copia en disco.
+    internal static Stream OpenResource(string nameSuffix)
     {
         var assembly = typeof(GeographySeeder).Assembly;
         var resourceName = assembly.GetManifestResourceNames()

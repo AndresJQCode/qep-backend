@@ -37,14 +37,19 @@ public sealed class OrdersExportLayoutApiTests
         Assert.NotNull(layout);
         Assert.Equal(tenantId, layout.TenantId);
         Assert.Equal(1, layout.Version);
-        Assert.Equal(40, layout.Columns.Count);
+        Assert.Equal(41, layout.Columns.Count);
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
-        Assert.All(layout.Columns, column => Assert.True(column.Visible));
-        Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, true), layout.Columns[0]);
-        Assert.Equal(new ColumnPayload("Catalog", "email", "Email", 19, "Email", null, true), layout.Columns[18]);
+        // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
+        // (ajuste 2026-10-02), que nace oculta y lo dice en defaultVisible.
+        Assert.All(layout.Columns, column => Assert.Equal(column.DefaultVisible, column.Visible));
+        Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[0]);
+        Assert.Equal(new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true), layout.Columns[18]);
         Assert.Equal(38, layout.Columns[37].DefaultPosition);
-        Assert.Equal(new ColumnPayload("Catalog", "tax_rate", "Tasa IVA", 39, "Tasa IVA", null, true), layout.Columns[38]);
-        Assert.Equal(new ColumnPayload("Catalog", "company_tax_id", "NIT Empresa", 40, "NIT Empresa", null, true), layout.Columns[39]);
+        Assert.Equal(new ColumnPayload("Catalog", "tax_rate", "Tasa IVA", 39, true, "Tasa IVA", null, true), layout.Columns[38]);
+        Assert.Equal(new ColumnPayload("Catalog", "company_tax_id", "NIT Empresa", 40, true, "NIT Empresa", null, true), layout.Columns[39]);
+        Assert.Equal(
+            new ColumnPayload("Catalog", "coordinadora_city", "Ciudad Coordinadora", 41, false, "Ciudad Coordinadora", null, false),
+            layout.Columns[40]);
     }
 
     // D9: el primer PUT viaja con "1" y la fila nace en 2. El GET siguiente la devuelve tal cual.
@@ -67,9 +72,10 @@ public sealed class OrdersExportLayoutApiTests
         var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
         Assert.NotNull(saved);
         Assert.Equal(2, saved.Version);
-        Assert.Equal(41, saved.Columns.Count);
-        Assert.Equal(new ColumnPayload("Fixed", null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
-        Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, false), saved.Columns[1]);
+        // 41 del catálogo (desde el ajuste 2026-10-02) + 1 fija.
+        Assert.Equal(42, saved.Columns.Count);
+        Assert.Equal(new ColumnPayload("Fixed", null, null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
+        Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), saved.Columns[1]);
         Assert.Equal("Correo", saved.Columns[19].Header);
         Assert.Equal("Email", saved.Columns[19].DefaultHeader);
 
@@ -255,11 +261,12 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
         var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(41, layout!.Columns.Count);
+        // 41 del catálogo (desde el ajuste 2026-10-02) + la repetida.
+        Assert.Equal(42, layout!.Columns.Count);
         Assert.Equal(
             [
-                new ColumnPayload("Catalog", "email", "Email", 19, "Email", null, true),
-                new ColumnPayload("Catalog", "email", "Email", 19, "Otro correo", null, true),
+                new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true),
+                new ColumnPayload("Catalog", "email", "Email", 19, true, "Otro correo", null, true),
             ],
             layout.Columns.Where(column => column.Key == "email"));
     }
@@ -408,7 +415,8 @@ public sealed class OrdersExportLayoutApiTests
             await OutboxMessagesAsync(factory, AuditEvent), message => ActionOf(message) == AuditAction);
     }
 
-    // D8: un PUT no exige el catálogo entero; lo que falte va al final, visible y con su nombre.
+    // D8: un PUT no exige el catálogo entero; lo que falte va al final, con su nombre y visible
+    // según su defecto: "coordinadora_city" (ajuste 2026-10-02) se completa oculta.
     [Fact]
     public async Task PutWithoutSomeCatalogKeysCompletesThemAtTheEnd()
     {
@@ -422,10 +430,12 @@ public sealed class OrdersExportLayoutApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var layout = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(40, layout!.Columns.Count);
+        Assert.Equal(41, layout!.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal("order_number", layout.Columns[1].Key);
-        Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, "EMPRESA", null, true), layout.Columns[2]);
+        Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[2]);
+        Assert.Equal("coordinadora_city", layout.Columns[^1].Key);
+        Assert.False(layout.Columns[^1].Visible);
     }
 
     // D10: restaurar es un PUT con el catálogo en su orden y nombres, sin fijas. La fila queda.
@@ -448,7 +458,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
         Assert.Equal("\"3\"", restored.Headers.ETag?.Tag);
         var layout = await restored.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(40, layout!.Columns.Count);
+        Assert.Equal(41, layout!.Columns.Count);
         Assert.DoesNotContain(layout.Columns, column => column.Kind == "Fixed");
         Assert.Equal(defaults, layout.Columns);
     }
@@ -489,10 +499,10 @@ public sealed class OrdersExportLayoutApiTests
     }
 
     private static ColumnPayload Catalog(string key, string header, bool visible = true) =>
-        new("Catalog", key, null, null, header, null, visible);
+        new("Catalog", key, null, null, null, header, null, visible);
 
     private static ColumnPayload Fixed(string header, string value, bool visible = true) =>
-        new("Fixed", null, null, null, header, value, visible);
+        new("Fixed", null, null, null, null, header, value, visible);
 
     private static string ActionOf(QuotationsOutboxMessage message)
     {
@@ -503,7 +513,8 @@ public sealed class OrdersExportLayoutApiTests
     private sealed record LayoutPayload(Guid TenantId, IReadOnlyList<ColumnPayload> Columns, long Version);
 
     private sealed record ColumnPayload(
-        string Kind, string? Key, string? DefaultHeader, int? DefaultPosition, string Header, string? Value, bool Visible);
+        string Kind, string? Key, string? DefaultHeader, int? DefaultPosition, bool? DefaultVisible, string Header,
+        string? Value, bool Visible);
 
     private sealed record ProblemPayload(string? Code, Dictionary<string, string[]>? Errors);
 }
