@@ -1,4 +1,3 @@
-using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,11 +11,10 @@ using Modules.Identity.Infrastructure.Persistence;
 namespace Modules.Identity.Infrastructure.Messaging;
 
 // Consume del Outbox de plataforma el evento de membresía quitada y, si el usuario ya no deja
-// huella en ningún módulo, lo borra físicamente. Mismo esqueleto que SessionRevocationWorker:
-// proyección de sólo lectura del outbox, anti-join contra el inbox propio con clave
-// (consumidor, id de mensaje), y auditoría + inbox en el mismo SaveChanges que el efecto. A
-// diferencia de ese, reclama cada mensaje antes de procesarlo, para acotar los reintentos (ver
-// el último párrafo).
+// huella en ningún módulo, lo borra físicamente. Mismo esqueleto que SessionRevocationWorker,
+// compartido en ClaimedOutboxConsumer: proyección de sólo lectura del outbox, reclamo en el inbox
+// propio con clave (consumidor, id de mensaje), un scope por mensaje, y auditoría + inbox en el
+// mismo SaveChanges que el efecto.
 //
 // Es asíncrono a propósito: RemoveMemberHandler lee el correo del usuario después del commit
 // para armar su respuesta, así que borrar en el handler rompería la respuesta del remove.
@@ -58,14 +56,14 @@ namespace Modules.Identity.Infrastructure.Messaging;
 // las commiteaba como si fueran suyas: borraba la membresía de un usuario que nunca se borró.
 //
 // Reintentos con backoff (spec 2026-10-02, «Reintentos y log de la purga»). Antes de procesar,
-// el mensaje se reclama en el inbox propio con IdentityInboxClaims, el mismo mecanismo que
-// OutboxDeliveryWorker de Notifications: una sentencia que se commitea sola, suma el intento y
-// deja la fila reclamada hasta ClaimedUntil. Así el intento queda contado aunque la unidad de
-// trabajo del mensaje falle y se descarte entera, y el lote no vuelve a tomar un mensaje cuyo
-// reclamo sigue vivo: uno que falla siempre deja de ocupar la cabeza del lote, que se llena con
-// los que sí toca. El reclamo dura LeaseFor(intento) —1, 5 y 15 minutos, la curva de reintentos
-// de ExportJob (D11), y 15 de ahí en adelante—, que es a la vez el lease de quien procesa y la
-// espera antes del reintento.
+// ClaimedOutboxConsumer reclama el mensaje en el inbox propio con IdentityInboxClaims, el mismo
+// mecanismo que OutboxDeliveryWorker de Notifications: una sentencia que se commitea sola, suma
+// el intento y deja la fila reclamada hasta ClaimedUntil. Así el intento queda contado aunque la
+// unidad de trabajo del mensaje falle y se descarte entera, y el lote no vuelve a tomar un
+// mensaje cuyo reclamo sigue vivo: uno que falla siempre deja de ocupar la cabeza del lote, que
+// se llena con los que sí toca. El reclamo dura Claims.LeaseFor(intento) —1, 5 y 15 minutos, la
+// curva de reintentos de ExportJob (D11), y 15 de ahí en adelante—, que es a la vez el lease de
+// quien procesa y la espera antes del reintento.
 //
 // A diferencia de Notifications, un mensaje nunca se abandona: cada reclamo procesa. Allá un
 // correo que llega con media hora de atraso ya no sirve; acá borrar a un huérfano no tiene plazo,
@@ -78,7 +76,7 @@ internal sealed partial class OrphanUserCleanupWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<OrphanUserCleanupWorker> logger) : BackgroundService
 {
-    internal const int BatchSize = 20;
+    internal const int BatchSize = ClaimedOutboxConsumer.BatchSize;
 
     /// <summary>
     /// Desde qué intento una falla se loguea en Error y no en Warning. No corta nada: el mensaje
@@ -88,18 +86,23 @@ internal sealed partial class OrphanUserCleanupWorker(
     /// </summary>
     internal const int ErrorAfterAttempts = 4;
 
-    private const string Consumer = "identity.orphan-user-cleanup";
-    private const string RemovedEvent = "tenancy.membership-removed.v1";
+    internal const string Consumer = "identity.orphan-user-cleanup";
+    internal const string RemovedEvent = "tenancy.membership-removed.v1";
 
     /// <summary>
     /// La espera después del intento fallido número n es <c>RetryDelays[n - 1]</c>, la misma curva
     /// de <c>ExportJob.RetryDelays</c> (D11). Copiada y no referenciada: Identity no depende de
-    /// Quotations.
+    /// Quotations. Se le pasa una sola vez a <see cref="Claims"/>, que es quien la aplica.
     /// </summary>
-    internal static readonly IReadOnlyList<TimeSpan> RetryDelays =
+    private static readonly IReadOnlyList<TimeSpan> RetryDelays =
         [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15)];
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+
+    /// <summary>El esqueleto compartido, con la curva de este worker. Interno para que las pruebas
+    /// lean la curva de la instancia que corre.</summary>
+    internal ClaimedOutboxConsumer Claims { get; } =
+        new(scopeFactory, Consumer, [RemovedEvent], RetryDelays);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Orphan user cleanup tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
@@ -131,15 +134,6 @@ internal sealed partial class OrphanUserCleanupWorker(
         Message = "User {UserId} deleted after membership removal: no module references it. Purged rows by source: {PurgedRows}.")]
     private static partial void LogUserDeleted(ILogger logger, Guid userId, string purgedRows);
 
-    /// <summary>
-    /// Cuánto dura el reclamo número <paramref name="attempt"/>: la espera de
-    /// <see cref="RetryDelays"/> que le sigue, y desde el último intento en adelante, la última.
-    /// Es la misma regla que <see cref="IdentityInboxClaims"/> aplica en SQL; las pruebas avanzan
-    /// el reloj con esto.
-    /// </summary>
-    internal static TimeSpan LeaseFor(int attempt) =>
-        RetryDelays[Math.Min(attempt, RetryDelays.Count) - 1];
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(PollInterval);
@@ -147,7 +141,7 @@ internal sealed partial class OrphanUserCleanupWorker(
         {
             try
             {
-                await ProcessBatchAsync(stoppingToken);
+                await Claims.ProcessBatchAsync(CleanupAsync, LogFailure, stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -161,80 +155,18 @@ internal sealed partial class OrphanUserCleanupWorker(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
+    // Corre ya reclamado y en su propio scope (ClaimedOutboxConsumer). Si lanza —una sonda o un
+    // purgador caídos, un conflicto de concurrencia con SessionRevocationWorker—, el mensaje vuelve
+    // cuando su reclamo venza, siempre, por más veces que haya fallado.
+    private async Task CleanupAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
-        List<OutboxRecord> pending;
-        await using (var scope = scopeFactory.CreateAsyncScope())
-        {
-            var dbContext = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
-            var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
-            // Candidatos: sin fila en el inbox, o reclamados y sin terminar con el reclamo vencido.
-            // Un mensaje que espera su reintento no entra, así que no le quita lugar a otro.
-            pending = await dbContext.Outbox
-                .AsNoTracking()
-                .Where(record => record.EventName == RemovedEvent)
-                .Where(record => !dbContext.Inbox.Any(entry =>
-                    entry.Consumer == Consumer
-                    && entry.MessageId == record.Id
-                    && (entry.ProcessedAt != null || entry.ClaimedUntil >= now)))
-                .OrderBy(record => record.OccurredAt)
-                .Take(BatchSize)
-                .ToListAsync(cancellationToken);
-        }
-
-        foreach (var record in pending)
-        {
-            // Una unidad de trabajo por mensaje: ver el comentario del encabezado.
-            await using var recordScope = scopeFactory.CreateAsyncScope();
-            var services = recordScope.ServiceProvider;
-            int? attempts = null;
-            try
-            {
-                var dbContext = services.GetRequiredService<IdentityDbContext>();
-                var now = services.GetRequiredService<IClock>().UtcNow;
-                attempts = await IdentityInboxClaims.TryClaimAsync(
-                    dbContext, Consumer, record.Id, now, RetryDelays, cancellationToken);
-                if (attempts is null)
-                {
-                    // Otra réplica lo tiene, o ya se terminó desde que se armó el lote.
-                    continue;
-                }
-
-                await CleanupAsync(
-                    dbContext,
-                    services.GetRequiredService<IUserRepository>(),
-                    services.GetServices<IUserReferenceProbe>().ToList(),
-                    services.GetServices<IUserReferencePurger>().ToList(),
-                    record,
-                    now,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                // Un mensaje que falla (una sonda o un purgador caídos, un conflicto de
-                // concurrencia con SessionRevocationWorker) no puede frenar a los demás del lote
-                // ni al loop. Lo que dejó rastreado muere con su scope, así que no hay nada que
-                // limpiar. El intento ya quedó contado en el reclamo, que se commiteó solo: el
-                // mensaje vuelve cuando ese reclamo venza, siempre, por más veces que haya fallado.
-                LogFailure(exception, record, attempts);
-            }
-        }
-    }
-
-    private async Task CleanupAsync(
-        IdentityDbContext dbContext,
-        IUserRepository users,
-        IReadOnlyList<IUserReferenceProbe> probes,
-        IReadOnlyList<IUserReferencePurger> purgers,
-        OutboxRecord record,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        var userId = ParsePayload(record.PayloadJson);
+        var services = message.Services;
+        var dbContext = message.DbContext;
+        var users = services.GetRequiredService<IUserRepository>();
+        IReadOnlyList<IUserReferenceProbe> probes = services.GetServices<IUserReferenceProbe>().ToList();
+        IReadOnlyList<IUserReferencePurger> purgers = services.GetServices<IUserReferencePurger>().ToList();
+        var now = message.Now;
+        var userId = MembershipEventPayload.ReadUserId(message.Record.PayloadJson);
 
         // Sin usuario no hay nada que borrar: pasa cuando el mensaje se reentrega después de
         // un borrado exitoso. Igual se marca el inbox para no volver a mirarlo.
@@ -282,10 +214,7 @@ internal sealed partial class OrphanUserCleanupWorker(
 
         // La fila ya existe desde el reclamo: terminarla va en el mismo SaveChanges —y en la misma
         // transacción— que el efecto, así que un mensaje procesado nunca queda sin marcar.
-        var entry = await dbContext.Inbox.SingleAsync(
-            candidate => candidate.Consumer == Consumer && candidate.MessageId == record.Id,
-            cancellationToken);
-        entry.ProcessedAt = now;
+        await Claims.MarkProcessedAsync(message, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         if (transaction is not null)
         {
@@ -305,7 +234,7 @@ internal sealed partial class OrphanUserCleanupWorker(
         }
 
         // En una variable y no dentro de la llamada al logger: CA1873.
-        var userId = TryParsePayload(record.PayloadJson);
+        var userId = MembershipEventPayload.TryReadUserId(record.PayloadJson);
         if (attempt >= ErrorAfterAttempts)
         {
             LogAttemptFailedRepeatedly(logger, exception, record.Id, userId, attempt);
@@ -355,29 +284,5 @@ internal sealed partial class OrphanUserCleanupWorker(
         }
 
         return null;
-    }
-
-    private static Guid ParsePayload(string payloadJson)
-    {
-        using var document = JsonDocument.Parse(payloadJson);
-        return document.RootElement.GetProperty("userId").GetGuid();
-    }
-
-    // Para el log de la falla: el payload puede ser justo lo que hace fallar al mensaje, así que
-    // leerlo no puede lanzar. Las excepciones son las de JsonDocument.Parse y de GetProperty
-    // y GetGuid con un campo ausente, de otro tipo o con un Guid inválido.
-    private static Guid? TryParsePayload(string payloadJson)
-    {
-        try
-        {
-            return ParsePayload(payloadJson);
-        }
-        catch (Exception exception) when (exception is JsonException
-            or KeyNotFoundException
-            or FormatException
-            or InvalidOperationException)
-        {
-            return null;
-        }
     }
 }

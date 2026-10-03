@@ -3,11 +3,12 @@ namespace Modules.Identity.Infrastructure.Persistence;
 // Guarda de idempotencia por consumidor: un id de mensaje de outbox ya procesado por el
 // consumidor de este módulo. (consumer, message_id) es único.
 //
-// OrphanUserCleanupWorker además la usa como reclamo, igual que el inbox de Notifications: una
+// Los dos consumidores (OrphanUserCleanupWorker y SessionRevocationWorker, por
+// ClaimedOutboxConsumer) además la usan como reclamo, igual que el inbox de Notifications: una
 // fila con ProcessedAt en null es un mensaje reclamado y sin terminar, ClaimedUntil es hasta cuándo
 // nadie lo vuelve a tomar —su espera antes del reintento— y Attempts cuenta los reclamos
-// (IdentityInboxClaims). SessionRevocationWorker no reclama: escribe la fila ya procesada, y
-// ClaimedUntil le queda en null y Attempts en 1.
+// (IdentityInboxClaims). Las filas de antes de los reclamos quedaron procesadas, con
+// ClaimedUntil en null y Attempts en 1.
 internal sealed class IdentityInboxMessage
 {
     public string Consumer { get; init; } = string.Empty;

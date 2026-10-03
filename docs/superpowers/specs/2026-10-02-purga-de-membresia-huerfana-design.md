@@ -249,7 +249,7 @@ columna con forma de id de usuario en los `DbContext`. Ninguna otra necesita son
 
 ## Reintentos y log de la purga
 
-Eran los dos pendientes de este spec. Quedaron resueltos así.
+Eran los pendientes de este spec. Quedaron resueltos así.
 
 ### Reintentos con backoff, sin abandono
 
@@ -317,19 +317,78 @@ la línea Information del borrado: `User {UserId} deleted after membership remov
 references it. Purged rows by source: {PurgedRows}.` Armarlo dentro de la llamada al logger es lo
 que rechaza CA1873. Los purgadores no loguean: el log de la purga vive en un solo lugar.
 
+### Revocación de sesiones
+
+Quedó como pendiente al cerrar lo de arriba, y se resolvió en un cambio aparte.
+
+**Problema.** `SessionRevocationWorker` corre sobre el mismo evento y sobre
+`tenancy.membership-suspended.v1`. Tenía un solo scope por lote y **ningún catch por mensaje**: un
+mensaje que lanzaba cortaba el lote entero en `LogTickFailed`, y como el lote se ordena por
+`OccurredAt`, ese mensaje quedaba primero en cada tick y **ninguna revocación posterior a él se
+procesaba nunca**. Sin tope ni backoff. Sus fuentes de fallo eran un payload ilegible, que Tenancy
+no escribe, y un conflicto de concurrencia con `OrphanUserCleanupWorker` al tocar las mismas
+sesiones.
+
+**Qué tan grave era: defensa en profundidad, no un acceso abierto.** El acceso al tenant se corta
+en el request siguiente a la suspensión o la baja, sin esperar al worker:
+
+- `ExternalClaimsTransformation.TransformAsync` corre el paso de tenant y permisos también para el
+  principal de la cookie de sesión (`src/Bootstrapper/Authentication/ExternalClaimsTransformation.cs:57-61`),
+  y en ese paso, si `IAuthorizationService.ResolvePermissionsAsync` devuelve `null`, no agrega ni
+  el claim de tenant ni los de permisos (`:112-119`).
+- `AuthorizationService.ResolvePermissionsAsync` devuelve `null` cuando no hay membresía activa
+  (`src/Modules/Authorization/Modules.Authorization.Application/AuthorizationService.cs:33-40`), y
+  `MembershipDirectory.FindActiveRolesAsync` sólo da roles para `State == Active`
+  (`src/Modules/Tenancy/Modules.Tenancy.Application/MembershipDirectory.cs:17-19`): `Suspended` y
+  `Removed` quedan afuera.
+- Toda política de permiso exige el claim (`src/Bootstrapper/QepServiceCollectionExtensions.cs:1153-1154`,
+  `RequireClaim(QepClaimTypes.Permission, permission)`), y los handlers revalidan tenant y permiso.
+
+Lo que una sesión sin revocar todavía permite es lo que no pide un tenant, como `/auth/me`, y los
+tenants donde la persona sigue activa (la revocación la saca de todos a propósito). Un atraso en
+la revocación es eso, no acceso al tenant del que la sacaron.
+
+**Cómo queda.**
+
+- El esqueleto que ya tenía `OrphanUserCleanupWorker` se extrajo a `ClaimedOutboxConsumer`
+  (Identity.Infrastructure/Messaging), y los dos workers lo usan: lote con el filtro de procesados
+  y reclamos vivos, reclamo con `IdentityInboxClaims` bajo la clave de cada consumidor, un scope y
+  un try/catch por mensaje, y `MarkProcessedAsync` para terminar la fila del reclamo en el mismo
+  `SaveChanges` que el efecto. Cada worker conserva lo suyo: qué hace con el mensaje, su curva y
+  sus logs. La lectura del `userId` del payload pasó a `MembershipEventPayload`, compartida.
+- Sin migración nueva: las columnas son las de `20261003010629_AddInboxClaims`. Las filas que ya
+  tenía `identity.session-revocation` están procesadas y el filtro las sigue excluyendo.
+- **Curva más corta: 5 s, 30 s y 5 minutos, y 5 de ahí en adelante.** Acá el atraso es una sesión
+  que sigue viva, y un reintento cuesta una consulta y un `UPDATE` por sesión; la de 1, 5 y 15
+  minutos del huérfano es para un trabajo sin plazo. La primera espera es casi un tick porque la
+  falla más probable es pasajera —un conflicto de concurrencia con `OrphanUserCleanupWorker` sobre
+  las mismas sesiones— y antes del reclamo ese reintento llegaba a los 3 s del tick siguiente: con
+  una primera espera de 30 s la sesión quedaba viva diez veces más.
+- **Sin abandono**, por la misma razón que el huérfano y con más motivo: una revocación abandonada
+  deja viva una sesión que tenía que morir, y sólo se arregla a mano.
+- `ErrorAfterAttempts = 3`: el tercer intento es el primero que deja por delante la espera de 5
+  minutos. Si falla, la causa ya sobrevivió a dos reintentos rápidos (5 y 30 s) y la sesión va a
+  seguir viva por lo menos cinco minutos más; antes, Warning. La falla del reclamo mismo
+  va en su propia línea, en Warning. Todas llevan excepción, id del mensaje, id del usuario —leído
+  sin lanzar, en una variable por CA1873— e intento.
+- El "ahora" sale de `IClock`, para el reclamo, el `revoked_at`, la auditoría y el inbox. Antes
+  era `DateTimeOffset.UtcNow`; `SystemClock` lo trunca a microsegundos, que es lo mismo que
+  `timestamptz` ya guardaba, así que no cambia nada observable.
+
+**Pruebas** (`SessionRevocationTests`, Identity.IntegrationTests): un mensaje ilegible más viejo
+que una suspensión sana no impide que la sesión sana se revoque (RED contra el worker anterior:
+la sesión nunca se revocaba); un mensaje que falla siempre queda reclamado 5 s en su primer
+intento, no se retoma antes de su lease, se retoma después, llega a cinco intentos sin terminar,
+el lease se satura en 5 minutos, y cuando se arregla el payload el reintento siguiente revoca y
+termina el mensaje; y quitar una membresía (`tenancy.membership-removed.v1`) revoca la sesión con
+motivo `membership_removed` y termina el mensaje. El camino feliz de punta a punta con cookie real
+sigue en `RealAuthenticationApiTests.SuspendingMembershipRevokesTheMembersActiveSession`. Las
+pruebas leen la curva de la instancia del worker que corre (`ClaimedOutboxConsumer.LeaseFor` y
+`Leases`), que es el único lugar donde vive una vez armado.
+
 ## Pendientes
 
-- **`SessionRevocationWorker` tiene la exposición de antes, y peor.** Corre sobre el mismo evento
-  (y sobre `tenancy.membership-suspended.v1`) con un solo scope por lote y **sin catch por
-  mensaje** (`SessionRevocationWorker.cs:70-73`): un mensaje que lanza corta el lote entero, que
-  termina en `LogTickFailed` (`:49-52`), y como el lote se ordena por `OccurredAt` (`:66`), ese
-  mensaje queda primero en cada tick y **ninguna revocación posterior a él se procesa nunca**.
-  Tampoco tiene tope ni backoff. Hoy sus fuentes de fallo son un payload ilegible
-  (`ParsePayload`, `:117-121`), que Tenancy no escribe, y un conflicto de concurrencia con este
-  worker al borrar las mismas sesiones, que se resuelve solo en el tick siguiente. No se corrigió
-  acá porque es un worker de seguridad —revoca sesiones— y su arreglo (catch y scope por mensaje,
-  más el mismo reclamo) merece su propio cambio y sus pruebas. Ya puede usar
-  `IdentityInboxClaims`: la tabla tiene las columnas.
+Ninguno de los de este spec.
 
 ## Fuera de alcance
 

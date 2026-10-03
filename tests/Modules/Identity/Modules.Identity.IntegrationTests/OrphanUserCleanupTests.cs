@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Modules.Identity.Infrastructure.Messaging;
@@ -39,7 +40,8 @@ namespace Modules.Identity.IntegrationTests;
 /// </summary>
 public sealed class OrphanUserCleanupTests
 {
-    private const string Consumer = "identity.orphan-user-cleanup";
+    private const string Consumer = OrphanUserCleanupWorker.Consumer;
+    private const string RemovedEvent = OrphanUserCleanupWorker.RemovedEvent;
     private static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(15);
     private static readonly string[] AdvisorRoles = ["advisor"];
 
@@ -499,7 +501,7 @@ public sealed class OrphanUserCleanupTests
 
     /// <summary>
     /// Un mensaje que falla siempre no se reintenta en cada tick: queda reclamado hasta su próximo
-    /// intento, con esperas que crecen (<see cref="OrphanUserCleanupWorker.LeaseFor"/>) hasta la
+    /// intento, con esperas que crecen (<see cref="ClaimedOutboxConsumer.LeaseFor"/>) hasta la
     /// última y se quedan ahí. Nunca se abandona: cuando la falla se arregla, el reintento siguiente
     /// borra al usuario. El reloj es de la prueba: avanzarlo es lo que vence cada espera, así que la
     /// prueba no duerme minutos.
@@ -534,18 +536,19 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await InboxAttemptsAsync(connection, poisoned.Id));
 
         // Más allá del cuarto intento, que es donde antes se abandonaba: sigue sin terminar.
+        var claims = Worker(factory).Claims;
         const int lastFailedAttempt = 6;
         for (var attempt = 2; attempt <= lastFailedAttempt; attempt++)
         {
             var expected = attempt;
-            clock.Advance(OrphanUserCleanupWorker.LeaseFor(attempt - 1) + TimeSpan.FromSeconds(1));
+            clock.Advance(claims.LeaseFor(attempt - 1) + TimeSpan.FromSeconds(1));
             await WaitUntilAsync(async () => await InboxAttemptsAsync(connection, poisoned.Id) == expected);
             Assert.Equal(0, await CountInboxAsync(connection, poisoned.Id));
         }
 
         // La espera se satura en la última de la curva: el reclamo vigente dura 15 minutos desde
         // que se tomó, que es el instante congelado del reloj.
-        var longestWait = OrphanUserCleanupWorker.RetryDelays[^1];
+        var longestWait = claims.Leases[^1];
         Assert.Equal(clock.UtcNow + longestWait, await ClaimedUntilAsync(connection, poisoned.Id));
 
         // Antes de que venza, otro tick no lo retoma.
@@ -891,10 +894,11 @@ public sealed class OrphanUserCleanupTests
             JOIN platform.outbox_messages outbox ON outbox.id = inbox.message_id
             WHERE inbox.consumer = @consumer
               AND inbox.processed_at IS NOT NULL
-              AND outbox.event_name = 'tenancy.membership-removed.v1'
+              AND outbox.event_name = @eventName
               AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
             """,
             ("consumer", Consumer),
+            ("eventName", RemovedEvent),
             ("membershipId", membershipId.ToString()));
 
     // Los intentos del mensaje de esa baja, terminado o no; 0 si nunca se reclamó.
@@ -905,10 +909,11 @@ public sealed class OrphanUserCleanupTests
             SELECT COALESCE(SUM(inbox.attempts), 0)::bigint FROM identity.inbox_messages inbox
             JOIN platform.outbox_messages outbox ON outbox.id = inbox.message_id
             WHERE inbox.consumer = @consumer
-              AND outbox.event_name = 'tenancy.membership-removed.v1'
+              AND outbox.event_name = @eventName
               AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
             """,
             ("consumer", Consumer),
+            ("eventName", RemovedEvent),
             ("membershipId", membershipId.ToString()));
 
     // Hasta cuándo está reclamado el mensaje de esa baja, que es cuándo le toca el reintento.
@@ -920,10 +925,10 @@ public sealed class OrphanUserCleanupTests
             SELECT inbox.claimed_until FROM identity.inbox_messages inbox
             JOIN platform.outbox_messages outbox ON outbox.id = inbox.message_id
             WHERE inbox.consumer = @consumer
-              AND outbox.event_name = 'tenancy.membership-removed.v1'
+              AND outbox.event_name = @eventName
               AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
             """,
-            [("consumer", Consumer), ("membershipId", membershipId.ToString())]);
+            [("consumer", Consumer), ("eventName", RemovedEvent), ("membershipId", membershipId.ToString())]);
         var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         return new DateTimeOffset((DateTime)result!, TimeSpan.Zero);
     }
@@ -938,10 +943,11 @@ public sealed class OrphanUserCleanupTests
             WHERE inbox.consumer = @consumer
               AND inbox.processed_at IS NULL
               AND inbox.attempts = 1
-              AND outbox.event_name = 'tenancy.membership-removed.v1'
+              AND outbox.event_name = @eventName
               AND (outbox.payload -> 'membershipId' ->> 'value') = @membershipId
             """,
             ("consumer", Consumer),
+            ("eventName", RemovedEvent),
             ("membershipId", membershipId.ToString()));
 
     // Un tenancy.membership-removed.v1 escrito a mano, con lo único que el worker y estas pruebas
@@ -957,13 +963,14 @@ public sealed class OrphanUserCleanupTests
             """
             INSERT INTO platform.outbox_messages
                 (id, event_name, payload, correlation_id, occurred_at, processed_at, attempts)
-            VALUES (@id, 'tenancy.membership-removed.v1',
+            VALUES (@id, @eventName,
                     jsonb_build_object(
                         'membershipId', jsonb_build_object('value', @membershipId::text),
                         'userId', @userId::text),
                     'orphan-user-cleanup-tests', @occurredAt, now(), 0)
             """,
             ("id", Guid.CreateVersion7()),
+            ("eventName", RemovedEvent),
             ("membershipId", membershipId),
             ("userId", userId),
             ("occurredAt", occurredAt));
@@ -991,6 +998,10 @@ public sealed class OrphanUserCleanupTests
 
         await transaction.CommitAsync(TestContext.Current.CancellationToken);
     }
+
+    // La instancia que corre en la aplicación de la prueba: su curva es la que se ejerce.
+    private static OrphanUserCleanupWorker Worker(QepApiFactory factory) =>
+        factory.Services.GetServices<IHostedService>().OfType<OrphanUserCleanupWorker>().Single();
 
     // Una baja sana, de punta a punta, para saber que el worker corrió otro tick.
     private static async Task<MembershipPayload> RemoveAMemberAndWaitForItsCleanupAsync(
