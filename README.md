@@ -977,7 +977,7 @@ texto. Los dos textos son contrato del ERP del tenant. La recogida no cambia nin
 También **nace oculta**, por la misma razón que `coordinadora_city`.
 
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
-ERP, «MIGRACION 1»: 47 columnas visibles, 21 de ellas fijas. Su «Nit» es el de la empresa de
+ERP, «MIGRACION 1»: 47 columnas visibles, 20 de ellas fijas. Su «Nit» es el de la empresa de
 facturación (`company_tax_id`) y no un NIT escrito a mano (2026-09-26). Su «IVA» es la tasa de cada línea
 (`tax_rate`) y no un `0.19` fijo, porque hay productos con otra tarifa; `tax` queda oculto. El banco con su cuenta
 va en «Forma de pago 1» y «Forma de pago 2», cada una con su comprobante (`payment_method_1` y
@@ -986,7 +986,10 @@ una sola consignación), y el total consignado (`proof_amount_total`) en «V. Co
 `bank` y `bank_account` quedan ocultos. Sólo crea: si el tenant ya tiene layout, no lo toca. Desde el 2026-09-26 su
 `Documento (P5)` lleva el documento de identidad (`customer_identification`) y el CUC (`document`)
 queda oculto. Desde el 2026-10-02 su «Ciudad (P4)» lleva la ciudad como la escribe Coordinadora
-(`coordinadora_city`) —la hoja ya fija «Transportadora (P2)» = Coordinadora— y `city` queda oculta.
+(`coordinadora_city`) —la transportadora es Coordinadora salvo en recogida— y `city` queda oculta. Desde el 2026-10-05 su
+«Transportadora (P2)» es la columna `carrier` y no una fija: `Recoger en tienda` en los pedidos de recogida. Como el
+layout ya guardado no se migra, el tenant que lo tenía de antes sigue con la fija `Coordinadora` hasta que se borre
+su fila y la semilla la recree.
 Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
 y lo cambia desde su pantalla de configuración.
 

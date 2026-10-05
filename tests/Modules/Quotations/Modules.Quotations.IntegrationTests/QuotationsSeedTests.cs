@@ -112,7 +112,15 @@ public sealed class QuotationsSeedTests
         Assert.Equal(
             SeededLayoutHeaders,
             layout.Columns.Where(column => column.Visible).Select(column => column.Header));
-        Assert.Equal(21, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        // Spec 2026-10-05 (recoger en tienda): "Transportadora (P2)" dejó de ser fija —era
+        // "Coordinadora" en todas las filas— y es la columna de catálogo "carrier", visible y en la
+        // misma posición. Quedan 20 fijas.
+        Assert.Equal(20, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+        var carrier = Assert.Single(layout.Columns, column => column.Header == "Transportadora (P2)");
+        Assert.Equal(OrdersExportColumnKind.Catalog, carrier.Kind);
+        Assert.Equal("carrier", carrier.Key);
+        Assert.True(carrier.Visible);
+        Assert.Equal(30, layout.Columns.Where(column => column.Visible).ToList().IndexOf(carrier));
         // Ajuste 2026-09-26: "Nit" es el NIT de la empresa por la que se factura, no uno escrito a
         // mano: una cotización facturada por otra empresa lo llevaba mal.
         Assert.Equal(
@@ -173,9 +181,9 @@ public sealed class QuotationsSeedTests
         var document = Assert.Single(layout.Columns, column => column.Key == "document");
         Assert.False(document.Visible);
         Assert.Equal("Documento", document.Header);
-        // Ajuste 2026-10-02: la hoja ya fija "Transportadora (P2)" = Coordinadora, así que
-        // "Ciudad (P4)" es la ciudad como la escribe Coordinadora. "city" (el nombre del DANE) queda
-        // en la lista, oculta y con su nombre por defecto.
+        // Ajuste 2026-10-02: la transportadora de la hoja es Coordinadora —salvo en recogida, que no
+        // despacha—, así que "Ciudad (P4)" es la ciudad como la escribe Coordinadora. "city" (el
+        // nombre del DANE) queda en la lista, oculta y con su nombre por defecto.
         Assert.Equal(
             "coordinadora_city",
             Assert.Single(layout.Columns, column => column.Header == "Ciudad (P4)").Key);

@@ -43,7 +43,7 @@ public sealed class OrdersExportColumnCatalogTests
     [Fact]
     public void HasTheFortySevenColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(47,OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(47, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }

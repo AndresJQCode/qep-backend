@@ -447,9 +447,9 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 46 del catálogo + 1 fija − 7 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
-        // (ajuste 2026-10-02) y las cinco "Forma de pago N" (ajuste 2026-10-03), que nacen ocultas y
-        // el PUT devuelve tal como las recibió del GET.
+        // 47 del catálogo + 1 fija − 8 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
+        // (ajuste 2026-10-02), las cinco "Forma de pago N" (ajuste 2026-10-03) y "Transportadora"
+        // (ajuste 2026-10-05), que nacen ocultas y el PUT devuelve tal como las recibió del GET.
         Assert.Equal(40, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
@@ -661,6 +661,41 @@ public sealed class OrderExportApiTests
         Assert.Equal(string.Empty, row[headers.IndexOf("V. Consignacion 2")]);
     }
 
+    // Spec 2026-10-05 (recoger en tienda), de punta a punta: con el layout de la semilla,
+    // "Transportadora (P2)" sale "Recoger en tienda" en el pedido cuya cotización es de recogida y
+    // "Coordinadora" en el otro, en el mismo archivo (Review Focus 2). Aparte de
+    // TheSeededLayoutProducesTheErpImportSheet porque ésa está roja desde 6f8aa75 por el formato del
+    // NIT, y una regresión de esta columna quedaría escondida detrás de esa falla.
+    [Fact]
+    public async Task TheSeededLayoutSaysRecogerEnTiendaOnlyForTheStorePickupOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var delivered = await CreateOrderAsync(client, factory, tenantId);
+        var pickedUp = await CreateOrderAsync(client, factory, tenantId, isStorePickup: true);
+        await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var carrier = headers.IndexOf("Transportadora (P2)");
+        var orderNumber = headers.IndexOf("Pedido (P6)");
+        Assert.Equal(30, carrier);
+        Assert.Equal(
+            new Dictionary<string, string>
+            {
+                [delivered.OrderNumber] = "Coordinadora",
+                [pickedUp.OrderNumber] = "Recoger en tienda",
+            },
+            sheet.Rows.Skip(1).ToDictionary(row => row[orderNumber], row => row[carrier]));
+        // Texto, como lo era la fija: el ERP no lo suma.
+        Assert.All(
+            Enumerable.Range(1, sheet.Rows.Count - 1),
+            index => Assert.False(sheet.NumericCells[index][carrier]));
+    }
+
     /// <summary>El layout de la prueba: una fija "Tipo Doc" = "FV" primero, "Email" renombrada
     /// "Correo" segunda, EMPRESA oculta, el resto del catálogo en su orden. La versión se lee del
     /// GET y no se supone: If-Match tiene que llevar la vigente.</summary>
@@ -688,14 +723,17 @@ public sealed class OrderExportApiTests
     }
 
     /// <summary>Un pedido convertido hoy, sin comprobantes (pago pendiente), mismo camino que
-    /// OrderListApiTests.ConvertToOrderAsync.</summary>
+    /// OrderListApiTests.ConvertToOrderAsync. Con <paramref name="isStorePickup"/> la cotización
+    /// nace de recogida en tienda (spec 2026-10-05).</summary>
     private static async Task<OrderResponse> CreateOrderAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId, string? identificationNumber = null,
-        Guid? taxRateId = null)
+        Guid? taxRateId = null, bool isStorePickup = false)
     {
         var customerId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber);
         var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
-        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, customerId, productId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, customerId, productId,
+            parties: isStorePickup ? new QuotationPartiesRequest(null, null, IsStorePickup: true) : null);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
