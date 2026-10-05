@@ -177,7 +177,7 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
+                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -447,10 +447,10 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 46 del catálogo + 1 fija − 7 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
+        // 47 del catálogo + 1 fija − 7 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
         // (ajuste 2026-10-02) y las cinco "Forma de pago N" (ajuste 2026-10-03), que nacen ocultas y
         // el PUT devuelve tal como las recibió del GET.
-        Assert.Equal(40, header.Count);
+        Assert.Equal(41, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
@@ -459,7 +459,7 @@ public sealed class OrderExportApiTests
         Assert.DoesNotContain("Email", header);
         Assert.DoesNotContain("Ciudad Coordinadora", header);
         Assert.DoesNotContain("Forma de pago 1", header);
-        Assert.Equal("NIT Empresa", header[^1]);
+        Assert.Equal("Total facturado", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -494,7 +494,9 @@ public sealed class OrderExportApiTests
         var headers = withoutName.Rows[0].ToList();
         var column = headers.IndexOf("Ciudad Coordinadora");
         var ciudad = headers.IndexOf("Ciudad");
-        Assert.Equal(headers.Count - 1, column);
+        // En su lugar del catálogo, detrás de "NIT Empresa": desde el ajuste 2026-10-05 la última
+        // visible es "Total facturado".
+        Assert.Equal(headers.IndexOf("NIT Empresa") + 1, column);
         Assert.NotEqual(string.Empty, withoutName.Rows[1][ciudad]);
         Assert.Equal(string.Empty, withoutName.Rows[1][column]);
 
@@ -522,6 +524,30 @@ public sealed class OrderExportApiTests
         Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
         return ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+    }
+
+    // Ajuste 2026-10-05, de punta a punta: "Total facturado" sale por defecto, última, con el Total
+    // de la cotización tal como lo lee la base —lo mismo que muestra el detalle del pedido—, como
+    // número.
+    [Fact]
+    public async Task TheOrderTotalComesOutLastAsTheQuotationsTotal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var column = headers.IndexOf("Total facturado");
+        Assert.Equal(headers.Count - 1, column);
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
+        Assert.True(detail!.Quotation.Total > 0m);
+        Assert.Equal(detail.Quotation.Total, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][column]);
     }
 
     // El GET trae "coordinadora_city" oculta, al final; el PUT la devuelve visible y en su lugar.
@@ -574,7 +600,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("MIGRACION 1", sheet.Name);
         Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders, sheet.Rows[0]);
         var row = sheet.Rows[1];
-        Assert.Equal(47, row.Count);
+        Assert.Equal(48, row.Count);
         Assert.Equal("QEP Comercial S.A.S.", row[0]);
         Assert.Equal(["FV", "PM", string.Empty], row.Skip(1).Take(3));
         Assert.Contains(row[4], new[] { Iso(today), Iso(today.AddDays(1)) });

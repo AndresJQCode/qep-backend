@@ -92,6 +92,8 @@ public sealed class QuotationsSeedTests
         "Documento (P5)", "Pedido (P6)", "V. Consignacion (P7)", "Direccion (P8)", "Observaciones",
         "Guia P9", "Telefono (P10)", "valor flete", "# Rotulos", "Email", "GeneraGuia",
         "GeneraFactura", "Nit",
+        // Ajuste 2026-10-05: visible por decisión del owner, al final y con su nombre por defecto.
+        "Total facturado",
     ];
 
     // Ajuste 2026-09-25: el tenant sembrado exporta pedidos con la hoja de su ERP. La fila nace por

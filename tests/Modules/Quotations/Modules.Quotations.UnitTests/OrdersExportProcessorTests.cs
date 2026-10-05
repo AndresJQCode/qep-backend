@@ -56,7 +56,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
+                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -1018,6 +1018,66 @@ public sealed class OrdersExportProcessorTests
         }
     }
 
+    // Ajuste 2026-10-05: "Total facturado" es Quotation.Total —Subtotal + IVA, con el descuento de
+    // cada línea ya adentro—, el mismo en cada línea del pedido. Visible por defecto, la última del
+    // archivo sin layout guardado.
+    private const int TotalFacturadoIndex = 40;
+
+    [Fact]
+    public async Task TotalFacturadoIsTheOrdersTotalRepeatedOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            items:
+            [
+                (ProductId, 2m, 1000m, 10m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        // 2 × 1.000 con 10 % de descuento son 1.800, más 5 × 500: 4.300 con el IVA adentro. Ya neto
+        // del descuento de la línea: restarle DiscountAmount lo descontaría dos veces.
+        Assert.Equal(4_300m, row.Quotation.Total);
+        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[TotalFacturadoIndex]);
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(4_300m), cells[TotalFacturadoIndex]));
+    }
+
+    // Con retención en la fuente el cliente paga NetTotal, pero lo facturado sigue siendo Total: la
+    // retención no es un descuento de la factura.
+    [Fact]
+    public async Task TotalFacturadoIsTheTotalAndNotTheNetTotalWhenTheOrderHasRetention()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", customerWithRetention: true);
+        Assert.True(row.Quotation.RetentionAmount > 0m);
+        Assert.NotEqual(row.Quotation.Total, row.Quotation.NetTotal);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[TotalFacturadoIndex]);
+    }
+
+    // Visible por defecto (decisión del owner, 2026-10-05): también la gana un layout guardado que
+    // no la nombra, al final, detrás de todo lo que el tenant ya tenía.
+    [Fact]
+    public async Task AStoredLayoutThatDoesNotNameItGetsTotalFacturadoAtTheEnd()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001");
+        var layouts = StoredLayout(OrdersExportColumnSetting.Fixed("Tipo Doc", "FV", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^1]);
+        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[^1]);
+    }
+
     // Sin comprobantes la celda queda vacía, igual que "V. Comprobante N" sin comprobante: vacío
     // dice "no hay comprobante", y un 0 diría que hubo una consignación de cero pesos.
     [Fact]
@@ -1345,11 +1405,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(39, writer.Columns.Count);
+        Assert.Equal(40, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("NIT Empresa", writer.Columns[^1].Header);
+        Assert.Equal("Total facturado", writer.Columns[^1].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -1380,7 +1440,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(42, writer.Columns.Count);
+        Assert.Equal(43, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc",OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -1397,7 +1457,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 40 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 41 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {
@@ -1542,13 +1602,14 @@ public sealed class OrdersExportProcessorTests
         QuotationBillingAccount? billingAccount = null,
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
         string? notes = null,
-        IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null)
+        IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null,
+        bool customerWithRetention = false)
     {
         var occurredAt = at ?? Now;
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod, notes, parties ?? QuotationParties.Empty, billingAccount,
-            customerWithRetention: false, customerVatSurplus: false, AdvisorId, occurredAt);
+            customerWithRetention, customerVatSurplus: false, AdvisorId, occurredAt);
 
         foreach (var item in items ?? DefaultItems)
         {
