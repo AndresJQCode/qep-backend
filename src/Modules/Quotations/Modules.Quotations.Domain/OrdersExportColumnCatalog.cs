@@ -93,6 +93,14 @@ public static class OrdersExportColumnCatalog
         // tenant, que no podía variar por fila. Oculta por defecto y al final, mismo criterio que
         // "coordinadora_city": un layout ya guardado la recibe sin columna sorpresa.
         new("carrier", "Transportadora", 20, DefaultVisible: false),
+        // Ajuste 2026-10-05: lo facturado del pedido (Quotation.Total: Subtotal + IVA, con el
+        // descuento de cada línea ya adentro; no NetTotal, que resta la retención), repetido en cada
+        // línea. Iría junto a "Total consignado", pero meterla ahí correría "Tasa IVA" y "NIT
+        // Empresa" en el archivo sin layout guardado: al final, como toda columna nueva. Visible por
+        // decisión del owner (2026-10-05), a diferencia de las anteriores: Effective la agrega al
+        // final de todo layout guardado —también el de la hoja "MIGRACION 1" del ERP—, y esa
+        // columna de más en los Excel que ya existen está aceptada.
+        new("order_total", "Total facturado", 18),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

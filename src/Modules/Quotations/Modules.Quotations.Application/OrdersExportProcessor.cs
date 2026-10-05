@@ -68,11 +68,12 @@ public sealed class OrdersExportProcessor(
     /// la hoja de importación del ERP (ajuste 2026-09-25): "Fecha Pedido" (<see cref="Order.CreatedAt"/>
     /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
     /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
-    /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido).
+    /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido). De
+    /// última, "Total facturado" (ajuste 2026-10-05, <see cref="Quotation.Total"/>).
     ///
     /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02), las "Forma de pago
     /// N" (ajuste 2026-10-03) y "Transportadora" (ajuste 2026-10-05) están en el catálogo pero
-    /// ocultas, así que sin layout guardado no salen, y esta lista sigue siendo el archivo de siempre.
+    /// ocultas, así que sin layout guardado no salen.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Where(column => column.DefaultVisible)
@@ -353,6 +354,10 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(ciudadCoordinadora),
                 .. formasDePago,
                 ExportCell.OfText(transportadora),
+                // "Total facturado" (ajuste 2026-10-05): lo facturado del pedido entero, número como
+                // "Total consignado" para que el ERP lo cuadre contra él. Total y no NetTotal: la
+                // retención no rebaja la factura, sólo lo que se cobra.
+                ExportCell.OfNumber(quotation.Total),
             ];
         }
     }
