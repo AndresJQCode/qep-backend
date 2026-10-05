@@ -236,6 +236,28 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// Spec 2026-10-05: las dos columnas de la facturación, nullable (un pedido sin facturar no las
+    /// tiene, y revertir las vuelve a null) y con el nombre en snake_case que fija el mapeo a mano.
+    /// `invoiced_by` necesita la conversión de <see cref="MemberId"/>: sin ella EF no puede mapear
+    /// el struct.
+    /// </summary>
+    [Fact]
+    public void OrderInvoicingMapsToNullableSnakeCaseColumns()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var order = model.FindEntityType(typeof(Order))!;
+
+        var invoicedAt = order.FindProperty(nameof(Order.InvoicedAt))!;
+        var invoicedBy = order.FindProperty(nameof(Order.InvoicedBy))!;
+
+        Assert.Equal("invoiced_at", invoicedAt.GetColumnName());
+        Assert.Equal("invoiced_by", invoicedBy.GetColumnName());
+        Assert.True(invoicedAt.IsNullable);
+        Assert.True(invoicedBy.IsNullable);
+    }
+
+    /// <summary>
     /// La tabla de formatos de numeración (spec 2026-09-17). La PK es (tenant, tipo de documento) y
     /// los tres rangos del spec van como CHECK: es configuración que se escribe a mano con SQL, y el
     /// CHECK es la única red que no depende de quién corra ese SQL. Los nombres van a mano, así que

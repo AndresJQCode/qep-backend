@@ -828,4 +828,216 @@ public sealed class OrderTests
 
         Assert.Equal("order.order.not_pending", error.Code);
     }
+
+    // Spec 2026-10-05 (facturar un pedido), decisiones 1 y 3: se factura un aprobado, queda quién
+    // y cuándo, y la aprobación no se toca.
+    [Fact]
+    public void InvoiceAnApprovedOrderRecordsWhoAndWhenAndKeepsTheApproval()
+    {
+        var order = NewOrder();
+        Assert.Null(order.InvoicedAt);
+        Assert.Null(order.InvoicedBy);
+        var approvedBy = new MemberId(Guid.CreateVersion7());
+        order.Approve(approvedBy, Now);
+        var invoicedBy = new MemberId(Guid.CreateVersion7());
+        var later = Now.AddDays(1);
+
+        order.Invoice(invoicedBy, later);
+
+        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Equal(later, order.InvoicedAt);
+        Assert.Equal(invoicedBy, order.InvoicedBy);
+        Assert.Equal(approvedBy, order.ApprovedBy);
+        Assert.Equal(Now, order.ApprovedAt);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(3, order.Version);
+    }
+
+    // Decisión 6: de momento facturar no mira el pago, igual que aprobar.
+    [Fact]
+    public void InvoiceDoesNotRequireTheOrderToBePaid()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
+        order.Approve(ConvertedBy, Now);
+
+        order.Invoice(ConvertedBy, Now.AddDays(1));
+
+        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
+    }
+
+    // Decisión 1: sólo desde Approved. Desde Pending se saltaría la revisión; un anulado ya no es
+    // una venta.
+    [Fact]
+    public void InvoiceRejectsAPendingOrACancelledOrder()
+    {
+        var pending = NewOrder();
+        var cancelled = NewOrder();
+        cancelled.Cancel(ConvertedBy, "El cliente desistió", Now);
+
+        var fromPending = Assert.Throws<QuotationsDomainException>(() =>
+            pending.Invoice(ConvertedBy, Now));
+        var fromCancelled = Assert.Throws<QuotationsDomainException>(() =>
+            cancelled.Invoice(ConvertedBy, Now));
+
+        Assert.Equal("order.order.not_approved", fromPending.Code);
+        Assert.Equal("order.order.not_approved", fromCancelled.Code);
+        Assert.Equal(OrderStatus.Pending, pending.Status);
+        Assert.Null(pending.InvoicedAt);
+        Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
+        Assert.Null(cancelled.InvoicedBy);
+    }
+
+    // Facturar dos veces reescribiría quién y cuándo se facturó.
+    [Fact]
+    public void InvoiceTwiceIsRejectedAndKeepsTheFirstInvoicing()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+        order.Invoice(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Invoice(new MemberId(Guid.CreateVersion7()), Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_approved", error.Code);
+        Assert.Equal(ConvertedBy, order.InvoicedBy);
+        Assert.Equal(Now, order.InvoicedAt);
+        Assert.Equal(3, order.Version);
+    }
+
+    // Decisión 4: revertir vuelve a Approved y limpia las marcas. La aprobación queda.
+    [Fact]
+    public void RevertInvoicingReturnsToApprovedWithoutTheMarks()
+    {
+        var order = NewOrder();
+        var approvedBy = new MemberId(Guid.CreateVersion7());
+        order.Approve(approvedBy, Now);
+        order.Invoice(ConvertedBy, Now.AddDays(1));
+        var later = Now.AddDays(2);
+
+        order.RevertInvoicing(new MemberId(Guid.CreateVersion7()), later);
+
+        Assert.Equal(OrderStatus.Approved, order.Status);
+        Assert.Null(order.InvoicedAt);
+        Assert.Null(order.InvoicedBy);
+        Assert.Equal(approvedBy, order.ApprovedBy);
+        Assert.Equal(Now, order.ApprovedAt);
+        Assert.Equal(later, order.UpdatedAt);
+        Assert.Equal(4, order.Version);
+    }
+
+    // Review Focus 3: el pedido revertido es un Approved limpio. Se vuelve a facturar con el quién y
+    // el cuándo nuevos, o se anula.
+    [Fact]
+    public void ARevertedOrderCanBeInvoicedAgainOrCancelled()
+    {
+        var reinvoiced = NewOrder();
+        reinvoiced.Approve(ConvertedBy, Now);
+        reinvoiced.Invoice(ConvertedBy, Now);
+        reinvoiced.RevertInvoicing(ConvertedBy, Now.AddDays(1));
+        var secondBiller = new MemberId(Guid.CreateVersion7());
+        var later = Now.AddDays(2);
+
+        reinvoiced.Invoice(secondBiller, later);
+
+        Assert.Equal(OrderStatus.Invoiced, reinvoiced.Status);
+        Assert.Equal(secondBiller, reinvoiced.InvoicedBy);
+        Assert.Equal(later, reinvoiced.InvoicedAt);
+
+        var cancelled = NewOrder();
+        cancelled.Approve(ConvertedBy, Now);
+        cancelled.Invoice(ConvertedBy, Now);
+        cancelled.RevertInvoicing(ConvertedBy, Now.AddDays(1));
+
+        cancelled.Cancel(ConvertedBy, "Facturado por error", later);
+
+        Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
+        Assert.Null(cancelled.InvoicedAt);
+    }
+
+    [Fact]
+    public void RevertInvoicingRejectsAnOrderThatIsNotInvoiced()
+    {
+        var pending = NewOrder();
+        var approved = NewOrder();
+        approved.Approve(ConvertedBy, Now);
+        var cancelled = NewOrder();
+        cancelled.Cancel(ConvertedBy, "El cliente desistió", Now);
+
+        var fromPending = Assert.Throws<QuotationsDomainException>(() =>
+            pending.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
+        var fromApproved = Assert.Throws<QuotationsDomainException>(() =>
+            approved.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
+        var fromCancelled = Assert.Throws<QuotationsDomainException>(() =>
+            cancelled.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
+
+        Assert.Equal("order.order.not_invoiced", fromPending.Code);
+        Assert.Equal("order.order.not_invoiced", fromApproved.Code);
+        Assert.Equal("order.order.not_invoiced", fromCancelled.Code);
+        Assert.Equal(OrderStatus.Approved, approved.Status);
+        Assert.Equal(2, approved.Version);
+    }
+
+    // Decisión 2: un facturado no se anula. El guard va antes que already_cancelled y que las reglas
+    // del motivo (spec, «Dominio»): con el motivo vacío la respuesta sigue siendo already_invoiced.
+    [Theory]
+    [InlineData("El cliente desistió")]
+    [InlineData(null)]
+    [InlineData("   ")]
+    public void CancelAnInvoicedOrderIsRejectedBeforeLookingAtTheReason(string? reason)
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+        order.Invoice(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.Cancel(ConvertedBy, reason, Now.AddDays(1)));
+
+        Assert.Equal("order.order.already_invoiced", error.Code);
+        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Null(order.CancelledAt);
+        Assert.Null(order.CancellationReason);
+    }
+
+    // Los guards existentes ya cubren un facturado: no es Pending, así que nada de lo que sólo se
+    // permite en Pending pasa (spec, «Dominio»). Tampoco se vuelve a aprobar.
+    [Fact]
+    public void AnInvoicedOrderRejectsEveryPendingOnlyChange()
+    {
+        var order = NewOrder();
+        var proofId = Assert.Single(order.PaymentProofs).Id;
+        order.Approve(ConvertedBy, Now);
+        order.Invoice(ConvertedBy, Now);
+        var later = Now.AddDays(1);
+
+        var addProofs = Assert.Throws<QuotationsDomainException>(() =>
+            order.AddPaymentProofs(
+                [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)],
+                OrderPaymentStatus.FullPaymentReceived,
+                null,
+                ConvertedBy,
+                later));
+        var recalculate = Assert.Throws<QuotationsDomainException>(() =>
+            order.RecalculatePaymentStatus(200_000m, later));
+        var removeProof = Assert.Throws<QuotationsDomainException>(() =>
+            order.RemovePaymentProof(proofId, later));
+        var approve = Assert.Throws<QuotationsDomainException>(() =>
+            order.Approve(ConvertedBy, later));
+        var attach = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachPaymentProofs([], ConvertedBy, later));
+        var correct = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectPaymentProofs([], later));
+        var notes = Assert.Throws<QuotationsDomainException>(() =>
+            order.UpdateNotes("Otra nota", later));
+
+        Assert.Equal("order.order.not_pending", addProofs.Code);
+        Assert.Equal("order.order.not_pending", recalculate.Code);
+        Assert.Equal("order.order.not_pending", removeProof.Code);
+        Assert.Equal("order.order.not_pending", approve.Code);
+        Assert.Equal("order.order.not_pending", attach.Code);
+        Assert.Equal("order.order.not_pending", correct.Code);
+        Assert.Equal("order.order.not_pending", notes.Code);
+        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Equal(3, order.Version);
+    }
 }

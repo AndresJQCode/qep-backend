@@ -34,6 +34,8 @@ public sealed class ExportStatusLabelsTests
                 [OrderStatus.Approved] = "Aprobado",
                 // Decisión 6 del spec 2026-09-16: la exportación muestra los anulados.
                 [OrderStatus.Cancelled] = "Anulado",
+                // Decisión 7 del spec 2026-10-05: y los facturados.
+                [OrderStatus.Invoiced] = "Facturado",
             },
             ExportStatusLabels.For);
 
