@@ -73,7 +73,8 @@ public static class OrdersExportLayoutEndpoints
                         column.Kind, column.Key, column.Header, column.Value, column.Visible))
                     .ToArray(),
                 expectedVersion,
-                httpContext.TraceIdentifier),
+                httpContext.TraceIdentifier,
+                request.SheetName),
             cancellationToken);
         return LayoutResult(layout, httpContext);
     }
@@ -94,7 +95,9 @@ public static class OrdersExportLayoutEndpoints
                     column.Value,
                     column.Visible))
                 .ToArray(),
-            layout.Version));
+            layout.Version,
+            layout.SheetName,
+            layout.DefaultSheetName));
     }
 
     // Copia de OrderEndpoints.TryParseVersion (mismo proyecto, privado allá): acepta "3", 3 y
@@ -119,8 +122,13 @@ public static class OrdersExportLayoutEndpoints
 }
 
 /// <summary>`columns` nullable a propósito: `{}` llega como nula y el validador la marca, en vez
-/// de convertirse en "restaurar todo" por accidente.</summary>
-public sealed record UpdateOrdersExportLayoutRequest(IReadOnlyList<OrdersExportColumnRequest>? Columns);
+/// de convertirse en "restaurar todo" por accidente. `sheetName` (spec 2026-10-05, D6) es
+/// opcional por la razón contraria: nulo o ausente conserva el nombre actual, así que un frontend
+/// anterior a este campo sigue guardando columnas sin borrarle el nombre de la hoja al tenant.
+/// Vacío o sólo espacios no es ausente: es un 422 con `errors.SheetName`.</summary>
+public sealed record UpdateOrdersExportLayoutRequest(
+    IReadOnlyList<OrdersExportColumnRequest>? Columns,
+    string? SheetName = null);
 
 public sealed record OrdersExportColumnRequest(
     string? Kind,
@@ -129,10 +137,15 @@ public sealed record OrdersExportColumnRequest(
     string? Value,
     bool Visible);
 
+/// <summary>`sheetName` es el nombre efectivo de la hoja y `defaultSheetName` el de fábrica
+/// (`Pedidos`): viaja por la misma razón que `defaultHeader` por columna (regla BFF), para que
+/// "Restaurar todo" no tenga que saberlo de memoria (spec 2026-10-05, D6).</summary>
 public sealed record OrdersExportLayoutResponse(
     Guid TenantId,
     IReadOnlyList<OrdersExportColumnResponse> Columns,
-    long Version);
+    long Version,
+    string SheetName,
+    string DefaultSheetName);
 
 /// <summary>`DefaultHeader`, `DefaultPosition` (1-based) y `DefaultVisible` viajan por columna
 /// (regla BFF): la pantalla los necesita como placeholder, para "restaurar" una sola y para

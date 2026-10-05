@@ -107,6 +107,45 @@ public sealed class UpdateOrdersExportLayoutValidatorTests
         Assert.Equal("ExpectedVersion", failure.PropertyName);
     }
 
+    // Spec 2026-10-05, D6: sin sheetName conserva el actual, así que nula no es un error.
+    [Fact]
+    public void ANullSheetNameIsValid()
+    {
+        Assert.True(_validator.Validate(NewCommand(sheetName: null)).IsValid);
+    }
+
+    // D4: las tildes son válidas, y el largo se mide recortado.
+    [Theory]
+    [InlineData("MIGRACION 1")]
+    [InlineData("Migración")]
+    [InlineData("  1234567890123456789012345678901  ")]
+    public void AValidSheetNameIsAccepted(string sheetName)
+    {
+        Assert.True(_validator.Validate(NewCommand(sheetName: sheetName)).IsValid);
+    }
+
+    // Las mismas reglas que el dominio (D4), con el campo para que la pantalla marque el input.
+    // Vacía o sólo espacios no es "ausente": es inválida (D6).
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("12345678901234567890123456789012")]
+    [InlineData("Hoja[1]")]
+    [InlineData("Hoja:1")]
+    [InlineData("Hoja*")]
+    [InlineData("Hoja?")]
+    [InlineData("Hoja/1")]
+    [InlineData("Hoja\\1")]
+    [InlineData("'Hoja")]
+    [InlineData("Hoja'")]
+    [InlineData("history")]
+    public void AnInvalidSheetNameMarksTheField(string sheetName)
+    {
+        var failure = Assert.Single(_validator.Validate(NewCommand(sheetName: sheetName)).Errors);
+
+        Assert.Equal("SheetName", failure.PropertyName);
+    }
+
     private static List<OrdersExportColumnInput> DefaultInputs() =>
         [.. OrdersExportLayout.Effective(stored: null)
             .Select(column => new OrdersExportColumnInput("Catalog", column.Key, column.Header, null, column.Visible))];
@@ -119,6 +158,7 @@ public sealed class UpdateOrdersExportLayoutValidatorTests
     private static UpdateOrdersExportLayoutCommand NewCommand(
         IReadOnlyList<OrdersExportColumnInput>? columns = null,
         long expectedVersion = 1,
-        bool withoutColumns = false) =>
-        new(Guid.CreateVersion7(), withoutColumns ? null : columns ?? DefaultInputs(), expectedVersion, "trace");
+        bool withoutColumns = false,
+        string? sheetName = null) =>
+        new(Guid.CreateVersion7(), withoutColumns ? null : columns ?? DefaultInputs(), expectedVersion, "trace", sheetName);
 }

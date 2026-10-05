@@ -205,6 +205,86 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         Assert.Equal(0, repository.FindCalls);
     }
 
+    // Spec 2026-10-05, D5: guardar sólo el nombre de la hoja es un cambio. Sin fila, crea la fila
+    // en 2 y audita con la misma acción.
+    [Fact]
+    public async Task SavingOnlyTheSheetNameWithoutARowCreatesTheRowAndAudits()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var audit = new RecordingExportAuditPublisher();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var handler = NewHandler(repository, audit, unitOfWork);
+
+        var dto = await handler.HandleAsync(
+            NewCommand(DefaultInputs(), expectedVersion: 1, sheetName: " MIGRACION 1 "), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, dto.Version);
+        Assert.Equal("MIGRACION 1", dto.SheetName);
+        Assert.Equal("Pedidos", dto.DefaultSheetName);
+        Assert.Equal("MIGRACION 1", Assert.Single(repository.Layouts).SheetName);
+        Assert.Equal(1, unitOfWork.Saves);
+        Assert.Equal("quotations.orders_export_layout.updated", Assert.Single(audit.Entries).Action);
+    }
+
+    // D6: sin sheetName conserva el nombre guardado. Un frontend anterior a este cambio, que no
+    // manda el campo, no le borra el nombre al tenant al guardar columnas.
+    [Fact]
+    public async Task WithoutASheetNameItKeepsTheStoredOne()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var stored = OrdersExportLayout.CreateDefault(TenantId, Now.AddDays(-1));
+        Assert.True(stored.Replace(OrdersExportLayout.Effective(stored: null), "MIGRACION 1", Now.AddDays(-1)));
+        repository.Add(stored);
+        var handler = NewHandler(repository, new RecordingExportAuditPublisher(), new CountingQuotationsUnitOfWork());
+        var columns = DefaultInputs();
+        columns[19] = columns[19] with { Header = "Correo" };
+
+        var dto = await handler.HandleAsync(
+            NewCommand(columns, expectedVersion: 2, sheetName: null), TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, dto.Version);
+        Assert.Equal("MIGRACION 1", dto.SheetName);
+        Assert.Equal("MIGRACION 1", stored.SheetName);
+    }
+
+    // Y sin fila ni sheetName, el default: el primer PUT de un frontend viejo no crea una hoja
+    // sin nombre.
+    [Fact]
+    public async Task WithoutARowOrASheetNameItUsesTheDefault()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var handler = NewHandler(repository, new RecordingExportAuditPublisher(), new CountingQuotationsUnitOfWork());
+        var columns = DefaultInputs();
+        columns[19] = columns[19] with { Header = "Correo" };
+
+        var dto = await handler.HandleAsync(
+            NewCommand(columns, expectedVersion: 1, sheetName: null), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Pedidos", dto.SheetName);
+        Assert.Equal("Pedidos", Assert.Single(repository.Layouts).SheetName);
+    }
+
+    // Mismas columnas y mismo nombre: no-op, ni guarda ni audita.
+    [Fact]
+    public async Task SavingTheSameColumnsAndSheetNameIsANoOp()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var stored = OrdersExportLayout.CreateDefault(TenantId, Now.AddDays(-1));
+        Assert.True(stored.Replace(OrdersExportLayout.Effective(stored: null), "MIGRACION 1", Now.AddDays(-1)));
+        repository.Add(stored);
+        var audit = new RecordingExportAuditPublisher();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var handler = NewHandler(repository, audit, unitOfWork);
+
+        var dto = await handler.HandleAsync(
+            NewCommand(DefaultInputs(), expectedVersion: 2, sheetName: "MIGRACION 1"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, dto.Version);
+        Assert.Equal("MIGRACION 1", dto.SheetName);
+        Assert.Empty(audit.Entries);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
     private static OrdersExportLayout StoredLayout(params OrdersExportColumnSetting[] columns)
     {
         var layout = OrdersExportLayout.CreateDefault(TenantId, Now.AddDays(-1));
@@ -223,8 +303,8 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         new("Fixed", null, header, value, Visible: true);
 
     private static UpdateOrdersExportLayoutCommand NewCommand(
-        IReadOnlyList<OrdersExportColumnInput> columns, long expectedVersion) =>
-        new(TenantId, columns, expectedVersion, "trace");
+        IReadOnlyList<OrdersExportColumnInput> columns, long expectedVersion, string? sheetName = null) =>
+        new(TenantId, columns, expectedVersion, "trace", sheetName);
 
     private static UpdateOrdersExportLayoutHandler NewHandler(
         InMemoryOrdersExportLayoutRepository repository,

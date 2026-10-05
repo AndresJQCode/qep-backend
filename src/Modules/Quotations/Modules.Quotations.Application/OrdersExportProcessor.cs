@@ -30,8 +30,6 @@ public sealed class OrdersExportProcessor(
     ITenantClock tenantClock)
     : IExportJobProcessor
 {
-    public const string SheetName = "Pedidos";
-
     public const string FilePrefix = "pedidos";
 
     /// <summary>Cuántas fechas de pago tienen columna propia (ajuste 2026-09-20). El número vive en
@@ -87,9 +85,11 @@ public sealed class OrdersExportProcessor(
 
         // El layout del tenant, una vez por job (spec 2026-09-24): encabezados, orden y ocultas del
         // tenant, más sus fijas. Sin fila guardada, el efectivo es el catálogo y el archivo es el de
-        // siempre (D8).
-        var layout = OrdersExportLayoutProjection.For(
-            OrdersExportLayout.Effective(await layoutRepository.FindAsync(job.TenantId, cancellationToken)));
+        // siempre (D8). El nombre de la hoja también sale de ahí (spec 2026-10-05, D7): el
+        // importador del tenant la busca por nombre; sin fila, "Pedidos".
+        var storedLayout = await layoutRepository.FindAsync(job.TenantId, cancellationToken);
+        var layout = OrdersExportLayoutProjection.For(OrdersExportLayout.Effective(storedLayout));
+        var sheetName = OrdersExportLayout.EffectiveSheetName(storedLayout);
 
         // El conteo del archivo (filas de producto) se lleva aparte del que devuelve el lote
         // (pedidos leídos, para el chequeo de "vacío" de abajo): un pedido con tres líneas aporta
@@ -97,7 +97,7 @@ public sealed class OrdersExportProcessor(
         // devuelve `toRows`.
         var exportedRows = 0;
 
-        using var workbook = writer.Create(SheetName, layout.Columns);
+        using var workbook = writer.Create(sheetName, layout.Columns);
         var orderCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
             workbook,
             (after, limit, ct) => repository.ListForExportAsync(
