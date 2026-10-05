@@ -473,6 +473,94 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(defaults, layout.Columns);
     }
 
+    // Spec 2026-10-05, D6: el GET trae el nombre efectivo y el default, en camelCase como el resto
+    // del cuerpo. Sin fila, los dos son "Pedidos".
+    [Fact]
+    public async Task GetWithoutAStoredLayoutReturnsTheDefaultSheetName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
+        using var _ = client;
+
+        using var response = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("Pedidos", body.RootElement.GetProperty("sheetName").GetString());
+        Assert.Equal("Pedidos", body.RootElement.GetProperty("defaultSheetName").GetString());
+    }
+
+    // D5: guardar sólo el nombre es un cambio — sube la versión, se audita y el GET lo devuelve.
+    [Fact]
+    public async Task PutWithOnlyANewSheetNameSavesItAndAudits()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var columns = await DefaultColumnsAsync(client, tenantId);
+
+        using var response = await PutAsync(client, tenantId, columns, "MIGRACION 1", "\"1\"");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("\"2\"", response.Headers.ETag?.Tag);
+        var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal("MIGRACION 1", saved!.SheetName);
+        Assert.Equal("Pedidos", saved.DefaultSheetName);
+
+        var reread = await client.GetFromJsonAsync<LayoutPayload>(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
+        Assert.Equal("MIGRACION 1", reread!.SheetName);
+        Assert.Equal(2, reread.Version);
+
+        Assert.Single(
+            await OutboxMessagesAsync(factory, AuditEvent), message => ActionOf(message) == AuditAction);
+    }
+
+    // D6: un PUT sin sheetName —el de un frontend anterior a este campo— conserva el nombre.
+    [Fact]
+    public async Task PutWithoutASheetNameKeepsTheStoredOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var columns = await DefaultColumnsAsync(client, tenantId);
+        using var first = await PutAsync(client, tenantId, columns, "MIGRACION 1", "\"1\"");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        columns[18] = columns[18] with { Header = "Correo" };
+
+        using var response = await PutAsync(client, tenantId, columns, "\"2\"");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(3, saved!.Version);
+        Assert.Equal("MIGRACION 1", saved.SheetName);
+        Assert.Equal("Correo", saved.Columns[18].Header);
+    }
+
+    // D4 y D6: vacía no es ausente. El 422 trae el mapa errors con la llave del campo, que es lo
+    // que la pantalla usa para marcar el input.
+    [Theory]
+    [InlineData("   ")]
+    [InlineData("Hoja/1")]
+    [InlineData("History")]
+    public async Task PutWithAnInvalidSheetNameMarksTheField(string sheetName)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var columns = await DefaultColumnsAsync(client, tenantId);
+
+        using var response = await PutAsync(client, tenantId, columns, sheetName, "\"1\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal("validation.failed", problem?.Code);
+        Assert.Equal(["SheetName"], problem!.Errors!.Keys);
+    }
+
     private static async Task AssertDomainCodeAsync(
         HttpClient client, Guid tenantId, IReadOnlyList<ColumnPayload> columns, string code, string ifMatch = "\"1\"")
     {
@@ -494,11 +582,19 @@ public sealed class OrdersExportLayoutApiTests
     }
 
     private static Task<HttpResponseMessage> PutAsync(
-        HttpClient client, Guid tenantId, IReadOnlyList<ColumnPayload> columns, string? ifMatch)
+        HttpClient client, Guid tenantId, IReadOnlyList<ColumnPayload> columns, string? ifMatch) =>
+        SendPutAsync(client, tenantId, JsonContent.Create(new { columns }), ifMatch);
+
+    private static Task<HttpResponseMessage> PutAsync(
+        HttpClient client, Guid tenantId, IReadOnlyList<ColumnPayload> columns, string sheetName, string? ifMatch) =>
+        SendPutAsync(client, tenantId, JsonContent.Create(new { columns, sheetName }), ifMatch);
+
+    private static Task<HttpResponseMessage> SendPutAsync(
+        HttpClient client, Guid tenantId, HttpContent content, string? ifMatch)
     {
         var request = new HttpRequestMessage(HttpMethod.Put, LayoutUrl(tenantId))
         {
-            Content = JsonContent.Create(new { columns }),
+            Content = content,
         };
         if (ifMatch is not null)
         {
@@ -520,7 +616,8 @@ public sealed class OrdersExportLayoutApiTests
         return payload.RootElement.GetProperty("action").GetString()!;
     }
 
-    private sealed record LayoutPayload(Guid TenantId, IReadOnlyList<ColumnPayload> Columns, long Version);
+    private sealed record LayoutPayload(
+        Guid TenantId, IReadOnlyList<ColumnPayload> Columns, long Version, string? SheetName, string? DefaultSheetName);
 
     private sealed record ColumnPayload(
         string Kind, string? Key, string? DefaultHeader, int? DefaultPosition, bool? DefaultVisible, string Header,

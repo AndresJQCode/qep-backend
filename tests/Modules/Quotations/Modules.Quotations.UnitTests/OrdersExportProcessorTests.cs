@@ -61,6 +61,23 @@ public sealed class OrdersExportProcessorTests
             writer.Columns.Select(column => column.Header));
     }
 
+    // Spec 2026-10-05, D7: la hoja se llama como diga el layout del tenant. Su importador la busca
+    // por nombre ("MIGRACION 1") y antes había que renombrarla a mano en cada exportación.
+    [Fact]
+    public async Task TheSheetIsNamedAfterTheTenantsLayout()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = new InMemoryOrdersExportLayoutRepository();
+        var layout = OrdersExportLayout.CreateDefault(TenantId, Now);
+        Assert.True(layout.Replace(OrdersExportLayout.Effective(stored: null), "MIGRACION 1", Now));
+        layouts.Add(layout);
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("MIGRACION 1", writer.SheetName);
+    }
+
     // 2026-09-24: "Valor Unit sin IVA" va al final, por la misma razón que "Cod. Asesor". Es el
     // precio unitario bruto con el IVA que trae adentro quitado, antes del descuento — distinto de
     // "Valor Unit", que desde 2026-10-03 lleva el neto (con descuento y sin IVA).

@@ -181,6 +181,84 @@ public sealed class OrdersExportLayoutPersistenceTests
         Assert.Empty(await ListAsync(connectionString, ColumnsSql));
     }
 
+    // Spec 2026-10-05, D2: el nombre de la hoja va en su propia columna, no en el jsonb.
+    [Fact]
+    public async Task TheSheetNameRoundTripsThroughItsOwnColumn()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory);
+        using var _ = client;
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var layout = OrdersExportLayout.CreateDefault(tenantId, Now);
+            Assert.True(layout.Replace(OrdersExportLayout.Effective(stored: null), "MIGRACION 1", Now));
+            scope.ServiceProvider.GetRequiredService<IOrdersExportLayoutRepository>().Add(layout);
+            await scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var reloaded = await scope.ServiceProvider.GetRequiredService<IOrdersExportLayoutRepository>()
+                .FindAsync(tenantId, TestContext.Current.CancellationToken);
+            Assert.NotNull(reloaded);
+            Assert.Equal("MIGRACION 1", reloaded.SheetName);
+        }
+
+        Assert.Equal("MIGRACION 1", await ScalarAsync<string>(
+            database.GetConnectionString(),
+            $"SELECT sheet_name FROM quotations.orders_export_layouts WHERE tenant_id = '{tenantId}'"));
+    }
+
+    // D3: la migración no le cambia el nombre a ningún Excel. Una fila que ya existía queda en
+    // "Pedidos", y revertir quita sólo la columna.
+    [Fact]
+    public async Task TheSheetNameMigrationDefaultsExistingRowsToPedidos()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        var migrations = context.Database.GetMigrations().ToList();
+        var sheetNameMigration = MigrationId(context, "_AddOrdersExportLayoutSheetName");
+        var previous = migrations[migrations.IndexOf(sheetNameMigration) - 1];
+        await migrator.MigrateAsync(previous, TestContext.Current.CancellationToken);
+        var tenantId = Guid.CreateVersion7();
+        await ExecuteAsync(
+            connectionString,
+            $"""
+            INSERT INTO quotations.orders_export_layouts (tenant_id, columns, version, updated_at)
+            VALUES ('{tenantId}', '[]', 3, now())
+            """);
+
+        await migrator.MigrateAsync(sheetNameMigration, TestContext.Current.CancellationToken);
+
+        Assert.Contains("sheet_name:character varying:NO", await ListAsync(connectionString, ColumnsSql));
+        Assert.Equal(31, await ScalarAsync<int>(
+            connectionString,
+            ColumnsSql.Replace("column_name || ':' || data_type || ':' || is_nullable", "character_maximum_length", StringComparison.Ordinal)
+            + " AND column_name = 'sheet_name'"));
+        Assert.Equal("Pedidos", await ScalarAsync<string>(
+            connectionString,
+            $"SELECT sheet_name FROM quotations.orders_export_layouts WHERE tenant_id = '{tenantId}'"));
+
+        await migrator.MigrateAsync(previous, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            ["columns:jsonb:NO", "tenant_id:uuid:NO", "updated_at:timestamp with time zone:NO", "version:bigint:NO"],
+            await ListAsync(connectionString, ColumnsSql));
+    }
+
+    private static async Task ExecuteAsync(string connectionString, string sql)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     private static async Task SaveFirstLayoutAsync(
         QepApiFactory factory, Guid tenantId, params OrdersExportColumnSetting[] columns)
     {

@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -22,10 +24,24 @@ public sealed class OrdersExportLayout
     /// <c>If-Match: "1"</c> y la fila nace en 2.</summary>
     public const long DefaultVersion = 1;
 
+    /// <summary>El nombre de la hoja sin layout guardado, y el que la migración le puso a toda fila
+    /// que ya existía (spec 2026-10-05, D3): ningún Excel cambia de nombre por desplegar.</summary>
+    public const string DefaultSheetName = "Pedidos";
+
+    /// <summary>El tope de Excel para el nombre de una hoja (D4).</summary>
+    public const int SheetNameMaxLength = 31;
+
+    // Excel reserva "History" para el historial de cambios de un libro compartido (D4).
+    private const string ReservedSheetName = "History";
+
+    // Excel no abre un libro con estos caracteres en el nombre de una hoja (D4).
+    private static readonly SearchValues<char> InvalidSheetNameCharacters = SearchValues.Create(@"[]:*?/\");
+
     private readonly List<OrdersExportColumnSetting> _columns = [];
 
     private OrdersExportLayout()
     {
+        SheetName = DefaultSheetName;
     }
 
     private OrdersExportLayout(
@@ -33,6 +49,7 @@ public sealed class OrdersExportLayout
     {
         TenantId = tenantId;
         _columns.AddRange(columns);
+        SheetName = DefaultSheetName;
         Version = DefaultVersion;
         UpdatedAt = now;
     }
@@ -41,6 +58,13 @@ public sealed class OrdersExportLayout
 
     /// <summary>En orden: la posición es el índice.</summary>
     public IReadOnlyList<OrdersExportColumnSetting> Columns => _columns;
+
+    /// <summary>
+    /// Cómo se llama la hoja dentro del archivo (spec 2026-10-05, D1): el importador del ERP del
+    /// tenant la busca por nombre. Es parte del layout —misma pantalla, mismos permisos, misma
+    /// <see cref="Version"/>— y no una configuración aparte. Recortado y válido para Excel (D4).
+    /// </summary>
+    public string SheetName { get; private set; }
 
     public long Version { get; private set; }
 
@@ -65,24 +89,71 @@ public sealed class OrdersExportLayout
     /// está guardada, entrada por entrada. Mismo criterio que <c>Membership.UpdateProfile</c>:
     /// guardar sin tocar no consume versión, que daría un 412 falso en otra pantalla abierta.
     /// </returns>
-    public bool Replace(IReadOnlyList<OrdersExportColumnSetting> columns, DateTimeOffset now)
+    public bool Replace(IReadOnlyList<OrdersExportColumnSetting> columns, DateTimeOffset now) =>
+        Replace(columns, SheetName, now);
+
+    /// <summary>
+    /// Igual que <see cref="Replace(IReadOnlyList{OrdersExportColumnSetting}, DateTimeOffset)"/>,
+    /// con el nombre de la hoja (spec 2026-10-05). El no-op compara columnas <b>y</b> nombre (D5):
+    /// guardar sólo el nombre es un cambio, sube la versión y se audita. El nombre se recorta y se
+    /// compara ordinal, como un encabezado: <c>pedidos</c> es un cambio, <c>" Pedidos "</c> no.
+    /// </summary>
+    public bool Replace(
+        IReadOnlyList<OrdersExportColumnSetting> columns, string sheetName, DateTimeOffset now)
     {
         // Antes de completar: una llave que no es del catálogo es un error del cuerpo, no algo que
         // Effective descarte en silencio (eso es para lo ya guardado cuando el catálogo cambia).
         EnsureKnownKeys(columns);
         var completed = Effective(columns, OrdersExportColumnCatalog.Columns);
         Validate(completed);
+        var normalizedSheetName = NormalizeSheetName(sheetName);
 
-        if (IsSameAs(completed))
+        if (IsSameAs(completed) && string.Equals(SheetName, normalizedSheetName, StringComparison.Ordinal))
         {
             return false;
         }
 
         _columns.Clear();
         _columns.AddRange(completed);
+        SheetName = normalizedSheetName;
         Version++;
         UpdatedAt = now;
         return true;
+    }
+
+    /// <summary>
+    /// Las reglas de Excel para el nombre de una hoja (D4), medidas sobre el texto recortado: entre
+    /// 1 y <see cref="SheetNameMaxLength"/> caracteres, sin <c>[ ] : * ? / \</c>, sin <c>'</c> al
+    /// inicio ni al final, y distinto de <c>History</c> sin distinguir mayúsculas. Las tildes sí
+    /// son válidas. Pública para que el validador de Application aplique exactamente estas reglas
+    /// y no una copia que se desvíe.
+    /// </summary>
+    public static bool IsValidSheetName(string? sheetName)
+    {
+        var trimmed = sheetName?.Trim() ?? string.Empty;
+        return trimmed.Length is > 0 and <= SheetNameMaxLength
+            && trimmed.AsSpan().IndexOfAny(InvalidSheetNameCharacters) < 0
+            && !trimmed.StartsWith('\'')
+            && !trimmed.EndsWith('\'')
+            && !string.Equals(trimmed, ReservedSheetName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>El nombre de la hoja que ven GET y el processor: el de la fila, o
+    /// <see cref="DefaultSheetName"/> sin fila (D3).</summary>
+    public static string EffectiveSheetName(OrdersExportLayout? stored) =>
+        stored?.SheetName ?? DefaultSheetName;
+
+    private static string NormalizeSheetName(string? sheetName)
+    {
+        if (!IsValidSheetName(sheetName))
+        {
+            throw new QuotationsDomainException(
+                "quotations.orders_export_layout.sheet_name_invalid",
+                $"The sheet name must have between 1 and {SheetNameMaxLength} characters, "
+                + "cannot contain [ ] : * ? / \\, cannot start or end with an apostrophe and cannot be 'History'.");
+        }
+
+        return sheetName!.Trim();
     }
 
     private bool IsSameAs(IReadOnlyList<OrdersExportColumnSetting> columns) =>

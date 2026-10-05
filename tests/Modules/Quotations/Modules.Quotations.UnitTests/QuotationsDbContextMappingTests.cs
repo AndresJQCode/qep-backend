@@ -288,9 +288,16 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("PK_orders_export_layouts", layout.FindPrimaryKey()!.GetName());
         Assert.Equal(["TenantId"], layout.FindPrimaryKey()!.Properties.Select(property => property.Name));
         Assert.Equal(
-            ["tenant_id", "updated_at", "version"],
+            ["sheet_name", "tenant_id", "updated_at", "version"],
             layout.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
         Assert.True(layout.FindProperty(nameof(OrdersExportLayout.Version))!.IsConcurrencyToken);
+
+        // Spec 2026-10-05, D2 y D3: columna propia y no dentro del jsonb, con el tope de Excel y el
+        // default que conserva el nombre de toda fila que ya existía.
+        var sheetName = layout.FindProperty(nameof(OrdersExportLayout.SheetName))!;
+        Assert.False(sheetName.IsNullable);
+        Assert.Equal(OrdersExportLayout.SheetNameMaxLength, sheetName.GetMaxLength());
+        Assert.Equal(OrdersExportLayout.DefaultSheetName, sheetName.GetDefaultValue());
 
         var setting = model.FindEntityType(typeof(OrdersExportColumnSetting));
         Assert.NotNull(setting);

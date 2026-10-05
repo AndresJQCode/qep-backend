@@ -24,12 +24,24 @@ public sealed record OrdersExportColumnDto(
     string? Value,
     bool Visible);
 
-/// <summary>El layout efectivo (D8), entero y en orden (D7). <c>Version</c> es la de la fila, o
-/// 1 si no hay fila (D9).</summary>
+/// <summary>
+/// El layout efectivo (D8), entero y en orden (D7). <c>Version</c> es la de la fila, o 1 si no hay
+/// fila (D9).
+///
+/// <c>SheetName</c> (spec 2026-10-05) es el nombre efectivo de la hoja: el guardado, o
+/// <see cref="OrdersExportLayout.DefaultSheetName"/> sin fila. <c>DefaultSheetName</c> viaja al
+/// lado por la misma razón que <c>DefaultHeader</c> por columna (regla BFF): "Restaurar todo" lo
+/// necesita y la pantalla no tiene por qué saberlo de memoria — si el default cambia acá, la
+/// pantalla no se entera de otra forma. En el PUT, un <c>sheetName</c> nulo o ausente conserva el
+/// actual (D6), para que un frontend anterior a este campo no le borre el nombre al tenant al
+/// guardar columnas.
+/// </summary>
 public sealed record OrdersExportLayoutDto(
     Guid TenantId,
     IReadOnlyList<OrdersExportColumnDto> Columns,
-    long Version);
+    long Version,
+    string SheetName,
+    string DefaultSheetName);
 
 public static class OrdersExportLayoutMappings
 {
@@ -37,7 +49,9 @@ public static class OrdersExportLayoutMappings
         new(
             tenantId,
             OrdersExportLayout.Effective(stored).Select(ToDto).ToArray(),
-            stored?.Version ?? OrdersExportLayout.DefaultVersion);
+            stored?.Version ?? OrdersExportLayout.DefaultVersion,
+            OrdersExportLayout.EffectiveSheetName(stored),
+            OrdersExportLayout.DefaultSheetName);
 
     private static OrdersExportColumnDto ToDto(OrdersExportColumnSetting column)
     {

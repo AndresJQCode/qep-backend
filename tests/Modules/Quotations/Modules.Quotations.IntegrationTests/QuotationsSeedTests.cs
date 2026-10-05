@@ -107,6 +107,8 @@ public sealed class QuotationsSeedTests
         var layout = Assert.Single(await LayoutsOfTheSeedTenantAsync(factory));
 
         Assert.Equal(2, layout.Version);
+        // Spec 2026-10-05, D8: la hoja se llama como la busca el importador del ERP, sin tilde.
+        Assert.Equal("MIGRACION 1", layout.SheetName);
         Assert.Equal(
             SeededLayoutHeaders,
             layout.Columns.Where(column => column.Visible).Select(column => column.Header));
@@ -230,6 +232,9 @@ public sealed class QuotationsSeedTests
         Assert.Equal(2, stored.Version);
         Assert.Equal("Correo", stored.Columns[0].Header);
         Assert.DoesNotContain(stored.Columns, column => column.Kind == OrdersExportColumnKind.Fixed);
+        // D8: la semilla sólo crea. El tenant de producción ya tiene layout, y su nombre de hoja se
+        // cambia a mano desde la pantalla.
+        Assert.Equal("Pedidos", stored.SheetName);
     }
 
     private static async Task<List<OrdersExportLayout>> LayoutsOfTheSeedTenantAsync(
