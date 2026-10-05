@@ -12,6 +12,11 @@ no tiene forma de dejar constancia en QEP de que un pedido aprobado ya se factur
 `qep-frontend` `features/orders/types/order-list.ts:40-42` lo deja pendiente ("Facturado ... todavía
 no existen en el dominio").
 
+**Alcance:** "Facturado" es **sólo un cambio de estado** del pedido. QEP no emite ni anula
+facturas, no llama a Siigo ni a ningún otro sistema, y no genera documento. La factura se hace
+afuera; aquí sólo se deja constancia de quién la marcó y cuándo. Por lo mismo, revertir
+(decisión 4) sólo devuelve el estado a `Approved` y no anula nada afuera.
+
 ## Decisiones tomadas
 
 | #   | Decisión | Alternativa descartada |
