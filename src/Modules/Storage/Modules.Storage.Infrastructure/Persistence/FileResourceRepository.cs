@@ -15,6 +15,23 @@ internal sealed class FileResourceRepository(StorageDbContext dbContext) : IFile
             .Include(resource => resource.Variants)
             .FirstOrDefaultAsync(resource => resource.Id == id, cancellationToken);
 
+    // Lo mismo que GetAsync —variantes incluidas y con tracking— en una sola consulta
+    // (`WHERE id = ANY(...)`). Sin ids no hay nada que buscar y no se toca la base.
+    public async Task<IReadOnlyList<FileResource>> ListByIdsAsync(
+        IReadOnlyCollection<FileResourceId> ids,
+        CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.FileResources
+            .Include(resource => resource.Variants)
+            .Where(resource => ids.Contains(resource.Id))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<(IReadOnlyList<FileResource> Items, int TotalCount)> SearchAsync(
         Guid tenantId,
         string? search,

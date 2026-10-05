@@ -579,7 +579,8 @@ internal static class QuotationsApiHarness
         Guid tenantId,
         Guid clientId,
         Guid productId,
-        string? paymentMethod = "Transferencia")
+        string? paymentMethod = "Transferencia",
+        QuotationPartiesRequest? parties = null)
     {
         // Los tres datos que `Quotation.EnsureComplete` exige para enviar (f656ec9): productos,
         // vigencia y cuenta de cobro. La vigencia la pone `CreateQuotationAsync`; las otras dos,
@@ -596,7 +597,10 @@ internal static class QuotationsApiHarness
             // Ya no es un requisito para convertir en pedido (2026-09-12: el editor dejó de
             // pedirla, así que exigirla bloqueaba toda cotización nueva). El parámetro se queda
             // por si alguna prueba puntual quiere una cotización con forma de pago cargada.
-            paymentMethod: paymentMethod);
+            paymentMethod: paymentMethod,
+            // Null es el caso normal: factura y entrega a los datos del cliente. Una prueba que
+            // necesita recogida en tienda (spec 2026-10-05) la pide acá.
+            parties: parties);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
             new AddQuotationItemRequest(productId, 1m),
@@ -624,7 +628,8 @@ internal static class QuotationsApiHarness
         Guid clientId,
         DateOnly? validUntil = null,
         QuotationBillingAccountRequest? billingAccount = null,
-        string? paymentMethod = null)
+        string? paymentMethod = null,
+        QuotationPartiesRequest? parties = null)
     {
         var response = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
@@ -633,7 +638,7 @@ internal static class QuotationsApiHarness
                 validUntil ?? TodayInBogota().AddDays(30),
                 paymentMethod,
                 null,
-                null,
+                parties,
                 billingAccount),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();

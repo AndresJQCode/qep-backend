@@ -27,7 +27,7 @@ afuera; aquí sólo se deja constancia de quién la marcó y cuándo. Por lo mis
 | 4   | **Revertir facturación** (`Invoiced → Approved`): limpia `InvoicedAt`/`InvoicedBy`. La historia queda en la auditoría. | Sin reversa: una marca equivocada sólo se arreglaría tocando la base a mano. |
 | 5   | Permiso nuevo **`quotations.order.invoice`**, asignado a **admin y billing**. Cubre facturar **y** revertir. | Un permiso aparte para revertir, sólo admin: billing dependería de un admin para corregir su propio error. |
 | 6   | **De momento**, facturar **no exige** que el pedido esté pagado, igual que aprobar (`Order.Approve` no mira `PaymentStatus`). | Exigir `Paid`: es una regla nueva que no se pidió. |
-| 7   | Reportes: un facturado **cuenta como venta** en el resumen. El listado y la exportación lo muestran como "Facturado". | Excluirlo: el resumen sólo excluye `Cancelled` (`OrdersReportSource.cs:71`), y facturado es una venta concretada. |
+| 7   | Reportes: un facturado **cuenta como venta** en el resumen. El listado y los filtros del frontend lo muestran como "Facturado"; el Excel de pedidos no tiene columna de estado. | Excluirlo: el resumen sólo excluye `Cancelled` (`OrdersReportSource.cs:71`), y facturado es una venta concretada. |
 
 ## Backend (`qep-backend`)
 
@@ -90,8 +90,10 @@ afuera; aquí sólo se deja constancia de quién la marcó y cuándo. Por lo mis
 
 ### Reportes y exportación
 
-- `ExportStatusLabels.cs:28-34`: `Invoiced → "Facturado"`. Sin esa etiqueta,
-  `ExportStatusLabelsTests` falla porque recorre `Enum.GetValues`.
+- `ExportStatusLabels.cs:28-34`: `Invoiced → "Facturado"`. La etiqueta existe para que el enum siga
+  exhaustivo: `ExportStatusLabelsTests` falla si falta, porque recorre `Enum.GetValues`. Ningún código
+  de `src` la llama hoy: el Excel de pedidos se arma desde el layout y no tiene columna de estado, así
+  que "Facturado" se ve en el listado y los filtros del frontend, no en la exportación.
 - `OrdersReportSource.cs` no cambia (decisión 7).
 
 ### Pruebas (RED antes que GREEN)

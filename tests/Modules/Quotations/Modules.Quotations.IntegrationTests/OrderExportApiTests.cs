@@ -177,7 +177,7 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
+                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -233,10 +233,11 @@ public sealed class OrderExportApiTests
         // que la línea se tomó con 0 %. Número, no texto.
         Assert.Equal("0", first[38]);
         Assert.True(sheet.NumericCells[1][38]);
-        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync, con
-        // puntos y dígito de verificación, así que texto y no número.
-        Assert.Matches(@"^901\.\d{3}\.\d{3}-2$", first[39]);
-        Assert.False(sheet.NumericCells[1][39]);
+        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Desde
+        // el 2026-09-28 sale como lo lee el ERP —sin puntos ni dígito de verificación—, así que
+        // sólo dígitos y número, no texto.
+        Assert.Matches(@"^901\d{6}$", first[39]);
+        Assert.True(sheet.NumericCells[1][39]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -447,10 +448,11 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 46 del catálogo + 1 fija − 7 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
-        // (ajuste 2026-10-02) y las cinco "Forma de pago N" (ajuste 2026-10-03), que nacen ocultas y
-        // el PUT devuelve tal como las recibió del GET.
-        Assert.Equal(40, header.Count);
+        // 48 del catálogo + 1 fija − 8 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
+        // (ajuste 2026-10-02), las cinco "Forma de pago N" (ajuste 2026-10-03) y "Transportadora"
+        // (ajuste 2026-10-05), que nacen ocultas y el PUT devuelve tal como las recibió del GET.
+        // "Total facturado" (ajuste 2026-10-05) nace visible.
+        Assert.Equal(41, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
@@ -459,7 +461,7 @@ public sealed class OrderExportApiTests
         Assert.DoesNotContain("Email", header);
         Assert.DoesNotContain("Ciudad Coordinadora", header);
         Assert.DoesNotContain("Forma de pago 1", header);
-        Assert.Equal("NIT Empresa", header[^1]);
+        Assert.Equal("Total facturado", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -494,7 +496,9 @@ public sealed class OrderExportApiTests
         var headers = withoutName.Rows[0].ToList();
         var column = headers.IndexOf("Ciudad Coordinadora");
         var ciudad = headers.IndexOf("Ciudad");
-        Assert.Equal(headers.Count - 1, column);
+        // En su lugar del catálogo, detrás de "NIT Empresa": desde el ajuste 2026-10-05 la última
+        // visible es "Total facturado".
+        Assert.Equal(headers.IndexOf("NIT Empresa") + 1, column);
         Assert.NotEqual(string.Empty, withoutName.Rows[1][ciudad]);
         Assert.Equal(string.Empty, withoutName.Rows[1][column]);
 
@@ -522,6 +526,30 @@ public sealed class OrderExportApiTests
         Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
         return ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+    }
+
+    // Ajuste 2026-10-05, de punta a punta: "Total facturado" sale por defecto, última, con el Total
+    // de la cotización tal como lo lee la base —lo mismo que muestra el detalle del pedido—, como
+    // número.
+    [Fact]
+    public async Task TheOrderTotalComesOutLastAsTheQuotationsTotal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var column = headers.IndexOf("Total facturado");
+        Assert.Equal(headers.Count - 1, column);
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
+        Assert.True(detail!.Quotation.Total > 0m);
+        Assert.Equal(detail.Quotation.Total, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][column]);
     }
 
     // El GET trae "coordinadora_city" oculta, al final; el PUT la devuelve visible y en su lugar.
@@ -574,7 +602,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("MIGRACION 1", sheet.Name);
         Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders, sheet.Rows[0]);
         var row = sheet.Rows[1];
-        Assert.Equal(47, row.Count);
+        Assert.Equal(48, row.Count);
         Assert.Equal("QEP Comercial S.A.S.", row[0]);
         Assert.Equal(["FV", "PM", string.Empty], row.Skip(1).Take(3));
         Assert.Contains(row[4], new[] { Iso(today), Iso(today.AddDays(1)) });
@@ -619,11 +647,14 @@ public sealed class OrderExportApiTests
         Assert.NotEqual(line.UnitPrice, decimal.Parse(row[20], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][20]);
         Assert.Equal("Nit", sheet.Rows[0][46]);
-        Assert.Equal(detail.Quotation.BillingAccount!.CompanyTaxId, row[46]);
-        Assert.False(sheet.NumericCells[1][46]);
+        // El NIT guardado ("901.463.203-2") sale como lo lee el ERP: sin puntos ni dígito de
+        // verificación, y número (2026-09-28).
+        var erpTaxId = detail.Quotation.BillingAccount!.CompanyTaxId!.Split('-')[0].Replace(".", string.Empty);
+        Assert.Equal(erpTaxId, row[46]);
+        Assert.True(sheet.NumericCells[1][46]);
         // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en
-        // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; las de texto
-        // ("FV", "Coordinadora") siguen siendo texto.
+        // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; "FV" es fija de
+        // texto, y Transportadora (carrier) sale de texto también.
         Assert.Equal("IVA", sheet.Rows[0][21]);
         Assert.Equal(0.19m, decimal.Parse(row[21], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][21]);
@@ -661,6 +692,41 @@ public sealed class OrderExportApiTests
         Assert.Equal(string.Empty, row[headers.IndexOf("V. Consignacion 2")]);
     }
 
+    // Spec 2026-10-05 (recoger en tienda), de punta a punta: con el layout de la semilla,
+    // "Transportadora (P2)" sale "Recoger en tienda" en el pedido cuya cotización es de recogida y
+    // "Coordinadora" en el otro, en el mismo archivo (Review Focus 2). Aparte de
+    // TheSeededLayoutProducesTheErpImportSheet porque ésa está roja desde 6f8aa75 por el formato del
+    // NIT, y una regresión de esta columna quedaría escondida detrás de esa falla.
+    [Fact]
+    public async Task TheSeededLayoutSaysRecogerEnTiendaOnlyForTheStorePickupOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var delivered = await CreateOrderAsync(client, factory, tenantId);
+        var pickedUp = await CreateOrderAsync(client, factory, tenantId, isStorePickup: true);
+        await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var carrier = headers.IndexOf("Transportadora (P2)");
+        var orderNumber = headers.IndexOf("Pedido (P6)");
+        Assert.Equal(30, carrier);
+        Assert.Equal(
+            new Dictionary<string, string>
+            {
+                [delivered.OrderNumber] = "Coordinadora",
+                [pickedUp.OrderNumber] = "Recoger en tienda",
+            },
+            sheet.Rows.Skip(1).ToDictionary(row => row[orderNumber], row => row[carrier]));
+        // Texto, como lo era la fija: el ERP no lo suma.
+        Assert.All(
+            Enumerable.Range(1, sheet.Rows.Count - 1),
+            index => Assert.False(sheet.NumericCells[index][carrier]));
+    }
+
     /// <summary>El layout de la prueba: una fija "Tipo Doc" = "FV" primero, "Email" renombrada
     /// "Correo" segunda, EMPRESA oculta, el resto del catálogo en su orden. La versión se lee del
     /// GET y no se supone: If-Match tiene que llevar la vigente.</summary>
@@ -688,14 +754,17 @@ public sealed class OrderExportApiTests
     }
 
     /// <summary>Un pedido convertido hoy, sin comprobantes (pago pendiente), mismo camino que
-    /// OrderListApiTests.ConvertToOrderAsync.</summary>
+    /// OrderListApiTests.ConvertToOrderAsync. Con <paramref name="isStorePickup"/> la cotización
+    /// nace de recogida en tienda (spec 2026-10-05).</summary>
     private static async Task<OrderResponse> CreateOrderAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId, string? identificationNumber = null,
-        Guid? taxRateId = null)
+        Guid? taxRateId = null, bool isStorePickup = false)
     {
         var customerId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber);
         var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
-        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, customerId, productId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, customerId, productId,
+            parties: isStorePickup ? new QuotationPartiesRequest(null, null, IsStorePickup: true) : null);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),

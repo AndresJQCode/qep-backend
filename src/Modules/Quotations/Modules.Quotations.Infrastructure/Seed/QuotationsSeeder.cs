@@ -67,7 +67,7 @@ public static class QuotationsSeeder
     /// El layout del Excel de pedidos del tenant sembrado (ajuste 2026-09-25): reproduce la hoja
     /// de importación de su ERP, «MIGRACION 1», columna por columna y en su orden. Lo que el ERP
     /// pide y el backend conoce sale del catálogo con el encabezado de la hoja; lo que es constante
-    /// para el tenant (tipo de documento, bodega, transportadora...) va como fija, vacía
+    /// para el tenant (tipo de documento, bodega, flete...) va como fija, vacía
     /// cuando la hoja exige la columna pero no tiene qué ponerle.
     ///
     /// La fecha del pedido se repite bajo FECHA, Bloq/act y Vencimiento: el ERP lee el mismo dato
@@ -122,11 +122,14 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("Factor Conversion Cantidad", "0", visible: true),
         OrdersExportColumnSetting.Fixed("Factor conversion", "0", visible: true),
         OrdersExportColumnSetting.Catalog("payment_date_1", "Fecha Pago (P1)", visible: true),
-        OrdersExportColumnSetting.Fixed("Transportadora (P2)", "Coordinadora", visible: true),
+        // Spec 2026-10-05 (recoger en tienda): la transportadora de cada pedido —"Recoger en tienda"
+        // si el cliente pasa a recogerlo, "Coordinadora" si no—. Hasta entonces era una fija con
+        // "Coordinadora" en todas las filas. Mismo lugar, mismo encabezado.
+        OrdersExportColumnSetting.Catalog("carrier", "Transportadora (P2)", visible: true),
         OrdersExportColumnSetting.Fixed("Flete (P3)", "CONTRAENTREGA", visible: true),
-        // Ajuste 2026-10-02: la hoja ya fija "Transportadora (P2)" = Coordinadora, así que la ciudad
-        // va como la escribe Coordinadora ("ABEJORRAL (ANT)"), no con el nombre del DANE. "city"
-        // queda entre las ocultas.
+        // Ajuste 2026-10-02: la transportadora de la hoja es Coordinadora —salvo en recogida, que no
+        // despacha—, así que la ciudad va como la escribe Coordinadora ("ABEJORRAL (ANT)"), no con el
+        // nombre del DANE. "city" queda entre las ocultas.
         OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad (P4)", visible: true),
         OrdersExportColumnSetting.Fixed("Tipo Envio", string.Empty, visible: true),
         // Ajuste 2026-09-26: el ERP lee acá el documento de identidad de quien se factura, no el

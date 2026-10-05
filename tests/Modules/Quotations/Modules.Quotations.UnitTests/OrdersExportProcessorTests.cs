@@ -56,7 +56,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
-                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa",
+                "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -669,6 +669,133 @@ public sealed class OrdersExportProcessorTests
     private static InMemoryOrdersExportLayoutRepository CoordinadoraCityVisibleFirst() =>
         StoredLayout(OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad Coordinadora", visible: true));
 
+    // Spec 2026-10-05 (recoger en tienda): "Transportadora" sale por pedido desde la cotización.
+    // Hasta entonces la hoja del tenant la tenía fija en "Coordinadora", así que quien despachaba no
+    // se enteraba de que el cliente pasaba a recoger. Los dos textos son contrato del ERP del tenant
+    // y se fijan literales: cambiar la constante tiene que romper estas pruebas.
+    [Fact]
+    public async Task TransportadoraIsRecogerEnTiendaWhenTheQuotationIsAStorePickup()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: StorePickup)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Transportadora", 20), writer.Columns[0]);
+        Assert.Equal(ExportCell.OfText("Recoger en tienda"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task TransportadoraIsCoordinadoraWhenTheQuotationIsNotAStorePickup()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Coordinadora"), Assert.Single(writer.Rows)[0]);
+    }
+
+    // Review Focus 1: es un dato del pedido, como "Pedido" o "Direccion", así que se repite en cada
+    // una de sus líneas.
+    [Fact]
+    public async Task TransportadoraRepeatsOnEveryLineOfAStorePickupOrder()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            parties: StorePickup,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Recoger en tienda"), cells[0]));
+    }
+
+    // Review Focus 2: un pedido de recogida y uno con envío en el mismo lote. Cada fila con lo suyo:
+    // un valor calculado una vez por lote arrastraría "Recoger en tienda" al otro pedido.
+    [Fact]
+    public async Task TransportadoraIsDecidedPerOrderWithinTheSameBatch()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("carrier", "Transportadora", visible: true),
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true));
+
+        await NewProcessor(
+                new StubOrderListRepository(
+                    NewRow("PED-2026-0001", parties: StorePickup),
+                    NewRow("PED-2026-0002", parties: QuotationParties.Empty)),
+                writer,
+                layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new Dictionary<string, string>
+            {
+                ["PED-2026-0001"] = "Recoger en tienda",
+                ["PED-2026-0002"] = "Coordinadora",
+            },
+            writer.Rows.ToDictionary(cells => cells[1].Text!, cells => cells[0].Text!));
+    }
+
+    // Review Focus 3, decisión del owner (2026-10-05): la recogida sólo cambia "Transportadora". El
+    // dominio descarta la parte de entrega que llegue con la recogida, así que "Direccion" cae a la
+    // del cliente, como en cualquier pedido sin parte de entrega propia. No se vacía.
+    [Fact]
+    public async Task RecogerEnTiendaKeepsTheCustomersAddressInDireccion()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: null,
+            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", Address = "Zona Franca, Bodega 14" },
+            IsStorePickup: true);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("carrier", "Transportadora", visible: true),
+            OrdersExportColumnSetting.Catalog("address", "Direccion", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(ExportCell.OfText("Recoger en tienda"), cells[0]);
+        Assert.Equal(ExportCell.OfText("Calle 1 # 2-3"), cells[1]);
+    }
+
+    // Review Focus 4: oculta por defecto. El Excel de un tenant que no la prende no cambia: ni
+    // encabezado nuevo ni celda de más.
+    [Fact]
+    public async Task WithoutALayoutThatShowsItTransportadoraIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: StorePickup)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(OrdersExportProcessor.Columns, writer.Columns);
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Transportadora");
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
+
+    private static readonly QuotationParties StorePickup = new(Billing: null, Shipping: null, IsStorePickup: true);
+
+    // La columna nueva va oculta al final del efectivo: un layout que la pide visible la pone donde
+    // la guarda, acá de primera, para leerla en la celda 0.
+    private static InMemoryOrdersExportLayoutRepository CarrierVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("carrier", "Transportadora", visible: true));
+
     [Fact]
     public async Task PaymentDatesFillFromTheProofsUploadedAtInTheTenantsLocalTime()
     {
@@ -1018,6 +1145,66 @@ public sealed class OrdersExportProcessorTests
         }
     }
 
+    // Ajuste 2026-10-05: "Total facturado" es Quotation.Total —Subtotal + IVA, con el descuento de
+    // cada línea ya adentro—, el mismo en cada línea del pedido. Visible por defecto, la última del
+    // archivo sin layout guardado.
+    private const int TotalFacturadoIndex = 40;
+
+    [Fact]
+    public async Task TotalFacturadoIsTheOrdersTotalRepeatedOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            items:
+            [
+                (ProductId, 2m, 1000m, 10m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        // 2 × 1.000 con 10 % de descuento son 1.800, más 5 × 500: 4.300 con el IVA adentro. Ya neto
+        // del descuento de la línea: restarle DiscountAmount lo descontaría dos veces.
+        Assert.Equal(4_300m, row.Quotation.Total);
+        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[TotalFacturadoIndex]);
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(4_300m), cells[TotalFacturadoIndex]));
+    }
+
+    // Con retención en la fuente el cliente paga NetTotal, pero lo facturado sigue siendo Total: la
+    // retención no es un descuento de la factura.
+    [Fact]
+    public async Task TotalFacturadoIsTheTotalAndNotTheNetTotalWhenTheOrderHasRetention()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", customerWithRetention: true);
+        Assert.True(row.Quotation.RetentionAmount > 0m);
+        Assert.NotEqual(row.Quotation.Total, row.Quotation.NetTotal);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[TotalFacturadoIndex]);
+    }
+
+    // Visible por defecto (decisión del owner, 2026-10-05): también la gana un layout guardado que
+    // no la nombra, al final, detrás de todo lo que el tenant ya tenía.
+    [Fact]
+    public async Task AStoredLayoutThatDoesNotNameItGetsTotalFacturadoAtTheEnd()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001");
+        var layouts = StoredLayout(OrdersExportColumnSetting.Fixed("Tipo Doc", "FV", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^1]);
+        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[^1]);
+    }
+
     // Sin comprobantes la celda queda vacía, igual que "V. Comprobante N" sin comprobante: vacío
     // dice "no hay comprobante", y un 0 diría que hubo una consignación de cero pesos.
     [Fact]
@@ -1345,11 +1532,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(39, writer.Columns.Count);
+        Assert.Equal(40, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("NIT Empresa", writer.Columns[^1].Header);
+        Assert.Equal("Total facturado", writer.Columns[^1].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -1380,7 +1567,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(42, writer.Columns.Count);
+        Assert.Equal(43, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc",OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -1397,7 +1584,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 40 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 41 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {
@@ -1542,13 +1729,14 @@ public sealed class OrdersExportProcessorTests
         QuotationBillingAccount? billingAccount = null,
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
         string? notes = null,
-        IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null)
+        IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null,
+        bool customerWithRetention = false)
     {
         var occurredAt = at ?? Now;
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod, notes, parties ?? QuotationParties.Empty, billingAccount,
-            customerWithRetention: false, customerVatSurplus: false, AdvisorId, occurredAt);
+            customerWithRetention, customerVatSurplus: false, AdvisorId, occurredAt);
 
         foreach (var item in items ?? DefaultItems)
         {

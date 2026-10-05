@@ -28,6 +28,13 @@ internal sealed class InMemoryMembershipRepository(params Membership[] membershi
         Task.FromResult<IReadOnlyList<Membership>>(
             _memberships.Where(membership => membership.TenantId == tenantId).ToList());
 
+    public Task<IReadOnlyList<Membership>> ListByIdsAsync(
+        TenantId tenantId, IReadOnlyCollection<MembershipId> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Membership>>(
+            _memberships
+                .Where(membership => membership.TenantId == tenantId && ids.Contains(membership.Id))
+                .ToList());
+
     public Task<Membership?> FindByIdAsync(
         MembershipId id, TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult(_memberships.SingleOrDefault(

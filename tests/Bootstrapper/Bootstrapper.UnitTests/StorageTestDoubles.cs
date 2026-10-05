@@ -9,15 +9,31 @@ namespace Bootstrapper.UnitTests;
 // Dobles de los puertos de Storage que usan los adaptadores del composition root. A mano y sin
 // librería de mocking, como el resto del repositorio: anotan lo que reciben.
 
-/// <summary>Los archivos que siembra la prueba, por id. Sólo <see cref="GetAsync"/>: es lo único que
-/// el publicador de comprobantes lee.</summary>
+/// <summary>Los archivos que siembra la prueba, por id. Sólo las lecturas por id: es lo único que leen
+/// el publicador de comprobantes y los lookups. Cuenta cada llamada, para que una prueba afirme que una
+/// lectura en lote no se volvió una por id.</summary>
 internal sealed class InMemoryFileResourceRepository(params FileResource[] resources)
     : IFileResourceRepository
 {
+    public int GetCalls { get; private set; }
+
+    public int ListByIdsCalls { get; private set; }
+
     public void Add(FileResource resource) => throw new NotSupportedException();
 
-    public Task<FileResource?> GetAsync(FileResourceId id, CancellationToken cancellationToken) =>
-        Task.FromResult(resources.FirstOrDefault(resource => resource.Id == id));
+    public Task<FileResource?> GetAsync(FileResourceId id, CancellationToken cancellationToken)
+    {
+        GetCalls++;
+        return Task.FromResult(resources.FirstOrDefault(resource => resource.Id == id));
+    }
+
+    public Task<IReadOnlyList<FileResource>> ListByIdsAsync(
+        IReadOnlyCollection<FileResourceId> ids, CancellationToken cancellationToken)
+    {
+        ListByIdsCalls++;
+        return Task.FromResult<IReadOnlyList<FileResource>>(
+            resources.Where(resource => ids.Contains(resource.Id)).ToList());
+    }
 
     public Task<(IReadOnlyList<FileResource> Items, int TotalCount)> SearchAsync(
         Guid tenantId,
