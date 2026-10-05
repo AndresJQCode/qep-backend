@@ -15,11 +15,14 @@ public sealed record OrdersExportColumnInput(
     string? Value,
     bool Visible);
 
+/// <summary><c>SheetName</c> (spec 2026-10-05, D6) es opcional: nulo conserva el nombre actual, o
+/// el default si no hay fila. Vacío o sólo espacios no es "ausente": es inválido.</summary>
 public sealed record UpdateOrdersExportLayoutCommand(
     Guid TenantId,
     IReadOnlyList<OrdersExportColumnInput>? Columns,
     long ExpectedVersion,
-    string CorrelationId) : ICommand<OrdersExportLayoutDto>;
+    string CorrelationId,
+    string? SheetName = null) : ICommand<OrdersExportLayoutDto>;
 
 /// <summary>El nombre exacto del enum, como viaja en el DTO: ordinal, sin minúsculas ni el número
 /// del miembro, que es lo que <c>Enum.TryParse</c> sí aceptaría.</summary>
@@ -76,6 +79,15 @@ public sealed class UpdateOrdersExportLayoutValidator : AbstractValidator<Update
                 .WithMessage($"'Value' cannot exceed {OrdersExportColumnSetting.FixedValueMaxLength} characters.");
         });
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
+        // Spec 2026-10-05, D4: las reglas son las del dominio, no una copia; el validador sólo
+        // agrega el campo para que la pantalla marque el input. Nula no se valida: conserva el
+        // nombre actual (D6).
+        RuleFor(command => command.SheetName)
+            .Must(OrdersExportLayout.IsValidSheetName)
+            .When(command => command.SheetName is not null)
+            .WithMessage(
+                $"'Sheet Name' must have between 1 and {OrdersExportLayout.SheetNameMaxLength} characters, "
+                + "cannot contain [ ] : * ? / \\, cannot start or end with an apostrophe and cannot be 'History'.");
     }
 }
 
@@ -128,7 +140,9 @@ public sealed class UpdateOrdersExportLayoutHandler(
 
         // El validador ya garantizó que Columns no es nula y que cada Kind es conocido.
         var columns = (command.Columns ?? []).Select(ToSetting).ToArray();
-        if (!layout.Replace(columns, now))
+        // D6: sin sheetName se conserva el actual, que en el layout por defecto en memoria ya es
+        // OrdersExportLayout.DefaultSheetName.
+        if (!layout.Replace(columns, command.SheetName ?? layout.SheetName, now))
         {
             return OrdersExportLayoutMappings.ToDto(stored, command.TenantId);
         }

@@ -126,6 +126,35 @@ public sealed class GetOrdersExportLayoutHandlerTests
         Assert.Equal("product_code", dto.Columns[3].Key);
     }
 
+    // Spec 2026-10-05, D6: el nombre efectivo y el default viajan juntos (regla BFF), para que
+    // "Restaurar todo" no tenga que saber de memoria cuál es el default.
+    [Fact]
+    public async Task WithoutAStoredLayoutTheSheetNameIsTheDefault()
+    {
+        var handler = NewHandler(new InMemoryOrdersExportLayoutRepository());
+
+        var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Pedidos", dto.SheetName);
+        Assert.Equal("Pedidos", dto.DefaultSheetName);
+    }
+
+    [Fact]
+    public async Task AStoredLayoutComesOutWithItsSheetNameAndTheDefault()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var layout = OrdersExportLayout.CreateDefault(TenantId, Now);
+        Assert.True(layout.Replace(OrdersExportLayout.Effective(stored: null), "MIGRACION 1", Now));
+        repository.Add(layout);
+        var handler = NewHandler(repository);
+
+        var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal("MIGRACION 1", dto.SheetName);
+        Assert.Equal("Pedidos", dto.DefaultSheetName);
+        Assert.Equal(2, dto.Version);
+    }
+
     [Fact]
     public async Task ForAnotherTenantIsForbiddenAndReadsNothing()
     {
