@@ -3,7 +3,7 @@
 **Fecha:** 2026-10-05
 **Repos:** `qep-backend` (módulo Quotations, Bootstrapper) y `qep-frontend` (features `orders`,
 `quotes`, `reports`, `customers`)
-**Estado:** aprobado en conversación; pendiente de revisión escrita
+**Estado:** aprobado por escrito el 2026-10-05
 
 ## Problema
 
@@ -26,7 +26,7 @@ afuera; aquí sólo se deja constancia de quién la marcó y cuándo. Por lo mis
 | 3   | Al facturar se guarda **quién y cuándo** (`InvoicedAt`, `InvoicedBy`). El request no lleva cuerpo. | Número de factura obligatorio u opcional: no hay hoy quién lo consuma. |
 | 4   | **Revertir facturación** (`Invoiced → Approved`): limpia `InvoicedAt`/`InvoicedBy`. La historia queda en la auditoría. | Sin reversa: una marca equivocada sólo se arreglaría tocando la base a mano. |
 | 5   | Permiso nuevo **`quotations.order.invoice`**, asignado a **admin y billing**. Cubre facturar **y** revertir. | Un permiso aparte para revertir, sólo admin: billing dependería de un admin para corregir su propio error. |
-| 6   | Facturar **no exige** que el pedido esté pagado, igual que aprobar (`Order.Approve` no mira `PaymentStatus`). | Exigir `Paid`: es una regla nueva que no se pidió. |
+| 6   | **De momento**, facturar **no exige** que el pedido esté pagado, igual que aprobar (`Order.Approve` no mira `PaymentStatus`). | Exigir `Paid`: es una regla nueva que no se pidió. |
 | 7   | Reportes: un facturado **cuenta como venta** en el resumen. El listado y la exportación lo muestran como "Facturado". | Excluirlo: el resumen sólo excluye `Cancelled` (`OrdersReportSource.cs:71`), y facturado es una venta concretada. |
 
 ## Backend (`qep-backend`)
