@@ -137,7 +137,7 @@ public sealed class UpdateQuotationItemHandler(
 
         // El total de la cotización cambió: lo que ya está cargado en comprobantes no cambia,
         // pero el estado del pago sí puede -- mismo motivo que AddOrderItemsHandler.
-        order?.RecalculatePaymentStatus(quotation.Total, now);
+        order?.RecalculatePaymentStatus(quotation.NetTotal, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();

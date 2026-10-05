@@ -428,12 +428,12 @@ public sealed class OrderTests
     [InlineData(100_000, 100_000, OrderPaymentStatus.FullPaymentReceived)]
     [InlineData(120_000, 100_000, OrderPaymentStatus.FullPaymentReceived)]
     public void RecalculatePaymentStatusComparesProofsAgainstTheNewTotal(
-        decimal proofAmount, decimal newTotal, OrderPaymentStatus expected)
+        decimal proofAmount, decimal amountDue, OrderPaymentStatus expected)
     {
         var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)]);
         var later = Now.AddDays(1);
 
-        order.RecalculatePaymentStatus(newTotal, later);
+        order.RecalculatePaymentStatus(amountDue, later);
 
         Assert.Equal(expected, order.PaymentStatus);
         Assert.Equal(later, order.UpdatedAt);
