@@ -24,7 +24,8 @@ Quotation.status: Draft → Sent → Converted
                               ↘ Voided (desde Draft o Sent)
                               ↘ Expired (job automático, sólo desde Sent)
 
-Order.status:        Pending → Approved
+Order.status:        Pending → Approved → Invoiced
+                     Invoiced → Approved (revertir la facturación; no anula nada fuera de QEP)
                      Pending | Approved → Cancelled (con motivo; la cotización sigue Converted)
 Order.paymentStatus: FullPaymentReceived | PartialPaymentReceived | PaymentPending
 ```
@@ -39,7 +40,8 @@ nada de cambiar cantidad ni quitar—, sin importar el `status` de la cotizació
 **El pedido se direcciona por su propio id.** De la cotización cuelgan sólo dos cosas: convertirla
 en pedido (`POST /quotations/{id}/order`) y leer el pedido que salió de ella
 (`GET /quotations/{id}/order`) — ahí todavía no hay un `orderId` que usar. Todo lo demás
-—aprobar, anular, comprobantes, productos, editar y el cálculo previo— va por
+—aprobar, anular, facturar, revertir la facturación, comprobantes, productos, editar y el cálculo
+previo— va por
 `/orders/{orderId}/…`, porque quien llega desde el listado de pedidos tiene el id del pedido y no
 el de su cotización. Un `orderId` que no existe en el tenant responde **404
 `order.order.not_found`** en todas ellas. Las rutas viejas `/quotations/{id}/order/...` **no
@@ -74,6 +76,8 @@ Y los del pedido, siempre por su `orderId` (el `id` que devuelve la conversión,
 | `GET` | `/orders/{orderId}` | — | 200 `OrderDetailResponse`: el pedido y su cotización compuesta |
 | `POST` | `/orders/{orderId}/approve` | — (sin body) | 200 `OrderResponse` en `Approved`. Sólo desde `Pending`; exige `quotations.order.approve` (admin y facturación, no el asesor: `quotations.order.manage` no alcanza) |
 | `POST` | `/orders/{orderId}/cancel` | `CancelOrderRequest` | 200 `OrderResponse` en `Cancelled`. Desde `Pending` o `Approved`; exige `quotations.order.cancel` (sólo admin). Conserva `approvedAt`/`approvedBy` |
+| `POST` | `/orders/{orderId}/invoice` | — (sin body) | 200 `OrderResponse` en `Invoiced`, con `invoicedAt`/`invoicedBy`. Sólo desde `Approved`; no exige el pago completo. Exige `quotations.order.invoice` (admin y facturación: `quotations.order.approve` no alcanza). Es sólo el estado: QEP no emite la factura |
+| `POST` | `/orders/{orderId}/uninvoice` | — (sin body) | 200 `OrderResponse` de vuelta en `Approved`, con `invoicedAt`/`invoicedBy` en `null`. Sólo desde `Invoiced`; mismo permiso que facturar. No anula nada fuera de QEP |
 | `POST` | `/orders/{orderId}/proofs` | `AddOrderPaymentProofsRequest` | 200 `OrderResponse`. Suma comprobantes y corrige monto o archivo de los ya cargados. Sólo con el pedido en `Pending` |
 | `DELETE` | `/orders/{orderId}/proofs/{proofId}` | — | 200 `OrderResponse`. Quita un comprobante y recalcula `paymentStatus`. Sólo con el pedido en `Pending` |
 | `POST` | `/orders/{orderId}/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas a la cotización y recalcula `paymentStatus` contra el total nuevo |
@@ -125,13 +129,16 @@ type QuotationResponse = {
 type CancelOrderRequest = { reason: string }; // obligatorio, se recorta, máx. 500
 
 type OrderResponse = {
-  id: string; orderNumber: string; quotationId: string; status: "Pending" | "Approved" | "Cancelled";
+  id: string; orderNumber: string; quotationId: string;
+  status: "Pending" | "Approved" | "Cancelled" | "Invoiced";
   paymentStatus: string; notes: string | null;
   convertedAt: string; convertedBy: string;
   approvedAt: string | null; approvedBy: string | null;
   cancelledAt: string | null; cancelledBy: string | null; cancellationReason: string | null;
+  invoicedAt: string | null; invoicedBy: string | null; // null si no está facturado
   ritualCollectionSyncId: string | null;
   createdAt: string; updatedAt: string;
+  version: number; // el If-Match de PUT /orders/{orderId}
   paymentProofs: { id, fileId, amount, uploadedAt }[];
 };
 
@@ -140,7 +147,7 @@ type AddOrderItemsRequest = { toAdd: { productId: string; quantity: number }[] }
 type OrderDetailResponse = { order: OrderResponse; quotation: QuotationResponse };
 ```
 
-`advisorId`/`createdBy`/`updatedBy`/`convertedBy`/`approvedBy`/`cancelledBy` son ids de **membership** (Tenancy), no el
+`advisorId`/`createdBy`/`updatedBy`/`convertedBy`/`approvedBy`/`cancelledBy`/`invoicedBy` son ids de **membership** (Tenancy), no el
 `subject`/usuario — son valores distintos a propósito.
 
 ## Comprobantes de pago: se suben con el flujo de Storage
@@ -188,13 +195,16 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
 | `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
-| `order.order.not_pending` | 422 | El pedido ya está `Approved` o `Cancelled`: no admite comprobantes (`/orders/{orderId}/proofs`), productos (`/orders/{orderId}/items`), edición (`PUT /orders/{orderId}` y su `/preview`) ni otra aprobación |
+| `order.order.not_pending` | 422 | El pedido ya está `Approved`, `Invoiced` o `Cancelled`: no admite comprobantes (`/orders/{orderId}/proofs`), productos (`/orders/{orderId}/items`), edición (`PUT /orders/{orderId}` y su `/preview`) ni otra aprobación |
 | `concurrency.conflict` | 412 | `PUT /orders/{orderId}` con un `If-Match` que ya no es la `version` del pedido: otra persona lo cambió. Recargar |
 | `precondition.if_match_required` | 428 | `PUT /orders/{orderId}` sin `If-Match` o con un valor que no es un número positivo |
 | `order.order.not_found` | 404 | El `orderId` de la ruta no existe en este tenant. Lo devuelven todas las acciones de `/orders/{orderId}/…` |
 | `order.order.already_cancelled` | 422 | `POST /orders/{orderId}/cancel` sobre un pedido ya `Cancelled` |
 | `order.order.cancellation_reason_required` | 422 | `POST /orders/{orderId}/cancel` con el campo `reason` ausente, `null`, vacío o en blanco. Código de dominio, sin `errors`. Un request sin body no llega hasta acá: el binding lo rechaza con `400` |
 | `order.order.cancellation_reason_too_long` | 422 | `POST /orders/{orderId}/cancel` con `reason` de más de 500 caracteres ya recortado. Código de dominio, sin `errors` |
+| `order.order.already_invoiced` | 422 | `POST /orders/{orderId}/cancel` sobre un pedido `Invoiced`, con o sin motivo: primero se revierte la facturación |
+| `order.order.not_approved` | 422 | `POST /orders/{orderId}/invoice` sobre un pedido que no está `Approved` (`Pending`, `Cancelled` o ya `Invoiced`) |
+| `order.order.not_invoiced` | 422 | `POST /orders/{orderId}/uninvoice` sobre un pedido que no está `Invoiced` |
 | `order.order.payment_proof_required` | 422 | `POST /quotations/{id}/order` sin comprobantes y el pago no es `PaymentPending`; en `POST /orders/{orderId}/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
 | `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
 | `order.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |
