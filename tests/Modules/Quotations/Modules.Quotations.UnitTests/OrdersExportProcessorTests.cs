@@ -669,6 +669,133 @@ public sealed class OrdersExportProcessorTests
     private static InMemoryOrdersExportLayoutRepository CoordinadoraCityVisibleFirst() =>
         StoredLayout(OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad Coordinadora", visible: true));
 
+    // Spec 2026-10-05 (recoger en tienda): "Transportadora" sale por pedido desde la cotización.
+    // Hasta entonces la hoja del tenant la tenía fija en "Coordinadora", así que quien despachaba no
+    // se enteraba de que el cliente pasaba a recoger. Los dos textos son contrato del ERP del tenant
+    // y se fijan literales: cambiar la constante tiene que romper estas pruebas.
+    [Fact]
+    public async Task TransportadoraIsRecogerEnTiendaWhenTheQuotationIsAStorePickup()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: StorePickup)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Transportadora", 20), writer.Columns[0]);
+        Assert.Equal(ExportCell.OfText("Recoger en tienda"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task TransportadoraIsCoordinadoraWhenTheQuotationIsNotAStorePickup()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Coordinadora"), Assert.Single(writer.Rows)[0]);
+    }
+
+    // Review Focus 1: es un dato del pedido, como "Pedido" o "Direccion", así que se repite en cada
+    // una de sus líneas.
+    [Fact]
+    public async Task TransportadoraRepeatsOnEveryLineOfAStorePickupOrder()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            parties: StorePickup,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Recoger en tienda"), cells[0]));
+    }
+
+    // Review Focus 2: un pedido de recogida y uno con envío en el mismo lote. Cada fila con lo suyo:
+    // un valor calculado una vez por lote arrastraría "Recoger en tienda" al otro pedido.
+    [Fact]
+    public async Task TransportadoraIsDecidedPerOrderWithinTheSameBatch()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("carrier", "Transportadora", visible: true),
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true));
+
+        await NewProcessor(
+                new StubOrderListRepository(
+                    NewRow("PED-2026-0001", parties: StorePickup),
+                    NewRow("PED-2026-0002", parties: QuotationParties.Empty)),
+                writer,
+                layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new Dictionary<string, string>
+            {
+                ["PED-2026-0001"] = "Recoger en tienda",
+                ["PED-2026-0002"] = "Coordinadora",
+            },
+            writer.Rows.ToDictionary(cells => cells[1].Text!, cells => cells[0].Text!));
+    }
+
+    // Review Focus 3, decisión del owner (2026-10-05): la recogida sólo cambia "Transportadora". El
+    // dominio descarta la parte de entrega que llegue con la recogida, así que "Direccion" cae a la
+    // del cliente, como en cualquier pedido sin parte de entrega propia. No se vacía.
+    [Fact]
+    public async Task RecogerEnTiendaKeepsTheCustomersAddressInDireccion()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: null,
+            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", Address = "Zona Franca, Bodega 14" },
+            IsStorePickup: true);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("carrier", "Transportadora", visible: true),
+            OrdersExportColumnSetting.Catalog("address", "Direccion", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal(ExportCell.OfText("Recoger en tienda"), cells[0]);
+        Assert.Equal(ExportCell.OfText("Calle 1 # 2-3"), cells[1]);
+    }
+
+    // Review Focus 4: oculta por defecto. El Excel de un tenant que no la prende no cambia: ni
+    // encabezado nuevo ni celda de más.
+    [Fact]
+    public async Task WithoutALayoutThatShowsItTransportadoraIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: StorePickup)), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(OrdersExportProcessor.Columns, writer.Columns);
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Transportadora");
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
+
+    private static readonly QuotationParties StorePickup = new(Billing: null, Shipping: null, IsStorePickup: true);
+
+    // La columna nueva va oculta al final del efectivo: un layout que la pide visible la pone donde
+    // la guarda, acá de primera, para leerla en la celda 0.
+    private static InMemoryOrdersExportLayoutRepository CarrierVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("carrier", "Transportadora", visible: true));
+
     [Fact]
     public async Task PaymentDatesFillFromTheProofsUploadedAtInTheTenantsLocalTime()
     {

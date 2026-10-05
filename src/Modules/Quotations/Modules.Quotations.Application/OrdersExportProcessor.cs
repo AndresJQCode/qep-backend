@@ -42,6 +42,16 @@ public sealed class OrdersExportProcessor(
     /// puede significar las dos cosas.</summary>
     public const string PrivateProofText = "Sin enlace";
 
+    /// <summary>"Transportadora" de un pedido cuya cotización es de recogida en tienda (spec
+    /// 2026-10-05). Contrato del ERP del tenant, no copy de UI: su importador compara el texto, así
+    /// que no se traduce ni se cambia sin hablarlo con el tenant.</summary>
+    public const string StorePickupCarrier = "Recoger en tienda";
+
+    /// <summary>"Transportadora" de todo pedido que no es de recogida: la transportadora con la que
+    /// despacha el tenant, la misma que su hoja tenía fija hasta el 2026-10-05. Contrato del ERP,
+    /// igual que <see cref="StorePickupCarrier"/>.</summary>
+    public const string DefaultCarrier = "Coordinadora";
+
     /// <summary>
     /// Las columnas por defecto del ERP contable, en su orden: las del catálogo
     /// (<see cref="OrdersExportColumnCatalog"/>, spec 2026-09-24) con su encabezado y su ancho. Ya
@@ -60,9 +70,9 @@ public sealed class OrdersExportProcessor(
     /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
     /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido).
     ///
-    /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02) y las "Forma de pago
-    /// N" (ajuste 2026-10-03) están en el catálogo pero ocultas, así que sin layout guardado no
-    /// salen, y esta lista sigue siendo el archivo de siempre.
+    /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02), las "Forma de pago
+    /// N" (ajuste 2026-10-03) y "Transportadora" (ajuste 2026-10-05) están en el catálogo pero
+    /// ocultas, así que sin layout guardado no salen, y esta lista sigue siendo el archivo de siempre.
     /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Where(column => column.DefaultVisible)
@@ -290,6 +300,9 @@ public sealed class OrdersExportProcessor(
 
         var observaciones = quotation.Notes ?? string.Empty;
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
+        // "Transportadora" (spec 2026-10-05): sólo depende de la recogida. Las demás columnas de
+        // entrega no cambian con ella (decisión del owner): sin parte de envío caen al cliente.
+        var transportadora = quotation.IsStorePickup ? StorePickupCarrier : DefaultCarrier;
         var banco = quotation.BillingAccount?.BankName ?? string.Empty;
         var cuenta = quotation.BillingAccount?.AccountNumber ?? string.Empty;
         var bancoYCuenta = BankAndAccount(banco, cuenta);
@@ -339,6 +352,7 @@ public sealed class OrdersExportProcessor(
                 nitEmpresa,
                 ExportCell.OfText(ciudadCoordinadora),
                 .. formasDePago,
+                ExportCell.OfText(transportadora),
             ];
         }
     }

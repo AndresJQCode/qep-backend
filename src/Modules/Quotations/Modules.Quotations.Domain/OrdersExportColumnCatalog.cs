@@ -88,6 +88,11 @@ public static class OrdersExportColumnCatalog
         .. Enumerable.Range(1, PaymentDateColumns)
             .Select(number => new OrdersExportCatalogColumn(
                 $"payment_method_{number}", $"Forma de pago {number}", 36, DefaultVisible: false)),
+        // Spec 2026-10-05 (recoger en tienda): la transportadora del pedido, "Recoger en tienda" si
+        // el cliente pasa a recogerlo y "Coordinadora" si no. Antes era una fija de la hoja del
+        // tenant, que no podía variar por fila. Oculta por defecto y al final, mismo criterio que
+        // "coordinadora_city": un layout ya guardado la recibe sin columna sorpresa.
+        new("carrier", "Transportadora", 20, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

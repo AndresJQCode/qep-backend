@@ -916,7 +916,7 @@ es de dónde salen. Portada y escalas de la línea siguen siendo las de hoy.
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 46 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
+reordenar y ocultar las 47 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
 (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una fija cuyo valor es un número
 canónico en cultura invariante (`0.19`, `9999`, `-1`, `901851609`) sale como **número**, que un
 Excel en `es-CO` muestra `0,19` y el ERP lee como cifra; el resto (`02`, `PM`, `1,5`, `+1`, vacío)
@@ -962,13 +962,19 @@ Coordinadora](#nombres-de-ciudad-de-coordinadora)) o si el cliente no tiene ciud
 no cambia. **Nace oculta**: no aparece en ningún Excel, ni sin layout ni en un layout ya guardado,
 hasta que el tenant la prenda desde su configuración.
 
-Las últimas (2026-10-03) son `Forma de pago 1` a `Forma de pago 5` (`payment_method_1` a
+Después (2026-10-03) van `Forma de pago 1` a `Forma de pago 5` (`payment_method_1` a
 `payment_method_5`): el mismo texto que `Banco y cuenta` —`BANCOLOMBIA 7542`—, pero sólo si el
 pedido tiene el comprobante N, en el mismo orden que `Fecha Pago N` y `V. Comprobante N`; sin ese
 comprobante, **vacía**, igual que `V. Comprobante N`. Existen porque `bank_account` es del pedido:
 repetida bajo dos encabezados llenaba la forma de pago 2 aunque hubiera una sola consignación.
 `Banco y cuenta` (`bank_account`) no cambia, porque otro ERP puede estar leyéndola. También **nacen
 ocultas**, por la misma razón que `coordinadora_city`.
+
+La última (2026-10-05) es `Transportadora` (`carrier`): `Recoger en tienda` si la cotización del
+pedido es de recogida (`Quotation.IsStorePickup`) y `Coordinadora` en cualquier otro caso, como
+texto. Los dos textos son contrato del ERP del tenant. La recogida no cambia ninguna otra columna:
+`Direccion`, `Ciudad` y `Telefono` siguen cayendo a los datos del cliente sin parte de envío propia.
+También **nace oculta**, por la misma razón que `coordinadora_city`.
 
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
 ERP, «MIGRACION 1»: 47 columnas visibles, 21 de ellas fijas. Su «Nit» es el de la empresa de
@@ -995,7 +1001,7 @@ que no esté guardada, al final, con su nombre por defecto y visible u oculta se
 y ETag `"1"`. Cada columna viaja con `kind` (`Catalog` | `Fixed`), `key` y
 `defaultHeader`/`defaultPosition`/`defaultVisible` (sólo las del catálogo; `null` en las fijas),
 `header`, `value` (sólo las fijas) y `visible`. `defaultVisible` es `true` en todas menos en
-`coordinadora_city` (2026-10-02) y las `payment_method_N` (2026-10-03).
+`coordinadora_city` (2026-10-02), las `payment_method_N` (2026-10-03) y `carrier` (2026-10-05).
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
 vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no
