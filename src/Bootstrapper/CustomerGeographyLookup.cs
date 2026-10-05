@@ -38,6 +38,13 @@ internal sealed class CustomerGeographyLookup(
     public async Task<IReadOnlyDictionary<Guid, CustomerCityRef>> FindCitiesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
     {
+        // Un cliente sin ciudad ni direcciones llega con la lista vacía: sin ids no hay nada que
+        // buscar, y no se gasta una consulta en eso.
+        if (cityIds.Count == 0)
+        {
+            return new Dictionary<Guid, CustomerCityRef>();
+        }
+
         var distinctIds = cityIds.Distinct().Select(id => new CityId(id)).ToArray();
         var cities = await cityRepository.ListByIdsAsync(distinctIds, cancellationToken);
         if (cities.Count == 0)
