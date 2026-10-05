@@ -104,7 +104,7 @@ public sealed class AddOrderItemsHandler(
         await QuotationPricingRecalculation.ApplyAsync(
             pricingLookup, command.TenantId, quotation, now, cancellationToken);
 
-        order.RecalculatePaymentStatus(quotation.Total, now);
+        order.RecalculatePaymentStatus(quotation.NetTotal, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new OrderItemsAddedResult(order.ToDto(), quotation.ToDto());
