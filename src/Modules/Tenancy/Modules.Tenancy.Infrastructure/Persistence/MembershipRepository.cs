@@ -79,6 +79,24 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
             .OrderByDescending(membership => membership.InvitedAt)
             .ToListAsync(cancellationToken);
 
+    // Mismo tracking y mismo orden que ListByTenantAsync, que es a quien reemplaza en
+    // QuotationAdvisorLookup. El tenant va siempre en el WHERE, junto a los ids y nunca en su lugar.
+    public async Task<IReadOnlyList<Membership>> ListByIdsAsync(
+        TenantId tenantId,
+        IReadOnlyCollection<MembershipId> ids,
+        CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.Memberships
+            .Where(membership => membership.TenantId == tenantId && ids.Contains(membership.Id))
+            .OrderByDescending(membership => membership.InvitedAt)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<Membership>> ListActiveExcludingAsync(
         TenantId tenantId,
         MembershipId excludeId,

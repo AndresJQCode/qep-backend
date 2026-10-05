@@ -47,6 +47,14 @@ public interface IMembershipRepository
         TenantId tenantId,
         CancellationToken cancellationToken);
 
+    // Sólo las membresías pedidas, y sólo si son de este tenant: un id de otro tenant no aparece,
+    // igual que uno que no existe. Lo usa QuotationAdvisorLookup para resolver las asesoras de una
+    // página sin traer el tenant entero.
+    Task<IReadOnlyList<Membership>> ListByIdsAsync(
+        TenantId tenantId,
+        IReadOnlyCollection<MembershipId> ids,
+        CancellationToken cancellationToken);
+
     // Membresías activas del tenant distintas de excludeId, para que un handler de suspender o
     // quitar verifique si otro miembro conserva un rol con capacidad de gestión (guarda de lockout).
     Task<IReadOnlyList<Membership>> ListActiveExcludingAsync(

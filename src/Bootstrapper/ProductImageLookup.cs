@@ -33,23 +33,17 @@ internal sealed class ProductImageLookup(
         IReadOnlyCollection<Guid> fileIds,
         CancellationToken cancellationToken)
     {
-        var found = new Dictionary<Guid, ProductImageRef>();
-
-        // Una lectura por id. `IFileResourceRepository` no tiene un método por lote y agregárselo
-        // es cambiarle el contrato a `Storage` desde afuera, que es lo que este slice evita.
-        // Deuda declarada en el spec de CAT-05b: con muchos productos con portada conviene un
-        // `GetManyAsync` propio de `Storage`, pedido por su dueño.
-        foreach (var fileId in fileIds.Distinct())
+        if (fileIds.Count == 0)
         {
-            var resource = await repository.GetAsync(
-                new FileResourceId(fileId), cancellationToken);
-            if (resource is not null)
-            {
-                found[fileId] = ToRef(resource);
-            }
+            return new Dictionary<Guid, ProductImageRef>();
         }
 
-        return found;
+        // Una sola consulta para todas las portadas, con la misma semántica de GetAsync: sin
+        // filtro de tenant, que sigue siendo de ProductImageResolver. Un id que no existe
+        // simplemente no aparece.
+        var ids = fileIds.Distinct().Select(fileId => new FileResourceId(fileId)).ToArray();
+        var resources = await repository.ListByIdsAsync(ids, cancellationToken);
+        return resources.ToDictionary(resource => resource.Id.Value, ToRef);
     }
 
     private ProductImageRef ToRef(FileResource resource) =>
