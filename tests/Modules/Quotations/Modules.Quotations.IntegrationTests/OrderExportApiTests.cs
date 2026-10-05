@@ -622,8 +622,8 @@ public sealed class OrderExportApiTests
         Assert.Equal(detail.Quotation.BillingAccount!.CompanyTaxId, row[46]);
         Assert.False(sheet.NumericCells[1][46]);
         // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en
-        // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; las de texto
-        // ("FV", "Coordinadora") siguen siendo texto.
+        // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; "FV" es fija de
+        // texto, y Transportadora (carrier) sale de texto también.
         Assert.Equal("IVA", sheet.Rows[0][21]);
         Assert.Equal(0.19m, decimal.Parse(row[21], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][21]);
