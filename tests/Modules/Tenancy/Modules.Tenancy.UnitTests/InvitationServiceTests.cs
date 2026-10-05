@@ -318,6 +318,10 @@ public sealed class InvitationServiceTests
             TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Membership>>([]);
 
+        public Task<IReadOnlyList<Membership>> ListByIdsAsync(
+            TenantId tenantId, IReadOnlyCollection<MembershipId> ids, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Membership>>([]);
+
         public Task<IReadOnlyList<Membership>> ListActiveExcludingAsync(
             TenantId tenantId, MembershipId excludeId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Membership>>([]);

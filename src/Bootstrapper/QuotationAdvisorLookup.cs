@@ -28,14 +28,12 @@ internal sealed class QuotationAdvisorLookup(
             return new Dictionary<Guid, QuotationAdvisor>();
         }
 
-        // Las membresías del tenant se traen de una: son pocas por tenant (mismo supuesto que
-        // documenta ListMembershipsHandler) y así el filtro por id no cuesta una consulta por
-        // asesora.
-        var wanted = membershipIds.ToHashSet();
-        var scoped = (await memberships.ListByTenantAsync(
-                new TenantId(tenantId), cancellationToken))
-            .Where(membership => wanted.Contains(membership.Id.Value))
-            .ToList();
+        // Sólo las membresías pedidas, en una consulta: el repositorio filtra por tenant e ids a la
+        // vez, así que una de otro tenant no llega y no hace falta traer el tenant entero para
+        // quedarse con una o dos asesoras.
+        var ids = membershipIds.Distinct().Select(id => new MembershipId(id)).ToArray();
+        var scoped = await memberships.ListByIdsAsync(
+            new TenantId(tenantId), ids, cancellationToken);
 
         // El correo sí es una búsqueda por usuario: IUserDirectory sólo resuelve por id único,
         // igual que en ListMembershipsHandler. Acá el conteo es la cantidad de asesoras

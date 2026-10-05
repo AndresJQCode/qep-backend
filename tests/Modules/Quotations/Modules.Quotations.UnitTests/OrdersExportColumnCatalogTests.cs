@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 47 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 48 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -21,7 +21,7 @@ public sealed class OrdersExportColumnCatalogTests
         "unit_price_without_tax", "order_date", "customer_name", "customer_identification",
         "bank_account", "proof_amount_total", "tax_rate", "company_tax_id", "coordinadora_city",
         "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5",
-        "order_total",
+        "carrier", "order_total",
     ];
 
     private static readonly string[] Headers =
@@ -37,13 +37,13 @@ public sealed class OrdersExportColumnCatalogTests
         "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
         "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Ciudad Coordinadora",
         "Forma de pago 1", "Forma de pago 2", "Forma de pago 3", "Forma de pago 4", "Forma de pago 5",
-        "Total facturado",
+        "Transportadora", "Total facturado",
     ];
 
     [Fact]
-    public void HasTheFortySevenColumnsOfTheSpecInItsOrder()
+    public void HasTheFortyEightColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(47, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(48, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -124,10 +124,11 @@ public sealed class OrdersExportColumnCatalogTests
 
     // Ajuste 2026-10-03: el banco con la cuenta, una por comprobante. "bank_account" es del pedido,
     // así que repetida bajo "Forma de pago 1" y "Forma de pago 2" llenaba las dos aunque hubiera un
-    // solo comprobante; ésta sólo se llena si existe el comprobante N. Al final y ocultas, para que
-    // ningún Excel que ya existe cambie; "bank_account" sigue igual, otros ERP lo leen.
+    // solo comprobante; ésta sólo se llena si existe el comprobante N. Ocultas, para que ningún Excel
+    // que ya existe cambie; "bank_account" sigue igual, otros ERP lo leen. Desde el ajuste 2026-10-05
+    // las sigue "carrier".
     [Fact]
-    public void PaymentMethodsAreAppendedAtTheEndHiddenByDefault()
+    public void PaymentMethodsAreAppendedAfterCoordinadoraCityHiddenByDefault()
     {
         Assert.Equal(
             Enumerable.Range(1, OrdersExportColumnCatalog.PaymentDateColumns)
@@ -137,8 +138,21 @@ public sealed class OrdersExportColumnCatalogTests
         Assert.Equal(45, OrdersExportColumnCatalog.IndexOf("payment_method_5"));
         Assert.Equal(36, OrdersExportColumnCatalog.IndexOf("bank_account"));
         Assert.Equal(
-            ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5"],
+            ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
+    }
+
+    // Spec 2026-10-05 (recoger en tienda): la transportadora del pedido —"Recoger en tienda" si el
+    // cliente pasa a recogerlo, "Coordinadora" si no—. Detrás de las "Forma de pago N" y oculta,
+    // mismo criterio que "coordinadora_city": un layout ya guardado la recibe sin columna sorpresa.
+    // Desde el ajuste 2026-10-05 la sigue "order_total".
+    [Fact]
+    public void CarrierIsAppendedAfterThePaymentMethodsHiddenByDefault()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("carrier", "Transportadora", 20, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[46]);
+        Assert.Equal(46, OrdersExportColumnCatalog.IndexOf("carrier"));
     }
 
     // Ajuste 2026-10-05: lo facturado del pedido (Quotation.Total), repetido en cada línea. Al final,
@@ -150,7 +164,7 @@ public sealed class OrdersExportColumnCatalogTests
         Assert.Equal(
             new OrdersExportCatalogColumn("order_total", "Total facturado", 18),
             OrdersExportColumnCatalog.Columns[^1]);
-        Assert.Equal(46, OrdersExportColumnCatalog.IndexOf("order_total"));
+        Assert.Equal(47, OrdersExportColumnCatalog.IndexOf("order_total"));
         Assert.Equal(37, OrdersExportColumnCatalog.IndexOf("proof_amount_total"));
     }
 

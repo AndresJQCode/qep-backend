@@ -8,6 +8,14 @@ public interface IFileResourceRepository
 
     Task<FileResource?> GetAsync(FileResourceId id, CancellationToken cancellationToken);
 
+    // La versión en lote de GetAsync, con su misma semántica: sin filtro de tenant ni de estado,
+    // y con las variantes cargadas. Quien la llama decide qué hacer con lo que llega —hoy
+    // ProductImageLookup, que deja la regla de tenant a ProductImageResolver—. Un id que no
+    // existe simplemente no aparece en el resultado.
+    Task<IReadOnlyList<FileResource>> ListByIdsAsync(
+        IReadOnlyCollection<FileResourceId> ids,
+        CancellationToken cancellationToken);
+
     Task<(IReadOnlyList<FileResource> Items, int TotalCount)> SearchAsync(
         Guid tenantId,
         string? search,

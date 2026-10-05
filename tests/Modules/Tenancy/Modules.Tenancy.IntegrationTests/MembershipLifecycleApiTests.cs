@@ -731,6 +731,41 @@ public sealed class MembershipLifecycleApiTests
         Assert.False(await memberships.IsAdvisorCodeTakenAsync(tenant, 8, null, cancellationToken));
     }
 
+    // La lectura en lote de QuotationAdvisorLookup: sólo las pedidas, sólo del tenant. La del otro
+    // tenant es la que importa: un id único de por sí parecería bastar para filtrar, y publicaría la
+    // asesora ajena en cuanto alguien pidiera un id que no es suyo.
+    [Fact]
+    public async Task ListByIdsReturnsOnlyTheRequestedMembershipsOfTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerMembershipId, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var (_, otherOwnerMembershipId, _, _) = await RegisterTenantWithOwnerAsync(factory);
+        var requested = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+        await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var memberships = scope.ServiceProvider.GetRequiredService<IMembershipRepository>();
+        var tenant = new TenantId(Guid.Parse(tenantId));
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var found = await memberships.ListByIdsAsync(
+            tenant,
+            [
+                new MembershipId(requested),
+                new MembershipId(ownerMembershipId),
+                new MembershipId(otherOwnerMembershipId),
+                MembershipId.New(),
+            ],
+            cancellationToken);
+
+        Assert.Equal(
+            new[] { requested, ownerMembershipId }.Order(),
+            found.Select(membership => membership.Id.Value).Order());
+        Assert.All(found, membership => Assert.Equal(tenant, membership.TenantId));
+        Assert.Empty(await memberships.ListByIdsAsync(tenant, [], cancellationToken));
+    }
+
     private static readonly string[] AdvisorRoles = ["advisor"];
     private static readonly string[] AdminRoles = ["admin"];
     private const string DefaultDisplayName = "Ana Pérez";

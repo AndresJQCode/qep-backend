@@ -88,12 +88,17 @@ public static class OrdersExportColumnCatalog
         .. Enumerable.Range(1, PaymentDateColumns)
             .Select(number => new OrdersExportCatalogColumn(
                 $"payment_method_{number}", $"Forma de pago {number}", 36, DefaultVisible: false)),
+        // Spec 2026-10-05 (recoger en tienda): la transportadora del pedido, "Recoger en tienda" si
+        // el cliente pasa a recogerlo y "Coordinadora" si no. Antes era una fija de la hoja del
+        // tenant, que no podía variar por fila. Oculta por defecto y al final, mismo criterio que
+        // "coordinadora_city": un layout ya guardado la recibe sin columna sorpresa.
+        new("carrier", "Transportadora", 20, DefaultVisible: false),
         // Ajuste 2026-10-05: lo facturado del pedido (Quotation.Total: Subtotal + IVA, con el
         // descuento de cada línea ya adentro; no NetTotal, que resta la retención), repetido en cada
         // línea. Iría junto a "Total consignado", pero meterla ahí correría "Tasa IVA" y "NIT
         // Empresa" en el archivo sin layout guardado: al final, como toda columna nueva. Visible por
-        // decisión del owner (2026-10-05), a diferencia de las dos anteriores: Effective la agrega
-        // al final de todo layout guardado —también el de la hoja "MIGRACION 1" del ERP—, y esa
+        // decisión del owner (2026-10-05), a diferencia de las anteriores: Effective la agrega al
+        // final de todo layout guardado —también el de la hoja "MIGRACION 1" del ERP—, y esa
         // columna de más en los Excel que ya existen está aceptada.
         new("order_total", "Total facturado", 18),
     ];
