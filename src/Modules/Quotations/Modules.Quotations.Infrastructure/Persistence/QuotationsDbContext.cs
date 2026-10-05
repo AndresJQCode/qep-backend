@@ -594,6 +594,15 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("version")
             .IsConcurrencyToken();
         layout.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Spec 2026-10-05: columna propia y no dentro del jsonb, que es la lista de columnas (D2).
+        // El default de la base es el de la migración: toda fila que ya existía sigue exportando
+        // "Pedidos" (D3). El dominio siempre escribe un valor, así que la base nunca lo usa al
+        // insertar.
+        layout.Property(value => value.SheetName)
+            .HasColumnName("sheet_name")
+            .HasMaxLength(OrdersExportLayout.SheetNameMaxLength)
+            .IsRequired()
+            .HasDefaultValue(OrdersExportLayout.DefaultSheetName);
 
         layout.OwnsMany(value => value.Columns, columns =>
         {
