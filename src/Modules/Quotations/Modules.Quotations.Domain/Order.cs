@@ -242,7 +242,7 @@ public sealed class Order
     /// <summary>
     /// Recalcula el estado de pago cuando el total de la cotización cambia por agregarle un
     /// producto (a pedido, 2026-09, ver <see cref="Quotation.AddItemAfterConversion"/>): lo
-    /// cargado en comprobantes no cambia, pero el total contra el que se compara sí. Mismo
+    /// cargado en comprobantes no cambia, pero el neto contra el que se compara sí. Mismo
     /// cálculo que usa el frontend al cargar comprobantes (<c>derivePaymentStatus</c>) — acá se
     /// repite porque agregar un producto no pasa por esa pantalla, así que nadie manda el
     /// estado ya calculado.
@@ -252,8 +252,14 @@ public sealed class Order
     /// alguien ya revisó con el total que tenía en ese momento. El caso de uso que agrega el
     /// producto ya comprobó esto mismo antes de tocar la cotización; este chequeo es la mitad
     /// que le toca a este agregado.
+    ///
+    /// <paramref name="amountDue"/> es lo que el cliente tiene que pagar en efectivo, no lo
+    /// facturado: el caso de uso pasa <see cref="Quotation.NetTotal"/>, que con retención en la
+    /// fuente queda por debajo de <see cref="Quotation.Total"/> — el cliente no paga lo que retiene,
+    /// así que comparar contra el bruto dejaba en pago parcial a quien ya pagó todo (decisión del
+    /// dueño de producto, 2026-10-05). Sin retención, los dos valen lo mismo.
     /// </summary>
-    public void RecalculatePaymentStatus(decimal quotationTotal, DateTimeOffset occurredAt)
+    public void RecalculatePaymentStatus(decimal amountDue, DateTimeOffset occurredAt)
     {
         if (Status != OrderStatus.Pending)
         {
@@ -265,7 +271,7 @@ public sealed class Order
         var proofsTotal = _paymentProofs.Sum(proof => proof.Amount);
         PaymentStatus = proofsTotal <= 0
             ? OrderPaymentStatus.PaymentPending
-            : proofsTotal >= quotationTotal
+            : proofsTotal >= amountDue
                 ? OrderPaymentStatus.FullPaymentReceived
                 : OrderPaymentStatus.PartialPaymentReceived;
         UpdatedAt = occurredAt;
@@ -277,8 +283,8 @@ public sealed class Order
     /// monto o su archivo (<see cref="AddPaymentProofs"/>), no queda ningún rastro de él en el
     /// pedido: es para el caso de haber cargado uno equivocado, no para corregirlo. El estado del
     /// pago no se recalcula acá — lo hace el caso de uso con
-    /// <see cref="RecalculatePaymentStatus"/>, que ya necesita el total de la cotización y no lo
-    /// tiene este agregado.
+    /// <see cref="RecalculatePaymentStatus"/>, que ya necesita el neto a cobrar de la cotización y
+    /// no lo tiene este agregado.
     ///
     /// Sólo sobre <see cref="OrderStatus.Pending"/>, mismo motivo que el resto: aprobado, el
     /// pedido es el respaldo de un cobro que alguien ya revisó con los comprobantes que tenía en

@@ -169,6 +169,63 @@ public sealed class OrderEditsApiTests
         Assert.Equal("FullPaymentReceived", (await ReadDetailAsync(response)).Order.PaymentStatus);
     }
 
+    // Decisión del dueño de producto (2026-10-05): con retención en la fuente el pedido queda
+    // pagado cuando los comprobantes cubren el neto (NetTotal), no lo facturado (Total) — el
+    // cliente no paga en efectivo lo que retiene. Un peso menos que el neto sigue siendo parcial.
+    [Theory]
+    [InlineData(0, "FullPaymentReceived")]
+    [InlineData(1, "PartialPaymentReceived")]
+    public async Task SaveComparesTheProofsAgainstTheNetOfRetention(int shortBy, string expected)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, order, productId) = await CreatePendingOrderAsync(
+            client, factory, tenantId, withRetention: true);
+        Assert.True(quotation.NetTotal < quotation.Total);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)],
+                new OrderEditProofsRequest(
+                    [new OrderEditProofAddRequest(proofFileId, quotation.NetTotal - shortBy)], null, null),
+                null));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(expected, (await ReadDetailAsync(response)).Order.PaymentStatus);
+        Assert.Equal(expected, (await GetDetailAsync(client, tenantId, order.Id)).Order.PaymentStatus);
+    }
+
+    // Mismo criterio en el cálculo previo: el preview no puede mostrar un estado de pago distinto
+    // del que va a dejar el guardado.
+    [Fact]
+    public async Task PreviewComparesTheProofsAgainstTheNetOfRetention()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, order, productId) = await CreatePendingOrderAsync(
+            client, factory, tenantId, withRetention: true);
+        Assert.True(quotation.NetTotal < quotation.Total);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)],
+                new OrderEditProofsRequest(
+                    [new OrderEditProofAddRequest(proofFileId, quotation.NetTotal)], null, null),
+                null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        Assert.Equal("FullPaymentReceived", (await ReadDetailAsync(preview)).Order.PaymentStatus);
+    }
+
     // Paso 5 del spec: quitar y corregir en el mismo guardado, con el evento detached en el outbox.
     [Fact]
     public async Task SaveRemovesAndCorrectsProofsAndRecalculatesThePaymentStatus()
@@ -496,11 +553,12 @@ public sealed class OrderEditsApiTests
 
     /// <summary>Una cotización enviada con un producto de 100.000 COP sin impuesto, convertida con el
     /// pago pendiente y sin comprobantes: el total es 100.000 y el estado de pago lo decide cada
-    /// prueba.</summary>
+    /// prueba. Con <paramref name="withRetention"/> el cliente practica retención en la fuente y el
+    /// neto a cobrar queda por debajo del total.</summary>
     private static async Task<(QuotationResponse Quotation, OrderResponse Order, Guid ProductId)> CreatePendingOrderAsync(
-        HttpClient client, QepApiFactory factory, Guid tenantId)
+        HttpClient client, QepApiFactory factory, Guid tenantId, bool withRetention = false)
     {
-        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, withRetention: withRetention);
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var response = await client.PostAsJsonAsync(

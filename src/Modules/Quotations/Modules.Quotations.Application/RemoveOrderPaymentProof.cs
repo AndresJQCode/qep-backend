@@ -32,7 +32,7 @@ public sealed class RemoveOrderPaymentProofHandler(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
 
         // Primero el pedido por su id y recién desde él su cotización, igual que
-        // SaveOrderEditsHandler: hace falta el total para recalcular el estado de pago. Que falte
+        // SaveOrderEditsHandler: hace falta el neto a cobrar para recalcular el estado de pago. Que falte
         // la cotización sería un pedido huérfano, imposible por la FK: mismo "no encontrado".
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
@@ -49,9 +49,9 @@ public sealed class RemoveOrderPaymentProofHandler(
         var removed = order.PaymentProofs.FirstOrDefault(proof => proof.Id == proofId);
         order.RemovePaymentProof(proofId, now);
         // El estado del pago cambia con lo que quede cargado -- mismo motivo que
-        // AddOrderItemsHandler recalcula tras sumar un producto: el agregado no tiene el total de
-        // la cotización a mano.
-        order.RecalculatePaymentStatus(quotation.Total, now);
+        // AddOrderItemsHandler recalcula tras sumar un producto: el agregado no tiene el neto de la
+        // cotización a mano.
+        order.RecalculatePaymentStatus(quotation.NetTotal, now);
 
         auditPublisher.Publish(
             command.TenantId,

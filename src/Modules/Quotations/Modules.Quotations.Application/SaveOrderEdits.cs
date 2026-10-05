@@ -270,7 +270,7 @@ public sealed class SaveOrderEditsHandler(
 
             // Pasos 7 y 8: el estado de pago lo deriva el servidor una sola vez (decisión 5), y todo
             // se escribe junto.
-            order.RecalculatePaymentStatus(quotation.Total, now);
+            order.RecalculatePaymentStatus(quotation.NetTotal, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch
