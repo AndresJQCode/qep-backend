@@ -95,6 +95,14 @@ public sealed class Order
 
     public string? CancellationReason { get; private set; }
 
+    /// <summary>Cuándo se marcó como facturado y quién (spec 2026-10-05, decisión 3). Null mientras
+    /// el pedido no está <see cref="OrderStatus.Invoiced"/>: revertir la facturación las limpia
+    /// (decisión 4) y la historia queda en la auditoría. QEP no emite la factura; esto sólo deja
+    /// constancia de que se hizo afuera.</summary>
+    public DateTimeOffset? InvoicedAt { get; private set; }
+
+    public MemberId? InvoicedBy { get; private set; }
+
     /// <summary>Vacío hasta que se sincronice — placeholder para la integración futura con
     /// Ritual Collection (modelo-datos-cotizaciones.md §2.4). Esta fase no la implementa.</summary>
     public string? RitualCollectionSyncId { get; private set; }
@@ -147,9 +155,20 @@ public sealed class Order
     ///
     /// Anular dos veces se rechaza antes de mirar el motivo: reescribiría quién, cuándo y por qué
     /// se anuló. Todo se valida antes de cambiar un solo campo.
+    /// Un pedido <see cref="OrderStatus.Invoiced"/> no se anula: primero se revierte la facturación.
     /// </summary>
     public void Cancel(MemberId cancelledBy, string? reason, DateTimeOffset occurredAt)
     {
+        // Spec 2026-10-05, decisión 2: la factura ya existe fuera de QEP y anular el pedido no la
+        // anula. Va antes que already_cancelled y que el motivo: un facturado nunca se anula, así que
+        // pedir el motivo primero mandaría a corregir algo que no destraba nada.
+        if (Status == OrderStatus.Invoiced)
+        {
+            throw new QuotationsDomainException(
+                "order.order.already_invoiced",
+                "An invoiced order cannot be cancelled; revert the invoicing first.");
+        }
+
         if (Status == OrderStatus.Cancelled)
         {
             throw new QuotationsDomainException(
@@ -163,6 +182,57 @@ public sealed class Order
         CancelledBy = cancelledBy;
         CancelledAt = occurredAt;
         CancellationReason = normalizedReason;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>
+    /// Marca el pedido como facturado (spec 2026-10-05). Es sólo un cambio de estado: QEP no emite
+    /// ni anula facturas ni llama a ningún sistema; la factura se hace afuera y acá queda quién la
+    /// marcó y cuándo (decisión 3).
+    ///
+    /// Sólo desde <see cref="OrderStatus.Approved"/> (decisión 1): desde Pending se saltaría la
+    /// revisión, y facturar dos veces reescribiría quién y cuándo se facturó. No mira
+    /// <see cref="PaymentStatus"/> (decisión 6), igual que <see cref="Approve"/>. No toca
+    /// <see cref="ApprovedAt"/>/<see cref="ApprovedBy"/>.
+    /// </summary>
+    public void Invoice(MemberId invoicedBy, DateTimeOffset occurredAt)
+    {
+        if (Status != OrderStatus.Approved)
+        {
+            throw new QuotationsDomainException(
+                "order.order.not_approved",
+                "Only an approved order can be invoiced.");
+        }
+
+        Status = OrderStatus.Invoiced;
+        InvoicedBy = invoicedBy;
+        InvoicedAt = occurredAt;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>
+    /// Revierte la facturación (spec 2026-10-05, decisión 4): el pedido vuelve a
+    /// <see cref="OrderStatus.Approved"/> sin <see cref="InvoicedAt"/>/<see cref="InvoicedBy"/>. Es
+    /// para corregir una marca equivocada; no anula nada fuera de QEP. La aprobación no se toca.
+    ///
+    /// <paramref name="revertedBy"/> no se guarda en el agregado: la historia queda en la auditoría,
+    /// que registra al usuario que actúa. El caso de uso lo resuelve igual, porque eso es lo que
+    /// exige una membresía activa antes de tocar el pedido.
+    /// </summary>
+    public void RevertInvoicing(MemberId revertedBy, DateTimeOffset occurredAt)
+    {
+        if (Status != OrderStatus.Invoiced)
+        {
+            throw new QuotationsDomainException(
+                "order.order.not_invoiced",
+                "Only an invoiced order can have its invoicing reverted.");
+        }
+
+        Status = OrderStatus.Approved;
+        InvoicedBy = null;
+        InvoicedAt = null;
         UpdatedAt = occurredAt;
         Version++;
     }

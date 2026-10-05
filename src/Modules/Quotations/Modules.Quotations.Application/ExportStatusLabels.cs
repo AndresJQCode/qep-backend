@@ -30,6 +30,7 @@ public static class ExportStatusLabels
         OrderStatus.Pending => "Pendiente",
         OrderStatus.Approved => "Aprobado",
         OrderStatus.Cancelled => "Anulado",
+        OrderStatus.Invoiced => "Facturado",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The order status has no export label."),
     };
 

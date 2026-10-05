@@ -10,10 +10,14 @@ namespace Modules.Quotations.Domain;
 ///
 /// <see cref="Cancelled"/> (spec 2026-09-16) es terminal y se llega desde los otros dos: el pedido
 /// no se borra, queda con quién, cuándo y por qué se anuló.
+///
+/// <see cref="Invoiced"/> (spec 2026-10-05) sólo se alcanza desde <see cref="Approved"/> y deja
+/// constancia de que la factura se hizo fuera de QEP; revertirlo lo devuelve a <see cref="Approved"/>.
 /// </summary>
 public enum OrderStatus
 {
     Pending,
     Approved,
-    Cancelled
+    Cancelled,
+    Invoiced
 }

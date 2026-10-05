@@ -370,6 +370,12 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<CancelOrderCommand, OrderDto>,
             CancelOrderHandler>();
         services.AddScoped<
+            ICommandHandler<InvoiceOrderCommand, OrderDto>,
+            InvoiceOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
+            RevertOrderInvoicingHandler>();
+        services.AddScoped<
             ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>,
             ConvertQuotationToOrderHandler>();
         services.AddScoped<
@@ -611,6 +617,9 @@ public static class QepServiceCollectionExtensions
                 // Sólo admin (spec 2026-09-16, decisión 5): anular deshace también un pedido ya
                 // aprobado. El rol vive en código, así que no hay migración de datos.
                 OrdersPermissions.OrderCancel,
+                // Facturar y revertir la facturación (spec 2026-10-05, decisión 5): admin y
+                // facturación. El rol vive en código, así que no hay migración de datos.
+                OrdersPermissions.OrderInvoice,
                 // Los cuatro reportes. Admin es el unico rol que ve los de cambios de precio y
                 // padron de clientes: el primero expone el historial comercial completo del
                 // catalogo, y el segundo el padron entero con datos de identificacion.
@@ -690,6 +699,10 @@ public static class QepServiceCollectionExtensions
                 // Dar el visto bueno al pedido: facturación revisa el pago y los comprobantes antes
                 // de facturar, y es quien aprueba lo que la asesora registró.
                 OrdersPermissions.OrderApprove,
+                // Marcar como facturado lo que ya facturó afuera, y revertir la marca si se
+                // equivocó (spec 2026-10-05, decisión 5). Es sólo el estado del pedido: la factura
+                // no la emite QEP.
+                OrdersPermissions.OrderInvoice,
                 // Ver los comprobantes desde el detalle del pedido: el pedido sólo guarda el fileId,
                 // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
                 // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
@@ -863,6 +876,14 @@ public static class QepServiceCollectionExtensions
             "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
             "Quotations",
             "high"));
+        // Medium, igual que aprobar: sólo cambia el estado del pedido, no emite ni anula nada fuera
+        // de QEP (spec 2026-10-05).
+        services.AddSingleton(new PermissionDefinition(
+            OrdersPermissions.OrderInvoice,
+            "Facturar pedidos",
+            "Permite marcar como facturado un pedido aprobado y revertir esa marca.",
+            "Quotations",
+            "medium"));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.OrdersRead,
             "Reporte de pedidos",
@@ -1116,6 +1137,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 OrdersPermissions.OrderCancel,
                 policy => AddPermissionRequirement(policy, OrdersPermissions.OrderCancel))
+            .AddPolicy(
+                OrdersPermissions.OrderInvoice,
+                policy => AddPermissionRequirement(policy, OrdersPermissions.OrderInvoice))
             // La otra mitad del permiso, para los cuatro de Reporting. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 -- mismo gotcha que
             // TaxRateRead/TaxRateManage, ClassificationRead/ClassificationManage y los de

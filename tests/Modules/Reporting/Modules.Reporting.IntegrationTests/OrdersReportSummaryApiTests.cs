@@ -111,6 +111,48 @@ public sealed class OrdersReportSummaryApiTests
         Assert.Equal(1, Assert.Single(summary.ByClient).Count);
     }
 
+    /// <summary>
+    /// Spec 2026-10-05, decisión 7: un facturado es una venta concretada y cuenta en el resumen.
+    /// Prueba de guarda (Review Focus 5): <c>OrdersReportSource</c> sólo excluye <c>Cancelled</c>, y
+    /// un filtro reescrito como «sólo Approved» la pone en rojo.
+    /// </summary>
+    [Fact]
+    public async Task SummaryCountsAnInvoicedOrderAsASale()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, OrdersPermissions.OrderApprove, OrdersPermissions.OrderInvoice]);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        (await client.PostAsync(
+            $"/api/v1/tenants/{tenant.TenantId}/orders/{order.Id}/approve",
+            content: null,
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        (await client.PostAsync(
+            $"/api/v1/tenants/{tenant.TenantId}/orders/{order.Id}/invoice",
+            content: null,
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var response = await client.GetAsync(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var summary = await response.Content.ReadFromJsonAsync<OrdersReportSummary>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal(quotation.Subtotal, summary.Subtotal);
+        Assert.Equal(quotation.TaxAmount, summary.TaxAmount);
+        Assert.Equal(quotation.Total, summary.Total);
+        Assert.Equal(1, Assert.Single(summary.Monthly).Count);
+    }
+
     // Spec 2026-09-17, punto 5: el pedido convertido el 31 de diciembre a las 23:00 de Bogotá —ya
     // enero en UTC— cuenta en la serie de diciembre del tenant.
     [Fact]
