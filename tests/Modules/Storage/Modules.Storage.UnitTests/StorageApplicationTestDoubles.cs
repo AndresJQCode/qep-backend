@@ -16,6 +16,11 @@ internal sealed class InMemoryFileResourceRepository(params FileResource[] resou
     public Task<FileResource?> GetAsync(FileResourceId id, CancellationToken cancellationToken) =>
         Task.FromResult(resources.FirstOrDefault(resource => resource.Id == id));
 
+    // Ningún handler de Storage lee en lote: lo usa sólo el composition root.
+    public Task<IReadOnlyList<FileResource>> ListByIdsAsync(
+        IReadOnlyCollection<FileResourceId> ids, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<(IReadOnlyList<FileResource> Items, int TotalCount)> SearchAsync(
         Guid tenantId,
         string? search,
