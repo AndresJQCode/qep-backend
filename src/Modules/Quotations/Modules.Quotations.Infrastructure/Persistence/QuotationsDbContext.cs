@@ -441,6 +441,15 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.CancellationReason)
             .HasColumnName("cancellation_reason")
             .HasMaxLength(Order.CancellationReasonMaxLength);
+        // Spec 2026-10-05: quién y cuándo se marcó como facturado. Nullables, porque un pedido sin
+        // facturar no tiene nada que guardar acá y revertir las vuelve a null; misma conversión
+        // nullable que approved_by.
+        order.Property(value => value.InvoicedAt).HasColumnName("invoiced_at");
+        order.Property(value => value.InvoicedBy)
+            .HasColumnName("invoiced_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
         order.Property(value => value.RitualCollectionSyncId)
             .HasColumnName("ritual_collection_sync_id")
             .HasMaxLength(100);

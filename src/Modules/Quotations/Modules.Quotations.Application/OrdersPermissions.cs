@@ -13,4 +13,9 @@ public static class OrdersPermissions
     /// <summary>Anular un pedido (spec 2026-09-16, decisión 5). Aparte de <see cref="OrderManage"/>:
     /// quien edita pedidos no tiene por qué poder deshacer uno aprobado.</summary>
     public const string OrderCancel = "quotations.order.cancel";
+
+    /// <summary>Marcar un pedido aprobado como facturado y revertir esa marca (spec 2026-10-05,
+    /// decisión 5). Un solo permiso para las dos cosas: con uno aparte para revertir, facturación
+    /// dependería de un admin para corregir su propio error.</summary>
+    public const string OrderInvoice = "quotations.order.invoice";
 }

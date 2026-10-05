@@ -94,6 +94,24 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Facturar (spec 2026-10-05): sólo un cambio de estado, sin cuerpo. QEP no emite la
+        // factura; deja constancia de quién la marcó y cuándo. Política propia y no OrderApprove
+        // — ver InvoiceOrderHandler.
+        collection.MapPost("/{orderId:guid}/invoice", InvoiceOrderAsync)
+            .RequireAuthorization(OrdersPermissions.OrderInvoice)
+            .Produces<OrderResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Revertir la facturación (decisión 4): vuelve a Approved. Mismo permiso que facturar.
+        collection.MapPost("/{orderId:guid}/uninvoice", RevertOrderInvoicingAsync)
+            .RequireAuthorization(OrdersPermissions.OrderInvoice)
+            .Produces<OrderResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Cargar lo que faltó al convertir, lo que se terminó de cobrar después, o corregir el
         // monto de un comprobante ya cargado (a pedido, 2026-09): "Aprobar pedido" se bloquea
         // mientras el pago no está completo o correcto, y esto es la única forma de destrabarlo
@@ -411,6 +429,32 @@ public static class OrderEndpoints
         return Results.Ok(ToResponse(order));
     }
 
+    private static async Task<IResult> InvoiceOrderAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var order = await dispatcher.SendAsync(
+            new InvoiceOrderCommand(tenantId, orderId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(order));
+    }
+
+    private static async Task<IResult> RevertOrderInvoicingAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var order = await dispatcher.SendAsync(
+            new RevertOrderInvoicingCommand(tenantId, orderId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(order));
+    }
+
     private static OrderResponse ToResponse(OrderDto order) => new(
         order.Id,
         order.OrderNumber,
@@ -425,6 +469,8 @@ public static class OrderEndpoints
         order.CancelledAt,
         order.CancelledBy,
         order.CancellationReason,
+        order.InvoicedAt,
+        order.InvoicedBy,
         order.RitualCollectionSyncId,
         order.CreatedAt,
         order.UpdatedAt,

@@ -22,6 +22,10 @@ public sealed record OrderDto(
     DateTimeOffset? CancelledAt,
     Guid? CancelledBy,
     string? CancellationReason,
+    /// <summary>Cuándo se marcó como facturado y quién (id de membership, spec 2026-10-05). Null
+    /// mientras el pedido no está facturado; revertir la facturación los vuelve a null.</summary>
+    DateTimeOffset? InvoicedAt,
+    Guid? InvoicedBy,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
@@ -132,6 +136,8 @@ public sealed record OrderResponse(
     DateTimeOffset? CancelledAt,
     Guid? CancelledBy,
     string? CancellationReason,
+    DateTimeOffset? InvoicedAt,
+    Guid? InvoicedBy,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,

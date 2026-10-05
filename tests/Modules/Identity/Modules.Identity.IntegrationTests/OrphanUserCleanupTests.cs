@@ -288,6 +288,36 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, canceller.UserId));
     }
 
+    // Spec 2026-10-05: invoiced_by también retiene. El facturador es una tercera membresía y la
+    // aprobación la da el asesor, así que lo único que apunta al facturador es invoiced_by.
+    [Fact]
+    public async Task InvoicingAnOrderKeepsTheUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var advisor = await InviteAsync(ownerClient, tenantId, NewEmail());
+        var biller = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, advisor.Id);
+        await ActivateMembershipAsync(connectionString, biller.Id);
+        await SeedOrderAsync(
+            factory,
+            Guid.Parse(tenantId),
+            convertedByMembershipId: advisor.Id,
+            approvedByMembershipId: advisor.Id,
+            invoicedByMembershipId: biller.Id);
+
+        var removal = await RemoveAsync(ownerClient, tenantId, biller.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountInboxAsync(connection, biller.Id) == 1);
+
+        Assert.Equal(1, await CountUsersAsync(connection, biller.UserId));
+    }
+
     [Fact]
     public async Task OwningAFileKeepsTheUser()
     {
@@ -763,15 +793,16 @@ public sealed class OrphanUserCleanupTests
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by o
-    // cancelled_by, no el resto del contrato de pedidos. La cotización subyacente existe sólo
-    // porque orders.quotation_id tiene FK — su contenido no se ejercita.
+    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by,
+    // cancelled_by o invoiced_by, no el resto del contrato de pedidos. La cotización subyacente
+    // existe sólo porque orders.quotation_id tiene FK — su contenido no se ejercita.
     private static async Task SeedOrderAsync(
         QepApiFactory factory,
         Guid tenantId,
         Guid convertedByMembershipId,
         Guid? approvedByMembershipId = null,
-        Guid? cancelledByMembershipId = null)
+        Guid? cancelledByMembershipId = null,
+        Guid? invoicedByMembershipId = null)
     {
         using var scope = factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
@@ -808,6 +839,13 @@ public sealed class OrphanUserCleanupTests
         if (approvedByMembershipId is { } approvedBy)
         {
             order.Approve(new MemberId(approvedBy), occurredAt);
+        }
+
+        // Facturar exige Approved (spec 2026-10-05, decisión 1): quien pida invoicedBy tiene que
+        // pedir también approvedBy.
+        if (invoicedByMembershipId is { } invoicedBy)
+        {
+            order.Invoice(new MemberId(invoicedBy), occurredAt);
         }
 
         if (cancelledByMembershipId is { } cancelledBy)

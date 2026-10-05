@@ -18,6 +18,8 @@ internal static class OrderMapping
         order.CancelledAt,
         order.CancelledBy?.Value,
         order.CancellationReason,
+        order.InvoicedAt,
+        order.InvoicedBy?.Value,
         order.RitualCollectionSyncId,
         order.CreatedAt,
         order.UpdatedAt,
