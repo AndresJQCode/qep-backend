@@ -103,7 +103,7 @@ public sealed class AuthorizationCatalogApiTests
         // borrar y publicar archivos siguen fuera del rol.
         Assert.Equal(["storage.file.read"], PermissionsOf(catalog, "billing", "storage."));
         // Facturación no ve cotizaciones (decisión del owner, 2026-10-01): ve clientes y pedidos, y
-        // aprueba pedidos. Ningún permiso de quotations.quotation.*, ni siquiera el de lectura.
+        // aprueba y factura pedidos. Ningún permiso de quotations.quotation.*, ni siquiera el de lectura.
         Assert.Empty(PermissionsOf(catalog, "billing", "quotations.quotation."));
     }
 

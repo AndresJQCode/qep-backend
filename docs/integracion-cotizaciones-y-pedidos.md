@@ -196,7 +196,7 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
 | `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
 | `order.order.not_pending` | 422 | El pedido ya está `Approved`, `Invoiced` o `Cancelled`: no admite comprobantes (`/orders/{orderId}/proofs`), productos (`/orders/{orderId}/items`), edición (`PUT /orders/{orderId}` y su `/preview`) ni otra aprobación |
-| `concurrency.conflict` | 412 | `PUT /orders/{orderId}` con un `If-Match` que ya no es la `version` del pedido: otra persona lo cambió. Recargar |
+| `concurrency.conflict` | 412 | `PUT /orders/{orderId}` con un `If-Match` que ya no es la `version` del pedido, o cualquiera de `/approve`, `/cancel`, `/invoice` y `/uninvoice` que choca con otro cambio simultáneo sobre el mismo pedido: otra persona lo cambió. Recargar |
 | `precondition.if_match_required` | 428 | `PUT /orders/{orderId}` sin `If-Match` o con un valor que no es un número positivo |
 | `order.order.not_found` | 404 | El `orderId` de la ruta no existe en este tenant. Lo devuelven todas las acciones de `/orders/{orderId}/…` |
 | `order.order.already_cancelled` | 422 | `POST /orders/{orderId}/cancel` sobre un pedido ya `Cancelled` |

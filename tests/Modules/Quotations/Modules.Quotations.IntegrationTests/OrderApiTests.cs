@@ -1627,7 +1627,6 @@ public sealed class OrderApiTests
         Assert.Null(order.CancellationReason);
     }
 
-
     private static async Task AssertDomainRejectionAsync(HttpResponseMessage response, string code)
     {
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
