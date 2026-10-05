@@ -570,6 +570,8 @@ public sealed class OrderExportApiTests
 
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        // Spec 2026-10-05, D7 y D8: la hoja ya sale con el nombre que busca el importador.
+        Assert.Equal("MIGRACION 1", sheet.Name);
         Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders, sheet.Rows[0]);
         var row = sheet.Rows[1];
         Assert.Equal(47, row.Count);

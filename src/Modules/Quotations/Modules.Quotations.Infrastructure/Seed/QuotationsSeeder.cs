@@ -154,6 +154,10 @@ public static class QuotationsSeeder
             visible: false)),
     ];
 
+    /// <summary>El nombre con el que el importador del ERP del tenant busca la hoja (spec
+    /// 2026-10-05, D8). Sin tilde: así lo pide ese importador, aunque el dominio acepte tildes.</summary>
+    private const string OrdersExportSheetName = "MIGRACION 1";
+
     // Las del catálogo que la hoja no usa, con su nombre por defecto. "IVA" choca con una visible
     // de la hoja, pero entre ocultas y visibles el encabezado puede repetirse.
     private static IEnumerable<string> HiddenCatalogKeys() =>
@@ -196,7 +200,7 @@ public static class QuotationsSeeder
         // Como el primer PUT: el por defecto en versión 1, y Replace lo deja en 2.
         var now = DateTimeOffset.UtcNow;
         var layout = OrdersExportLayout.CreateDefault(tenantId, now);
-        layout.Replace(OrdersExportColumns, now);
+        layout.Replace(OrdersExportColumns, OrdersExportSheetName, now);
         dbContext.OrdersExportLayouts.Add(layout);
 
         await dbContext.SaveChangesAsync(cancellationToken);
