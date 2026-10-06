@@ -25,7 +25,8 @@ public interface ICityRepository
     /// <summary>
     /// Busqueda por **nombre dentro de un departamento**, case-insensitive y sin espacios
     /// sobrantes — nunca por nombre de ciudad solo: el mismo nombre puede repetirse en mas de un
-    /// departamento del DIVIPOLA, y buscarlo aislado seria ambiguo. La usa
+    /// departamento del DIVIPOLA, y buscarlo aislado seria ambiguo. Reconoce tanto el nombre que
+    /// se muestra como el oficial del DANE ("Cali" y "Santiago de Cali"). La usa
     /// <c>CustomerGeographyLookup</c> para la importacion masiva de clientes.
     /// </summary>
     Task<City?> FindByNameAsync(

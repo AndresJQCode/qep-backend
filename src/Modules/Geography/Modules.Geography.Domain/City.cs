@@ -15,11 +15,12 @@ public sealed class City
     {
     }
 
-    private City(CityId id, string divipolaCode, string name, DepartmentId departmentId)
+    private City(CityId id, string divipolaCode, string divipolaName, DepartmentId departmentId)
     {
         Id = id;
         DivipolaCode = divipolaCode;
-        Name = name;
+        DivipolaName = divipolaName;
+        Name = divipolaName;
         DepartmentId = departmentId;
     }
 
@@ -27,7 +28,20 @@ public sealed class City
 
     public string DivipolaCode { get; private set; } = string.Empty;
 
+    /// <summary>
+    /// El nombre que se muestra: el nombre común del municipio cuando hay uno ("CALI"), o el
+    /// oficial del DANE (<see cref="DivipolaName"/>) cuando no. Es el que pinta el selector de
+    /// ciudad, el PDF y los Excel. Lo fija el importador en cada arranque desde
+    /// <c>common-names.json</c> (ver <c>GeographySeeder</c>).
+    /// </summary>
     public string Name { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// El nombre oficial del municipio en DIVIPOLA ("SANTIAGO DE CALI"), tal como lo trae el
+    /// archivo del DANE. Se guarda aparte de <see cref="Name"/> para no perderlo cuando el
+    /// municipio tiene nombre común, y para que la importación de clientes reconozca los dos.
+    /// </summary>
+    public string DivipolaName { get; private set; } = string.Empty;
 
     public DepartmentId DepartmentId { get; private set; }
 
@@ -43,18 +57,37 @@ public sealed class City
     /// </summary>
     public string? CoordinadoraName { get; private set; }
 
-    public static City Create(CityId id, string divipolaCode, string name, DepartmentId departmentId)
+    // Nace con el nombre del DANE como nombre oficial y como nombre que se muestra; el nombre
+    // común, si lo hay, lo pone después SetCommonName.
+    public static City Create(CityId id, string divipolaCode, string divipolaName, DepartmentId departmentId)
     {
         EnsureValidCode(divipolaCode);
-        var trimmedName = EnsureValidName(name);
+        var trimmedName = EnsureValidName(divipolaName);
         return new City(id, divipolaCode, trimmedName, departmentId);
     }
 
-    // Usado por el importador cuando el nombre de un código ya existente cambia de un año de
-    // DIVIPOLA al siguiente.
-    public void Rename(string name)
+    // Usado por el importador cuando el nombre DANE de un código ya existente cambia de un año de
+    // DIVIPOLA al siguiente. Si la ciudad no tiene nombre común, el nombre que se muestra sigue al
+    // del DANE; si lo tiene, se conserva.
+    public void Rename(string divipolaName)
     {
-        Name = EnsureValidName(name);
+        var trimmedName = EnsureValidName(divipolaName);
+        if (Name == DivipolaName)
+        {
+            Name = trimmedName;
+        }
+
+        DivipolaName = trimmedName;
+    }
+
+    // Usado por el importador en cada arranque, después de Rename. Vacío, sólo espacios o null
+    // cuenta como "sin nombre común": el nombre que se muestra vuelve al del DANE, así que una
+    // ciudad que sale de common-names.json recupera su nombre oficial en el siguiente arranque.
+    public void SetCommonName(string? commonName)
+    {
+        Name = string.IsNullOrWhiteSpace(commonName)
+            ? DivipolaName
+            : commonName.Trim();
     }
 
     // Usado por el importador en cada arranque. Vacío o sólo espacios cuenta como "Coordinadora no
