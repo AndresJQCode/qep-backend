@@ -36,6 +36,10 @@ internal sealed class CityRepository(GeographyDbContext dbContext) : ICityReposi
     // Postgres no tiene una funcion nativa de "sin tildes" sin la extension `unaccent`. Acotado por
     // departamento en la consulta (a lo sumo unas pocas decenas de ciudades), asi que traerlas
     // enteras y comparar con NameMatching.Normalize no pesa.
+    //
+    // Compara contra los dos nombres, el que se muestra y el oficial del DANE: quien llena el Excel
+    // puede escribir "Cali" o "Santiago de Cali", y los dos son la misma ciudad. Sin nombre común
+    // los dos son iguales, así que la ciudad sigue apareciendo una sola vez.
     public async Task<City?> FindByNameAsync(
         DepartmentId departmentId, string name, CancellationToken cancellationToken)
     {
@@ -44,6 +48,8 @@ internal sealed class CityRepository(GeographyDbContext dbContext) : ICityReposi
             .AsNoTracking()
             .Where(city => city.DepartmentId == departmentId)
             .ToArrayAsync(cancellationToken);
-        return cities.SingleOrDefault(city => NameMatching.Normalize(city.Name) == target);
+        return cities.SingleOrDefault(city =>
+            NameMatching.Normalize(city.Name) == target ||
+            NameMatching.Normalize(city.DivipolaName) == target);
     }
 }
