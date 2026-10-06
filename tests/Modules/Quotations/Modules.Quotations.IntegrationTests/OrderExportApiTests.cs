@@ -178,6 +178,7 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
                 "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
+                "Retencion",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -448,11 +449,11 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 48 del catálogo + 1 fija − 8 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
+        // 49 del catálogo + 1 fija − 8 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
         // (ajuste 2026-10-02), las cinco "Forma de pago N" (ajuste 2026-10-03) y "Transportadora"
         // (ajuste 2026-10-05), que nacen ocultas y el PUT devuelve tal como las recibió del GET.
-        // "Total facturado" (ajuste 2026-10-05) nace visible.
-        Assert.Equal(41, header.Count);
+        // "Total facturado" (ajuste 2026-10-05) y "Retencion" (ajuste 2026-10-06) nacen visibles.
+        Assert.Equal(42, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
@@ -461,7 +462,8 @@ public sealed class OrderExportApiTests
         Assert.DoesNotContain("Email", header);
         Assert.DoesNotContain("Ciudad Coordinadora", header);
         Assert.DoesNotContain("Forma de pago 1", header);
-        Assert.Equal("Total facturado", header[^1]);
+        Assert.Equal("Total facturado", header[^2]);
+        Assert.Equal("Retencion", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -496,8 +498,8 @@ public sealed class OrderExportApiTests
         var headers = withoutName.Rows[0].ToList();
         var column = headers.IndexOf("Ciudad Coordinadora");
         var ciudad = headers.IndexOf("Ciudad");
-        // En su lugar del catálogo, detrás de "NIT Empresa": desde el ajuste 2026-10-05 la última
-        // visible es "Total facturado".
+        // En su lugar del catálogo, detrás de "NIT Empresa": desde el ajuste 2026-10-05 detrás van
+        // "Total facturado" y, desde el 2026-10-06, "Retencion".
         Assert.Equal(headers.IndexOf("NIT Empresa") + 1, column);
         Assert.NotEqual(string.Empty, withoutName.Rows[1][ciudad]);
         Assert.Equal(string.Empty, withoutName.Rows[1][column]);
@@ -528,9 +530,9 @@ public sealed class OrderExportApiTests
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
     }
 
-    // Ajuste 2026-10-05, de punta a punta: "Total facturado" sale por defecto, última, con el Total
-    // de la cotización tal como lo lee la base —lo mismo que muestra el detalle del pedido—, como
-    // número.
+    // Ajuste 2026-10-05, de punta a punta: "Total facturado" sale por defecto, con el Total de la
+    // cotización tal como lo lee la base —lo mismo que muestra el detalle del pedido—, como número.
+    // Penúltima desde el ajuste 2026-10-06: "Retencion" va detrás.
     [Fact]
     public async Task TheOrderTotalComesOutLastAsTheQuotationsTotal()
     {
@@ -544,11 +546,35 @@ public sealed class OrderExportApiTests
 
         var headers = sheet.Rows[0].ToList();
         var column = headers.IndexOf("Total facturado");
-        Assert.Equal(headers.Count - 1, column);
+        Assert.Equal(headers.Count - 2, column);
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
         Assert.True(detail!.Quotation.Total > 0m);
         Assert.Equal(detail.Quotation.Total, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][column]);
+    }
+
+    // Ajuste 2026-10-06, de punta a punta: "Retencion" sale por defecto, última, con la retención
+    // de la cotización tal como la lee la base —lo mismo que muestra el detalle del pedido—, como
+    // número. Con ella y "Total facturado" el ERP cuadra lo facturado contra lo que se cobra.
+    [Fact]
+    public async Task TheRetentionComesOutLastAsTheQuotationsRetentionAmount()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId, withRetention: true);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var column = headers.IndexOf("Retencion");
+        Assert.Equal(headers.Count - 1, column);
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
+        Assert.True(detail!.Quotation.RetentionAmount > 0m);
+        Assert.Equal(detail.Quotation.RetentionAmount, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][column]);
     }
 
@@ -602,7 +628,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("MIGRACION 1", sheet.Name);
         Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders, sheet.Rows[0]);
         var row = sheet.Rows[1];
-        Assert.Equal(48, row.Count);
+        Assert.Equal(49, row.Count);
         Assert.Equal("QEP Comercial S.A.S.", row[0]);
         Assert.Equal(["FV", "PM", string.Empty], row.Skip(1).Take(3));
         Assert.Contains(row[4], new[] { Iso(today), Iso(today.AddDays(1)) });
@@ -758,9 +784,9 @@ public sealed class OrderExportApiTests
     /// nace de recogida en tienda (spec 2026-10-05).</summary>
     private static async Task<OrderResponse> CreateOrderAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId, string? identificationNumber = null,
-        Guid? taxRateId = null, bool isStorePickup = false)
+        Guid? taxRateId = null, bool isStorePickup = false, bool withRetention = false)
     {
-        var customerId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber, withRetention);
         var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
         var quotation = await CreateSentQuotationAsync(
             client, factory, tenantId, customerId, productId,

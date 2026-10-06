@@ -57,6 +57,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
                 "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
+                "Retencion",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -1146,8 +1147,8 @@ public sealed class OrdersExportProcessorTests
     }
 
     // Ajuste 2026-10-05: "Total facturado" es Quotation.Total —Subtotal + IVA, con el descuento de
-    // cada línea ya adentro—, el mismo en cada línea del pedido. Visible por defecto, la última del
-    // archivo sin layout guardado.
+    // cada línea ya adentro—, el mismo en cada línea del pedido. Visible por defecto; desde el ajuste
+    // 2026-10-06 la sigue "Retencion".
     private const int TotalFacturadoIndex = 40;
 
     [Fact]
@@ -1190,7 +1191,8 @@ public sealed class OrdersExportProcessorTests
     }
 
     // Visible por defecto (decisión del owner, 2026-10-05): también la gana un layout guardado que
-    // no la nombra, al final, detrás de todo lo que el tenant ya tenía.
+    // no la nombra, al final, detrás de todo lo que el tenant ya tenía. Desde el ajuste 2026-10-06,
+    // penúltima: "Retencion" va detrás.
     [Fact]
     public async Task AStoredLayoutThatDoesNotNameItGetsTotalFacturadoAtTheEnd()
     {
@@ -1201,8 +1203,74 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^1]);
-        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[^1]);
+        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^2]);
+        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[^2]);
+    }
+
+    // Ajuste 2026-10-06: "Retencion" es Quotation.RetentionAmount, la misma en cada línea del pedido,
+    // detrás de "Total facturado". Con las dos el ERP cuadra lo facturado contra lo que de verdad se
+    // cobra: NetTotal = Total − RetentionAmount. Visible por defecto, la última del archivo sin
+    // layout guardado.
+    private const int RetencionIndex = 41;
+
+    [Fact]
+    public async Task RetencionIsTheOrdersRetentionRepeatedOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            items:
+            [
+                (ProductId, 2m, 1000m, 10m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ],
+            customerWithRetention: true);
+        Assert.True(row.Quotation.RetentionAmount > 0m);
+        Assert.Equal(row.Quotation.Total - row.Quotation.RetentionAmount, row.Quotation.NetTotal);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[RetencionIndex]);
+        Assert.Equal(RetencionIndex, writer.Columns.Count - 1);
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells =>
+        {
+            Assert.Equal(ExportCell.OfNumber(row.Quotation.RetentionAmount), cells[RetencionIndex]);
+            Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), cells[TotalFacturadoIndex]);
+        });
+    }
+
+    // Sin retención la celda es 0, un número y no vacía: a diferencia de "Total consignado", donde
+    // vacío dice "no hay comprobante", acá 0 dice la verdad —no se retiene nada— y el ERP lo resta
+    // igual.
+    [Fact]
+    public async Task RetencionIsZeroWhenTheOrderHasNoRetention()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001");
+        Assert.Equal(0m, row.Quotation.RetentionAmount);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfNumber(0m), Assert.Single(writer.Rows)[RetencionIndex]);
+    }
+
+    // Visible por defecto, como "Total facturado": también la gana un layout guardado que no la
+    // nombra, al final, detrás de todo lo que el tenant ya tenía.
+    [Fact]
+    public async Task AStoredLayoutThatDoesNotNameItGetsRetencionAtTheEnd()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", customerWithRetention: true);
+        var layouts = StoredLayout(OrdersExportColumnSetting.Fixed("Tipo Doc", "FV", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[^1]);
+        Assert.Equal(ExportCell.OfNumber(row.Quotation.RetentionAmount), Assert.Single(writer.Rows)[^1]);
     }
 
     // Sin comprobantes la celda queda vacía, igual que "V. Comprobante N" sin comprobante: vacío
@@ -1532,11 +1600,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(40, writer.Columns.Count);
+        Assert.Equal(41, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("Total facturado", writer.Columns[^1].Header);
+        Assert.Equal("Retencion", writer.Columns[^1].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -1567,7 +1635,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(43, writer.Columns.Count);
+        Assert.Equal(44, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc",OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -1584,7 +1652,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 41 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 42 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {

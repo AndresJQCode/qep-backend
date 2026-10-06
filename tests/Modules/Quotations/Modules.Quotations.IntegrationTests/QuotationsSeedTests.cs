@@ -94,6 +94,9 @@ public sealed class QuotationsSeedTests
         "GeneraFactura", "Nit",
         // Ajuste 2026-10-05: visible por decisión del owner, al final y con su nombre por defecto.
         "Total facturado",
+        // Ajuste 2026-10-06: visible como "Total facturado", detrás de ella y con su nombre por
+        // defecto.
+        "Retencion",
     ];
 
     // Ajuste 2026-09-25: el tenant sembrado exporta pedidos con la hoja de su ERP. La fila nace por
