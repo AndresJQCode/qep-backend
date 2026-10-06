@@ -35,9 +35,9 @@ public sealed class CustomerContactAddressMigrationTests
         INSERT INTO geography.departments (id, divipola_code, name) VALUES
             ('{DepartmentAId}', '05', 'Antioquia'),
             ('{DepartmentBId}', '11', 'Bogotá, D.C.');
-        INSERT INTO geography.cities (id, divipola_code, name, department_id) VALUES
-            ('{CityAId}', '05001', 'Medellín', '{DepartmentAId}'),
-            ('{CityBId}', '11001', 'Bogotá, D.C.', '{DepartmentBId}');
+        INSERT INTO geography.cities (id, divipola_code, name, divipola_name, department_id) VALUES
+            ('{CityAId}', '05001', 'Medellín', 'Medellín', '{DepartmentAId}'),
+            ('{CityBId}', '11001', 'Bogotá, D.C.', 'Bogotá, D.C.', '{DepartmentBId}');
         """;
 
     // Un cliente del esquema anterior a la migración: sin address ni city_id propios. La

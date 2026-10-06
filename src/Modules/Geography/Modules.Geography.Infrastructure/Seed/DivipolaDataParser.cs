@@ -8,6 +8,8 @@ internal sealed record DivipolaCityRecord(string DivipolaCode, string Name, stri
 
 internal sealed record CoordinadoraCityRecord(string DivipolaCode, string Name);
 
+internal sealed record CommonCityNameRecord(string DivipolaCode, string Name);
+
 /// <summary>
 /// Parsea y valida el JSON fuente de DIVIPOLA antes de que <see cref="GeographySeeder"/> toque la
 /// base. El archivo de localidades trae dos niveles bajo el mismo array, planos: municipios
@@ -120,6 +122,39 @@ internal static class DivipolaDataParser
             }
 
             records.Add(new CoordinadoraCityRecord(code, name));
+        }
+
+        return records;
+    }
+
+    /// <summary>
+    /// Los nombres comunes de algunos municipios (Seed/Data/common-names.json): "CALI" en vez de
+    /// "SANTIAGO DE CALI", "BOGOTÁ" en vez de "BOGOTÁ, D.C.". Se mantiene a mano y aparte de
+    /// localities.json, que es el snapshot del DANE y se regenera cada año: editar ese archivo
+    /// perdería el cambio en la siguiente regeneración.
+    ///
+    /// Igual que <see cref="ParseCoordinadoraNames"/>, un código que no sea de 5 dígitos revienta en
+    /// vez de descartarse: el archivo sólo trae municipios, así que otro código es un error de
+    /// quien lo editó.
+    /// </summary>
+    public static IReadOnlyList<CommonCityNameRecord> ParseCommonNames(Stream stream)
+    {
+        var raw = JsonSerializer.Deserialize<List<CommonNameJsonCity>>(stream, JsonOptions)
+            ?? [];
+
+        var seenCodes = new HashSet<string>(StringComparer.Ordinal);
+        var records = new List<CommonCityNameRecord>(raw.Count);
+        foreach (var entry in raw)
+        {
+            var code = RequireCityCode(entry.Code);
+            var name = RequireName(entry.Name, "common city");
+            if (!seenCodes.Add(code))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate common city name DIVIPOLA code '{code}' in the source file.");
+            }
+
+            records.Add(new CommonCityNameRecord(code, name));
         }
 
         return records;

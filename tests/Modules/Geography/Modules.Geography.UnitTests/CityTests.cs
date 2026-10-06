@@ -88,4 +88,64 @@ public sealed class CityTests
 
         Assert.Null(city.CoordinadoraName);
     }
+
+    [Fact]
+    public void CreateKeepsTheDaneNameAsBothTheOfficialAndTheDisplayName()
+    {
+        var city = City.Create(CityId.New(), "76001", "  SANTIAGO DE CALI ", DepartmentId.New());
+
+        Assert.Equal("SANTIAGO DE CALI", city.DivipolaName);
+        Assert.Equal("SANTIAGO DE CALI", city.Name);
+    }
+
+    [Fact]
+    public void SetCommonNameChangesTheDisplayNameAndKeepsTheDaneName()
+    {
+        var city = City.Create(CityId.New(), "76001", "SANTIAGO DE CALI", DepartmentId.New());
+
+        city.SetCommonName("  CALI ");
+
+        Assert.Equal("CALI", city.Name);
+        Assert.Equal("SANTIAGO DE CALI", city.DivipolaName);
+    }
+
+    // La ciudad salió de common-names.json: el nombre vuelve al del DANE, no se conserva el
+    // nombre común de un arranque anterior.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void SetCommonNameWithoutANameRevertsToTheDaneName(string? commonName)
+    {
+        var city = City.Create(CityId.New(), "76001", "SANTIAGO DE CALI", DepartmentId.New());
+        city.SetCommonName("CALI");
+
+        city.SetCommonName(commonName);
+
+        Assert.Equal("SANTIAGO DE CALI", city.Name);
+        Assert.Equal("SANTIAGO DE CALI", city.DivipolaName);
+    }
+
+    [Fact]
+    public void RenameWithoutACommonNameUpdatesBothNames()
+    {
+        var city = City.Create(CityId.New(), "05001", "MEDELLÍN", DepartmentId.New());
+
+        city.Rename("MEDELLÍN RENOMBRADO");
+
+        Assert.Equal("MEDELLÍN RENOMBRADO", city.DivipolaName);
+        Assert.Equal("MEDELLÍN RENOMBRADO", city.Name);
+    }
+
+    [Fact]
+    public void RenameWithACommonNameUpdatesOnlyTheDaneName()
+    {
+        var city = City.Create(CityId.New(), "76001", "SANTIAGO DE CALI", DepartmentId.New());
+        city.SetCommonName("CALI");
+
+        city.Rename("SANTIAGO DE CALI RENOMBRADO");
+
+        Assert.Equal("SANTIAGO DE CALI RENOMBRADO", city.DivipolaName);
+        Assert.Equal("CALI", city.Name);
+    }
 }

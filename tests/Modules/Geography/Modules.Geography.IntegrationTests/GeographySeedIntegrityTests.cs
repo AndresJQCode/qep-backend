@@ -98,6 +98,66 @@ public sealed class GeographySeedIntegrityTests
         Assert.Null(names["13030"]);
     }
 
+    // El nombre común sale de common-names.json en cada arranque: 76001 queda "CALI" y conserva el
+    // nombre DANE aparte; 05001 no está en el archivo, así que muestra el del DANE.
+    [Fact]
+    public async Task SeedingAppliesTheCommonNameAndKeepsTheDaneName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Fuerza a que el host arranque (y con él, la migración + el primer seed).
+        using var warmUpClient = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+        var cali = await dbContext.Cities.SingleAsync(
+            city => city.DivipolaCode == "76001", TestContext.Current.CancellationToken);
+        var medellin = await dbContext.Cities.SingleAsync(
+            city => city.DivipolaCode == "05001", TestContext.Current.CancellationToken);
+
+        Assert.Equal("CALI", cali.Name);
+        Assert.Equal("SANTIAGO DE CALI", cali.DivipolaName);
+        Assert.Equal("MEDELLÍN", medellin.Name);
+        Assert.Equal("MEDELLÍN", medellin.DivipolaName);
+    }
+
+    // Cada arranque reconcilia contra common-names.json: un nombre común puesto a mano en una
+    // ciudad que el archivo no trae se pierde (vuelve al DANE), y uno borrado se recupera.
+    [Fact]
+    public async Task ReseedingReconcilesCommonNamesThatDriftedFromTheFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var warmUpClient = factory.CreateClient();
+
+        await using (var driftScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = driftScope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+            var cali = await dbContext.Cities.SingleAsync(
+                city => city.DivipolaCode == "76001", TestContext.Current.CancellationToken);
+            var medellin = await dbContext.Cities.SingleAsync(
+                city => city.DivipolaCode == "05001", TestContext.Current.CancellationToken);
+            cali.SetCommonName(null);
+            medellin.SetCommonName("MEDALLO");
+            await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await factory.Services.InitializeGeographyDatabaseAsync(
+            TestContext.Current.CancellationToken);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var reseeded = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+        var names = await reseeded.Cities
+            .Where(city => city.DivipolaCode == "76001" || city.DivipolaCode == "05001")
+            .ToDictionaryAsync(
+                city => city.DivipolaCode,
+                city => city.Name,
+                TestContext.Current.CancellationToken);
+
+        Assert.Equal("CALI", names["76001"]);
+        Assert.Equal("MEDELLÍN", names["05001"]);
+    }
+
     [Fact]
     public async Task InsertingTwoDepartmentsWithTheSameDivipolaCodeViolatesTheUniqueIndex()
     {

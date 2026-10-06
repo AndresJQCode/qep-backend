@@ -1,0 +1,14 @@
+[
+  { "code": "11001", "name": "BOGOTÁ" },
+  { "code": "76001", "name": "CALI" },
+  { "code": "13001", "name": "CARTAGENA" },
+  { "code": "54001", "name": "CÚCUTA" },
+  { "code": "76111", "name": "BUGA" },
+  { "code": "52835", "name": "TUMACO" },
+  { "code": "13468", "name": "MOMPOX" },
+  { "code": "73443", "name": "MARIQUITA" },
+  { "code": "25843", "name": "UBATÉ" },
+  { "code": "70820", "name": "TOLÚ" },
+  { "code": "70742", "name": "SINCÉ" },
+  { "code": "70823", "name": "TOLUVIEJO" }
+]

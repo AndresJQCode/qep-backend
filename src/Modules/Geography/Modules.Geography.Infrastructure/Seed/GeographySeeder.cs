@@ -18,18 +18,26 @@ namespace Modules.Geography.Infrastructure.Seed;
 /// <c>ws.coordinadora.com</c> porque el arranque no puede depender de que un tercero responda; se
 /// regenera a mano cuando Coordinadora cambie su lista (README § Nombres de ciudad de
 /// Coordinadora). Mismo criterio que las ciudades: cada arranque reconcilia todo contra el archivo.
+///
+/// Por último aplica los nombres comunes de un cuarto JSON (common-names.json): "CALI" como
+/// <see cref="City.Name"/> en vez de "SANTIAGO DE CALI", que queda en
+/// <see cref="City.DivipolaName"/>. Va después de las ciudades porque <see cref="City.Rename"/> fija
+/// el nombre DANE, y se aplica a todas —las que no están en el archivo vuelven al nombre DANE—,
+/// así que sacar una ciudad del archivo le devuelve su nombre oficial en el siguiente arranque.
 /// </summary>
 internal sealed class GeographySeeder(GeographyDbContext dbContext)
 {
     internal const string DepartmentsResourceSuffix = "Seed.Data.departments.json";
     internal const string CitiesResourceSuffix = "Seed.Data.localities.json";
     internal const string CoordinadoraCitiesResourceSuffix = "Seed.Data.coordinadora-cities.json";
+    internal const string CommonNamesResourceSuffix = "Seed.Data.common-names.json";
 
     public async Task SeedAsync(CancellationToken cancellationToken)
     {
         var departmentsByCode = await SeedDepartmentsAsync(cancellationToken);
         var citiesByCode = await SeedCitiesAsync(departmentsByCode, cancellationToken);
         SeedCoordinadoraNames(citiesByCode);
+        SeedCommonNames(citiesByCode);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -110,6 +118,21 @@ internal sealed class GeographySeeder(GeographyDbContext dbContext)
         foreach (var (code, city) in citiesByCode)
         {
             city.SetCoordinadoraName(namesByCode.GetValueOrDefault(code));
+        }
+    }
+
+    // Toda ciudad toma su nombre común del archivo, o vuelve al nombre DANE si el archivo no la
+    // trae. Un código que no sea de ninguna ciudad se ignora, igual que en Coordinadora; lo frena la
+    // prueba unitaria que cruza common-names.json con localities.json.
+    private static void SeedCommonNames(Dictionary<string, City> citiesByCode)
+    {
+        var namesByCode = DivipolaDataParser
+            .ParseCommonNames(OpenResource(CommonNamesResourceSuffix))
+            .ToDictionary(record => record.DivipolaCode, record => record.Name, StringComparer.Ordinal);
+
+        foreach (var (code, city) in citiesByCode)
+        {
+            city.SetCommonName(namesByCode.GetValueOrDefault(code));
         }
     }
 

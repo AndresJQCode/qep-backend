@@ -266,5 +266,91 @@ public sealed class DivipolaDataParserTests
         Assert.Empty(unknownCodes);
     }
 
+    [Fact]
+    public void ParseCommonNamesReturnsOneRecordPerValidEntry()
+    {
+        var json = """
+            [
+              { "code": "76001", "name": "CALI" },
+              { "code": "11001", "name": "BOGOTÁ" }
+            ]
+            """;
+
+        var records = DivipolaDataParser.ParseCommonNames(ToStream(json));
+
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, record => record.DivipolaCode == "76001" && record.Name == "CALI");
+        Assert.Contains(records, record => record.DivipolaCode == "11001" && record.Name == "BOGOTÁ");
+    }
+
+    [Fact]
+    public void ParseCommonNamesThrowsOnDuplicateCode()
+    {
+        var json = """
+            [
+              { "code": "76001", "name": "CALI" },
+              { "code": "76001", "name": "CALI OTRA VEZ" }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseCommonNames(ToStream(json)));
+    }
+
+    [Theory]
+    [InlineData("7601")]
+    [InlineData("76001000")]
+    [InlineData("ABCDE")]
+    [InlineData("")]
+    public void ParseCommonNamesThrowsWhenCodeIsNotFiveDigits(string code)
+    {
+        var json = $$"""
+            [
+              { "code": "{{code}}", "name": "CALI" }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseCommonNames(ToStream(json)));
+    }
+
+    [Fact]
+    public void ParseCommonNamesThrowsWhenNameIsEmpty()
+    {
+        var json = """
+            [
+              { "code": "76001", "name": "  " }
+            ]
+            """;
+
+        Assert.Throws<InvalidOperationException>(
+            () => DivipolaDataParser.ParseCommonNames(ToStream(json)));
+    }
+
+    // El seeder ignora un código de common-names.json que no sea de una ciudad sembrada, para no
+    // tumbar el arranque. Esta prueba es la que no lo deja pasar: un código mal escrito se cae en
+    // CI. Duplicados y nombres vacíos ya los rechaza el parser.
+    [Fact]
+    public void EveryCodeOfTheEmbeddedCommonNamesIsASeededMunicipality()
+    {
+        var municipalities = DivipolaDataParser
+            .ParseCities(GeographySeeder.OpenResource(GeographySeeder.CitiesResourceSuffix))
+            .ToDictionary(record => record.DivipolaCode, record => record.Name, StringComparer.Ordinal);
+
+        var commonNames = DivipolaDataParser.ParseCommonNames(
+            GeographySeeder.OpenResource(GeographySeeder.CommonNamesResourceSuffix));
+
+        // Materializado: si falla, el mensaje lista los códigos que sobran.
+        var unknownCodes = commonNames
+            .Select(record => record.DivipolaCode)
+            .Where(code => !municipalities.ContainsKey(code))
+            .ToArray();
+
+        Assert.NotEmpty(commonNames);
+        Assert.Empty(unknownCodes);
+        Assert.Contains(commonNames, record => record.DivipolaCode == "76001" && record.Name == "CALI");
+        Assert.Equal("SANTIAGO DE CALI", municipalities["76001"]);
+    }
+
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
 }
