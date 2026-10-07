@@ -106,4 +106,104 @@ public sealed class CashSessionTests
         Assert.Equal(CashSessionStatus.Open, session.Status);
         Assert.Equal(1, session.Version);
     }
+
+    [Fact]
+    public void RegisterSaleAddsByMethodAndMovesTheVersion()
+    {
+        var session = OpenSession(100_000m);
+        var sale = Sale(session);
+
+        session.RegisterSale(sale, Now);
+
+        Assert.Equal(1, session.SalesCount);
+        Assert.Equal(37_890m, session.SalesTotal);
+        Assert.Equal(17_890m, session.CashTotal);
+        Assert.Equal(20_000m, session.CardTotal);
+        Assert.Equal(0m, session.TransferTotal);
+        Assert.Equal(117_890m, session.LiveExpectedCash);
+        Assert.Equal(2, session.Version);
+    }
+
+    // Review Focus 1: el arqueo resta lo aplicado en efectivo (17 890), no el billete (20 000).
+    [Fact]
+    public void RegisterVoidOfASplitSaleSubtractsTheAppliedCashNotTheTendered()
+    {
+        var session = OpenSession(100_000m);
+        var sale = Sale(session);
+        session.RegisterSale(sale, Now);
+        sale.Void("Cliente se arrepintió", Cashier, Now);
+
+        session.RegisterVoid(sale, Now);
+
+        Assert.Equal(0, session.SalesCount);
+        Assert.Equal(1, session.VoidedCount);
+        Assert.Equal(0m, session.SalesTotal);
+        Assert.Equal(0m, session.CashTotal);
+        Assert.Equal(0m, session.CardTotal);
+        Assert.Equal(100_000m, session.LiveExpectedCash);
+        Assert.Equal(3, session.Version);
+    }
+
+    // Arrastre del ledger: con una venta que sí dio cambio, anular una y dejar otra viva.
+    [Fact]
+    public void ExpectedCashKeepsOnlyTheNetCashOfTheSalesThatStayAfterAVoid()
+    {
+        var session = OpenSession(100_000m);
+        var kept = Sale(session, payments: [Cash(40_000m)]);
+        var voided = Sale(session);
+        session.RegisterSale(kept, Now);
+        session.RegisterSale(voided, Now);
+        voided.Void("Cliente se arrepintió", Cashier, Now);
+        session.RegisterVoid(voided, Now);
+
+        Assert.Equal(1, session.SalesCount);
+        Assert.Equal(1, session.VoidedCount);
+        Assert.Equal(37_890m, session.SalesTotal);
+        Assert.Equal(37_890m, session.CashTotal);
+        Assert.Equal(137_890m, session.LiveExpectedCash);
+
+        session.Close(137_890m, null, Now);
+
+        Assert.Equal(137_890m, session.ExpectedCash);
+        Assert.Equal(0m, session.CashDifference);
+    }
+
+    [Fact]
+    public void ClosingAfterASaleExpectsTheFloatPlusTheNetCash()
+    {
+        var session = OpenSession(100_000m);
+        session.RegisterSale(Sale(session), Now);
+
+        session.Close(117_000m, null, Now);
+
+        Assert.Equal(117_890m, session.ExpectedCash);
+        Assert.Equal(-890m, session.CashDifference);
+    }
+
+    [Fact]
+    public void AClosedSessionTakesNoSaleAndNoVoid()
+    {
+        var session = OpenSession();
+        var sale = Sale(session);
+        session.RegisterSale(sale, Now);
+        session.Close(117_890m, null, Now);
+
+        var selling = Assert.Throws<PosDomainException>(() => session.RegisterSale(Sale(session), Now));
+        var voiding = Assert.Throws<PosDomainException>(() => session.RegisterVoid(sale, Now));
+
+        Assert.Equal("pos.session.not_open", selling.Code);
+        Assert.Equal("pos.sale.void_session_closed", voiding.Code);
+        Assert.Equal(1, session.SalesCount);
+    }
+
+    [Fact]
+    public void ASaleOfAnotherSessionIsRejected()
+    {
+        var session = OpenSession();
+        var foreign = Sale(OpenSession());
+
+        Assert.Throws<InvalidOperationException>(() => session.RegisterSale(foreign, Now));
+        Assert.Equal(0, session.SalesCount);
+        Assert.Equal(1, session.Version);
+    }
 }

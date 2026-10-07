@@ -135,6 +135,61 @@ public sealed class CashSession
         Touch(at);
     }
 
+    /// <summary>Suma la venta a los acumulados. Exige la caja abierta.</summary>
+    public void RegisterSale(PosSale sale, DateTimeOffset at)
+    {
+        EnsureOpen("pos.session.not_open", "The cash session is not open.");
+        EnsureOwns(sale);
+        Accumulate(sale, +1);
+        SalesCount++;
+        Touch(at);
+    }
+
+    /// <summary>
+    /// Resta exactamente lo que sumó RegisterSale. Una caja cerrada es un arqueo que alguien ya
+    /// firmó: tocarla lo dejaría mintiendo.
+    /// </summary>
+    public void RegisterVoid(PosSale sale, DateTimeOffset at)
+    {
+        EnsureOpen("pos.sale.void_session_closed", "The sale belongs to a closed cash session.");
+        EnsureOwns(sale);
+        Accumulate(sale, -1);
+        SalesCount--;
+        VoidedCount++;
+        Touch(at);
+    }
+
+    private void EnsureOwns(PosSale sale)
+    {
+        if (sale.CashSessionId != Id)
+        {
+            throw new InvalidOperationException($"Sale '{sale.Id}' does not belong to cash session '{Id}'.");
+        }
+    }
+
+    // Lo aplicado por medio: en Cash es cashDue, no el billete (Review Focus 1).
+    private void Accumulate(PosSale sale, int sign)
+    {
+        SalesTotal += sign * sale.Total;
+        foreach (var payment in sale.Payments)
+        {
+            switch (payment.Method)
+            {
+                case PosPaymentMethod.Cash:
+                    CashTotal += sign * payment.Amount;
+                    break;
+                case PosPaymentMethod.Card:
+                    CardTotal += sign * payment.Amount;
+                    break;
+                case PosPaymentMethod.Transfer:
+                    TransferTotal += sign * payment.Amount;
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unknown payment method '{payment.Method}'.");
+            }
+        }
+    }
+
     private void EnsureOpen(string code, string message)
     {
         if (Status != CashSessionStatus.Open)
