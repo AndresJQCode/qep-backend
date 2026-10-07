@@ -12,6 +12,8 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
 
     public DbSet<Membership> Memberships => Set<Membership>();
 
+    public DbSet<TenantModule> TenantModules => Set<TenantModule>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
@@ -24,6 +26,7 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureTenant(modelBuilder);
+        ConfigureTenantModule(modelBuilder);
         ConfigureMembership(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías críticas commiteen atómicas en
@@ -85,6 +88,45 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.CreatedAt).HasColumnName("created_at");
         tenant.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         tenant.Ignore(value => value.DomainEvents);
+    }
+
+    // Spec 2026-10-07, «Tabla y migración». La FK va en el modelo y no sólo en SQL: sin ella EF no
+    // sabe que la fila depende del tenant y puede ordenar el INSERT de tenant_modules antes que el de
+    // tenants en el mismo SaveChangesAsync (23503 en TenantRegistrationService y en TenancySeeder).
+    // Sin navegación en Tenant: el agregado no carga sus módulos, y no cierra ningún ciclo porque
+    // tenants no apunta a tenant_modules.
+    private static void ConfigureTenantModule(ModelBuilder modelBuilder)
+    {
+        var module = modelBuilder.Entity<TenantModule>();
+        module.ToTable("tenant_modules", "tenancy", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tenant_modules_module_key",
+                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos')");
+            table.HasCheckConstraint(
+                "CK_tenant_modules_source",
+                "source IN ('backfill','signup','seed','manual')");
+        });
+        module.HasKey(value => new { value.TenantId, value.ModuleKey });
+        module.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        // La única conversión de texto a clave (TenantModuleKey.Parse): una clave desconocida lanza
+        // al materializar la fila, ruidoso a propósito.
+        module.Property(value => value.ModuleKey)
+            .HasColumnName("module_key")
+            .HasMaxLength(32)
+            .HasConversion(key => key.Value, value => TenantModuleKey.Parse(value));
+        module.Property(value => value.EnabledAt).HasColumnName("enabled_at");
+        module.Property(value => value.Source)
+            .HasColumnName("source")
+            .HasMaxLength(TenantModule.SourceMaxLength);
+        module.Property(value => value.Note)
+            .HasColumnName("note")
+            .HasMaxLength(TenantModule.NoteMaxLength);
+        module.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureMembership(ModelBuilder modelBuilder)

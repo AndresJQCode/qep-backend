@@ -810,6 +810,8 @@ dan 403 `tenancy.module_not_enabled` sin `orders`, antes de leer el repositorio 
   `AuthorizationPermissionsMigrationTests`): migrar Tenancy hasta
   `20260924152521_AddMembershipAdvisorCode`, insertar un tenant por SQL, migrar al final y ver sus
   seis filas `backfill`.
+  El caso del `CHECK` (`'inventory'` rechazado con `23514`) vive también en esta clase, no en
+  `TenantModulesApiTests`: es el mismo escenario de migración y base.
 - Semilla (`SeedStartupTests`): el tenant de la semilla queda con las siete `seed`; correr dos
   veces no duplica ni falla.
 - Quotations (con `RegisterTenantAsync`, `QuotationsApiHarness.cs:136`): `GET /quotations` 200;

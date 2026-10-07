@@ -26,6 +26,8 @@ public static class TenancyInfrastructureExtensions
                     "__ef_migrations_history",
                     "platform")));
         services.AddScoped<ITenantRepository, TenantRepository>();
+        services.AddScoped<ITenantModules, TenantModules>();
+        services.AddScoped<ITenantModuleRepository, TenantModuleRepository>();
         services.AddScoped<ITenantDirectory, TenantDirectory>();
         // Spec 2026-09-17: el día de negocio es el del tenant. Scoped para memorizar el huso por
         // request (TenantClock).
