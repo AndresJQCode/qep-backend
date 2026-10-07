@@ -29,6 +29,7 @@ using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
+using Modules.Pos.Infrastructure;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
@@ -449,6 +450,10 @@ public static class QepServiceCollectionExtensions
         // no registra nada. Se llama igual para que el modulo se cablee como los demas.
         services.AddReportingInfrastructure(configuration);
         services.AddPlatformInfrastructure(configuration);
+
+        // Pos (spec 2026-10-07): su unico vecino directo es Tenancy; productos, empresas y
+        // cajeros entran por adaptadores que se registran mas abajo, con los demas.
+        services.AddPosInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

@@ -22,6 +22,7 @@ using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
+using Modules.Pos.Api;
 using Modules.Quotations.Api;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
@@ -140,6 +141,7 @@ app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
 app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
+app.MapPosEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

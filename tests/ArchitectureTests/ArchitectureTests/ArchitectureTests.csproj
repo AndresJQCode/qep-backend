@@ -31,6 +31,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Application\Modules.Companies.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Domain\Modules.Companies.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Pos\Modules.Pos.Api\Modules.Pos.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Pos\Modules.Pos.Application\Modules.Pos.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Pos\Modules.Pos.Domain\Modules.Pos.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Pos\Modules.Pos.Infrastructure\Modules.Pos.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Api\Modules.Geography.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Application\Modules.Geography.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Domain\Modules.Geography.Domain.csproj" />
