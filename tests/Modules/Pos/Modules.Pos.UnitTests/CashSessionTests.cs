@@ -124,7 +124,7 @@ public sealed class CashSessionTests
         Assert.Equal(2, session.Version);
     }
 
-    // Review Focus 1: el arqueo resta lo aplicado en efectivo (17 890), no el billete (20 000).
+    // El arqueo resta lo aplicado en efectivo (17 890), no el billete (20 000).
     [Fact]
     public void RegisterVoidOfASplitSaleSubtractsTheAppliedCashNotTheTendered()
     {
@@ -194,6 +194,50 @@ public sealed class CashSessionTests
         Assert.Equal("pos.session.not_open", selling.Code);
         Assert.Equal("pos.sale.void_session_closed", voiding.Code);
         Assert.Equal(1, session.SalesCount);
+        Assert.Equal(0, session.VoidedCount);
+        Assert.Equal(17_890m, session.CashTotal);
+        Assert.Equal(3, session.Version);
+    }
+
+    [Fact]
+    public void RegisterVoidRequiresTheSaleToBeVoided()
+    {
+        var session = OpenSession();
+        var sale = Sale(session);
+        session.RegisterSale(sale, Now);
+
+        Assert.Throws<InvalidOperationException>(() => session.RegisterVoid(sale, Now));
+
+        Assert.Equal(1, session.SalesCount);
+        Assert.Equal(0, session.VoidedCount);
+        Assert.Equal(17_890m, session.CashTotal);
+        Assert.Equal(2, session.Version);
+    }
+
+    [Fact]
+    public void RegisterSaleRequiresTheSaleToBeCompleted()
+    {
+        var session = OpenSession();
+        var sale = Sale(session);
+        sale.Void("Cliente se arrepintió", Cashier, Now);
+
+        Assert.Throws<InvalidOperationException>(() => session.RegisterSale(sale, Now));
+
+        Assert.Equal(0, session.SalesCount);
+        Assert.Equal(0m, session.SalesTotal);
+        Assert.Equal(1, session.Version);
+    }
+
+    [Fact]
+    public void AVoidOfAnotherSessionsSaleIsRejected()
+    {
+        var session = OpenSession();
+        var foreign = Sale(OpenSession());
+        foreign.Void("Cliente se arrepintió", Cashier, Now);
+
+        Assert.Throws<InvalidOperationException>(() => session.RegisterVoid(foreign, Now));
+        Assert.Equal(0, session.VoidedCount);
+        Assert.Equal(1, session.Version);
     }
 
     [Fact]

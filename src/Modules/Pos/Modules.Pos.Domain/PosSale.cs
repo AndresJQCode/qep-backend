@@ -30,7 +30,7 @@ public sealed class PosSale
 
     public MemberId CashierId { get; private set; }
 
-    /// <summary>Vacío hasta AssignNumber, que corre adentro de la transacción (decisión P2).</summary>
+    /// <summary>Vacío hasta AssignNumber, que corre adentro de la transacción, después de validar todo.</summary>
     public string SaleNumber { get; private set; }
 
     public Guid? CustomerId { get; private set; }
@@ -211,6 +211,13 @@ public sealed class PosSale
                     throw new PosDomainException(
                         "pos.sale.tendered_only_for_cash", "Only a cash payment carries a tendered amount.");
                 }
+
+                // Antes de sumar: dos importes enormes desbordarían decimal (500 en vez de 422).
+                if (amount > total)
+                {
+                    throw new PosDomainException(
+                        "pos.sale.payment_exceeds_total", "A card or transfer gives no change.");
+                }
             }
         }
 
@@ -226,8 +233,8 @@ public sealed class PosSale
 
         if (total == 0)
         {
-            // Regla 8: la única venta cuyo Cash guarda 0. Cualquier billete dejaría un ChangeAmount
-            // igual al billete, que el arqueo no distingue de un vuelto real (decisión 46).
+            // Con total 0 es la única venta cuyo Cash guarda 0. Cualquier billete dejaría un
+            // ChangeAmount igual al billete, que el arqueo no distingue de un vuelto real.
             if (cash is null || cash.Tendered!.Value > 0)
             {
                 throw new PosDomainException(

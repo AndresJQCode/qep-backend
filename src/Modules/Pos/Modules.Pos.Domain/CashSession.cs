@@ -140,6 +140,14 @@ public sealed class CashSession
     {
         EnsureOpen("pos.session.not_open", "The cash session is not open.");
         EnsureOwns(sale);
+
+        // Una venta anulada ya no entra al arqueo. No se detecta el doble registro de una venta
+        // completada: la venta no guarda si ya fue contada, y el handler la registra una sola vez.
+        if (sale.Status != PosSaleStatus.Completed)
+        {
+            throw new InvalidOperationException($"Sale '{sale.Id}' is not completed and cannot be registered.");
+        }
+
         Accumulate(sale, +1);
         SalesCount++;
         Touch(at);
@@ -153,6 +161,13 @@ public sealed class CashSession
     {
         EnsureOpen("pos.sale.void_session_closed", "The sale belongs to a closed cash session.");
         EnsureOwns(sale);
+
+        // Restar una venta que sigue completada dejaría el arqueo bajo lo que de verdad entró.
+        if (sale.Status != PosSaleStatus.Voided)
+        {
+            throw new InvalidOperationException($"Sale '{sale.Id}' is not voided and cannot be unregistered.");
+        }
+
         Accumulate(sale, -1);
         SalesCount--;
         VoidedCount++;
@@ -167,7 +182,7 @@ public sealed class CashSession
         }
     }
 
-    // Lo aplicado por medio: en Cash es cashDue, no el billete (Review Focus 1).
+    // Lo aplicado por medio: en Cash es lo aplicado al total (recibido menos cambio), no el billete.
     private void Accumulate(PosSale sale, int sign)
     {
         SalesTotal += sign * sale.Total;

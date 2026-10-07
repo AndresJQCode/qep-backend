@@ -74,8 +74,8 @@ public sealed class PosSaleTests
             sale.TaxBreakdown());
     }
 
-    // Review Focus 2: addProduct sólo acumula sobre la línea sin descuento, así que el mismo
-    // producto puede llegar en dos líneas.
+    // El carrito sólo acumula cantidad sobre la línea sin descuento, así que el mismo producto
+    // puede llegar en dos líneas.
     [Fact]
     public void TheSameProductOnTwoLinesKeepsBothLines()
     {
@@ -165,6 +165,18 @@ public sealed class PosSaleTests
             [Cash(5_000m)]));
 
         Assert.Equal("pos.sale.tendered_invalid", error.Code);
+    }
+
+    // Dos importes enormes sumados desbordarían decimal (500); cada uno se compara con el total antes.
+    [Fact]
+    public void HugeCardAmountsAreRejectedByTheDomainNotByAnOverflow()
+    {
+        var huge = 50_000_000_000_000_000_000_000_000_000m;
+
+        var error = Assert.Throws<PosDomainException>(() =>
+            Sale(OpenSession(), payments: [Card(huge), Card(huge)]));
+
+        Assert.Equal("pos.sale.payment_exceeds_total", error.Code);
     }
 
     [Fact]
