@@ -77,10 +77,17 @@ public static class AuthorizationCatalogEndpoints
         return Results.Ok(new EffectivePermissionsResponse(tenantId, subjectId, permissions));
     }
 
-    private static IResult GetCatalogAsync(
+    // Spec 2026-10-07, «Catálogo de roles filtrado»: con el tenant en tenancy.tenants, saca de
+    // permissions y de cada roles[].permissions lo que el enmascarado descartaría. No se filtran
+    // /authorization/roles ni EnsureKnownPermissions: son lo guardado, y si el módulo vuelve el rol
+    // vuelve a conceder lo que concedía. CatalogVersion no cambia: describe el catálogo del build.
+    private static async Task<IResult> GetCatalogAsync(
         Guid tenantId,
         IExecutionContext executionContext,
-        IRoleCatalog roleCatalog)
+        IRoleCatalog roleCatalog,
+        ITenantModules tenantModules,
+        ModuleEntitlementMask entitlementMask,
+        CancellationToken cancellationToken)
     {
         if (executionContext.TenantId != new TenantId(tenantId))
         {
@@ -88,6 +95,9 @@ public static class AuthorizationCatalogEndpoints
                 "authorization.denied",
                 "The subject cannot read the authorization catalog for this tenant.");
         }
+
+        var modules = await tenantModules.FindAsync(tenantId, cancellationToken);
+        bool Offered(string permission) => modules is null || entitlementMask.Allows(permission, modules);
 
         return Results.Ok(new AuthorizationCatalogResponse(
             roleCatalog.CatalogVersion,
@@ -98,9 +108,13 @@ public static class AuthorizationCatalogEndpoints
                     role.Description,
                     role.Category,
                     role.RiskLevel,
-                    role.Permissions.OrderBy(permission => permission, StringComparer.Ordinal).ToArray()))
+                    role.Permissions
+                        .Where(Offered)
+                        .OrderBy(permission => permission, StringComparer.Ordinal)
+                        .ToArray()))
                 .ToArray(),
             roleCatalog.ListPermissions()
+                .Where(permission => Offered(permission.Permission))
                 .Select(permission => new PermissionCatalogItemResponse(
                     permission.Permission,
                     permission.DisplayName,

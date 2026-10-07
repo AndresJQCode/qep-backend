@@ -93,6 +93,46 @@ public sealed class TenantModulesQuotationsApiTests
         Assert.Null(row.OrderStatus);
     }
 
+    // Spec 2026-10-07, «Catálogo de roles filtrado»: ni en permissions ni en los roles. El editor de
+    // roles sólo pinta checkboxes del catálogo, así que un permiso de un módulo apagado no se ofrece.
+    [Fact]
+    public async Task TheRoleCatalogHidesThePermissionsOfAModuleThatIsOff()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.AdvisorshipRead]);
+        using var _ = client;
+        Assert.Contains(
+            (await CatalogAsync(client, tenantId)).Permissions,
+            permission => permission.Permission == QuotationsPermissions.QuotationRead);
+
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Quotations);
+
+        var catalog = await CatalogAsync(client, tenantId);
+        Assert.DoesNotContain(
+            catalog.Permissions,
+            permission => permission.Permission.StartsWith("quotations.", StringComparison.Ordinal));
+        Assert.All(catalog.Roles, role => Assert.DoesNotContain(
+            role.Permissions, permission => permission.StartsWith("quotations.", StringComparison.Ordinal)));
+        Assert.Contains(
+            catalog.Permissions, permission => permission.Permission == CustomersPermissions.CustomerRead);
+    }
+
+    private static async Task<CatalogDto> CatalogAsync(HttpClient client, Guid tenantId)
+    {
+        var catalog = await client.GetFromJsonAsync<CatalogDto>(
+            $"/api/v1/tenants/{tenantId}/authorization/catalog", TestContext.Current.CancellationToken);
+        Assert.NotNull(catalog);
+        return catalog;
+    }
+
+    private sealed record CatalogDto(string CatalogVersion, CatalogRoleDto[] Roles, CatalogPermissionDto[] Permissions);
+
+    private sealed record CatalogRoleDto(string Role, string[] Permissions);
+
+    private sealed record CatalogPermissionDto(string Permission);
+
     private static async Task<QuotationsPageResponse> ListAsync(HttpClient client, Guid tenantId)
     {
         var page = await client.GetFromJsonAsync<QuotationsPageResponse>(
