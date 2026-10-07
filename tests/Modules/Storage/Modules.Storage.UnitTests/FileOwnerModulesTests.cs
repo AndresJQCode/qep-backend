@@ -20,6 +20,14 @@ public sealed class FileOwnerModulesTests
             FileOwnerModules.ByOwnerType.Keys.Order());
     }
 
+    // El mapa se lee en cada request y no cambia nunca: congelado, no un Dictionary mutable.
+    [Fact]
+    public void TheMapIsFrozen()
+    {
+        Assert.IsType<System.Collections.Frozen.FrozenDictionary<FileOwnerType, TenantModuleKey?>>(
+            FileOwnerModules.ByOwnerType, exactMatch: false);
+    }
+
     [Fact]
     public void ProductsAreCatalogAndProofsAreOrdersAndTheRestIsCore()
     {

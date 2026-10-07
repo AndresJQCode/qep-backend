@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using Modules.Storage.Domain;
 using Modules.Tenancy.Application;
 using TenantModuleKey = Modules.Tenancy.Domain.TenantModuleKey;
@@ -25,7 +26,7 @@ public static class FileOwnerModules
             [FileOwnerType.Product] = TenantModuleKeys.Catalog,
             [FileOwnerType.PaymentProof] = TenantModuleKeys.Orders,
             [FileOwnerType.Tenant] = null,
-        };
+        }.ToFrozenDictionary();
 
     public static TenantModuleKey? ModuleOf(FileOwnerType ownerType) => ByOwnerType[ownerType];
 
