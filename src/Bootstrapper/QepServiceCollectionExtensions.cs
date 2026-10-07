@@ -203,6 +203,17 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
             DeleteCompanyHandler>();
+        // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demas: un handler olvidado
+        // responde 500 y CompositionRootTests lo detecta.
+        services.AddScoped<
+            IQueryHandler<GetRegisterContextQuery, RegisterContextResponse>,
+            GetRegisterContextHandler>();
+        services.AddScoped<
+            ICommandHandler<OpenCashSessionCommand, PosOpenSessionResponse>,
+            OpenCashSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<CloseCashSessionCommand, PosSessionSummaryResponse>,
+            CloseCashSessionHandler>();
         // CLI. Los siete van aca por la misma razon que los de empresas: el dispatcher resuelve
         // por registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y
         // falla recien en runtime con 500 al no encontrar handler.
@@ -437,6 +448,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
+        services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
