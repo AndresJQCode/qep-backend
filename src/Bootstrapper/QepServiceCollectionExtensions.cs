@@ -948,9 +948,8 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Customers]));
         // Medio y no bajo, mismo criterio que PriceChangeRead: es la venta de cada asesor vista
         // por otro. No abre ningún reporte por sí solo; amplía el alcance de los de pedidos y
-        // cotizaciones, que sin él muestran sólo lo de quien consulta.
-        // Spec 2026-10-07: sólo reporting. No abre ningún reporte por sí solo; amplía los de pedidos
-        // y cotizaciones, que ya están enmascarados por su fuente.
+        // cotizaciones, que sin él muestran sólo lo de quien consulta. Spec 2026-10-07: exige sólo
+        // reporting, porque esos reportes ya quedan enmascarados por su fuente.
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.AllAdvisorsRead,
             "Ver reportes de todos los asesores",

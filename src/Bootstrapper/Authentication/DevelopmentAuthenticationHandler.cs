@@ -3,26 +3,32 @@ using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
 
 namespace Bootstrapper.Authentication;
 
+// Los handlers de autenticación se resuelven por request, así que admiten dependencias scoped como
+// ITenantModules.
 internal sealed class DevelopmentAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
-    UrlEncoder encoder)
+    UrlEncoder encoder,
+    ITenantModules tenantModules,
+    ModuleEntitlementMask entitlementMask)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string AuthenticationSchemeName = "Development";
 
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var subjectId = Request.Headers["X-Subject-Id"].ToString();
         var tenantId = Request.Headers["X-Tenant-Id"].ToString();
-        if (!Guid.TryParse(subjectId, out _) || !Guid.TryParse(tenantId, out _))
+        if (!Guid.TryParse(subjectId, out _) || !Guid.TryParse(tenantId, out var parsedTenantId))
         {
-            return Task.FromResult(AuthenticateResult.Fail(
-                "Development requests require valid X-Subject-Id and X-Tenant-Id headers."));
+            // Sin tenant no hay consulta de módulos: el request ni siquiera autentica.
+            return AuthenticateResult.Fail(
+                "Development requests require valid X-Subject-Id and X-Tenant-Id headers.");
         }
 
         List<Claim> claims =
@@ -30,7 +36,14 @@ internal sealed class DevelopmentAuthenticationHandler(
             new(QepClaimTypes.SubjectId, subjectId),
             new(QepClaimTypes.TenantId, tenantId)
         ];
-        foreach (var permission in ResolvePermissions())
+
+        // Spec 2026-10-07, «Cuándo el stub enmascara»: el criterio es si el tenant tiene fila en
+        // tenancy.tenants. Sin fila (tenant simulado por casi todas las suites de Catalog, Customers
+        // y Companies) los permisos quedan como vienen; con fila, se enmascaran igual que por cookie.
+        var requested = ResolvePermissions();
+        var modules = await tenantModules.FindAsync(parsedTenantId, Context.RequestAborted);
+        var permissions = modules is null ? requested : entitlementMask.Apply(requested, modules);
+        foreach (var permission in permissions)
         {
             claims.Add(new Claim(QepClaimTypes.Permission, permission));
         }
@@ -49,8 +62,8 @@ internal sealed class DevelopmentAuthenticationHandler(
 
         var principal = new ClaimsPrincipal(
             new ClaimsIdentity(claims, AuthenticationSchemeName));
-        return Task.FromResult(AuthenticateResult.Success(
-            new AuthenticationTicket(principal, AuthenticationSchemeName)));
+        return AuthenticateResult.Success(
+            new AuthenticationTicket(principal, AuthenticationSchemeName));
     }
 
     // Los permisos vienen del header opcional X-Permissions (separados por coma) para

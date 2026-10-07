@@ -47,6 +47,55 @@ public sealed class TenantModulesApiTests
         Assert.Empty(await RowsAsync(factory, tenantId));
     }
 
+    // Criterio de "Cuándo el stub enmascara": con fila en tenancy.tenants, enmascara.
+    [Fact]
+    public async Task TheStubMasksARegisteredTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(factory, ownerId, tenantId, "catalog.product.read", "tenancy.settings.read");
+        Assert.Contains("catalog.product.read", await EffectivePermissionsAsync(client, tenantId));
+
+        await DisableAsync(factory, tenantId, TenantModuleKeys.Catalog);
+
+        var permissions = await EffectivePermissionsAsync(client, tenantId);
+        Assert.DoesNotContain("catalog.product.read", permissions);
+        Assert.Contains("tenancy.settings.read", permissions);
+    }
+
+    [Fact]
+    public async Task WithTheSwitchOffTheOwnerOnlyKeepsCorePermissions()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), grantDefaultModulesOnSignup: false);
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(
+            factory, ownerId, tenantId, "tenancy.settings.read", "catalog.product.read", "quotations.quotation.read");
+
+        Assert.Equal(["tenancy.settings.read"], await EffectivePermissionsAsync(client, tenantId));
+    }
+
+    // Sin fila (tenant simulado): no enmascara, para no romper las suites que nunca registran tenant.
+    [Fact]
+    public async Task TheStubLeavesASimulatedTenantAlone()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        using var client = StubClient(factory, Guid.CreateVersion7(), tenantId, "catalog.product.read");
+
+        Assert.Equal(["catalog.product.read"], await EffectivePermissionsAsync(client, tenantId));
+    }
+
+    internal static async Task<string[]> EffectivePermissionsAsync(HttpClient client, Guid tenantId)
+    {
+        var response = await client.GetFromJsonAsync<EffectivePermissionsDto>(
+            $"/api/v1/tenants/{tenantId}/authorization/me", TestContext.Current.CancellationToken);
+        Assert.NotNull(response);
+        return response.Permissions;
+    }
+
     internal static async Task<(Guid TenantId, Guid OwnerUserId)> RegisterAsync(QepApiFactory factory)
     {
         using var bootstrap = StubClient(factory, Guid.CreateVersion7(), Guid.CreateVersion7());
@@ -122,6 +171,8 @@ public sealed class TenantModulesApiTests
     }
 
     private sealed record RegisteredDto(Guid TenantId, Guid OwnerUserId);
+
+    private sealed record EffectivePermissionsDto(Guid TenantId, string[] Permissions);
 
     internal sealed class QepApiFactory(string connectionString, bool? grantDefaultModulesOnSignup = null)
         : WebApplicationFactory<Program>
