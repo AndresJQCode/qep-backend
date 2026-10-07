@@ -1,5 +1,8 @@
+using BuildingBlocks.Application;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Storage.UnitTests;
 
@@ -59,6 +62,51 @@ public sealed class IssueDownloadUrlHandlerTests
             result.Url);
     }
 
+    [Fact]
+    public async Task AProductImageWithCatalogOffIsForbidden()
+    {
+        var image = AvailableFile(FileOwnerType.Product);
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            HandlerFor(image, new RecordingStorageAuditPublisher(), FixedTenantModules.AllBut(TenantModuleKeys.Catalog))
+                .HandleAsync(new IssueDownloadUrlCommand(TenantId, image.Id.Value), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.module_not_enabled", error.Code);
+    }
+
+    // El logo es núcleo: se descarga aunque el tenant no tenga ningún módulo.
+    [Fact]
+    public async Task ATenantLogoIsSignedWithNoModules()
+    {
+        var logo = AvailableFile(FileOwnerType.Tenant);
+
+        var result = await HandlerFor(logo, new RecordingStorageAuditPublisher(), new FixedTenantModules(TenantModuleSet.Empty))
+            .HandleAsync(new IssueDownloadUrlCommand(TenantId, logo.Id.Value), TestContext.Current.CancellationToken);
+
+        Assert.StartsWith(SigningObjectStorage.SignedBaseUrl, result.Url, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ASimulatedTenantStillGetsTheUrlOfAProof()
+    {
+        var proof = AvailablePaymentProof();
+
+        var result = await HandlerFor(proof, new RecordingStorageAuditPublisher(), FixedTenantModules.Simulated)
+            .HandleAsync(new IssueDownloadUrlCommand(TenantId, proof.Id.Value), TestContext.Current.CancellationToken);
+
+        Assert.StartsWith(SigningObjectStorage.SignedBaseUrl, result.Url, StringComparison.Ordinal);
+    }
+
+    private static FileResource AvailableFile(FileOwnerType ownerType)
+    {
+        var file = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.CreateVersion7(), ownerType,
+            "archivo.pdf", "application/pdf", 2048, $"staging/tenants/{TenantId:N}/archivo", Now);
+        file.CompleteUpload("checksum", 2048, Now);
+        file.MarkClean(Now);
+        return file;
+    }
+
     private static FileResource AvailablePaymentProof()
     {
         var proof = FileResource.CreatePendingUpload(
@@ -70,9 +118,10 @@ public sealed class IssueDownloadUrlHandlerTests
     }
 
     private static IssueDownloadUrlHandler HandlerFor(
-        FileResource resource, RecordingStorageAuditPublisher audit) =>
+        FileResource resource, RecordingStorageAuditPublisher audit, ITenantModules? modules = null) =>
         new(
             new InMemoryFileResourceRepository(resource),
+            modules ?? FixedTenantModules.Simulated,
             new SigningObjectStorage(),
             new FixedPublicObjectStorage(),
             new CountingStorageUnitOfWork(),

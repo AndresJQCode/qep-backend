@@ -11,6 +11,7 @@ public sealed record CancelUploadResult(bool Cancelled);
 
 public sealed class CancelUploadHandler(
     IFileResourceRepository repository,
+    ITenantModules tenantModules,
     IObjectStorage objectStorage,
     IStorageUnitOfWork unitOfWork,
     IStorageAuditPublisher auditPublisher,
@@ -32,6 +33,10 @@ public sealed class CancelUploadHandler(
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");
         }
+
+        // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
+        // de cualquier otra regla o efecto.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
 
         var now = clock.UtcNow;
         await objectStorage.DeleteAsync(resource.StorageKey, cancellationToken);

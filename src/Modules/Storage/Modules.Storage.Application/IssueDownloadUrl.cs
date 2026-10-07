@@ -14,6 +14,7 @@ public sealed record IssueDownloadUrlCommand(
 
 public sealed class IssueDownloadUrlHandler(
     IFileResourceRepository repository,
+    ITenantModules tenantModules,
     IObjectStorage objectStorage,
     IPublicObjectStorage publicObjectStorage,
     IStorageUnitOfWork unitOfWork,
@@ -36,6 +37,10 @@ public sealed class IssueDownloadUrlHandler(
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");
         }
+
+        // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
+        // de cualquier otra regla o efecto.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
 
         // Sólo un recurso disponible se puede descargar (invariante de la capacidad).
         resource.EnsureDownloadable();
