@@ -23,7 +23,7 @@ public sealed class GetOrdersExportLayoutHandlerTests
 
         Assert.Equal(TenantId, dto.TenantId);
         Assert.Equal(1, dto.Version);
-        Assert.Equal(48, dto.Columns.Count);
+        Assert.Equal(49, dto.Columns.Count);
         Assert.All(dto.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
@@ -63,6 +63,9 @@ public sealed class GetOrdersExportLayoutHandlerTests
             dto.Columns[46]);
         Assert.Equal(
             new OrdersExportColumnDto("Catalog", "order_total", "Total facturado", 48, true, "Total facturado", null, true),
+            dto.Columns[47]);
+        Assert.Equal(
+            new OrdersExportColumnDto("Catalog", "retention_amount", "Retencion", 49, true, "Retencion", null, true),
             dto.Columns[^1]);
     }
 
@@ -128,8 +131,8 @@ public sealed class GetOrdersExportLayoutHandlerTests
         var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dto.Version);
-        // 48 del catálogo (desde el ajuste 2026-10-05) + 1 fija.
-        Assert.Equal(49, dto.Columns.Count);
+        // 49 del catálogo (desde el ajuste 2026-10-06) + 1 fija.
+        Assert.Equal(50, dto.Columns.Count);
         Assert.Equal(new OrdersExportColumnDto("Fixed", null, null, null, null, "Tipo Doc", "FV", true), dto.Columns[0]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "email", "Email", 19, true, "Correo", null, true), dto.Columns[1]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), dto.Columns[2]);

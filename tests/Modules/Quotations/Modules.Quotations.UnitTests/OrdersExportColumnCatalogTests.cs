@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 48 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 49 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -21,7 +21,7 @@ public sealed class OrdersExportColumnCatalogTests
         "unit_price_without_tax", "order_date", "customer_name", "customer_identification",
         "bank_account", "proof_amount_total", "tax_rate", "company_tax_id", "coordinadora_city",
         "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5",
-        "carrier", "order_total",
+        "carrier", "order_total", "retention_amount",
     ];
 
     private static readonly string[] Headers =
@@ -37,13 +37,13 @@ public sealed class OrdersExportColumnCatalogTests
         "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
         "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Ciudad Coordinadora",
         "Forma de pago 1", "Forma de pago 2", "Forma de pago 3", "Forma de pago 4", "Forma de pago 5",
-        "Transportadora", "Total facturado",
+        "Transportadora", "Total facturado", "Retencion",
     ];
 
     [Fact]
-    public void HasTheFortyEightColumnsOfTheSpecInItsOrder()
+    public void HasTheFortyNineColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(48, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(49, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -157,15 +157,29 @@ public sealed class OrdersExportColumnCatalogTests
 
     // Ajuste 2026-10-05: lo facturado del pedido (Quotation.Total), repetido en cada línea. Al final,
     // como toda columna nueva, para no mover lo que ya sale; visible por decisión del owner, así que
-    // también la ganan los layouts guardados.
+    // también la ganan los layouts guardados. Desde el ajuste 2026-10-06 la sigue "retention_amount".
     [Fact]
-    public void OrderTotalIsAppendedAtTheEndVisibleByDefault()
+    public void OrderTotalIsAppendedAfterTheCarrierVisibleByDefault()
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("order_total", "Total facturado", 18),
-            OrdersExportColumnCatalog.Columns[^1]);
+            OrdersExportColumnCatalog.Columns[47]);
         Assert.Equal(47, OrdersExportColumnCatalog.IndexOf("order_total"));
         Assert.Equal(37, OrdersExportColumnCatalog.IndexOf("proof_amount_total"));
+    }
+
+    // Ajuste 2026-10-06: la retención del pedido (Quotation.RetentionAmount), repetida en cada línea,
+    // justo detrás de "Total facturado": con las dos el ERP cuadra lo facturado contra lo que de
+    // verdad se cobra. Visible por defecto, como "order_total", así que también la ganan los layouts
+    // guardados.
+    [Fact]
+    public void RetentionAmountIsAppendedAtTheEndVisibleByDefault()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("retention_amount", "Retencion", 16),
+            OrdersExportColumnCatalog.Columns[^1]);
+        Assert.Equal(48, OrdersExportColumnCatalog.IndexOf("retention_amount"));
+        Assert.Equal(OrdersExportColumnCatalog.IndexOf("order_total") + 1, OrdersExportColumnCatalog.IndexOf("retention_amount"));
     }
 
     // Las llaves son identificadores: únicas, y el tenant no puede inventar ni repetir una.
@@ -188,7 +202,7 @@ public sealed class OrdersExportColumnCatalogTests
                 .Where(column => column.DefaultVisible)
                 .Select(column => new ExportColumn(column.DefaultHeader, column.Width)),
             OrdersExportProcessor.Columns);
-        Assert.Equal(41, OrdersExportProcessor.Columns.Count);
+        Assert.Equal(42, OrdersExportProcessor.Columns.Count);
     }
 
     // Review Focus 5: la llave se compara ordinal. "Company" no existe.

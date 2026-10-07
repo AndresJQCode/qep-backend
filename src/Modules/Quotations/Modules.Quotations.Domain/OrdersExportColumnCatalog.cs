@@ -101,6 +101,13 @@ public static class OrdersExportColumnCatalog
         // final de todo layout guardado —también el de la hoja "MIGRACION 1" del ERP—, y esa
         // columna de más en los Excel que ya existen está aceptada.
         new("order_total", "Total facturado", 18),
+        // Ajuste 2026-10-06: la retención en la fuente del pedido (Quotation.RetentionAmount),
+        // repetida en cada línea, justo detrás de "Total facturado". Con las dos el ERP cuadra lo
+        // facturado contra lo que de verdad se cobra (NetTotal = Total − RetentionAmount): la
+        // retención no rebaja la factura, pero el cliente no la paga en efectivo. Sin retención sale
+        // 0, no vacía: el dominio la deja en 0 y ese 0 dice la verdad. Visible por defecto, mismo
+        // criterio que "order_total": Effective la agrega al final de todo layout guardado.
+        new("retention_amount", "Retencion", 16),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
