@@ -64,7 +64,7 @@ public sealed class TenantModuleDefaultsTests
 
         var validator = provider.GetRequiredService<IStartupValidator>();
 
-        Assert.ThrowsAny<Exception>(validator.Validate);
+        Assert.Throws<InvalidOperationException>(validator.Validate);
     }
 
     [Fact]
