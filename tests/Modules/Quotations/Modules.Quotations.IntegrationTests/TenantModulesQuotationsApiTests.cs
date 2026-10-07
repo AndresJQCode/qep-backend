@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Customers.Application;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -113,10 +114,33 @@ public sealed class TenantModulesQuotationsApiTests
         Assert.DoesNotContain(
             catalog.Permissions,
             permission => permission.Permission.StartsWith("quotations.", StringComparison.Ordinal));
+        Assert.NotEmpty(catalog.Roles);
         Assert.All(catalog.Roles, role => Assert.DoesNotContain(
             role.Permissions, permission => permission.StartsWith("quotations.", StringComparison.Ordinal)));
         Assert.Contains(
             catalog.Permissions, permission => permission.Permission == CustomersPermissions.CustomerRead);
+    }
+
+    [Fact]
+    public async Task TheOrdersExportLayoutNeedsOrders()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.SettingsRead]);
+        using var _ = client;
+        var url = $"/api/v1/tenants/{tenantId}/orders-export-layout";
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync(url, TestContext.Current.CancellationToken)).StatusCode);
+
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Orders);
+
+        var response = await client.GetAsync(url, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var problem = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("tenancy.module_not_enabled", problem.RootElement.GetProperty("code").GetString());
     }
 
     private static async Task<CatalogDto> CatalogAsync(HttpClient client, Guid tenantId)

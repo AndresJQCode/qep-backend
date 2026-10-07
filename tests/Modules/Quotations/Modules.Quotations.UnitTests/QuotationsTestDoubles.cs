@@ -897,3 +897,24 @@ internal sealed class StubQuotationGeographyLookup(
             cityIds.Where(_coordinadoraNames.ContainsKey).Distinct().ToDictionary(id => id, id => _coordinadoraNames[id]));
     }
 }
+
+/// <summary>El puerto de módulos con una respuesta fija; <c>null</c> = tenant simulado por el stub
+/// (spec 2026-10-07), que no se bloquea. Es el default de los constructores de prueba para que los
+/// casos que no son sobre módulos no cambien de significado. Cuenta las consultas para que una
+/// prueba de guard pueda afirmar que el puerto sí se consultó (un 403 por otra vía no la engaña).
+/// Cada propiedad estática devuelve una instancia nueva: el contador no se comparte entre pruebas.</summary>
+internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
+{
+    public static FixedTenantModules Simulated => new(null);
+
+    public static FixedTenantModules WithoutOrders => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders])));
+
+    public int FindCalls { get; private set; }
+
+    public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(set);
+    }
+}
