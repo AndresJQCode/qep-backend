@@ -183,6 +183,51 @@ internal sealed class FakeCashierLookup : IPosCashierLookup
         Task.FromResult(Names.TryGetValue(membershipId, out var name) ? name : null);
 }
 
+internal sealed class FakeProductLookup : IPosProductLookup
+{
+    public List<(Guid TenantId, PosProductRef Product)> Products { get; } = [];
+
+    public PosProductRef Add(string code, string name, decimal? price, int tax, bool active = true, Guid? id = null, Guid? tenantId = null)
+    {
+        var product = new PosProductRef(id ?? Guid.CreateVersion7(), code, name, active, price, tax, null);
+        Products.Add((tenantId ?? PosFixtures.TenantId, product));
+        return product;
+    }
+
+    public void Replace(PosProductRef product)
+    {
+        var index = Products.FindIndex(entry => entry.Product.Id == product.Id);
+        Products[index] = (Products[index].TenantId, product);
+    }
+
+    // Como el adaptador: sólo activos en la búsqueda.
+    public Task<(IReadOnlyList<PosProductRef> Items, int Total)> SearchAsync(
+        Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        var matches = Products
+            .Where(entry => entry.TenantId == tenantId && entry.Product.IsActive)
+            .Select(entry => entry.Product)
+            .Where(product => string.IsNullOrWhiteSpace(search)
+                || product.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || product.Code.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return Task.FromResult<(IReadOnlyList<PosProductRef>, int)>(
+            (matches.Skip((page - 1) * pageSize).Take(pageSize).ToList(), matches.Count));
+    }
+
+    public Task<PosProductRef?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
+        Task.FromResult(Products
+            .Where(entry => entry.TenantId == tenantId && string.Equals(entry.Product.Code, code, StringComparison.Ordinal))
+            .Select(entry => entry.Product)
+            .SingleOrDefault());
+
+    public Task<IReadOnlyDictionary<Guid, PosProductRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, PosProductRef>>(Products
+            .Where(entry => entry.TenantId == tenantId && productIds.Contains(entry.Product.Id))
+            .ToDictionary(entry => entry.Product.Id, entry => entry.Product));
+}
+
 /// <summary>Todo lo que un handler del POS necesita, con el cajero del ejemplo ya miembro activo.</summary>
 internal sealed class PosTestBed
 {
@@ -212,6 +257,8 @@ internal sealed class PosTestBed
 
     public FakeCashierLookup Cashiers { get; } = new();
 
+    public FakeProductLookup Products { get; } = new();
+
     public FakeClock Clock { get; } = new(PosFixtures.Now);
 
     public FakeTenantClock TenantClock { get; } = new(PosFixtures.Now);
@@ -227,6 +274,14 @@ internal sealed class PosTestBed
         var session = PosFixtures.OpenSession(openingFloat);
         Sessions.Add(session);
         return session;
+    }
+
+    /// <summary>Los tres productos del ejemplo trabajado, con sus ids de PosFixtures.</summary>
+    public void AddWorkedExampleProducts()
+    {
+        Products.Add("SH-400", "Shampoo 400 ml", 11_900m, 19, id: PosFixtures.Shampoo);
+        Products.Add("AV-01", "Avena granel (kg)", 5_000m, 0, id: PosFixtures.Avena);
+        Products.Add("JB-03", "Jabón", 2_990m, 5, id: PosFixtures.Jabon);
     }
 
     public PosCompanyRef AddCompany(string name = "Origen Botánico SAS", bool active = true, Guid? tenantId = null)

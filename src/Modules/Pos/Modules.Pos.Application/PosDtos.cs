@@ -61,6 +61,7 @@ public sealed record PosSessionSummaryResponse(
 
 public sealed record PosPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, int Total);
 
+/// <param name="TaxPercentage">Siempre presente: 0 sin tasa o con tasa inexistente (PosProductRef.TaxPercentage es int), igual que el tipo del frontend. Sólo la línea NotFound del preview lo lleva en null.</param>
 /// <param name="UnsellableReason">Inactive, PriceMissing o NotFound (este último sólo en el preview). Un producto no vendible se muestra marcado en vez de esconderse: el cajero escanearía un código existente y vería "no existe".</param>
 public sealed record PosProductResponse(
     Guid Id,
@@ -94,7 +95,7 @@ public sealed record PosPreviewLineResponse(
 /// Existe para que el frontend nunca calcule IVA. Una línea no vendible vuelve marcada y fuera de
 /// los totales, no como 422: el carrito tiene que poder mostrar qué está mal.
 /// </summary>
-/// <param name="ZeroTotalNotAllowed">Total 0 con al menos una línea vendible y sin pos.sale.discount: la pantalla bloquea "Cobrar" con el motivo; sólo el POST responde 403.</param>
+/// <param name="ZeroTotalNotAllowed">Total 0 sin pos.sale.discount (también con todas las líneas no vendibles, que es lo que da el spec): la pantalla bloquea "Cobrar" con el motivo; sólo el POST responde 403.</param>
 public sealed record PosPreviewResponse(
     IReadOnlyList<PosPreviewLineResponse> Lines,
     decimal Subtotal,
