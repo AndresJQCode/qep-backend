@@ -21,6 +21,10 @@ internal sealed class InMemoryFileResourceRepository(params FileResource[] resou
         IReadOnlyCollection<FileResourceId> ids, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Lo que el handler pidió excluir en la última búsqueda (spec 2026-10-07). El filtro
+    /// es SQL y lo cubre integración; acá se fija qué le pide el handler al repositorio.</summary>
+    public IReadOnlyCollection<FileOwnerType>? LastExcludedOwnerTypes { get; private set; }
+
     public Task<(IReadOnlyList<FileResource> Items, int TotalCount)> SearchAsync(
         Guid tenantId,
         string? search,
@@ -29,11 +33,15 @@ internal sealed class InMemoryFileResourceRepository(params FileResource[] resou
         string? category,
         string? tag,
         FileOwnerFilter? owner,
+        IReadOnlyCollection<FileOwnerType> excludedOwnerTypes,
         int page,
         int pageSize,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken)
+    {
+        LastExcludedOwnerTypes = excludedOwnerTypes;
         // Todo lo sembrado, sin filtrar: los filtros son SQL y los cubre integración.
-        Task.FromResult<(IReadOnlyList<FileResource>, int)>((resources, resources.Length));
+        return Task.FromResult<(IReadOnlyList<FileResource>, int)>((resources, resources.Length));
+    }
 }
 
 /// <summary>El bucket privado: sólo firma descargas, con la clave a la vista para que la prueba vea
