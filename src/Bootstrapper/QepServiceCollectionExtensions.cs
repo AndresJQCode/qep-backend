@@ -29,6 +29,7 @@ using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
+using Modules.Pos.Application;
 using Modules.Pos.Infrastructure;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
@@ -641,7 +642,15 @@ public static class QepServiceCollectionExtensions
                 ReportingPermissions.AllAdvisorsRead,
                 // Solo admin: el log expone trazas y mensajes crudos de todos los modulos.
                 PlatformPermissions.RequestLogRead,
-                PlatformPermissions.RequestLogPurge
+                PlatformPermissions.RequestLogPurge,
+                // Punto de venta (spec 2026-10-07): admin tiene los seis, incluidos descontar y
+                // anular, que el cajero no tiene.
+                PosPermissions.SaleRead,
+                PosPermissions.SaleCreate,
+                PosPermissions.SaleVoid,
+                PosPermissions.SaleDiscount,
+                PosPermissions.RegisterOperate,
+                PosPermissions.RegisterRead
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -716,6 +725,21 @@ public static class QepServiceCollectionExtensions
                 // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
                 // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
                 StoragePermissions.FileRead
+            ]));
+        // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
+        // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
+        // dibuja y el MVP no elige cliente. Un tenant que quiera cajeros con descuento hace un
+        // rol custom.
+        services.AddSingleton(new RoleDefinition(
+            "cashier",
+            "Cajero",
+            "Vende en el punto de venta y abre y cierra su propia caja.",
+            "Tenancy",
+            "medium",
+            [
+                PosPermissions.SaleRead,
+                PosPermissions.SaleCreate,
+                PosPermissions.RegisterOperate
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -978,6 +1002,48 @@ public static class QepServiceCollectionExtensions
             "Platform",
             "high",
             RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleRead,
+            "Ver ventas y cierres de caja",
+            "Permite consultar las ventas del punto de venta y los cierres de caja propios.",
+            "Pos",
+            "low",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleCreate,
+            "Vender en caja",
+            "Permite registrar ventas en el punto de venta con la caja propia abierta.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleDiscount,
+            "Dar descuentos en caja",
+            "Permite dar descuentos por línea y cobrar ventas en $0 en el punto de venta.",
+            "Pos",
+            "high",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleVoid,
+            "Anular ventas de caja",
+            "Permite anular, con un motivo, una venta cuya caja sigue abierta.",
+            "Pos",
+            "high",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.RegisterOperate,
+            "Abrir y cerrar su caja",
+            "Permite abrir y cerrar la caja propia del punto de venta.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.RegisterRead,
+            "Ver todas las cajas y ventas",
+            "Permite consultar las cajas y las ventas de todos los cajeros del tenant.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
     }
 
     private static void AddAuthentication(
@@ -1212,7 +1278,25 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogRead))
             .AddPolicy(
                 PlatformPermissions.RequestLogPurge,
-                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogPurge));
+                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogPurge))
+            .AddPolicy(
+                PosPermissions.SaleRead,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleRead))
+            .AddPolicy(
+                PosPermissions.SaleCreate,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleCreate))
+            .AddPolicy(
+                PosPermissions.SaleVoid,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleVoid))
+            .AddPolicy(
+                PosPermissions.SaleDiscount,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleDiscount))
+            .AddPolicy(
+                PosPermissions.RegisterOperate,
+                policy => AddPermissionRequirement(policy, PosPermissions.RegisterOperate))
+            .AddPolicy(
+                PosPermissions.RegisterRead,
+                policy => AddPermissionRequirement(policy, PosPermissions.RegisterRead));
     }
 
     private static void AddPermissionRequirement(

@@ -145,6 +145,21 @@ public sealed class RoleApiTests
     }
 
     [Fact]
+    public async Task CreateWithTheCashierKeyIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = Manager(factory);
+
+        var response = await CreateAsync(client, "cashier", "Mi cajero");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        Assert.Contains("authorization.role.key_reserved", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CreateWithADuplicateKeyIsRejected()
     {
         await using var database = await StartDatabaseAsync();

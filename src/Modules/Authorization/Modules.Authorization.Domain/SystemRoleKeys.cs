@@ -17,8 +17,12 @@ public static class SystemRoleKeys
     public const string Advisor = "advisor";
     public const string Billing = "billing";
 
+    /// <summary>Rol de sistema del punto de venta (spec 2026-10-07). Reservado para que un custom
+    /// no lo pise en silencio en TenantRoleCatalog.</summary>
+    public const string Cashier = "cashier";
+
     public static readonly IReadOnlySet<string> All =
-        new HashSet<string>(StringComparer.Ordinal) { Admin, Advisor, Billing };
+        new HashSet<string>(StringComparer.Ordinal) { Admin, Advisor, Billing, Cashier };
 
     public static bool IsReserved(string key) => All.Contains(key);
 }

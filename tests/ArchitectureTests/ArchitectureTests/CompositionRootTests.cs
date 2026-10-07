@@ -6,6 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
+using Modules.Pos.Application;
+using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace ArchitectureTests;
 
@@ -160,12 +162,41 @@ public sealed class CompositionRootTests
             .Select(permission => permission.Permission));
     }
 
-    /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec; el spec
-    /// de POS sube este número cuando declare las suyas.</summary>
+    /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec de
+    /// entitlements más las 6 de POS.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheThirtyFiveConstants()
+    public void PermissionDiscoveryFindsTheFortyOneConstants()
     {
-        Assert.Equal(35, PermissionConstants().Length);
+        // +6 de PosPermissions (spec 2026-10-07).
+        Assert.Equal(41, PermissionConstants().Length);
+    }
+
+    /// <summary>
+    /// Spec POS, «Arquitectura»: los seis <c>pos.*</c> mapean exactamente a <c>[pos]</c>. La prueba
+    /// genérica sólo exige que <c>RequiredModules</c> no sea nulo, así que un <c>[]</c> o un módulo
+    /// equivocado pasarían sin esta.
+    /// </summary>
+    [Fact]
+    public void EveryPosPermissionRequiresExactlyThePosModule()
+    {
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        string[] posPermissions =
+        [
+            PosPermissions.SaleRead,
+            PosPermissions.SaleCreate,
+            PosPermissions.SaleVoid,
+            PosPermissions.SaleDiscount,
+            PosPermissions.RegisterOperate,
+            PosPermissions.RegisterRead,
+        ];
+
+        foreach (var permission in posPermissions)
+        {
+            var modules = definitions[permission].RequiredModules;
+            Assert.NotNull(modules);
+            Assert.Equal([ModuleKeys.Pos], modules.ToArray());
+        }
     }
 
     [Fact]

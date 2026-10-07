@@ -75,6 +75,23 @@ public sealed class RoleTests
         Assert.Equal("authorization.role.key_reserved", error.Code);
     }
 
+    // Spec 2026-10-07: `cashier` es rol de sistema desde POS. Un custom con esa clave pisaría al
+    // de sistema en TenantRoleCatalog sin avisar.
+    [Fact]
+    public void CreateRejectsTheCashierKey()
+    {
+        var error = Assert.Throws<AuthorizationDomainException>(() => Role.Create(
+            RoleId.New(),
+            Tenant,
+            "cashier",
+            "Mi cajero",
+            "Descripcion",
+            ["advisorship.read"],
+            DateTimeOffset.UnixEpoch));
+
+        Assert.Equal("authorization.role.key_reserved", error.Code);
+    }
+
     [Fact]
     public void CreateRequiresAtLeastOnePermission()
     {
