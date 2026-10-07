@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
@@ -14,6 +15,14 @@ public static class QepAuthenticationMode
     // integración conserven la auth por headers sin fricción. Ver docs/decisions/0001-development-auth-stub.md.
     public static bool UseDevelopmentStub(IConfiguration configuration, IHostEnvironment environment) =>
         configuration.GetValue("Authentication:UseDevelopmentStub", environment.IsDevelopment());
+
+    /// <summary>
+    /// Si el principal lo autenticó el stub por headers. Misma comparación que
+    /// <c>ExternalClaimsTransformation</c>; pública porque <see cref="DevelopmentAuthenticationHandler"/>
+    /// es <c>internal</c> y <c>/modules</c> vive en <c>src/Api</c> (spec 2026-10-07).
+    /// </summary>
+    public static bool IsDevelopmentStub(ClaimsPrincipal principal) =>
+        principal.Identity?.AuthenticationType == DevelopmentAuthenticationHandler.AuthenticationSchemeName;
 
     /// <summary>
     /// Fija un endpoint al bearer token de Google — lo usan sólo los pocos endpoints

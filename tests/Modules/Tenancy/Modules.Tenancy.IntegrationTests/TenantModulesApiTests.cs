@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Api;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -87,6 +88,118 @@ public sealed class TenantModulesApiTests
 
         Assert.Equal(["catalog.product.read"], await EffectivePermissionsAsync(client, tenantId));
     }
+
+    [Fact]
+    public async Task ModulesListsTheSevenInOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(factory, ownerId, tenantId);
+
+        var modules = await ModulesAsync(client, tenantId);
+
+        Assert.Equal(tenantId, modules.TenantId);
+        Assert.Equal(
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos"],
+            modules.Modules.Select(module => module.Key));
+        Assert.All(modules.Modules.Where(module => module.Key != "pos"), module =>
+        {
+            Assert.True(module.Enabled);
+            Assert.True(module.Contracted);
+            Assert.Empty(module.MissingDependencies);
+        });
+        var pos = modules.Modules.Single(module => module.Key == "pos");
+        Assert.False(pos.Enabled);
+        Assert.False(pos.Contracted);
+    }
+
+    [Fact]
+    public async Task TurningCustomersOffNamesItAsTheRootCause()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(factory, ownerId, tenantId);
+
+        await DisableAsync(factory, tenantId, TenantModuleKeys.Customers);
+
+        var modules = (await ModulesAsync(client, tenantId)).Modules.ToDictionary(module => module.Key);
+        Assert.False(modules["customers"].Contracted);
+        Assert.Empty(modules["customers"].MissingDependencies);
+        foreach (var key in new[] { "quotations", "orders" })
+        {
+            Assert.False(modules[key].Enabled);
+            Assert.True(modules[key].Contracted);
+            Assert.Equal(["customers"], modules[key].MissingDependencies);
+        }
+    }
+
+    [Fact]
+    public async Task ASimulatedTenantSeesEverythingOn()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        using var client = StubClient(factory, Guid.CreateVersion7(), tenantId);
+
+        var modules = await ModulesAsync(client, tenantId);
+
+        Assert.Equal(7, modules.Modules.Count);
+        Assert.All(modules.Modules, module =>
+        {
+            Assert.True(module.Enabled);
+            Assert.True(module.Contracted);
+        });
+    }
+
+    [Fact]
+    public async Task ModulesOfAnotherTenantAreForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(factory, ownerId, tenantId);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{Guid.CreateVersion7()}/modules", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // Sin HTTP: por cookie real, null exige un tenant sin fila con una membresía activa, que no se
+    // puede armar por la API.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WithoutARowTheAnswerDependsOnTheScheme(bool isDevelopmentStub)
+    {
+        var tenantId = Guid.CreateVersion7();
+
+        var response = TenantModulesResponse.From(tenantId, modules: null, isDevelopmentStub);
+
+        Assert.Equal(7, response.Modules.Count);
+        Assert.All(response.Modules, module =>
+        {
+            Assert.Equal(isDevelopmentStub, module.Enabled);
+            Assert.Equal(isDevelopmentStub, module.Contracted);
+            Assert.Empty(module.MissingDependencies);
+        });
+    }
+
+    private static async Task<ModulesDto> ModulesAsync(HttpClient client, Guid tenantId)
+    {
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{tenantId}/modules", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var modules = await response.Content.ReadFromJsonAsync<ModulesDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(modules);
+        return modules;
+    }
+
+    private sealed record ModulesDto(Guid TenantId, List<ModuleDto> Modules);
+
+    private sealed record ModuleDto(string Key, bool Enabled, bool Contracted, string[] MissingDependencies);
 
     internal static async Task<string[]> EffectivePermissionsAsync(HttpClient client, Guid tenantId)
     {
