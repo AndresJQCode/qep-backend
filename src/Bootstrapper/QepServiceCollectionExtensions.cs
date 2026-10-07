@@ -203,7 +203,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
             DeleteCompanyHandler>();
-        // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demas: un handler olvidado
+        // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
             IQueryHandler<GetRegisterContextQuery, RegisterContextResponse>,
@@ -464,8 +464,8 @@ public static class QepServiceCollectionExtensions
         services.AddReportingInfrastructure(configuration);
         services.AddPlatformInfrastructure(configuration);
 
-        // Pos (spec 2026-10-07): su unico vecino directo es Tenancy; productos, empresas y
-        // cajeros entran por adaptadores que se registran mas abajo, con los demas.
+        // Pos (spec 2026-10-07): su único vecino directo es Tenancy; productos, empresas y
+        // cajeros entran por adaptadores que se registran más abajo, con los demás.
         services.AddPosInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:

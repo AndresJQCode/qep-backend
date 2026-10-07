@@ -218,7 +218,79 @@ public sealed class RegisterHandlersTests
         Assert.Equal(117_000m, summary.CountedCash);
         Assert.Equal(-890m, summary.CashDifference);
         Assert.Equal("Faltan 890", summary.Note);
-        Assert.Equal("pos.session.closed", Assert.Single(bed.Audit.Entries).Action);
+        Assert.Equal(1, bed.UnitOfWork.SaveCalls);
+        var audit = Assert.Single(bed.Audit.Entries);
+        Assert.Equal(("pos.session.closed", "cash_session", session.Id.ToString()), (audit.Action, audit.ResourceType, audit.ResourceId));
+        Assert.Equal(PosTestBed.UserId, audit.ActorId);
+    }
+
+    [Fact]
+    public async Task ClosingAnAlreadyClosedSessionIsNotOpen()
+    {
+        var bed = new PosTestBed();
+        var session = bed.OpenSessionInStore();
+        await Close(bed, Operator).HandleAsync(
+            new CloseCashSessionCommand(TenantId, session.Id.Value, session.Version, 100_000m, null),
+            TestContext.Current.CancellationToken);
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() => Close(bed, Operator).HandleAsync(
+            new CloseCashSessionCommand(TenantId, session.Id.Value, session.Version, 100_000m, null),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.session.not_open", error.Code);
+        Assert.Equal(1, bed.UnitOfWork.SaveCalls);
+        Assert.Single(bed.Audit.Entries);
+    }
+
+    [Fact]
+    public async Task OpenNeedsTheOperatePermissionAndTheRouteTenant()
+    {
+        var bed = new PosTestBed();
+        bed.AddCompany();
+
+        var withoutPermission = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            Open(bed, PosPermissions.SaleRead).HandleAsync(
+                new OpenCashSessionCommand(TenantId, null, 0m), TestContext.Current.CancellationToken));
+        var otherTenant = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            Open(bed, Operator).HandleAsync(
+                new OpenCashSessionCommand(Guid.CreateVersion7(), null, 0m), TestContext.Current.CancellationToken));
+
+        Assert.Equal("authorization.denied", withoutPermission.Code);
+        Assert.Equal("authorization.denied", otherTenant.Code);
+        Assert.Empty(bed.Sessions.Sessions);
+        Assert.Equal(0, bed.UnitOfWork.SaveCalls);
+    }
+
+    // Autorizar antes de validar: sin permiso, un cuerpo inválido da 403 y no el mapa de errores.
+    [Fact]
+    public async Task OpenAuthorizesBeforeValidating()
+    {
+        var bed = new PosTestBed();
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            Open(bed, PosPermissions.SaleRead).HandleAsync(
+                new OpenCashSessionCommand(TenantId, null, 10.005m), TestContext.Current.CancellationToken));
+
+        Assert.Equal("authorization.denied", error.Code);
+    }
+
+    [Fact]
+    public async Task CloseNeedsTheOperatePermissionAndTheRouteTenant()
+    {
+        var bed = new PosTestBed();
+        var session = bed.OpenSessionInStore();
+
+        var withoutPermission = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            Close(bed, PosPermissions.SaleRead).HandleAsync(
+                new CloseCashSessionCommand(TenantId, session.Id.Value, 1, 0m, null), TestContext.Current.CancellationToken));
+        var otherTenant = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            Close(bed, Operator).HandleAsync(
+                new CloseCashSessionCommand(Guid.CreateVersion7(), session.Id.Value, 1, 0m, null), TestContext.Current.CancellationToken));
+
+        Assert.Equal("authorization.denied", withoutPermission.Code);
+        Assert.Equal("authorization.denied", otherTenant.Code);
+        Assert.Equal(CashSessionStatus.Open, session.Status);
+        Assert.Equal(0, bed.UnitOfWork.SaveCalls);
     }
 
     // El cajero cierra contra el arqueo que vio (spec, «Cerrar caja», paso 2).

@@ -216,7 +216,7 @@ internal sealed class PosTestBed
 
     public FakeTenantClock TenantClock { get; } = new(PosFixtures.Now);
 
-    /// <summary>El usuario autenticado de las pruebas; instancia para que Context no sea estatico (CA1822).</summary>
+    /// <summary>El usuario autenticado de las pruebas; instancia para que Context no sea estático (CA1822).</summary>
     public Guid SubjectId { get; } = UserId;
 
     public FakeExecutionContext Context(params string[] permissions) =>
