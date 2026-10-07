@@ -52,6 +52,17 @@ public sealed class FileOwnerModulesTests
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }
 
+    // Con catalog apagado el listado excluye a los productos, y por la dependencia orders -> catalog
+    // también a los comprobantes: el módulo apagado se propaga.
+    [Fact]
+    public void OwnerTypesDisabledInExcludesProductsWhenCatalogIsOff()
+    {
+        Assert.Equal(
+            [FileOwnerType.Product, FileOwnerType.PaymentProof],
+            FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
+                TenantModuleKeys.All.Except([TenantModuleKeys.Catalog]))).Order());
+    }
+
     [Theory]
     [InlineData(FileOwnerType.Product, "catalog")]
     [InlineData(FileOwnerType.PaymentProof, "orders")]
