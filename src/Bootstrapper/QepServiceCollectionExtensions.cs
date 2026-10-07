@@ -37,6 +37,7 @@ using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
+using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Bootstrapper;
 
@@ -564,6 +565,9 @@ public static class QepServiceCollectionExtensions
     {
         // El catalogo del codigo sigue siendo singleton: son constantes del build.
         services.AddSingleton<IRoleCatalog, RoleCatalog>();
+        // Spec 2026-10-07: puro y sin estado por tenant, así que singleton como el catálogo del
+        // código. Indexa las PermissionDefinition registradas abajo.
+        services.AddSingleton<ModuleEntitlementMask>();
         // La vista por tenant NO puede serlo: fusiona los roles que el tenant definio, y esos
         // cambian con un PUT y no con un deploy. Scoped, ademas, es lo que hace que memoizar
         // por request sea correcto — el scope dura lo que el request.
@@ -713,109 +717,127 @@ public static class QepServiceCollectionExtensions
             "Leer configuración",
             "Permite consultar la configuración del tenant.",
             "Tenancy",
-            "low"));
+            "low",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsUpdate,
             "Actualizar configuración",
             "Permite modificar la configuración del tenant.",
             "Tenancy",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipInvite,
             "Invitar miembros",
             "Permite invitar usuarios al tenant.",
             "Tenancy",
-            "medium"));
+            "medium",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRead,
             "Leer miembros",
             "Permite consultar membresías y catálogo de roles/permisos.",
             "Tenancy",
-            "low"));
+            "low",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipManage,
             "Gestionar miembros",
             "Permite suspender, remover y cambiar los roles que tiene un miembro.",
             "Tenancy",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRolesManage,
             "Definir roles",
             "Permite crear roles propios y elegir que permisos concede cada uno.",
             "Tenancy",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileUpload,
             "Subir archivos",
             "Permite crear sesiones de carga y completar uploads.",
             "Storage",
-            "medium"));
+            "medium",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileRead,
             "Leer archivos",
             "Permite solicitar URLs de descarga.",
             "Storage",
-            "medium"));
+            "medium",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileDelete,
             "Eliminar archivos",
             "Permite marcar archivos como eliminados.",
             "Storage",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FilePublish,
             "Publicar imágenes",
             "Permite publicar y despublicar imágenes y sus variantes.",
             "Storage",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductRead,
             "Leer productos",
             "Permite consultar el catálogo de productos del tenant.",
             "Catalog",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductManage,
             "Gestionar productos",
             "Permite crear, editar e inactivar productos.",
             "Catalog",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateRead,
             "Leer tasas de impuesto",
             "Permite consultar las tasas de impuesto del tenant.",
             "Catalog",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateManage,
             "Gestionar tasas de impuesto",
             "Permite crear, editar e inactivar tasas de impuesto.",
             "Catalog",
-            "high"));
+            "high",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyRead,
             "Leer empresas",
             "Permite consultar las empresas del tenant.",
             "Companies",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Companies]));
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyManage,
             "Gestionar empresas",
             "Permite crear, editar, inactivar y reactivar empresas.",
             "Companies",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Companies]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerRead,
             "Leer clientes",
             "Permite consultar el listado y el detalle de los clientes del tenant.",
             "Customers",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerManage,
             "Gestionar clientes",
             "Permite crear, editar, inactivar y reactivar clientes.",
             "Customers",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerImport,
             "Importar clientes",
@@ -824,50 +846,58 @@ public static class QepServiceCollectionExtensions
             // Alto y no medio: una carga masiva escribe cientos de registros de datos personales
             // de una sola vez, y el gate CLI-00 todavia tiene abierta la politica de retencion de
             // PII. Separado de manage justamente para poder darlo a menos gente.
-            "high"));
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationRead,
             "Leer clasificaciones de clientes",
             "Permite consultar el catalogo de clasificaciones de clientes del tenant.",
             "Customers",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationManage,
             "Gestionar clasificaciones de clientes",
             "Permite crear, editar, inactivar, reactivar y eliminar clasificaciones de clientes.",
             "Customers",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationRead,
             "Leer cotizaciones",
             "Permite consultar el listado y el detalle de las cotizaciones del tenant.",
             "Quotations",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Quotations]));
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationManage,
             "Gestionar cotizaciones",
             "Permite crear y editar cotizaciones en borrador, incluidas sus lineas de producto.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Quotations]));
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderRead,
             "Leer pedidos",
             "Permite consultar el pedido convertido de una cotización.",
             "Quotations",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Orders]));
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderManage,
             "Gestionar pedidos",
             "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Orders]));
         // Aparte de OrderManage: quien registra el pedido (el asesor) no es quien lo revisa.
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderApprove,
             "Aprobar pedidos",
             "Permite dar el visto bueno a un pedido pendiente.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Orders]));
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
         // persona ya aprobó.
         services.AddSingleton(new PermissionDefinition(
@@ -875,7 +905,8 @@ public static class QepServiceCollectionExtensions
             "Anular pedidos",
             "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
             "Quotations",
-            "high"));
+            "high",
+            RequiredModules: [ModuleKeys.Orders]));
         // Medium, igual que aprobar: sólo cambia el estado del pedido, no emite ni anula nada fuera
         // de QEP (spec 2026-10-05).
         services.AddSingleton(new PermissionDefinition(
@@ -883,19 +914,22 @@ public static class QepServiceCollectionExtensions
             "Facturar pedidos",
             "Permite marcar como facturado un pedido aprobado y revertir esa marca.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Orders]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.OrdersRead,
             "Reporte de pedidos",
             "Permite consultar y exportar el reporte de pedidos convertidos del tenant.",
             "Reporting",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Orders]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.QuotationRead,
             "Reporte de cotizaciones",
             "Permite consultar y exportar el reporte de cotizaciones del tenant.",
             "Reporting",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Quotations]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.PriceChangeRead,
             "Reporte de cambios de precio",
@@ -903,22 +937,27 @@ public static class QepServiceCollectionExtensions
             "Reporting",
             // Medio y no bajo: el historico completo de precios de un catalogo es el margen del
             // negocio visto de costado, y por eso queda solo en admin.
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.CustomerRead,
             "Reporte de clientes",
             "Permite consultar y exportar el padron de clientes (Clientes CUC) del tenant.",
             "Reporting",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Customers]));
         // Medio y no bajo, mismo criterio que PriceChangeRead: es la venta de cada asesor vista
         // por otro. No abre ningún reporte por sí solo; amplía el alcance de los de pedidos y
         // cotizaciones, que sin él muestran sólo lo de quien consulta.
+        // Spec 2026-10-07: sólo reporting. No abre ningún reporte por sí solo; amplía los de pedidos
+        // y cotizaciones, que ya están enmascarados por su fuente.
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.AllAdvisorsRead,
             "Ver reportes de todos los asesores",
             "Permite ver en los reportes de pedidos y cotizaciones los datos de todos los asesores, no sólo los propios.",
             "Reporting",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Reporting]));
         // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
         // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
         services.AddSingleton(new PermissionDefinition(
@@ -926,13 +965,15 @@ public static class QepServiceCollectionExtensions
             "Leer el log de la aplicacion",
             "Permite consultar los POST, PUT, PATCH y DELETE que fallaron, con su error completo.",
             "Platform",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             PlatformPermissions.RequestLogPurge,
             "Purgar el log de la aplicacion",
             "Permite borrar del log lo anterior a la ultima semana.",
             "Platform",
-            "high"));
+            "high",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
