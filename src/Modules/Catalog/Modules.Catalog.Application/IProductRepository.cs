@@ -72,6 +72,16 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Igualdad exacta, con mayúsculas, servida por IX_products_tenant_code (spec 2026-10-07,
+    /// decisión 30). Sin respaldo sin mayúsculas: el lector teclea el código tal cual. Activos e
+    /// inactivos; sin escalas, sin conteo, sin rastreo.
+    /// </summary>
+    Task<Product?> FindByCodeAsync(
+        Guid tenantId,
+        string code,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Cuáles de estos códigos ya existen en el tenant, en una sola consulta — la usa la
     /// importación masiva para el chequeo de duplicados **contra la base**, mismo criterio que
     /// <c>ICustomerRepository.FindExistingIdentificationsAsync</c>: una consulta batch en vez de
