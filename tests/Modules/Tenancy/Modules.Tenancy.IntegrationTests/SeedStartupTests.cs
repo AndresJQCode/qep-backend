@@ -112,6 +112,60 @@ public sealed class SeedStartupTests
         Assert.Contains("admin", membership.Roles);
     }
 
+    // Spec 2026-10-07, «Semilla»: el tenant de la semilla nace con los siete, pos incluido.
+    [Fact]
+    public async Task SeedEnablesTheSevenModules()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var client = factory.CreateClient();
+
+        Assert.Equal(
+            ["catalog", "companies", "customers", "orders", "pos", "quotations", "reporting"],
+            await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
+    }
+
+    // Sólo al crear: el seeder devuelve antes si el tenant ya existe, así que correrlo otra vez no
+    // duplica (PK) ni resucita lo que alguien apagó a mano. Se borra una fila entre las dos
+    // corridas: si la segunda la repusiera, el módulo apagado volvería a prenderse solo.
+    [Fact]
+    public async Task SeedingTwiceDoesNotDuplicateTheModules()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var client = factory.CreateClient();
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var seedTenant = new TenantId(TenancySeeder.SeedTenantId);
+            var pos = TenantModuleKeys.Pos;
+            await dbContext.TenantModules
+                .Where(module => module.TenantId == seedTenant && module.ModuleKey == pos)
+                .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+        }
+
+        await factory.Services.SeedTenantWithOwnerAsync(
+            Guid.CreateVersion7(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            ["catalog", "companies", "customers", "orders", "quotations", "reporting"],
+            await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
+    }
+
+    private static async Task<List<string>> SeedModuleKeysAsync(QepApiFactory factory, string expectedSource)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var seedTenant = new TenantId(TenancySeeder.SeedTenantId);
+        var rows = await dbContext.TenantModules
+            .AsNoTracking()
+            .Where(module => module.TenantId == seedTenant)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        Assert.All(rows, row => Assert.Equal(expectedSource, row.Source));
+        return rows.Select(row => row.ModuleKey.Value).Order(StringComparer.Ordinal).ToList();
+    }
+
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
         var database = new PostgreSqlBuilder("postgres:18-alpine")
