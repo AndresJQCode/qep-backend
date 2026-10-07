@@ -1168,12 +1168,14 @@ public sealed class OrderPaymentProofPublicationApiTests
         await ConvertAsync(client, tenantId, quotation.Id, "FullPaymentReceived", proofId);
         var logoId = await CreateTenantLogoFileAsync(client, factory, tenantId);
         Assert.Contains(proofId, await ListedFileIdsAsync(client, tenantId, query: string.Empty));
+        var totalBefore = await ListedTotalCountAsync(client, tenantId);
 
         await DisableModuleAsync(factory, tenantId, ModuleKeys.Orders);
 
         var listed = await ListedFileIdsAsync(client, tenantId, query: string.Empty);
         Assert.DoesNotContain(proofId, listed);
         Assert.Contains(logoId, listed);
+        Assert.Equal(totalBefore - 1, await ListedTotalCountAsync(client, tenantId));
         await AssertModuleNotEnabledAsync(await client.PostAsync(
             $"/api/v1/tenants/{tenantId}/files/{proofId}/download-url", content: null,
             TestContext.Current.CancellationToken));
@@ -1218,6 +1220,14 @@ public sealed class OrderPaymentProofPublicationApiTests
         await image.SaveAsPngAsync(png, TestContext.Current.CancellationToken);
         return await CreateAvailableFileAsync(
             client, factory, tenantId, "image/png", png.ToArray(), "logo.png", ownerType: "Tenant");
+    }
+
+    private static async Task<int> ListedTotalCountAsync(HttpClient client, Guid tenantId)
+    {
+        var page = await client.GetFromJsonAsync<FilesPageDto>(
+            $"/api/v1/tenants/{tenantId}/files", TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        return page.TotalCount;
     }
 
     private static async Task<Guid[]> ListedFileIdsAsync(HttpClient client, Guid tenantId, string query)
