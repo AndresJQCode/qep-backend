@@ -1,6 +1,9 @@
 namespace BuildingBlocks.Domain.Pricing;
 
-/// <summary>Importes de una línea con IVA incluido en el precio.</summary>
+/// <summary>
+/// Importes de una línea con IVA incluido en el precio. <c>Subtotal</c> es la base sin IVA: es lo
+/// que suma el encabezado y la base sobre la que Quotations calcula la retención en la fuente.
+/// </summary>
 public readonly record struct VatIncludedLineAmounts(
     decimal DiscountAmount, decimal TaxAmount, decimal Subtotal)
 {
