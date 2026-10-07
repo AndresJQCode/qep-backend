@@ -128,7 +128,6 @@ public sealed class PosPersistenceTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        await ArrangeTenantAsync(factory);
         var tenantId = Guid.CreateVersion7();
 
         using var scope = factory.Services.CreateScope();
