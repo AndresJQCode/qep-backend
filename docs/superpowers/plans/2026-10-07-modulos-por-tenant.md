@@ -8,7 +8,7 @@
 
 **Tech Stack:** Backend .NET 10 (SDK de `global.json`), EF Core + Npgsql, xUnit v3, Testcontainers (`postgres:18-alpine`, Docker corriendo). Frontend React 19, TanStack Router (árbol generado y versionado en `src/routeTree.gen.ts`) y TanStack Query, Vitest + Testing Library, bun, oxlint, `tsc -b` dentro de `bun run build`.
 
-**Spec:** `docs/superpowers/specs/2026-10-07-modulos-por-tenant-design.md` (lo copia la Task B0 desde el scratchpad de la sesión que lo escribió). El plan argumenta desde el spec: quien ejecuta lee los dos.
+**Spec:** `docs/superpowers/specs/2026-10-07-modulos-por-tenant-design.md` (lo copia la Task B0 desde la carpeta de trabajo de la sesión que lo escribió). El plan argumenta desde el spec: quien ejecuta lee los dos.
 
 ## Global Constraints
 
@@ -203,7 +203,7 @@ type TenantModulesResponse = {
 ### Task B0: Worktree, spec y baseline
 
 **Files:**
-- Create: `docs/superpowers/specs/2026-10-07-modulos-por-tenant-design.md`, `docs/superpowers/plans/2026-10-07-modulos-por-tenant.md` (copias de los del scratchpad)
+- Create: `docs/superpowers/specs/2026-10-07-modulos-por-tenant-design.md`, `docs/superpowers/plans/2026-10-07-modulos-por-tenant.md` (copias de los de la carpeta de trabajo)
 
 **Interfaces:**
 - Produces: `$env:TEMP\qep-modulos-baseline-failed.txt` (nombres de las pruebas que ya fallan en `origin/develop`), que consume B13.
@@ -225,7 +225,7 @@ Esperado: `feature/modulos-por-tenant`.
 - [ ] **Step 2: Copiar el spec y el plan al repo y commitear**
 
 ```powershell
-$S = "C:\Users\andre\AppData\Local\Temp\claude\c--Users-andre-OneDrive-Documentos2-repositories-QCode-templates-qep-qep-backend\b6ad7612-c9ff-4dff-a4c1-51df3b0a1bcb\scratchpad"
+$S = "<carpeta donde la sesión dejó el spec y el plan>"
 Set-Location $B
 Copy-Item "$S\specs\2026-10-07-modulos-por-tenant-design.md" docs\superpowers\specs\
 Copy-Item "$S\plans\2026-10-07-modulos-por-tenant.md" docs\superpowers\plans\
