@@ -246,9 +246,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `WhatsAppQuotationMessage` y `ZenviaWhatsAppSender` — y el `TemplateId` viaja en **el mismo
   commit** que ese código: apuntar a una plantilla cuyas variables no coinciden con las que el
   backend manda rompe el envío en producción sin error de compilación.
-- **`Conversations` no existe**, aunque los requisitos la supongan. Los doce módulos
+- **`Pos` necesita la capacidad `pos` y no viene con el signup.** `GrantDefaultModulesOnSignup`
+  concede seis módulos sin `pos`, así que en un tenant nuevo todo `/pos/*` da 403 aunque el rol
+  tenga los permisos: se prende con la fila de `tenancy.tenant_modules` (spec de entitlements,
+  «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
+  reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
+  (spec 2026-10-07, «Despliegue»).
+- **`Conversations` no existe**, aunque los requisitos la supongan. Los trece módulos
   construidos son Audit, Authorization, Catalog, Companies, Customers, Geography, Identity,
-  Notifications, Quotations, Reporting, Storage y Tenancy — cada uno con su
+  Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada uno con su
   `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`.
 
 ## Verificación

@@ -90,7 +90,7 @@ descuento global por venta, PDF del ticket en backend. Ver «Fuera de alcance» 
 | La persona en un documento es un `MemberId` (membresía), no el usuario; se resuelve con `IMembershipDirectory.FindActiveMembershipIdAsync` | `QuotationAdvisorResolver.cs:17-30`, `MemberId.cs:3-13` |
 | Toda columna con `MemberId` necesita su `IUserReferenceProbe` o el usuario se borra igual | `QuotationUserReferenceProbe.cs:15-22` |
 | Empresa: `Name` (160), `TaxId` (32), `Address` (200), `Phone` (32), `IsActive` | `Company.cs:19-21`, `CompanyContactInfo.cs:27,31` |
-| Una FK de otro schema contra `companies.companies(id)` convierte su borrado en `422 companies.company.in_use` sin código nuevo | `CompaniesUnitOfWork.cs:37-54` |
+| Una FK de otro schema contra `companies.companies(id)` convierte su borrado en `422 companies.company.in_use`, pero `CompaniesUnitOfWork` tuvo que aceptar también el SQLSTATE 23001 (`restrict_violation`) de las FK `ON DELETE RESTRICT`, como la de `pos.cash_sessions.company_id` | `CompaniesUnitOfWork.cs:37-54` |
 | Calendario del tenant: `ITenantClock.GetAsync` → `TenantCalendar` (`UtcNow`, `Today`, `ToLocal`, `StartOfDayUtc`, `EndOfDayExclusiveUtc`) | `ITenantClock.cs:12-15`, `TenantCalendar.cs:8-58` |
 | Mapeo central: `ResourceNotFound`→404, `RequestForbidden`→403, `RequestConcurrency`→**412**, `PreconditionRequired`→428, `ValidationException`→422 `validation.failed` con `errors`, `DomainException`→422 con su código | `src/Api/ApiExceptionHandler.cs:129-151` |
 | No encontrado dentro del tenant = 404 con código propio (`CompanyNotFound.For`); tenant de la ruta distinto del llamador = 403 (`CompaniesAuthorization.EnsureAuthorized`) | `CompanyNotFound.cs:5-12`, `CompaniesAuthorization.cs:9-23` |
