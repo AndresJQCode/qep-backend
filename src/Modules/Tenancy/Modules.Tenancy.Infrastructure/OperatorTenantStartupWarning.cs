@@ -5,9 +5,11 @@ using Microsoft.Extensions.Options;
 namespace Modules.Tenancy.Infrastructure;
 
 /// <summary>
-/// Spec 2026-10-08 D10: en producción, arrancar sin <c>Platform:OperatorTenantId</c> no falla —el id
-/// de QCode no está en el repo y el CI despliega <c>main</c> sin pruebas—, pero deja una advertencia.
-/// Es un servicio hospedado y no parte del validador para que el validador no dependa del host: las
+/// Spec 2026-10-08 D10: en producción, arrancar sin <c>Platform:OperatorTenantId</c> no falla, pero
+/// deja una advertencia. Desde que <c>appsettings.json</c> trae por defecto el id fijo del tenant
+/// sembrado (<c>TenancySeeder.OperatorTenantId</c>), esto sólo pasa si alguien vació la clave a
+/// propósito para apagar la consola. Que el id exista como tenant no se mira acá: si no existe, nadie
+/// tiene membresía en él y la consola no es alcanzable. Es un servicio hospedado y no parte del validador para que el validador no dependa del host: las
 /// pruebas que arman <c>AddTenancyInfrastructure</c> sin host siguen pudiendo validar. Pública sólo
 /// para probarla sin <c>InternalsVisibleTo</c>, igual que <see cref="TenantModuleDefaults"/>.
 /// </summary>

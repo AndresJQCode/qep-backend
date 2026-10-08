@@ -44,6 +44,31 @@ internal sealed class SeedOptionsValidator : IValidateOptions<SeedOptions>
                 $"Seed:OwnerEmail '{options.OwnerEmail}' is not a valid email address.");
         }
 
+        return options.Enabled
+            ? ValidateOperatorOwnerEmail(options.OperatorOwnerEmail)
+            : ValidateOptionsResult.Success;
+    }
+
+    // Sólo la lee la semilla de arranque, así que sólo se valida con Seed:Enabled. Ausente es
+    // válido —la semilla advierte y no crea el tenant operador—; presente e inválido tumba el
+    // arranque por la misma razón que Seed:OwnerEmail.
+    private static ValidateOptionsResult ValidateOperatorOwnerEmail(string? operatorOwnerEmail)
+    {
+        if (string.IsNullOrWhiteSpace(operatorOwnerEmail))
+        {
+            return ValidateOptionsResult.Success;
+        }
+
+        try
+        {
+            User.NormalizeEmail(operatorOwnerEmail);
+        }
+        catch (IdentityDomainException)
+        {
+            return ValidateOptionsResult.Fail(
+                $"Seed:OperatorOwnerEmail '{operatorOwnerEmail}' is not a valid email address.");
+        }
+
         return ValidateOptionsResult.Success;
     }
 }

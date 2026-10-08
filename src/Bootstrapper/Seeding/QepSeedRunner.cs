@@ -31,6 +31,20 @@ public static class QepSeedRunner
             "Seeding is ENABLED. Creating tenant '{TenantSlug}' and granting the admin role "
             + "to '{OwnerEmail}'. Disable Seed:Enabled before handing this environment over.");
 
+    private static readonly Action<ILogger, string, Exception?> LogOperatorOwnerEmailMissing =
+        LoggerMessage.Define<string>(
+            LogLevel.Warning,
+            new EventId(4102, nameof(LogOperatorOwnerEmailMissing)),
+            "Seed:OperatorOwnerEmail is not configured: the operator tenant '{TenantSlug}' was not "
+            + "seeded, so nobody can open the operator console. Set Seed__OperatorOwnerEmail to seed it.");
+
+    private static readonly Action<ILogger, string, Guid, Exception?> LogOperatorSlugTaken =
+        LoggerMessage.Define<string, Guid>(
+            LogLevel.Warning,
+            new EventId(4103, nameof(LogOperatorSlugTaken)),
+            "The operator tenant was not seeded: slug '{TenantSlug}' already belongs to tenant "
+            + "{TenantId}. To make that tenant the operator, set Platform:OperatorTenantId to its id.");
+
     /// <summary>
     /// Corre la semilla del ambiente desplegado. No hace nada si <c>Seed:Enabled</c> está
     /// apagado. Es idempotente: lo que ya existe se saltea.
@@ -76,6 +90,41 @@ public static class QepSeedRunner
             TenancySeeder.SeedTenantId,
             token => ResolveCompaniesCityAsync(scope.ServiceProvider, token),
             cancellationToken);
+
+        // Al final y aparte: el tenant operador no depende de nada de lo anterior, y lo que le pase
+        // —sin email, slug ocupado— se advierte sin tumbar el arranque ni tocar Origen botánico.
+        await SeedOperatorTenantAsync(services, options.OperatorOwnerEmail, logger, cancellationToken);
+    }
+
+    // Sin email se advierte y no se crea: en producción Seed:Enabled corre en cada arranque, y hasta
+    // que el owner agregue la clave al ConfigMap esto es el estado normal, no una falla. Con email
+    // inválido no se llega acá: lo rechaza SeedOptionsValidator al arrancar.
+    private static async Task SeedOperatorTenantAsync(
+        IServiceProvider services,
+        string? operatorOwnerEmail,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(operatorOwnerEmail))
+        {
+            LogOperatorOwnerEmailMissing(logger, TenancySeeder.OperatorTenantSlug, null);
+            return;
+        }
+
+        // Se mira antes de crear el usuario: con el slug ocupado, el usuario quedaría sin membresía.
+        var (state, slugHolderId) = await services.InspectOperatorTenantAsync(cancellationToken);
+        switch (state)
+        {
+            case TenancySeeder.OperatorTenantSeedState.AlreadySeeded:
+                return;
+            case TenancySeeder.OperatorTenantSeedState.SlugTaken:
+                LogOperatorSlugTaken(logger, TenancySeeder.OperatorTenantSlug, slugHolderId!.Value, null);
+                return;
+        }
+
+        LogSeedEnabled(logger, TenancySeeder.OperatorTenantSlug, operatorOwnerEmail, null);
+        var ownerUserId = await services.SeedUserAsync(operatorOwnerEmail, cancellationToken);
+        await services.SeedOperatorTenantWithOwnerAsync(ownerUserId, cancellationToken);
     }
 
     // Revienta en vez de saltear la siembra: una empresa sin ciudad no se puede crear —CityId es

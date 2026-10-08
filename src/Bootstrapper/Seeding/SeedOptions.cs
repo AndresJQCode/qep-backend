@@ -22,6 +22,16 @@ public sealed class SeedOptions
     public string? OwnerEmail { get; set; }
 
     /// <summary>
+    /// Email de QCode que recibe la membresía admin del tenant operador (<c>qcode</c>). Es una clave
+    /// aparte y no se reutiliza <see cref="OwnerEmail"/> a propósito: en producción ése puede ser el
+    /// email del cliente, y reutilizarlo lo convertiría en operador de toda la plataforma.
+    ///
+    /// Opcional: sin valor la semilla no crea el tenant operador y lo advierte en el log, sin tumbar
+    /// el arranque. Si viene, tiene que ser un email válido.
+    /// </summary>
+    public string? OperatorOwnerEmail { get; set; }
+
+    /// <summary>
     /// La carga sintética de la exportación. También le concede admin a <see cref="OwnerEmail"/>,
     /// sobre su propio tenant, así que prenderla exige el email igual que <see cref="Enabled"/>.
     /// </summary>
