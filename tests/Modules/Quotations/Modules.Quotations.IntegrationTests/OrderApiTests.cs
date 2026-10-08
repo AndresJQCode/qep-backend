@@ -880,8 +880,10 @@ public sealed class OrderApiTests
         Assert.Equal(12_000m, proofJson.GetProperty("amount").GetDecimal());
         Assert.Equal("2026-10-07", proofJson.GetProperty("paidOn").GetString());
 
+        // `GET /orders/{id}` responde el detalle compuesto (`{ order, quotation }`), no un
+        // OrderResponse: se lee por la cotización, como el resto de este archivo.
         var fetched = await client.GetFromJsonAsync<OrderResponse>(
-            OrderByIdUrl(tenantId, created.Id), TestContext.Current.CancellationToken);
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
         Assert.NotNull(fetched);
         Assert.Equal(new DateOnly(2026, 10, 7), Assert.Single(fetched.PaymentProofs).PaidOn);
     }
