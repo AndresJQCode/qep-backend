@@ -218,9 +218,9 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                 unique: true);
 
             // FK real a la empresa emisora (spec, decisión 8): borrar una empresa con cajas sale
-            // como 422 companies.company.in_use por CompaniesUnitOfWork, sin código nuevo en
-            // Companies. A mano porque EF no modela relaciones entre DbContext de módulos distintos
-            // (mismo precedente que companies → geography).
+            // como 422 companies.company.in_use: CompaniesUnitOfWork traduce el SQLSTATE 23001
+            // (restrict_violation, el de ON DELETE RESTRICT) igual que el 23503. A mano porque EF no modela relaciones entre DbContext de
+            // módulos distintos (mismo precedente que companies → geography).
             migrationBuilder.AddForeignKey(
                 name: "FK_cash_sessions_companies_company_id",
                 schema: "pos",
