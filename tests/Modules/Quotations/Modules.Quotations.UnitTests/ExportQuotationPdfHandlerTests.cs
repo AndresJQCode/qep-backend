@@ -167,6 +167,7 @@ public sealed class ExportQuotationPdfHandlerTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
+            defaultCurrency: QuotationCurrency.Cop,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

@@ -25,7 +25,8 @@ public sealed class QuotationTests
         QuotationBillingAccount? billingAccount = null,
         bool customerWithRetention = false,
         bool customerVatSurplus = false,
-        DateOnly? validUntil = null) =>
+        DateOnly? validUntil = null,
+        QuotationCurrency defaultCurrency = QuotationCurrency.Cop) =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -37,10 +38,42 @@ public sealed class QuotationTests
             notes,
             parties ?? QuotationParties.Empty,
             billingAccount,
+            defaultCurrency,
             customerWithRetention,
             customerVatSurplus,
             AdvisorId,
             Now);
+
+    private static QuotationBillingAccount BillingAccountIn(string currency) =>
+        BillingAccount with { Currency = currency };
+
+    [Fact]
+    public void WithoutBillingAccountTheQuotationTakesTheTenantDefault()
+    {
+        var quotation = NewQuotation(billingAccount: null, defaultCurrency: QuotationCurrency.Usd);
+
+        Assert.Equal(QuotationCurrency.Usd, quotation.Currency);
+    }
+
+    [Fact]
+    public void TheBillingAccountCurrencyWinsOverTheTenantDefault()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccountIn("COP"), defaultCurrency: QuotationCurrency.Usd);
+
+        Assert.Equal(QuotationCurrency.Cop, quotation.Currency);
+    }
+
+    [Fact]
+    public void RemovingTheBillingAccountKeepsTheCurrency()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccountIn("USD"), defaultCurrency: QuotationCurrency.Cop);
+
+        quotation.UpdateDetails(
+            null, null, null, QuotationParties.Empty, billingAccount: null, repricing: null,
+            isRetail: false, globalScaleFloor: null, AdvisorId, Now);
+
+        Assert.Equal(QuotationCurrency.Usd, quotation.Currency);
+    }
 
     [Fact]
     public void CreateStartsAsDraftWithEmptyTotals()
@@ -69,7 +102,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "  QUO-2026-0001  ", ClientId, AdvisorId,
-            null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now);
+            null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now);
 
         Assert.Equal("QUO-2026-0001", quotation.QuotationNumber);
     }
@@ -82,7 +115,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, number, ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_required", error.Code);
     }
@@ -93,7 +126,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, new string('a', 21), ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_too_long", error.Code);
     }
@@ -104,7 +137,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, "QUO-2026-0001", Guid.Empty, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.client_required", error.Code);
     }
@@ -733,7 +766,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
-            validUntil: null, null, null, QuotationParties.Empty, null, false, false, AdvisorId, Now);
+            validUntil: null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None));

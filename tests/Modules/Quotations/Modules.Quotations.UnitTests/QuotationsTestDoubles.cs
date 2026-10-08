@@ -340,6 +340,19 @@ internal sealed class FixedTenantClock(DateTimeOffset utcNow, string timeZoneId 
     }
 }
 
+/// <summary>La moneda por defecto de un tenant, COP si no se dice otra. Anota por qué tenant se
+/// preguntó, mismo criterio que <see cref="FixedTenantClock"/>.</summary>
+public sealed class FixedTenantDefaultCurrency(string currency = "COP") : ITenantDefaultCurrency
+{
+    public List<Guid> RequestedTenantIds { get; } = [];
+
+    public Task<string> GetAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        RequestedTenantIds.Add(tenantId);
+        return Task.FromResult(currency);
+    }
+}
+
 /// <summary>Los filtros con que se preguntó por filas o se leyó para exportar, ya como instantes:
 /// desde inclusivo y antes-de exclusivo (spec 2026-09-17, punto 3).</summary>
 internal sealed record RecordedExportSearch(

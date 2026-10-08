@@ -1830,6 +1830,7 @@ public sealed class OrdersExportProcessorTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod, notes, parties ?? QuotationParties.Empty, billingAccount,
+            QuotationCurrency.Cop,
             customerWithRetention, customerVatSurplus: false, AdvisorId, occurredAt);
 
         foreach (var item in items ?? DefaultItems)

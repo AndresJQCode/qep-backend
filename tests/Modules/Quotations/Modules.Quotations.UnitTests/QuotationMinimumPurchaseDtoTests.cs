@@ -33,6 +33,7 @@ public sealed class QuotationMinimumPurchaseDtoTests
                 AccountNumber = "12345678",
                 Currency = currency
             },
+            QuotationCurrency.Cop,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

@@ -47,6 +47,7 @@ public sealed class Quotation
         string? notes,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
+        QuotationCurrency defaultCurrency,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -72,8 +73,10 @@ public sealed class Quotation
         PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
+        // The billing account rules when there is one; otherwise the tenant's default, read by the
+        // handler. Quotations never pick a currency on their own any more.
         Currency = BillingAccount is null
-            ? QuotationCurrencies.Default
+            ? defaultCurrency
             : QuotationCurrencies.FromCode(BillingAccount.Currency);
         CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
@@ -223,8 +226,8 @@ public sealed class Quotation
     ///
     /// La fija la cuenta de cobro (<see cref="BillingAccount"/>): si se factura a una cuenta en
     /// dólares, la cotización entera se expresa en dólares, con el precio en dólares de cada
-    /// producto — no con una conversión, que este módulo no sabe hacer. Sin cuenta elegida es
-    /// <see cref="QuotationCurrencies.Default"/>.
+    /// producto — no con una conversión, que este módulo no sabe hacer. Sin cuenta elegida es la
+    /// moneda por defecto del tenant, que la aplicación lee al crear.
     ///
     /// Quitar la cuenta **no** devuelve la cotización a pesos: los precios que ya se cotizaron
     /// quedan como están, y revalorizarlos por un borrado sería un cambio de totales que nadie
@@ -333,6 +336,7 @@ public sealed class Quotation
         string? notes,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
+        QuotationCurrency defaultCurrency,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -348,6 +352,7 @@ public sealed class Quotation
             notes,
             parties,
             billingAccount,
+            defaultCurrency,
             customerWithRetention,
             customerVatSurplus,
             createdBy,

@@ -39,6 +39,7 @@ public sealed class CreateQuotationHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
+    ITenantDefaultCurrency tenantDefaultCurrency,
     IValidator<CreateQuotationCommand> validator)
     : ICommandHandler<CreateQuotationCommand, QuotationDto>
 {
@@ -60,6 +61,11 @@ public sealed class CreateQuotationHandler(
 
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
             companyLookup, command.TenantId, command.BillingAccount, cancellationToken);
+
+        // Sin cuenta de cobro, la cotización nace en la moneda por defecto del tenant. Se lee
+        // siempre, haya cuenta o no: el agregado decide cuál gana, no el handler.
+        var defaultCurrency = QuotationCurrencies.FromCode(
+            await tenantDefaultCurrency.GetAsync(command.TenantId, cancellationToken));
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
@@ -91,6 +97,7 @@ public sealed class CreateQuotationHandler(
             command.Notes,
             command.Parties.ToDomain(),
             billingAccount,
+            defaultCurrency,
             customer.WithRetention,
             customer.VatSurplus,
             advisorId,

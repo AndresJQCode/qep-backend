@@ -784,6 +784,7 @@ public sealed class OrphanUserCleanupTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
+            defaultCurrency: QuotationCurrency.Cop,
             // El cliente de esta cotizacion de prueba no aplica retencion ni excedente de IVA:
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
             customerWithRetention: false,
@@ -819,6 +820,7 @@ public sealed class OrphanUserCleanupTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
+            defaultCurrency: QuotationCurrency.Cop,
             customerWithRetention: false,
             customerVatSurplus: false,
             convertedBy,

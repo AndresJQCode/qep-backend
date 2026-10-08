@@ -39,6 +39,7 @@ public sealed class QuotationRetailTests
             notes: null,
             QuotationParties.Empty,
             billingAccount,
+            QuotationCurrency.Cop,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

@@ -36,6 +36,7 @@ public sealed class QuotationItemEditsTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), UpdatedBy,
             new DateOnly(2026, 9, 30), null, null, QuotationParties.Empty, BillingAccount,
+            QuotationCurrency.Cop,
             false, false, UpdatedBy, Now);
         foreach (var (productId, quantity, unitPrice) in lines)
         {

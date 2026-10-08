@@ -358,6 +358,7 @@ public sealed class SendQuotationHandlerTests
                 ? QuotationParties.Empty
                 : new QuotationParties(billing, null),
             billingAccount: null,
+            defaultCurrency: QuotationCurrency.Cop,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

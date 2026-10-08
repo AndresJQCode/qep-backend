@@ -222,6 +222,7 @@ public sealed class ListQuotationsHandlerTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: complete ? BillingAccount : null,
+            defaultCurrency: QuotationCurrency.Cop,
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

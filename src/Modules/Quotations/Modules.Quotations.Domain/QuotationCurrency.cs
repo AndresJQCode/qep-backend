@@ -20,13 +20,6 @@ public static class QuotationCurrencies
 
     public const string UsdCode = "USD";
 
-    /// <summary>
-    /// La moneda de una cotización que todavía no eligió cuenta de cobro. Es COP por herencia:
-    /// hasta que existió la cuenta de facturación, US-5 decía que todo valor monetario del módulo
-    /// era COP, y las cotizaciones que ya existen quedaron así.
-    /// </summary>
-    public const QuotationCurrency Default = QuotationCurrency.Cop;
-
     public static string ToCode(this QuotationCurrency currency) =>
         currency == QuotationCurrency.Usd ? UsdCode : CopCode;
 
