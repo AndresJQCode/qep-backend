@@ -444,11 +444,12 @@ public static class QuotationEndpoints
         CancellationToken cancellationToken,
         SendQuotationRequest? request = null)
     {
-        var quotation = await dispatcher.SendAsync(
+        var result = await dispatcher.SendAsync(
             new SendQuotationCommand(tenantId, quotationId, request?.Recipient),
             cancellationToken);
 
-        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+        var response = await composer.ComposeAsync(tenantId, result.Quotation, cancellationToken);
+        return Results.Ok(response with { WhatsAppOutcome = result.WhatsApp.ToString() });
     }
 
     private static async Task<IResult> VoidQuotationAsync(

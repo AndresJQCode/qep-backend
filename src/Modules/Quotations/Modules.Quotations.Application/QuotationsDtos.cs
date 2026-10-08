@@ -447,7 +447,13 @@ public sealed record QuotationResponse(
     /// las escalas de los productos que esta cotizacion tiene cargados, ordenados ascendente.
     /// **Completo incluso vacio** — una coleccion que desaparece obliga a la pantalla a
     /// reconstruirla desde las escalas linea por linea.</summary>
-    IReadOnlyCollection<int> AvailableGlobalScaleFloors);
+    IReadOnlyCollection<int> AvailableGlobalScaleFloors,
+    /// <summary>Spec 2026-10-07: <c>"Accepted"</c> | <c>"Disabled"</c> en la respuesta de
+    /// <c>POST .../send</c>, nulo en el resto. Aditivo, mismo criterio que <c>AdvisorName</c>: un
+    /// frontend desplegado antes no se entera. La pantalla lo lee de acá y no del canal que pidió
+    /// antes: si alguien desactivó WhatsApp entre el diálogo y la confirmación, manda la
+    /// respuesta.</summary>
+    string? WhatsAppOutcome = null);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de

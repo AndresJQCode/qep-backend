@@ -344,7 +344,7 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<PreviewQuotationQuery, QuotationDto>,
             PreviewQuotationHandler>();
         services.AddScoped<
-            ICommandHandler<SendQuotationCommand, QuotationDto>,
+            ICommandHandler<SendQuotationCommand, SendQuotationResult>,
             SendQuotationHandler>();
         services.AddScoped<
             ICommandHandler<VoidQuotationCommand, QuotationDto>,

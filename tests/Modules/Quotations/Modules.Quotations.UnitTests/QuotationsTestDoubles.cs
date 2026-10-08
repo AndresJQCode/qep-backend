@@ -42,6 +42,17 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
     }
 }
 
+/// <summary>El canal que el envío resuelve (spec 2026-10-07). Con <paramref name="failure"/>,
+/// la falla de la etapa Channel.</summary>
+internal sealed class StubWhatsAppChannelResolver(WhatsAppChannel? channel, Exception? failure = null)
+    : IWhatsAppChannelResolver
+{
+    public Task<WhatsAppChannel> ResolveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        failure is null
+            ? Task.FromResult(channel!)
+            : Task.FromException<WhatsAppChannel>(failure);
+}
+
 internal sealed class StubQuotationFileLookup(string downloadUrl) : IQuotationFileLookup
 {
     public string? RequestedFileName { get; private set; }
