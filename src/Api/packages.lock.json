@@ -180,6 +180,8 @@
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
           "Modules.Platform.Application": "[1.0.0, )",
           "Modules.Platform.Infrastructure": "[1.0.0, )",
+          "Modules.Pos.Application": "[1.0.0, )",
+          "Modules.Pos.Infrastructure": "[1.0.0, )",
           "Modules.Quotations.Application": "[1.0.0, )",
           "Modules.Quotations.Infrastructure": "[1.0.0, )",
           "Modules.Reporting.Application": "[1.0.0, )",
@@ -475,6 +477,39 @@
           "Microsoft.EntityFrameworkCore": "[10.0.11, )",
           "Modules.Platform.Application": "[1.0.0, )",
           "Modules.Platform.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.pos.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Pos.Application": "[1.0.0, )",
+          "Modules.Pos.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.pos.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Pos.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.pos.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.pos.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.11, )",
+          "Modules.Pos.Application": "[1.0.0, )",
+          "Modules.Pos.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

@@ -370,6 +370,46 @@ public sealed class ProductDetailsApiTests
         Assert.Equal("catalog.product.tax_rate_not_found", error.Code);
     }
 
+    /// <summary>
+    /// Spec 2026-10-07 (POS), decisión 30: el lector teclea Product.Code y el escaneo es una
+    /// búsqueda por el índice único, exacta y con mayúsculas — no el ILIKE '%x%' con COUNT de
+    /// SearchAsync. Devuelve también los inactivos: la caja los muestra marcados en vez de decir
+    /// que no existen. Y no cruza tenants.
+    /// </summary>
+    [Fact]
+    public async Task FindByCodeMatchesTheExactCodeOnly()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        Assert.Empty(await ListAsync(client, TenantId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>();
+        var product = Product.Create(
+            ProductId.New(),
+            Guid.Parse(TenantId),
+            "Shampoo 400 ml",
+            "SH-400",
+            ProductDetails.Empty,
+            new ProductPricing { BaseCop = 11_900m },
+            DateTimeOffset.UtcNow);
+        repository.Add(product);
+        await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exact = await repository.FindByCodeAsync(Guid.Parse(TenantId), "SH-400", TestContext.Current.CancellationToken);
+        var lowercase = await repository.FindByCodeAsync(Guid.Parse(TenantId), "sh-400", TestContext.Current.CancellationToken);
+        var partial = await repository.FindByCodeAsync(Guid.Parse(TenantId), "SH-40", TestContext.Current.CancellationToken);
+        var otherTenant = await repository.FindByCodeAsync(Guid.Parse(OtherTenantId), "SH-400", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(exact);
+        Assert.Equal(product.Id, exact.Id);
+        Assert.Null(lowercase);
+        Assert.Null(partial);
+        Assert.Null(otherTenant);
+    }
+
     private static async Task<Guid> CreateTaxRateAsync(
         HttpClient client,
         string tenantId,

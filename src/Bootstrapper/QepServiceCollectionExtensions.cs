@@ -29,6 +29,8 @@ using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
+using Modules.Pos.Application;
+using Modules.Pos.Infrastructure;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
@@ -201,6 +203,44 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
             DeleteCompanyHandler>();
+        // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
+        // responde 500 y CompositionRootTests lo detecta.
+        services.AddScoped<
+            IQueryHandler<GetRegisterContextQuery, RegisterContextResponse>,
+            GetRegisterContextHandler>();
+        services.AddScoped<
+            ICommandHandler<OpenCashSessionCommand, PosOpenSessionResponse>,
+            OpenCashSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<CloseCashSessionCommand, PosSessionSummaryResponse>,
+            CloseCashSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<SearchPosProductsQuery, PosPage<PosProductResponse>>,
+            SearchPosProductsHandler>();
+        services.AddScoped<
+            IQueryHandler<FindPosProductByCodeQuery, PosProductResponse>,
+            FindPosProductByCodeHandler>();
+        services.AddScoped<
+            ICommandHandler<PreviewPosSaleCommand, PosPreviewResponse>,
+            PreviewPosSaleHandler>();
+        services.AddScoped<
+            ICommandHandler<CreatePosSaleCommand, PosSaleCreation>,
+            CreatePosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<GetPosSaleQuery, PosSaleResponse>,
+            GetPosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<ListPosSalesQuery, PosPage<PosSaleListItemResponse>>,
+            ListPosSalesHandler>();
+        services.AddScoped<
+            ICommandHandler<VoidPosSaleCommand, PosSaleResponse>,
+            VoidPosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCashSessionsQuery, PosPage<PosSessionSummaryResponse>>,
+            ListCashSessionsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCashSessionQuery, PosSessionSummaryResponse>,
+            GetCashSessionHandler>();
         // CLI. Los siete van aca por la misma razon que los de empresas: el dispatcher resuelve
         // por registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y
         // falla recien en runtime con 500 al no encontrar handler.
@@ -435,6 +475,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
+        services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -450,11 +491,22 @@ public static class QepServiceCollectionExtensions
         services.AddReportingInfrastructure(configuration);
         services.AddPlatformInfrastructure(configuration);
 
+        // Pos (spec 2026-10-07): su único vecino directo es Tenancy; productos, empresas y
+        // cajeros entran por adaptadores que se registran más abajo, con los demás.
+        services.AddPosInfrastructure(configuration);
+
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
         services.AddScoped<IProductImageLookup, ProductImageLookup>();
+
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
+
+        // Pos (spec 2026-10-07): Catalog, Companies y Tenancy/Identity entran por adaptadores
+        // (PosLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules).
+        services.AddScoped<IPosProductLookup, PosProductLookup>();
+        services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
+        services.AddScoped<IPosCashierLookup, PosCashierLookup>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
@@ -636,7 +688,15 @@ public static class QepServiceCollectionExtensions
                 ReportingPermissions.AllAdvisorsRead,
                 // Solo admin: el log expone trazas y mensajes crudos de todos los modulos.
                 PlatformPermissions.RequestLogRead,
-                PlatformPermissions.RequestLogPurge
+                PlatformPermissions.RequestLogPurge,
+                // Punto de venta (spec 2026-10-07): admin tiene los seis, incluidos descontar y
+                // anular, que el cajero no tiene.
+                PosPermissions.SaleRead,
+                PosPermissions.SaleCreate,
+                PosPermissions.SaleVoid,
+                PosPermissions.SaleDiscount,
+                PosPermissions.RegisterOperate,
+                PosPermissions.RegisterRead
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -711,6 +771,21 @@ public static class QepServiceCollectionExtensions
                 // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
                 // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
                 StoragePermissions.FileRead
+            ]));
+        // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
+        // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
+        // dibuja y el MVP no elige cliente. Un tenant que quiera cajeros con descuento hace un
+        // rol custom.
+        services.AddSingleton(new RoleDefinition(
+            "cashier",
+            "Cajero",
+            "Vende en el punto de venta y abre y cierra su propia caja.",
+            "Tenancy",
+            "medium",
+            [
+                PosPermissions.SaleRead,
+                PosPermissions.SaleCreate,
+                PosPermissions.RegisterOperate
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -973,6 +1048,48 @@ public static class QepServiceCollectionExtensions
             "Platform",
             "high",
             RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleRead,
+            "Ver ventas y cierres de caja",
+            "Permite consultar las ventas del punto de venta y los cierres de caja propios.",
+            "Pos",
+            "low",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleCreate,
+            "Vender en caja",
+            "Permite registrar ventas en el punto de venta con la caja propia abierta.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleDiscount,
+            "Dar descuentos en caja",
+            "Permite dar descuentos por línea y cobrar ventas en $0 en el punto de venta.",
+            "Pos",
+            "high",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleVoid,
+            "Anular ventas de caja",
+            "Permite anular, con un motivo, una venta cuya caja sigue abierta.",
+            "Pos",
+            "high",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.RegisterOperate,
+            "Abrir y cerrar su caja",
+            "Permite abrir y cerrar la caja propia del punto de venta.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.RegisterRead,
+            "Ver todas las cajas y ventas",
+            "Permite consultar las cajas y las ventas de todos los cajeros del tenant.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
     }
 
     private static void AddAuthentication(
@@ -1207,7 +1324,25 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogRead))
             .AddPolicy(
                 PlatformPermissions.RequestLogPurge,
-                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogPurge));
+                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogPurge))
+            .AddPolicy(
+                PosPermissions.SaleRead,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleRead))
+            .AddPolicy(
+                PosPermissions.SaleCreate,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleCreate))
+            .AddPolicy(
+                PosPermissions.SaleVoid,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleVoid))
+            .AddPolicy(
+                PosPermissions.SaleDiscount,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleDiscount))
+            .AddPolicy(
+                PosPermissions.RegisterOperate,
+                policy => AddPermissionRequirement(policy, PosPermissions.RegisterOperate))
+            .AddPolicy(
+                PosPermissions.RegisterRead,
+                policy => AddPermissionRequirement(policy, PosPermissions.RegisterRead));
     }
 
     private static void AddPermissionRequirement(

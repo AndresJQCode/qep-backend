@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Pricing;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -239,25 +241,15 @@ public sealed class QuotationItem
         DiscountPercentage = discountPercentage;
         TaxPercentage = taxPercentage;
 
-        // El precio del producto se carga **con IVA incluido**, asi que aca no se suma impuesto:
-        // se extrae el que ya viene adentro. Antes era al reves (precio base + IVA encima).
-        var gross = quantity * unitPrice;
-        DiscountAmount = Round(gross * discountPercentage / 100m);
-
-        // Lo que efectivamente se cobra por la linea, IVA adentro.
-        var lineTotal = Round(gross) - DiscountAmount;
-
-        // El IVA contenido en ese total: total x tasa / (100 + tasa), no total x tasa / 100 --
-        // esa segunda formula es la de agregar IVA a una base, y aplicada sobre un precio que ya
-        // lo trae cobraria el impuesto dos veces. Con tasa 0 da 0 y el divisor nunca es 0.
-        TaxAmount = Round(lineTotal * taxPercentage / (100m + taxPercentage));
-
-        // Sigue siendo la base sin IVA: es lo que el encabezado suma como Subtotal y lo que la
-        // retencion en la fuente toma como base, asi que esas formulas no cambian.
-        Subtotal = lineTotal - TaxAmount;
+        // La fórmula vive en BuildingBlocks (spec 2026-10-07): POS la comparte para cobrar al
+        // centavo lo mismo que una cotización detal. Las validaciones y los códigos
+        // quotation.item.* siguen aquí.
+        var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage);
+        DiscountAmount = amounts.DiscountAmount;
+        TaxAmount = amounts.TaxAmount;
+        Subtotal = amounts.Subtotal;
         UpdatedAt = occurredAt;
     }
 
-    private static decimal Round(decimal value) =>
-        Math.Round(value, 2, MidpointRounding.AwayFromZero);
+    private static decimal Round(decimal value) => VatIncludedLine.Round(value);
 }

@@ -681,6 +681,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
+| `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 **403, nunca 404**, cuando el recurso pertenece a otro tenant.
@@ -1064,6 +1065,26 @@ encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` 
 `PUT` con el catálogo en su orden, nombres y visibilidad por defecto, sin fijas.
 
 Un layout guardado se aplica en la siguiente exportación de pedidos; el de cotizaciones no cambia.
+
+### POS: caja y ventas
+
+Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/pos`. El detalle de cada contrato vive en
+el spec del slice; esta tabla es el inventario.
+
+| Método y ruta                      | Permiso                | Para qué                                                                         |
+| ---------------------------------- | ---------------------- | -------------------------------------------------------------------------------- |
+| `GET /register`                    | `pos.register.operate` | Contexto de la caja: cajero, empresas emisoras y la sesión abierta con su versión |
+| `POST /sessions`                   | `pos.register.operate` | Abre la caja con la base inicial (`openingFloat`, obligatoria)                   |
+| `POST /sessions/{sessionId}/close` | `pos.register.operate` | Cierra la caja con el conteo (`countedCash`, obligatorio); exige `If-Match`      |
+| `GET /sessions`                    | `pos.sale.read`        | Lista paginada de sesiones de caja                                               |
+| `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                   |
+| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada de productos para vender                                       |
+| `GET /products/by-code`            | `pos.sale.create`      | Busca un producto por código exacto (lector de barras)                           |
+| `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada                                   |
+| `POST /sales`                      | `pos.sale.create`      | Crea la venta; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir) |
+| `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
+| `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas, con filtros                                            |
+| `POST /sales/{saleId}/void`        | `pos.sale.void`        | Anula una venta, con motivo; sólo si su caja sigue abierta                       |
 
 ### Aceptación de la invitación
 
