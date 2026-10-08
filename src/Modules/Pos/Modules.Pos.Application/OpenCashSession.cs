@@ -5,7 +5,7 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Pos.Application;
 
-public sealed record OpenCashSessionCommand(Guid TenantId, Guid? CompanyId, decimal OpeningFloat)
+public sealed record OpenCashSessionCommand(Guid TenantId, Guid? CompanyId, decimal? OpeningFloat)
     : ICommand<PosOpenSessionResponse>;
 
 // El validador da el campo (422 validation.failed con errors); el dominio da el código. Los dos
@@ -14,9 +14,12 @@ public sealed class OpenCashSessionValidator : AbstractValidator<OpenCashSession
 {
     public OpenCashSessionValidator()
     {
+        // Ausente no es 0: un monto que no llegó no puede abrir la caja con base cero.
         RuleFor(command => command.OpeningFloat)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
             .InclusiveBetween(0m, PosLimits.MaxCashAmount)
-            .Must(PosLimits.HasValidScale).WithMessage("The opening float accepts at most 2 decimals.");
+            .Must(value => PosLimits.HasValidScale(value!.Value)).WithMessage("The opening float accepts at most 2 decimals.");
     }
 }
 
@@ -56,7 +59,7 @@ public sealed class OpenCashSessionHandler(
             cashier,
             name,
             new PosCompanySnapshot(company.Id, company.Name, company.TaxId, company.Address, company.Phone),
-            command.OpeningFloat,
+            command.OpeningFloat!.Value,
             now);
 
         sessions.Add(session);

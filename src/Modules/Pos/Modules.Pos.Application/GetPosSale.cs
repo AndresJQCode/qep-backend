@@ -19,6 +19,12 @@ public sealed class GetPosSaleHandler(
     public async Task<PosSaleResponse> HandleAsync(GetPosSaleQuery query, CancellationToken cancellationToken)
     {
         PosAuthorization.EnsureAuthorized(executionContext, query.TenantId, PosPermissions.SaleRead);
+        // El id vacío de la ruta es un id que no existe: 404, no el 422 del value object.
+        if (query.SaleId == Guid.Empty)
+        {
+            throw PosNotFound.Sale(query.SaleId);
+        }
+
         var sale = await sales.FindAsync(query.TenantId, new PosSaleId(query.SaleId), cancellationToken)
             ?? throw PosNotFound.Sale(query.SaleId);
         await PosScope.EnsureCanSeeAsync(sale.CashierId, membershipDirectory, executionContext, query.TenantId, cancellationToken);

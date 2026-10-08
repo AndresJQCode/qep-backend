@@ -7,7 +7,7 @@ namespace Modules.Pos.Application;
 
 /// <param name="ExpectedVersion">La version de GET /pos/register que pintó el arqueo; llega por If-Match.</param>
 public sealed record CloseCashSessionCommand(
-    Guid TenantId, Guid SessionId, long ExpectedVersion, decimal CountedCash, string? Note)
+    Guid TenantId, Guid SessionId, long ExpectedVersion, decimal? CountedCash, string? Note)
     : ICommand<PosSessionSummaryResponse>;
 
 public sealed class CloseCashSessionValidator : AbstractValidator<CloseCashSessionCommand>
@@ -15,9 +15,12 @@ public sealed class CloseCashSessionValidator : AbstractValidator<CloseCashSessi
     public CloseCashSessionValidator()
     {
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
+        // Ausente no es 0: congelaría un faltante falso en el arqueo.
         RuleFor(command => command.CountedCash)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
             .InclusiveBetween(0m, PosLimits.MaxCountedCash)
-            .Must(PosLimits.HasValidScale).WithMessage("The counted cash accepts at most 2 decimals.");
+            .Must(value => PosLimits.HasValidScale(value!.Value)).WithMessage("The counted cash accepts at most 2 decimals.");
         RuleFor(command => command.Note).MaximumLength(PosLimits.NoteMaxLength);
     }
 }
@@ -57,7 +60,7 @@ public sealed class CloseCashSessionHandler(
         }
 
         var now = clock.UtcNow;
-        session.Close(command.CountedCash, command.Note, now);
+        session.Close(command.CountedCash!.Value, command.Note, now);
         auditPublisher.Publish(
             command.TenantId, executionContext.SubjectId, "pos.session.closed", "cash_session",
             session.Id.ToString(), "success", [], now);

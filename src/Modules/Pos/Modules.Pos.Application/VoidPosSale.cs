@@ -38,6 +38,12 @@ public sealed class VoidPosSaleHandler(
     public async Task<PosSaleResponse> HandleAsync(VoidPosSaleCommand command, CancellationToken cancellationToken)
     {
         PosAuthorization.EnsureAuthorized(executionContext, command.TenantId, PosPermissions.SaleVoid);
+        // El id vacío de la ruta es un id que no existe: 404, no el 422 del value object.
+        if (command.SaleId == Guid.Empty)
+        {
+            throw PosNotFound.Sale(command.SaleId);
+        }
+
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var member = await PosCashierResolver.ResolveAsync(membershipDirectory, executionContext, command.TenantId, cancellationToken);
 

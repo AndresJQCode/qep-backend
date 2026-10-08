@@ -76,6 +76,22 @@ public sealed class SaleReadAndVoidHandlersTests
         Assert.Equal("pos.sale.not_found", error.Code);
     }
 
+    // El id vacío de la ruta es "no existe", como cualquier otro id desconocido: 404, no el 422 del
+    // value object. La regla de "ningún 422 antes del replay" es sólo de crear.
+    [Fact]
+    public async Task AnEmptySaleIdIsNotFoundOnGetAndVoid()
+    {
+        var bed = new PosTestBed();
+
+        var get = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            Get(bed, Reader).HandleAsync(new GetPosSaleQuery(TenantId, Guid.Empty), TestContext.Current.CancellationToken));
+        var voided = await Assert.ThrowsAsync<ResourceNotFoundException>(() => Void(bed, Voider).HandleAsync(
+            new VoidPosSaleCommand(TenantId, Guid.Empty, "Motivo"), TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.not_found", get.Code);
+        Assert.Equal("pos.sale.not_found", voided.Code);
+    }
+
     // voidable describe la venta, no al que pregunta (spec, decisión 33).
     [Fact]
     public async Task VoidableFollowsTheSaleAndItsSessionEvenWithoutTheVoidPermission()

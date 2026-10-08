@@ -326,6 +326,22 @@ public sealed class RegisterHandlersTests
         Assert.Equal("pos.session.not_found", missing.Code);
     }
 
+    // Un campo ausente en el JSON no debe llegar como 0: congelaría un faltante falso en el arqueo.
+    [Fact]
+    public async Task OpenAndCloseRejectAMissingAmountWithTheFieldInTheErrors()
+    {
+        var bed = new PosTestBed();
+        var session = bed.OpenSessionInStore();
+
+        var open = await Assert.ThrowsAsync<ValidationException>(() => Open(bed, Operator).HandleAsync(
+            new OpenCashSessionCommand(TenantId, null, null), TestContext.Current.CancellationToken));
+        var close = await Assert.ThrowsAsync<ValidationException>(() => Close(bed, Operator).HandleAsync(
+            new CloseCashSessionCommand(TenantId, session.Id.Value, 1, null, null), TestContext.Current.CancellationToken));
+
+        Assert.Contains(open.Errors, failure => failure.PropertyName == "OpeningFloat");
+        Assert.Contains(close.Errors, failure => failure.PropertyName == "CountedCash");
+    }
+
     [Fact]
     public async Task CloseValidatesTheCountAndTheNote()
     {

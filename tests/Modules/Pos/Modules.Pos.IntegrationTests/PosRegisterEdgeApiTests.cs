@@ -28,6 +28,49 @@ public sealed class PosRegisterEdgeApiTests
         Assert.Equal("SH-400", product!.Code);
     }
 
+    // Un campo ausente no se lee como 0: congelaría un faltante falso. Debe llegar el 422 con el campo.
+    [Fact]
+    public async Task OpeningOrClosingWithoutTheAmountIsValidationFailedWithTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+
+        var open = await world.Admin.PostAsJsonAsync($"{world.Url}/sessions", new { }, TestContext.Current.CancellationToken);
+        var session = await world.OpenSessionAsync(world.Admin);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{world.Url}/sessions/{session.Id}/close")
+        {
+            Content = JsonContent.Create(new { }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
+        var close = await world.Admin.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, open.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, close.StatusCode);
+        var openBody = await open.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var closeBody = await close.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("validation.failed", openBody, StringComparison.Ordinal);
+        Assert.Contains("OpeningFloat", openBody, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("validation.failed", closeBody, StringComparison.Ordinal);
+        Assert.Contains("CountedCash", closeBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // El id vacío de la ruta es 404, como cualquier id desconocido, no el 422 del value object.
+    [Fact]
+    public async Task AnEmptySaleIdInTheRouteIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+
+        var get = await world.Admin.GetAsync($"{world.Url}/sales/{Guid.Empty}", TestContext.Current.CancellationToken);
+        var voided = await world.Admin.PostAsJsonAsync(
+            $"{world.Url}/sales/{Guid.Empty}/void", new { reason = "Motivo" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, get.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, voided.StatusCode);
+    }
+
     [Fact]
     public async Task ClosingWithoutIfMatchIsPreconditionRequired()
     {

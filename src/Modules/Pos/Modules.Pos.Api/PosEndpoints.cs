@@ -229,9 +229,9 @@ public static class PosEndpoints
     }
 }
 
-public sealed record OpenCashSessionRequest(Guid? CompanyId, decimal OpeningFloat);
+public sealed record OpenCashSessionRequest(Guid? CompanyId, decimal? OpeningFloat);
 
-public sealed record CloseCashSessionRequest(decimal CountedCash, string? Note);
+public sealed record CloseCashSessionRequest(decimal? CountedCash, string? Note);
 
 public sealed record PreviewPosSaleRequest(IReadOnlyList<PosPreviewLineRequest>? Lines);
 
