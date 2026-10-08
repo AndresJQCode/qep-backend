@@ -300,7 +300,7 @@ public sealed class Order
         {
             _paymentProofs.Add(OrderPaymentProof.Create(
                 OrderPaymentProofId.New(), Id, proof.FileId, proof.PublicStorageKey, proof.Amount, uploadedBy,
-                occurredAt));
+                occurredAt, proof.PaidOn));
         }
 
         PaymentStatus = paymentStatus;
@@ -400,7 +400,7 @@ public sealed class Order
         {
             _paymentProofs.Add(OrderPaymentProof.Create(
                 OrderPaymentProofId.New(), Id, proof.FileId, proof.PublicStorageKey, proof.Amount, uploadedBy,
-                occurredAt));
+                occurredAt, proof.PaidOn));
         }
 
         UpdatedAt = occurredAt;
@@ -481,7 +481,7 @@ public sealed class Order
         {
             _paymentProofs.Add(OrderPaymentProof.Create(
                 OrderPaymentProofId.New(), Id, proof.FileId, proof.PublicStorageKey, proof.Amount, uploadedBy,
-                occurredAt));
+                occurredAt, proof.PaidOn));
         }
     }
 
@@ -549,9 +549,11 @@ public sealed class Order
 /// <summary>Un comprobante de pago tal como lo manda el cliente, sin id: <see cref="Order"/>
 /// asigna un <see cref="OrderPaymentProofId"/> nuevo a cada uno — mismo criterio que
 /// <c>PriceScaleInput</c> en Catalog. <c>PublicStorageKey</c> es la clave de la copia pública que
-/// el handler ya hizo (spec 2026-09-15, P5), o null si el comprobante queda privado. Va última y con
-/// default para no romper a quien lo construye posicionalmente.</summary>
-public sealed record OrderPaymentProofInput(Guid FileId, decimal Amount, string? PublicStorageKey = null);
+/// el handler ya hizo (spec 2026-09-15, P5), o null si el comprobante queda privado. Va con
+/// default para no romper a quien lo construye posicionalmente, y <c>PaidOn</c> —la fecha del
+/// soporte, ver <see cref="OrderPaymentProof.PaidOn"/>— detrás por el mismo motivo.</summary>
+public sealed record OrderPaymentProofInput(
+    Guid FileId, decimal Amount, string? PublicStorageKey = null, DateOnly? PaidOn = null);
 
 /// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
 /// <see cref="OrderPaymentProofInput"/>, sí lleva id — es el que dice cuál comprobante corregir,

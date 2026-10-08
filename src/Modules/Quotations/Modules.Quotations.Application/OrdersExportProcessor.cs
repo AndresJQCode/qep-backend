@@ -505,12 +505,23 @@ public sealed class OrdersExportProcessor(
                 ? ExportCell.OfNumber(code)
                 : ExportCell.OfText(string.Empty);
 
+    // "Fecha Pago N": la fecha del soporte que escribió quien adjuntó el comprobante (a pedido,
+    // 2026-10-08), sin hora porque el soporte no la trae. Un comprobante sin ella —anterior al campo,
+    // o adjuntado sin mandarla— sigue mostrando el instante de subida en la hora local del tenant,
+    // como siempre: es lo único que se sabe de él, y una celda vacía diría que no hubo pago.
     private static ExportCell PaymentDateCell(
-        IReadOnlyList<OrderExportPaymentProof> proofs, int index, TenantCalendar calendar) =>
-        index >= proofs.Count
-            ? ExportCell.OfText(string.Empty)
-            : ExportCell.OfText(calendar.ToLocal(proofs[index].UploadedAt)
-                .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+        IReadOnlyList<OrderExportPaymentProof> proofs, int index, TenantCalendar calendar)
+    {
+        if (index >= proofs.Count)
+        {
+            return ExportCell.OfText(string.Empty);
+        }
+
+        var proof = proofs[index];
+        return ExportCell.OfText(proof.PaidOn is { } paidOn
+            ? paidOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+            : calendar.ToLocal(proof.UploadedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+    }
 
     // "V. Comprobante N" y "URL Comprobante N" (2026-09-24): el monto como número, porque el ERP lo
     // suma, y el enlace con la URL como texto. Sin copia pública, o con la opción apagada —UrlFor

@@ -4,8 +4,9 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>Un comprobante nuevo del borrador (spec 2026-09-17). <paramref name="FileId"/> es null
-/// en el cálculo previo: los archivos se suben recién al guardar.</summary>
-public sealed record OrderEditProofAddition(Guid? FileId, decimal Amount);
+/// en el cálculo previo: los archivos se suben recién al guardar. <paramref name="PaidOn"/> es la
+/// fecha del soporte (a pedido, 2026-10-08), ver <see cref="OrderPaymentProofRequest.PaidOn"/>.</summary>
+public sealed record OrderEditProofAddition(Guid? FileId, decimal Amount, DateOnly? PaidOn = null);
 
 /// <summary>Los comprobantes del borrador. <see cref="Update"/> sólo lleva los que cambian; los no
 /// mencionados se conservan.</summary>

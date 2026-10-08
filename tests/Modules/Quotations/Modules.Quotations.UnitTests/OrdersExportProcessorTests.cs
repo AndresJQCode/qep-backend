@@ -811,6 +811,29 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(string.Empty, row[8].Text);
     }
 
+    // A pedido (2026-10-08): si el comprobante trae su fecha de pago, «Fecha Pago N» es esa fecha
+    // —la del soporte, sin hora, porque es lo que escribió quien lo adjuntó— y no el instante en
+    // que se subió. Sin ella (comprobantes anteriores al campo) sigue cayendo a la fecha de subida.
+    [Fact]
+    public async Task PaymentDatesPreferTheProofsPaidOnDateOverTheUploadInstant()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var convertedAt = new DateTimeOffset(2026, 9, 12, 15, 0, 0, TimeSpan.Zero); // 10:00 en Bogotá.
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow(
+                    "PED-2026-0001",
+                    proofs: [(10_000m, null), (5_000m, null)],
+                    paidOn: [new DateOnly(2026, 9, 10), null],
+                    at: convertedAt)),
+                writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal("2026-09-10", row[7].Text);
+        Assert.Equal("2026-09-12 10:00", row[8].Text);
+    }
+
     [Fact]
     public async Task AnOrderWithoutProofsLeavesEveryPaymentDateCellEmpty()
     {
@@ -1636,7 +1659,7 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(44, writer.Columns.Count);
-        Assert.Equal(new ExportColumn("Tipo Doc",OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
+        Assert.Equal(new ExportColumn("Tipo Doc", OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
         Assert.Equal(2, writer.Rows.Count);
@@ -1798,7 +1821,10 @@ public sealed class OrdersExportProcessorTests
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
         string? notes = null,
         IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null,
-        bool customerWithRetention = false)
+        bool customerWithRetention = false,
+        // La fecha de pago de cada comprobante, por índice contra `proofs`; null o ausente deja el
+        // comprobante sin fecha, como uno anterior al campo (2026-10-08).
+        IReadOnlyList<DateOnly?>? paidOn = null)
     {
         var occurredAt = at ?? Now;
         var quotation = Quotation.Create(
@@ -1814,7 +1840,8 @@ public sealed class OrdersExportProcessorTests
         }
 
         var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
-            .Select(proof => new OrderPaymentProofInput(Guid.CreateVersion7(), proof.Amount, proof.PublicKey))
+            .Select((proof, index) => new OrderPaymentProofInput(
+                Guid.CreateVersion7(), proof.Amount, proof.PublicKey, paidOn?.ElementAtOrDefault(index)))
             .ToArray();
         var order = Order.Create(
             OrderId.New(), TenantId, orderNumber, quotation.Id, OrderPaymentStatus.PaymentPending,

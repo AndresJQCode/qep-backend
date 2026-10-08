@@ -21,9 +21,15 @@ public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderN
 /// Lo mínimo de un comprobante de pago que el Excel de pedidos necesita (spec 2026-09-15, E6): cuál
 /// es, para el orden, su copia pública, si tiene, y su monto, que la hoja muestra desde el
 /// 2026-09-24 en «V. Comprobante N». Sin archivo: el enlace se arma con la clave pública.
+/// <c>PaidOn</c> (a pedido, 2026-10-08) es la fecha del soporte para «Fecha Pago N»; null en los
+/// comprobantes que no la trajeron, donde la hoja cae a <c>UploadedAt</c>.
 /// </summary>
 public sealed record OrderExportPaymentProof(
-    OrderPaymentProofId Id, string? PublicStorageKey, DateTimeOffset UploadedAt, decimal Amount);
+    OrderPaymentProofId Id,
+    string? PublicStorageKey,
+    DateTimeOffset UploadedAt,
+    decimal Amount,
+    DateOnly? PaidOn = null);
 
 /// <summary>
 /// Las fechas de los filtros llegan como instantes: <c>convertedFrom</c> inclusivo y

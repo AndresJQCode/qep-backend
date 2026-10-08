@@ -97,7 +97,8 @@ public sealed class PreviewOrderEditsHandler(
             now);
         order.AttachPaymentProofs(
             query.Proofs.Add
-                .Select(addition => new OrderPaymentProofInput(Guid.CreateVersion7(), addition.Amount))
+                .Select(addition => new OrderPaymentProofInput(
+                    Guid.CreateVersion7(), addition.Amount, PaidOn: addition.PaidOn))
                 .ToArray(),
             updatedBy,
             now);
