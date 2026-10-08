@@ -27,8 +27,8 @@ public sealed class ImageSharpVariantGeneratorTests
         Assert.NotEmpty(thumbnail.Content);
     }
 
-    // Los avisos de ImageSharp 3.1.12 viven en el decodificador de TIFF: un TIFF válido tiene que
-    // fallar como imagen inválida aunque el contenido se decodifique bien.
+    // TIFF concentra los vectores de los avisos de ImageSharp 3.1.12 que el contenido subido puede
+    // alcanzar: un TIFF válido tiene que fallar como imagen inválida aunque se decodifique bien.
     [Fact]
     public async Task AValidTiffIsRejectedAsInvalid()
     {

@@ -94,8 +94,8 @@ public sealed class ImageSharpPaymentProofImageProcessorTests
         Assert.Equal("storage.image.invalid", error.Code);
     }
 
-    // Los avisos de ImageSharp 3.1.12 viven en el decodificador de TIFF: un TIFF válido, aunque
-    // llegue con MIME de imagen, tiene que fallar como imagen inválida.
+    // TIFF concentra los vectores de los avisos de ImageSharp 3.1.12 que el contenido subido puede
+    // alcanzar: un TIFF válido, aunque llegue con MIME de imagen, tiene que fallar como inválida.
     [Fact]
     public async Task AValidTiffIsRejectedAsInvalid()
     {
