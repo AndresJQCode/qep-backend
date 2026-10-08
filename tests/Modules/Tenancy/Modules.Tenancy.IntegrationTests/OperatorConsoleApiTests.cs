@@ -413,6 +413,84 @@ public sealed class OperatorConsoleApiTests
         Assert.False(modules["quotations"].Status == "active" && modules["customers"].Status != "active");
     }
 
+    [Fact]
+    public async Task SuspendingRequiresIfMatchAndAFreshVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        await AssertProblemAsync(await PostStatusAsync(client, tenantId, null, "inactive", "nonpayment"),
+            (HttpStatusCode)428, "precondition.if_match_required");
+        await AssertProblemAsync(await PostStatusAsync(client, tenantId, "\"9\"", "inactive", "nonpayment"),
+            HttpStatusCode.PreconditionFailed, "concurrency.conflict");
+    }
+
+    // §4 y criterio 5: inactivar corta todo, reactivar deja los módulos como estaban (D8).
+    [Fact]
+    public async Task SuspendingCutsTheTenantAndReactivatingKeepsItsModules()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+        using var member = StubClient(factory, ownerId, tenantId, "tenancy.settings.read");
+
+        var suspended = await ReadDetailAsync(await PostStatusAsync(client, tenantId, "\"1\"", "inactive", "nonpayment"));
+        Assert.Equal(("Suspended", 2L, "nonpayment"), (suspended.Status, suspended.Version, suspended.StatusReason));
+        Assert.NotNull(suspended.StatusChangedAt);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await member.GetAsync($"/api/v1/tenants/{tenantId}/authorization/me", TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(1, (await GetOkAsync<TenantPagePayload>(client, Url("tenants"))).Summary.Inactive);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var audited = await scope.ServiceProvider.GetRequiredService<TenancyDbContext>().Database.SqlQuery<string>(
+                $"SELECT changed_fields::text AS \"Value\" FROM audit.entries WHERE action = 'tenancy.tenant.status_changed' AND tenant_id = {tenantId}")
+                .SingleAsync(TestContext.Current.CancellationToken);
+            Assert.Contains("status:Active->Suspended", audited, StringComparison.Ordinal);
+        }
+
+        var reactivated = await ReadDetailAsync(await PostStatusAsync(client, tenantId, "\"2\"", "active", "correction"));
+        Assert.Equal(("Active", 3L), (reactivated.Status, reactivated.Version));
+        Assert.Equal(6, reactivated.Modules.Count(module => module.Status == "active"));
+        Assert.Contains("tenancy.settings.read", await EffectivePermissionsAsync(member, tenantId));
+    }
+
+    [Fact]
+    public async Task TheOperatorTenantCannotBeSuspended()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        using var client = OperatorClient(factory);
+
+        await AssertProblemAsync(await PostStatusAsync(client, OperatorTenantId, "\"1\"", "inactive", "nonpayment"),
+            HttpStatusCode.UnprocessableEntity, "tenancy.tenant.operator_cannot_be_suspended");
+    }
+
+    private static async Task<HttpResponseMessage> PostStatusAsync(
+        HttpClient client, Guid tenantId, string? ifMatch, string status, string reason)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, Url($"tenants/{tenantId}/status"))
+        {
+            Content = JsonContent.Create(new { status, reason, note = (string?)null }),
+        };
+        if (ifMatch is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<DetailPayload> ReadDetailAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await response.Content.ReadFromJsonAsync<DetailPayload>(TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        return detail;
+    }
+
     private static async Task<DetailPayload> PostChangesAsync(
         HttpClient client, Guid tenantId, string reason, string? note, params (string Key, string Status)[] changes)
     {

@@ -73,7 +73,7 @@ public static class TenantSettingsEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
-        var expectedVersion = RequireIfMatch(httpContext);
+        var expectedVersion = IfMatchHeader.RequireVersion(httpContext);
 
         var settings = await dispatcher.SendAsync(
             new UpdateTenantSettingsCommand(
@@ -95,7 +95,7 @@ public static class TenantSettingsEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
-        var expectedVersion = RequireIfMatch(httpContext);
+        var expectedVersion = IfMatchHeader.RequireVersion(httpContext);
 
         var settings = await dispatcher.SendAsync(
             new SetTenantLogoCommand(
@@ -110,24 +110,12 @@ public static class TenantSettingsEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
-        var expectedVersion = RequireIfMatch(httpContext);
+        var expectedVersion = IfMatchHeader.RequireVersion(httpContext);
 
         var settings = await dispatcher.SendAsync(
             new RemoveTenantLogoCommand(new TenantId(tenantId), expectedVersion, httpContext.TraceIdentifier),
             cancellationToken);
         return SettingsResult(settings, httpContext);
-    }
-
-    private static long RequireIfMatch(HttpContext httpContext)
-    {
-        if (!TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion))
-        {
-            throw new PreconditionRequiredException(
-                "precondition.if_match_required",
-                "A valid If-Match header containing the loaded version is required.");
-        }
-
-        return expectedVersion;
     }
 
     private static IResult SettingsResult(
@@ -143,24 +131,6 @@ public static class TenantSettingsEndpoints
             settings.DateFormat,
             settings.Version,
             settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null));
-    }
-
-    private static bool TryParseVersion(string? etag, out long version)
-    {
-        version = 0;
-        if (string.IsNullOrWhiteSpace(etag))
-        {
-            return false;
-        }
-
-        var normalized = etag.Trim();
-        if (normalized.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
-        {
-            normalized = normalized[2..].Trim();
-        }
-
-        normalized = normalized.Trim('"');
-        return long.TryParse(normalized, out version) && version > 0;
     }
 }
 
