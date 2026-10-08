@@ -2,6 +2,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Companies.Application;
 using Modules.Pos.Application;
@@ -312,8 +314,16 @@ internal static class PosApiHarness
 
     public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
     {
+        /// <summary>Ajuste opcional del contenedor para una prueba (p. ej. un doble con compuerta).</summary>
+        public Action<IServiceCollection>? ConfigureTestServices { get; init; }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            if (ConfigureTestServices is { } configure)
+            {
+                builder.ConfigureTestServices(configure);
+            }
+
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Pos.Application;
 using Modules.Pos.Infrastructure.Persistence;
 using Npgsql;
@@ -57,8 +58,8 @@ public sealed class PosSaleApiTests
 
     // Spec, «Integración»: dos POST idénticos en paralelo, repetido 20 veces → cada vez una fila,
     // las dos respuestas 2xx y el mismo saleNumber. Si el planificador serializa las dos peticiones,
-    // las dos salidas son repeticiones válidas y el camino del choque no se ejerce (preflight F-24):
-    // la prueba de abajo, con el candado retenido a mano, es la que lo fuerza.
+    // las dos salidas son repeticiones válidas (preflight F-24). El camino del choque 412/id_taken lo
+    // cubren las unitarias de B10; el candado lo prueban las dos pruebas de abajo.
     [Fact]
     public async Task TwoIdenticalPostsInParallelAlwaysLeaveExactlyOneSale()
     {
@@ -118,7 +119,9 @@ public sealed class PosSaleApiTests
 
         await WaitUntilAsync(
             async () => await WaitingOnLockAsync(database, key) == 2,
-            "both requests to be waiting on the sale id advisory lock");
+            "both requests to be waiting on the sale id advisory lock",
+            firstSend,
+            retry);
         Assert.False(firstSend.IsCompleted);
         Assert.False(retry.IsCompleted);
         Assert.Equal(0, await SalesWithIdAsync(database, id));
@@ -139,18 +142,116 @@ public sealed class PosSaleApiTests
         Assert.Equal(1, register!.Session!.SalesCount);
     }
 
+    // Spec, decisión 55: el candado va ANTES de buscar la repetición. Aquí el primer envío queda
+    // detenido DENTRO del candado (después de leer el catálogo), llega el reintento, el precio
+    // cambia, y recién entonces el primero termina. El reintento debe responder 200 con la venta
+    // original; si el candado se tomara después de buscar la repetición, volvería a cotizar y
+    // respondería 422 pos.sale.price_changed.
+    [Fact]
+    public async Task TheRetryAnswers200WithTheOriginalSaleEvenIfThePriceChangedMeanwhile()
+    {
+        await using var database = await StartDatabaseAsync();
+        var gate = new ProductLookupGate();
+        using var factory = new QepApiFactory(database.GetConnectionString())
+        {
+            ConfigureTestServices = services => gate.Install(services),
+        };
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        var session = await world.OpenSessionAsync(world.Admin);
+        var id = Guid.CreateVersion7();
+        var body = PosWorld.SaleBody(id, session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m));
+        var key = PosSaleIdLock.KeyFor(world.Tenant.TenantId, id);
+
+        gate.Arm();
+        var firstSend = world.Admin.PostAsJsonAsync($"{world.Url}/sales", body, TestContext.Current.CancellationToken);
+        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var retry = world.Admin.PostAsJsonAsync($"{world.Url}/sales", body, TestContext.Current.CancellationToken);
+        await WaitUntilAsync(
+            async () => await WaitingOnLockAsync(database, key) == 1,
+            "the retry to be waiting on the sale id advisory lock",
+            firstSend,
+            retry);
+        Assert.False(retry.IsCompleted);
+        await ExecuteSqlAsync(database, "UPDATE catalog.products SET price_base_cop = 13000 WHERE id = @id", ("id", world.Shampoo));
+
+        gate.Release.SetResult();
+        var responses = await Task.WhenAll(firstSend, retry);
+
+        var texts = await Task.WhenAll(responses.Select(response => response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)));
+        Assert.True(responses[0].StatusCode == HttpStatusCode.Created, $"first: {responses[0].StatusCode} {texts[0]}");
+        Assert.True(responses[1].StatusCode == HttpStatusCode.OK, $"retry: {responses[1].StatusCode} {texts[1]}");
+        Assert.DoesNotContain("pos.sale.price_changed", texts[1], StringComparison.Ordinal);
+        var original = await responses[0].Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
+        var replayed = System.Text.Json.JsonSerializer.Deserialize<PosSaleResponse>(texts[1], System.Text.Json.JsonSerializerOptions.Web);
+        Assert.Equal(original!.SaleNumber, replayed!.SaleNumber);
+        Assert.Equal(11_900m, replayed.Total);
+        Assert.Equal(1, await SalesWithIdAsync(database, id));
+    }
+
+    /// <summary>
+    /// Doble de IPosProductLookup que, la primera vez que se le piden productos por id estando
+    /// armado, lee el catálogo real y se detiene hasta que la prueba lo suelta: deja al primer envío
+    /// dentro del candado, con los precios ya leídos.
+    /// </summary>
+    private sealed class ProductLookupGate
+    {
+        private int armed;
+
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Arm() => Interlocked.Exchange(ref armed, 1);
+
+        public void Install(IServiceCollection services)
+        {
+            var original = services.Single(descriptor => descriptor.ServiceType == typeof(IPosProductLookup));
+            services.Remove(original);
+            services.AddScoped<IPosProductLookup>(provider => new GatedLookup(
+                (IPosProductLookup)ActivatorUtilities.CreateInstance(provider, original.ImplementationType!), this));
+        }
+
+        public async Task PauseOnceAsync()
+        {
+            if (Interlocked.Exchange(ref armed, 0) == 1)
+            {
+                Entered.SetResult();
+                await Release.Task;
+            }
+        }
+    }
+
+    private sealed class GatedLookup(IPosProductLookup inner, ProductLookupGate gate) : IPosProductLookup
+    {
+        public Task<(IReadOnlyList<PosProductRef> Items, int Total)> SearchAsync(
+            Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken) =>
+            inner.SearchAsync(tenantId, search, page, pageSize, cancellationToken);
+
+        public Task<PosProductRef?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
+            inner.FindByCodeAsync(tenantId, code, cancellationToken);
+
+        public async Task<IReadOnlyDictionary<Guid, PosProductRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
+        {
+            var found = await inner.FindManyAsync(tenantId, productIds, cancellationToken);
+            await gate.PauseOnceAsync();
+            return found;
+        }
+    }
+
     /// <summary>Sesiones de Postgres esperando el candado consultivo de esa clave (aún no concedido).</summary>
     private static Task<long> WaitingOnLockAsync(Testcontainers.PostgreSql.PostgreSqlContainer database, long key) =>
         CountAsync(
             database,
             """
             SELECT count(*) FROM pg_locks
-            WHERE locktype = 'advisory' AND NOT granted
+            WHERE locktype = 'advisory' AND objsubid = 1 AND NOT granted
               AND ((classid::bigint << 32) | objid::bigint) = @key
             """,
             ("key", key));
 
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, string description)
+    private static async Task WaitUntilAsync(
+        Func<Task<bool>> condition, string description, params Task<HttpResponseMessage>[] requests)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -158,7 +259,8 @@ public sealed class PosSaleApiTests
         {
             if (timeout.IsCancellationRequested)
             {
-                Assert.Fail($"Timed out waiting for {description}.");
+                Assert.Fail($"Timed out waiting for {description}. Requests: " + string.Join(
+                    ", ", requests.Select(request => request.IsCompleted ? request.Status + "/" + (request.IsCompletedSuccessfully ? request.Result.StatusCode : "-") : "pending")));
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(50), TestContext.Current.CancellationToken);
