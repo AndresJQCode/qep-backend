@@ -41,6 +41,47 @@ public sealed class SeedOptionsValidatorTests
         Assert.Contains("Seed:OperatorOwnerEmail", result.FailureMessage, StringComparison.Ordinal);
     }
 
+    // El ConfigMap de producción trae #{SEED_OPERATOR_OWNER_EMAIL}#, que Azure DevOps reemplaza. Hasta
+    // que exista la variable del pipeline el token llega literal, y eso vale lo mismo que ausente:
+    // tumbar el arranque por una variable que todavía no se creó sería peor que no sembrar QCode.
+    [Theory]
+    [InlineData("#{SEED_OPERATOR_OWNER_EMAIL}#")]
+    [InlineData("  #{SEED_OPERATOR_OWNER_EMAIL}#  ")]
+    public void SeedEnabledWithAnUnreplacedPipelineTokenIsValid(string operatorOwnerEmail)
+    {
+        var result = new SeedOptionsValidator().Validate(null, Enabled(operatorOwnerEmail));
+
+        Assert.True(result.Succeeded);
+    }
+
+    // Sólo un token completo cuenta como ausente: algo que se le parece a medias es un error de
+    // configuración y se rechaza como cualquier email inválido.
+    [Theory]
+    [InlineData("#{seed_operator_owner_email}#")]
+    [InlineData("#{SEED_OPERATOR_OWNER_EMAIL}")]
+    [InlineData("x#{SEED_OPERATOR_OWNER_EMAIL}#")]
+    public void SeedEnabledWithSomethingThatOnlyLooksLikeATokenFails(string operatorOwnerEmail)
+    {
+        var result = new SeedOptionsValidator().Validate(null, Enabled(operatorOwnerEmail));
+
+        Assert.True(result.Failed);
+        Assert.Contains("Seed:OperatorOwnerEmail", result.FailureMessage, StringComparison.Ordinal);
+    }
+
+    // Seed:OwnerEmail no cambia: un token sin reemplazar ahí sigue tumbando el arranque, porque
+    // Origen botánico sí lo necesita para existir.
+    [Fact]
+    public void AnUnreplacedPipelineTokenInTheOwnerEmailStillFails()
+    {
+        var options = Enabled(operatorOwnerEmail: null);
+        options.OwnerEmail = "#{SEED_OWNER_EMAIL}#";
+
+        var result = new SeedOptionsValidator().Validate(null, options);
+
+        Assert.True(result.Failed);
+        Assert.Contains("Seed:OwnerEmail", result.FailureMessage, StringComparison.Ordinal);
+    }
+
     // Con la semilla apagada la clave no la lee nadie, igual que Seed:OwnerEmail.
     [Fact]
     public void SeedDisabledIgnoresTheOperatorOwnerEmail()

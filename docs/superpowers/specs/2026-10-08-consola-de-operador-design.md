@@ -101,14 +101,17 @@ de datos de tenants que se van (Ley 1581).
   producción ése puede ser el email del cliente, y reutilizarlo lo haría operador de la plataforma.
   - Sin `Seed:OperatorOwnerEmail`: no se crea el tenant, se advierte en el log (`EventId 4102`) y el
     arranque sigue.
-  - Con un valor que no es email: el arranque falla (`SeedOptionsValidator`, mismo criterio que
-    `Seed:OwnerEmail`).
+  - Con un token de Azure DevOps sin reemplazar (`^#\{[A-Z0-9_]+\}#$` tras recortar espacios,
+    `SeedOptions.IsUnreplacedPipelineToken`): igual que sin valor, con su propia advertencia
+    (`EventId 4107`). Sólo aplica a esta clave; `Seed:OwnerEmail` no cambia.
+  - Con cualquier otro valor que no es email: el arranque falla (`SeedOptionsValidator`, mismo
+    criterio que `Seed:OwnerEmail`).
   - Idempotente: si el tenant `...0006` existe, no toca nada. Si otro tenant ya tiene el slug
     `qcode` (QCode registrado por el signup), no lo crea, advierte (`EventId 4103`, con el id del
     que lo tiene) y el arranque sigue; en ese caso se apunta `Platform__OperatorTenantId` a ese id.
-- El email **no** va al ConfigMap versionado como marcador: un `#{...}#` sin variable definida
-  quedaría literal, fallaría la validación de email y tumbaría los pods al desplegar `main`, donde el
-  CI no corre pruebas. El owner lo agrega con el valor real (ver «Despliegue»).
+- El ConfigMap de producción declara `Seed__OperatorOwnerEmail: "#{SEED_OPERATOR_OWNER_EMAIL}#"`.
+  Como el token sin reemplazar vale lo mismo que ausente, desplegar `main` sin la variable del
+  pipeline no tumba los pods. El owner crea la variable en Azure DevOps (ver «Despliegue»).
 
 ### 2. Permisos de operador
 
@@ -517,7 +520,8 @@ historial. Se documenta `Platform:OperatorTenantId`.
 | `Platform:OperatorTenantId` ausente o vacía (cualquier ambiente) | sin consola: 403 para todos; la app sigue funcionando; en producción, advertencia en el log al arrancar. Por defecto no está ausente: `appsettings.json` trae el id del tenant sembrado |
 | `Platform:OperatorTenantId` apunta a un tenant que no existe (p. ej. el default antes de sembrar QCode) | inofensivo: nadie tiene membresía en él, la consola no es alcanzable |
 | `Seed:Enabled` sin `Seed:OperatorOwnerEmail` | no se siembra QCode; advertencia `4102`; el arranque sigue |
-| `Seed:OperatorOwnerEmail` con un valor que no es email | el arranque falla (`ValidateOnStart`) |
+| `Seed:OperatorOwnerEmail` con el token del pipeline sin reemplazar (`#{SEED_OPERATOR_OWNER_EMAIL}#`) | igual que sin valor: no se siembra QCode; advertencia `4107`; el arranque sigue |
+| `Seed:OperatorOwnerEmail` con cualquier otro valor que no es email | el arranque falla (`ValidateOnStart`) |
 | El slug `qcode` ya es de otro tenant | no se siembra QCode; advertencia `4103` con el id de ese tenant, que pide verificar su dueño antes de apuntar `Platform:OperatorTenantId` ahí; el arranque sigue |
 | `Seed:OperatorOwnerEmail` igual a `Seed:OwnerEmail` | no se siembra QCode; advertencia `4104`; el arranque sigue |
 | `Seed:OperatorOwnerEmail` de un usuario con membresía en otro tenant | no se siembra QCode; advertencia `4105`; el arranque sigue |
@@ -576,10 +580,11 @@ obligatorio, motivos por dirección, lote enviado); lista (búsqueda, resumen, s
 1. Backend antes que frontend.
 2. Se puede desplegar sin configurar nada: mientras QCode no esté sembrado, el id por defecto de
    `Platform:OperatorTenantId` apunta a un tenant que no existe, la consola no es alcanzable y todo
-   lo demás funciona. La semilla advierte en cada arranque que falta `Seed:OperatorOwnerEmail`.
-3. Para habilitarla, el owner agrega `Seed__OperatorOwnerEmail: "<email de QCode>"` al ConfigMap de
-   producción (que ya tiene `Seed__Enabled: "true"`) y reinicia el despliegue. La semilla crea QCode
-   con el id por defecto, así que no hace falta tocar `Platform__OperatorTenantId`.
+   lo demás funciona. La semilla advierte en cada arranque que el token
+   `#{SEED_OPERATOR_OWNER_EMAIL}#` no se reemplazó (`4107`).
+3. Para habilitarla, el owner crea en Azure DevOps la variable del pipeline
+   `SEED_OPERATOR_OWNER_EMAIL` con un email interno de QCode y vuelve a desplegar. La semilla crea
+   QCode con el id por defecto, así que no hace falta tocar `Platform__OperatorTenantId`.
 4. El dueño entra con Google con ese email —el primer login vincula el usuario sembrado— y ve
    «Plataforma» (puede requerir recargar la SPA).
 5. Si QCode ya existía con slug `qcode` (advertencia `4103`), en vez del paso 3 se agrega

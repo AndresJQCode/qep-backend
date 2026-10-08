@@ -384,8 +384,11 @@ No hace falta invitación ni registrar un tenant.
 
 `Seed__OperatorOwnerEmail` es una clave aparte a propósito y **no** reutiliza `Seed__OwnerEmail`:
 en producción ése puede ser el email del cliente, y reutilizarlo lo haría operador de toda la
-plataforma. Si viene, tiene que ser un email válido o el arranque falla. Si el slug `qcode` ya es de
-otro tenant, la semilla no crea QCode, lo advierte con el id de ese tenant y sigue arrancando.
+plataforma. Si viene, tiene que ser un email válido o el arranque falla, salvo que sea un token de
+Azure DevOps sin reemplazar (`#{SEED_OPERATOR_OWNER_EMAIL}#`, el que trae el ConfigMap de
+producción): ése vale lo mismo que ausente, y la semilla salta QCode con la advertencia `4107`. Si el
+slug `qcode` ya es de otro tenant, la semilla no crea QCode, lo advierte con el id de ese tenant y
+sigue arrancando.
 
 Es idempotente: el tenant por id, el usuario por email, la membresía por el par
 usuario-tenant y los productos por código. Correrla muchas veces —cada reinicio de pod
@@ -663,9 +666,12 @@ Lo crea la [semilla de arranque](#semilla-de-arranque) cuando tiene `Seed:Operat
 - Vaciar la clave (`Platform__OperatorTenantId: ""`) apaga la consola: los endpoints `/operator/*`
   responden 403 a todos. En `Production`, además, se registra una advertencia al arrancar.
 - `Guid.Empty` tumba el arranque (`OperatorTenantOptionsValidator` con `ValidateOnStart`).
-- El email **no** va como marcador en el ConfigMap versionado: un `#{...}#` sin variable definida
-  quedaría literal, fallaría la validación de email y tumbaría los pods, porque el CI despliega
-  `main` sin pruebas.
+- El email llega por la variable del pipeline: el ConfigMap trae
+  `Seed__OperatorOwnerEmail: "#{SEED_OPERATOR_OWNER_EMAIL}#"`, que Azure DevOps reemplaza al
+  desplegar. Mientras la variable no exista, el token llega literal y vale lo mismo que ausente:
+  `SeedOptionsValidator` no tumba el arranque y la semilla salta QCode con la advertencia `4107`.
+  Sólo un token completo (`#{` + mayúsculas, dígitos o `_` + `}#`) cuenta así; cualquier otro valor
+  que no sea email sí tumba el arranque.
 
 > [!WARNING]
 > `Seed:OperatorOwnerEmail` **tiene que ser una dirección interna de QCode que no use nadie más**.
@@ -684,11 +690,13 @@ niega a arrancar con él.
 
 Para habilitarla en producción:
 
-1. Desplegar el backend antes que el frontend. Sin el email, el despliegue no cambia nada visible:
-   la semilla sólo advierte en cada arranque que falta `Seed:OperatorOwnerEmail`.
-2. Agregar `Seed__OperatorOwnerEmail: "<email de QCode>"` al ConfigMap de producción (que ya tiene
-   `Seed__Enabled: "true"`) y reiniciar el despliegue. La semilla crea QCode con el id por defecto,
-   así que no hace falta tocar `Platform__OperatorTenantId`.
+1. Desplegar el backend antes que el frontend. Sin la variable del pipeline, el despliegue no
+   cambia nada visible: la semilla sólo advierte en cada arranque que el token no se reemplazó
+   (`4107`).
+2. Crear en Azure DevOps la variable del pipeline `SEED_OPERATOR_OWNER_EMAIL` con un email interno
+   de QCode y volver a desplegar. El ConfigMap ya la referencia y ya trae `Seed__Enabled: "true"`;
+   la semilla crea QCode con el id por defecto, así que no hace falta tocar
+   `Platform__OperatorTenantId`.
 3. Entrar con Google con ese email: el primer login vincula el usuario sembrado. El `admin` de QCode
    ve «Plataforma» (puede requerir recargar la SPA).
 

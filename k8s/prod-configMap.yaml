@@ -99,6 +99,11 @@ data:
   # al cliente. Sin ellas la semilla no corre.
   Seed__Enabled: "true"
   Seed__OwnerEmail: "#{SEED_OWNER_EMAIL}#"
+  # Dueño del tenant operador QCode (consola de operador): administra toda la plataforma, así que
+  # tiene que ser un email interno de QCode que no use nadie más. Mientras la variable del pipeline
+  # SEED_OPERATOR_OWNER_EMAIL no exista, el token llega literal y la semilla salta QCode con una
+  # advertencia (4107), sin tumbar el arranque.
+  Seed__OperatorOwnerEmail: "#{SEED_OPERATOR_OWNER_EMAIL}#"
   # Carga sintética para medir la exportación (spec 2026-09-13). Con un número mayor que 0 siembra,
   # después del arranque, el tenant "carga-export" con esa cantidad de cotizaciones, y le da admin a
   # Seed__OwnerEmail. Repite el default de la imagen a propósito, igual que

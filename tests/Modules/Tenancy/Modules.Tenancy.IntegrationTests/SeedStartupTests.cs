@@ -267,6 +267,37 @@ public sealed class SeedStartupTests
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
+    // El token del ConfigMap sin reemplazar —la variable SEED_OPERATOR_OWNER_EMAIL todavía no existe
+    // en el pipeline— vale lo mismo que ausente: no se siembra QCode, no se crea un usuario con ese
+    // "email", se advierte nombrando el token y el arranque sigue.
+    [Fact]
+    public async Task AnUnreplacedPipelineTokenDoesNotSeedTheOperatorTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var logs = new CapturingLoggerProvider();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(),
+            seedEnabled: true,
+            operatorOwnerEmail: "#{SEED_OPERATOR_OWNER_EMAIL}#",
+            logs: logs);
+        using var client = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        Assert.False(await dbContext.Tenants.AnyAsync(
+            tenant => tenant.Id == new TenantId(OperatorTenantId) || tenant.Slug == "qcode",
+            TestContext.Current.CancellationToken));
+        Assert.True(await dbContext.Tenants.AnyAsync(
+            tenant => tenant.Id == new TenantId(TenancySeeder.SeedTenantId),
+            TestContext.Current.CancellationToken));
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        Assert.False(await identity.Users.AnyAsync(
+            user => user.Email.Contains("SEED_OPERATOR_OWNER_EMAIL"), TestContext.Current.CancellationToken));
+        var warning = Assert.Single(logs.Entries, entry => entry.EventId == 4107);
+        Assert.Equal(LogLevel.Warning, warning.Level);
+        Assert.Contains("SEED_OPERATOR_OWNER_EMAIL", warning.Message, StringComparison.Ordinal);
+    }
+
     // Sin el email no hay a quién darle el tenant: no se crea, se advierte y el arranque sigue.
     // Es el estado del ConfigMap de producción hasta que el owner agregue la clave.
     [Theory]

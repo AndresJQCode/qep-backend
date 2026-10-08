@@ -50,11 +50,13 @@ internal sealed class SeedOptionsValidator : IValidateOptions<SeedOptions>
     }
 
     // Sólo la lee la semilla de arranque, así que sólo se valida con Seed:Enabled. Ausente es
-    // válido —la semilla advierte y no crea el tenant operador—; presente e inválido tumba el
-    // arranque por la misma razón que Seed:OwnerEmail.
+    // válido —la semilla advierte y no crea el tenant operador—, y un token del pipeline sin
+    // reemplazar vale lo mismo que ausente; presente e inválido tumba el arranque por la misma
+    // razón que Seed:OwnerEmail.
     private static ValidateOptionsResult ValidateOperatorOwnerEmail(string? operatorOwnerEmail)
     {
-        if (string.IsNullOrWhiteSpace(operatorOwnerEmail))
+        if (string.IsNullOrWhiteSpace(operatorOwnerEmail)
+            || SeedOptions.IsUnreplacedPipelineToken(operatorOwnerEmail))
         {
             return ValidateOptionsResult.Success;
         }

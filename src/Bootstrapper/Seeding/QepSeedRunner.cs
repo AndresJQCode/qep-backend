@@ -41,6 +41,14 @@ public static class QepSeedRunner
             "Seed:OperatorOwnerEmail is not configured: the operator tenant '{TenantSlug}' was not "
             + "seeded, so nobody can open the operator console. Set Seed__OperatorOwnerEmail to seed it.");
 
+    private static readonly Action<ILogger, string, string, Exception?> LogOperatorOwnerEmailPlaceholder =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Warning,
+            new EventId(4107, nameof(LogOperatorOwnerEmailPlaceholder)),
+            "Seed:OperatorOwnerEmail still holds the unreplaced pipeline token '{Token}': the operator "
+            + "tenant '{TenantSlug}' was not seeded. Create that pipeline variable with an internal QCode "
+            + "email and redeploy.");
+
     private static readonly Action<ILogger, string, Guid, Exception?> LogOperatorSlugTaken =
         LoggerMessage.Define<string, Guid>(
             LogLevel.Warning,
@@ -152,6 +160,16 @@ public static class QepSeedRunner
         if (string.IsNullOrWhiteSpace(operatorOwnerEmail))
         {
             LogOperatorOwnerEmailMissing(logger, TenancySeeder.OperatorTenantSlug, null);
+            return;
+        }
+
+        // El ConfigMap de producción trae #{SEED_OPERATOR_OWNER_EMAIL}#; sin la variable del pipeline
+        // llega literal. Vale lo mismo que ausente, con su propia advertencia para que se entienda qué
+        // falta. SeedOptionsValidator ya lo dejó pasar por la misma regla.
+        if (SeedOptions.IsUnreplacedPipelineToken(operatorOwnerEmail))
+        {
+            LogOperatorOwnerEmailPlaceholder(
+                logger, operatorOwnerEmail.Trim(), TenancySeeder.OperatorTenantSlug, null);
             return;
         }
 
