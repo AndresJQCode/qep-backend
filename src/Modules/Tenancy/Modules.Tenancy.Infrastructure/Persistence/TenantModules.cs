@@ -20,8 +20,10 @@ internal sealed class TenantModules(TenancyDbContext dbContext) : ITenantModules
             .Where(tenant => tenant.Id == id)
             .Select(tenant => new
             {
+                // Spec 2026-10-08 §3: contratado = fila con status = 'active'. FromStored y todo lo de
+                // encima (efectivos, missingDependencies, enmascarado, guard, /modules) no cambia.
                 Keys = dbContext.TenantModules
-                    .Where(module => module.TenantId == tenant.Id)
+                    .Where(module => module.TenantId == tenant.Id && module.Status == TenantModuleStatus.Active)
                     .Select(module => module.ModuleKey)
                     .ToList(),
             })

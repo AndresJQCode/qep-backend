@@ -14,6 +14,8 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
 
     public DbSet<TenantModule> TenantModules => Set<TenantModule>();
 
+    public DbSet<TenantChange> TenantChanges => Set<TenantChange>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
@@ -27,6 +29,7 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
     {
         ConfigureTenant(modelBuilder);
         ConfigureTenantModule(modelBuilder);
+        ConfigureTenantChange(modelBuilder);
         ConfigureMembership(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías críticas commiteen atómicas en
@@ -105,7 +108,8 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
                 "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos')");
             table.HasCheckConstraint(
                 "CK_tenant_modules_source",
-                "source IN ('backfill','signup','seed','manual')");
+                "source IN ('backfill','signup','seed','manual','operator')");
+            table.HasCheckConstraint("CK_tenant_modules_status", "status IN ('active','inactive')");
         });
         module.HasKey(value => new { value.TenantId, value.ModuleKey });
         module.Property(value => value.TenantId)
@@ -124,7 +128,69 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         module.Property(value => value.Note)
             .HasColumnName("note")
             .HasMaxLength(TenantModule.NoteMaxLength);
+        // Spec 2026-10-08 §3: el DEFAULT se queda y se declara en el modelo. Durante el rolling update los
+        // pods viejos insertan filas (signup, semilla) sin la columna, y el SQL manual del README también.
+        // HasDefaultValueSql y no HasDefaultValue("active"): Status es un enum con conversión a texto
+        // (decisión P3 del plan). Active vale 1, no 0, así que EF siempre manda el valor del agregado.
+        module.Property(value => value.Status)
+            .HasColumnName("status")
+            .HasMaxLength(TenantModule.StatusMaxLength)
+            .HasConversion(
+                status => TenantChangeVocabulary.ToText(status),
+                text => TenantChangeVocabulary.ParseModuleStatus(text))
+            .HasDefaultValueSql("'active'");
+        module.Property(value => value.StatusChangedAt)
+            .HasColumnName("status_changed_at")
+            .HasDefaultValueSql("now()");
         module.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Spec 2026-10-08 §3 (D12): un solo historial para módulos y estado del tenant. La FK va en el
+    // modelo por la misma razón que tenant_modules: que EF ordene los INSERT del mismo SaveChanges. Sin
+    // navegación en Tenant.
+    private static void ConfigureTenantChange(ModelBuilder modelBuilder)
+    {
+        var change = modelBuilder.Entity<TenantChange>();
+        change.ToTable("tenant_changes", "tenancy", table =>
+        {
+            table.HasCheckConstraint("CK_tenant_changes_kind", "kind IN ('module','tenant_status')");
+            table.HasCheckConstraint(
+                "CK_tenant_changes_module_key",
+                "(kind = 'module' AND module_key IS NOT NULL) OR (kind = 'tenant_status' AND module_key IS NULL)");
+            table.HasCheckConstraint(
+                "CK_tenant_changes_reason",
+                "reason IN ('contract','courtesy','nonpayment','cancellation','correction')");
+        });
+        change.HasKey(value => value.Id);
+        change.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        change.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        change.Property(value => value.BatchId).HasColumnName("batch_id");
+        change.Property(value => value.Kind)
+            .HasColumnName("kind")
+            .HasMaxLength(16)
+            .HasConversion(kind => TenantChangeVocabulary.ToText(kind), text => TenantChangeVocabulary.ParseKind(text));
+        // EF no le pasa null a un conversor: las filas de estado del tenant quedan con NULL.
+        change.Property(value => value.ModuleKey)
+            .HasColumnName("module_key")
+            .HasMaxLength(32)
+            .HasConversion(key => key!.Value, value => TenantModuleKey.Parse(value));
+        change.Property(value => value.FromStatus).HasColumnName("from_status").HasMaxLength(TenantChange.StatusMaxLength);
+        change.Property(value => value.ToStatus).HasColumnName("to_status").HasMaxLength(TenantChange.StatusMaxLength);
+        change.Property(value => value.Reason)
+            .HasColumnName("reason")
+            .HasMaxLength(16)
+            .HasConversion(reason => TenantChangeVocabulary.ToText(reason), text => TenantChangeVocabulary.ParseReason(text));
+        change.Property(value => value.Note).HasColumnName("note").HasMaxLength(TenantChange.NoteMaxLength);
+        change.Property(value => value.ActorUserId).HasColumnName("actor_user_id");
+        change.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        change.HasIndex(value => new { value.TenantId, value.OccurredAt })
+            .IsDescending(false, true)
+            .HasDatabaseName("IX_tenant_changes_tenant_id_occurred_at");
+        change.HasOne<Tenant>().WithMany()
             .HasForeignKey(value => value.TenantId)
             .OnDelete(DeleteBehavior.Cascade);
     }
