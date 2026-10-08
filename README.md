@@ -358,7 +358,9 @@ Con `Seed:Enabled` en `true`, la aplicación deja el ambiente utilizable al arra
 crea el tenant **Origen botánico**, el usuario que lo administra, su membresía y el
 catálogo de diecinueve productos con la tasa `IVA 19%`, y le deja configurados el formato de
 número de pedido (`PW…`) y las columnas del Excel de pedidos de su ERP (ver
-[homologación](#columnas-del-excel-de-pedidos-por-tenant-homologación)). Pensada para el ambiente
+[homologación](#columnas-del-excel-de-pedidos-por-tenant-homologación)). Después crea el
+[tenant operador](#tenant-operador) **QCode** (`qcode`, id `01900000-0000-7000-8000-000000000006`)
+con los siete módulos y una membresía `admin` para `Seed:OperatorOwnerEmail`. Pensada para el ambiente
 desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
 de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
 
@@ -366,6 +368,7 @@ de un borrado no hay ningún paso manual, alcanza con que la aplicación reinici
 | ------------------------------ | ----------- | ----------------------------------------------------------------------------- |
 | `Seed__Enabled`                | `false`     | Interruptor de la semilla de arranque. Apagado, no se siembra nada            |
 | `Seed__OwnerEmail`             | sin valor   | Email que recibe la membresía con rol `admin`                                 |
+| `Seed__OperatorOwnerEmail`     | sin valor   | Email de QCode que recibe el `admin` del tenant operador. Sin valor no se crea QCode: sólo se advierte en el log |
 | `Seed__ExportLoad__Quotations` | `0`         | Cotizaciones de la [carga sintética](#carga-sintética-para-medir-la-exportación). `0` la apaga |
 
 El usuario se siembra **sólo con su email**, sin proveedor vinculado: el primer login
@@ -378,6 +381,11 @@ No hace falta invitación ni registrar un tenant.
 > fuera de `Development`, porque el ambiente desplegado corre como `Production`. Su
 > única defensa es que nace apagada. **Al entregar el ambiente al cliente hay que
 > borrar las dos claves del ConfigMap.**
+
+`Seed__OperatorOwnerEmail` es una clave aparte a propósito y **no** reutiliza `Seed__OwnerEmail`:
+en producción ése puede ser el email del cliente, y reutilizarlo lo haría operador de toda la
+plataforma. Si viene, tiene que ser un email válido o el arranque falla. Si el slug `qcode` ya es de
+otro tenant, la semilla no crea QCode, lo advierte con el id de ese tenant y sigue arrancando.
 
 Es idempotente: el tenant por id, el usuario por email, la membresía por el par
 usuario-tenant y los productos por código. Correrla muchas veces —cada reinicio de pod
@@ -645,22 +653,33 @@ funcionando** (DECISIÓN-PENDIENTE del spec 2026-10-08). El tenant operador no s
 
 ### Tenant operador
 
-`Platform:OperatorTenantId` es **opcional en todo ambiente**:
+El tenant operador es **QCode**, con id fijo `01900000-0000-7000-8000-000000000006` (slug `qcode`).
+Lo crea la [semilla de arranque](#semilla-de-arranque) cuando tiene `Seed:OperatorOwnerEmail`, y
+`appsettings.json` trae ese mismo id como valor por defecto de `Platform:OperatorTenantId`:
 
-- Sin la clave no hay consola: los endpoints `/operator/*` responden 403 a todos y el resto de la
-  API funciona igual. En `Production`, además, se registra una advertencia al arrancar.
+- Mientras QCode no esté sembrado, el id por defecto apunta a un tenant que no existe. Es
+  inofensivo: nadie tiene membresía ahí, así que la consola no es alcanzable y el resto de la API
+  funciona igual.
+- Vaciar la clave (`Platform__OperatorTenantId: ""`) apaga la consola: los endpoints `/operator/*`
+  responden 403 a todos. En `Production`, además, se registra una advertencia al arrancar.
 - `Guid.Empty` tumba el arranque (`OperatorTenantOptionsValidator` con `ValidateOnStart`).
-- **No** va en `appsettings.json` ni como marcador en el ConfigMap: el id de QCode no está en el repo
-  y el CI despliega `main` sin pruebas, así que un valor de relleno tumbaría los pods. Su lugar en el
-  inventario es `src/Api/appsettings.example.json`.
+- El email **no** va como marcador en el ConfigMap versionado: un `#{...}#` sin variable definida
+  quedaría literal, fallaría la validación de email y tumbaría los pods, porque el CI despliega
+  `main` sin pruebas.
 
 Para habilitarla en producción:
 
-1. Desplegar el backend antes que el frontend. Sin la clave, el despliegue no cambia nada visible.
-2. Obtener el id de QCode por el acceso a la base que QCode ya usa para operaciones manuales:
-   `SELECT id FROM tenancy.tenants WHERE slug = '<slug de QCode>';`
-3. Agregar `Platform__OperatorTenantId: "<id>"` al ConfigMap de producción y reiniciar el despliegue.
-4. El `admin` de QCode ve «Plataforma» (puede requerir recargar la SPA).
+1. Desplegar el backend antes que el frontend. Sin el email, el despliegue no cambia nada visible:
+   la semilla sólo advierte en cada arranque que falta `Seed:OperatorOwnerEmail`.
+2. Agregar `Seed__OperatorOwnerEmail: "<email de QCode>"` al ConfigMap de producción (que ya tiene
+   `Seed__Enabled: "true"`) y reiniciar el despliegue. La semilla crea QCode con el id por defecto,
+   así que no hace falta tocar `Platform__OperatorTenantId`.
+3. Entrar con Google con ese email: el primer login vincula el usuario sembrado. El `admin` de QCode
+   ve «Plataforma» (puede requerir recargar la SPA).
+
+Si QCode ya existía con slug `qcode` —registrado por el signup—, el log del arranque lo dice con la
+advertencia `4103` y el id de ese tenant. En ese caso, en vez del paso 2, agrega
+`Platform__OperatorTenantId: "<ese id>"` al ConfigMap.
 
 **No uses la consola hasta que termine el rolling update de `AddOperatorConsole`.** Un pod viejo
 cuenta como contratada cualquier fila, también una `inactive`, e ignora el estado del tenant: un

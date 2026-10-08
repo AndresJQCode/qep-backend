@@ -90,11 +90,25 @@ de datos de tenants que se van (Ley 1581).
   Implementación en `Tenancy.Infrastructure`, singleton, lee las opciones. No consulta la base: que
   el id exista como tenant no se valida al arrancar (no hay base disponible en la validación de
   opciones); si no existe, la consola simplemente no es alcanzable por nadie.
-- La clave va en `appsettings.example.json` (lo exige `ConfigurationExampleTests`). **No** va en
-  `appsettings.json` ni se agrega un marcador al ConfigMap de producción: un valor inválido ahí
-  tumbaría los pods al desplegar `main`, donde el CI no corre pruebas. El owner agrega
-  `Platform__OperatorTenantId` con el id real de QCode cuando quiera habilitar la consola (ver
-  «Despliegue»).
+- **El id del operador es fijo y se siembra** (revisión 2026-10-08, ver D10):
+  `01900000-0000-7000-8000-000000000006` (`TenancySeeder.OperatorTenantId`), slug `qcode`, nombre
+  «QCode». `appsettings.json` lo trae como valor por defecto de `Platform:OperatorTenantId`, y
+  `appsettings.example.json` lo documenta (lo exige `ConfigurationExampleTests`). Vaciar la clave
+  (`Platform__OperatorTenantId: ""`) sigue apagando la consola.
+- La semilla de arranque (`QepSeedRunner`, con `Seed:Enabled`) crea ese tenant **después** de los
+  pasos de Origen botánico, con los siete módulos (`source = seed`) y una membresía `admin` activa
+  para `Seed:OperatorOwnerEmail`. Es una clave propia y **no** reutiliza `Seed:OwnerEmail`: en
+  producción ése puede ser el email del cliente, y reutilizarlo lo haría operador de la plataforma.
+  - Sin `Seed:OperatorOwnerEmail`: no se crea el tenant, se advierte en el log (`EventId 4102`) y el
+    arranque sigue.
+  - Con un valor que no es email: el arranque falla (`SeedOptionsValidator`, mismo criterio que
+    `Seed:OwnerEmail`).
+  - Idempotente: si el tenant `...0006` existe, no toca nada. Si otro tenant ya tiene el slug
+    `qcode` (QCode registrado por el signup), no lo crea, advierte (`EventId 4103`, con el id del
+    que lo tiene) y el arranque sigue; en ese caso se apunta `Platform__OperatorTenantId` a ese id.
+- El email **no** va al ConfigMap versionado como marcador: un `#{...}#` sin variable definida
+  quedaría literal, fallaría la validación de email y tumbaría los pods al desplegar `main`, donde el
+  CI no corre pruebas. El owner lo agrega con el valor real (ver «Despliegue»).
 
 ### 2. Permisos de operador
 
@@ -500,7 +514,11 @@ historial. Se documenta `Platform:OperatorTenantId`.
 | Usuario de un tenant que no es el operador llama a `/operator/*` con un rol personalizado que tiene `operator.*` (insertado por SQL) | el filtro lo quita al resolver permisos → 403 de la política |
 | Crear o editar un rol personalizado con `operator.*`, en cualquier tenant | `422 authorization.role.permission_operator_only` |
 | Stub de desarrollo con `X-Permissions: operator.tenants.read` sobre un tenant no operador | el filtro lo quita → 403 |
-| `Platform:OperatorTenantId` ausente (cualquier ambiente) | sin consola: 403 para todos; la app sigue funcionando; en producción, advertencia en el log al arrancar |
+| `Platform:OperatorTenantId` ausente o vacía (cualquier ambiente) | sin consola: 403 para todos; la app sigue funcionando; en producción, advertencia en el log al arrancar. Por defecto no está ausente: `appsettings.json` trae el id del tenant sembrado |
+| `Platform:OperatorTenantId` apunta a un tenant que no existe (p. ej. el default antes de sembrar QCode) | inofensivo: nadie tiene membresía en él, la consola no es alcanzable |
+| `Seed:Enabled` sin `Seed:OperatorOwnerEmail` | no se siembra QCode; advertencia `4102`; el arranque sigue |
+| `Seed:OperatorOwnerEmail` con un valor que no es email | el arranque falla (`ValidateOnStart`) |
+| El slug `qcode` ya es de otro tenant | no se siembra QCode; advertencia `4103` con el id de ese tenant; el arranque sigue |
 | `Platform:OperatorTenantId` = `Guid.Empty` | el arranque falla (`ValidateOnStart`) |
 | Clave de módulo, estado o motivo desconocidos en el cuerpo o en `?module=` | `422 validation.failed` (nunca 500) |
 | Dos operadores cambian módulos del mismo tenant a la vez | el candado los serializa; el segundo valida contra el estado ya cambiado |
@@ -553,12 +571,16 @@ obligatorio, motivos por dirección, lote enviado); lista (búsqueda, resumen, s
 ## Despliegue
 
 1. Backend antes que frontend.
-2. Se puede desplegar sin configurar nada: sin `Platform__OperatorTenantId` la consola no existe y
-   todo lo demás funciona.
-3. Para habilitarla, el owner agrega `Platform__OperatorTenantId: "<id del tenant QCode>"` al
-   ConfigMap de producción y reinicia el despliegue. El id se obtiene con
-   `SELECT id FROM tenancy.tenants WHERE slug = '<slug de QCode>';`.
-4. Después, el `admin` de QCode ve «Plataforma» (puede requerir recargar la SPA).
+2. Se puede desplegar sin configurar nada: mientras QCode no esté sembrado, el id por defecto de
+   `Platform:OperatorTenantId` apunta a un tenant que no existe, la consola no es alcanzable y todo
+   lo demás funciona. La semilla advierte en cada arranque que falta `Seed:OperatorOwnerEmail`.
+3. Para habilitarla, el owner agrega `Seed__OperatorOwnerEmail: "<email de QCode>"` al ConfigMap de
+   producción (que ya tiene `Seed__Enabled: "true"`) y reinicia el despliegue. La semilla crea QCode
+   con el id por defecto, así que no hace falta tocar `Platform__OperatorTenantId`.
+4. El dueño entra con Google con ese email —el primer login vincula el usuario sembrado— y ve
+   «Plataforma» (puede requerir recargar la SPA).
+5. Si QCode ya existía con slug `qcode` (advertencia `4103`), en vez del paso 3 se agrega
+   `Platform__OperatorTenantId: "<id que nombra la advertencia>"`.
 
 ## Decisiones tomadas sin el owner
 
@@ -573,7 +595,7 @@ obligatorio, motivos por dirección, lote enviado); lista (búsqueda, resumen, s
 | D7 | `404` para un `targetTenantId` inexistente | El operador puede listar todos los tenants; la regla de «403, nunca 404» protege el aislamiento entre tenants, que aquí no aplica. |
 | D8 | Inactivar no toca `tenant_modules` | Reactivar debe dejar todo como estaba (O8). |
 | D9 | La regla de consistencia sólo mira los pares que el lote toca | No bloquear la reparación de estados inconsistentes heredados del SQL manual, sin dejar entrar inconsistencias nuevas. |
-| D10 | `Platform:OperatorTenantId` opcional también en producción (advertencia, no falla) | El id de QCode no está en el repo y el CI despliega `main` sin pruebas: un marcador en el ConfigMap tumbaría los pods. Sin la clave, la consola simplemente no existe. |
+| D10 | `Platform:OperatorTenantId` opcional también en producción (advertencia, no falla). **Revisada 2026-10-08:** el id de QCode pasa a ser fijo (`...0006`), lo siembra la semilla de arranque con dueño `Seed:OperatorOwnerEmail`, y es el default de `appsettings.json` | Un marcador en el ConfigMap tumbaría los pods, porque el CI despliega `main` sin pruebas. Con el id fijo en el repo no hace falta marcador: la única clave que agrega el owner es el email, y sin ella la semilla sólo advierte. Un id por defecto que todavía no existe como tenant es inofensivo. |
 | D11 | `operator.*` sólo en roles de sistema (`admin`), nunca en roles personalizados | Con 1–3 operadores no hace falta delegar con roles personalizados, y cierra un camino de escalamiento. Se puede abrir después dentro del tenant operador. |
 | D12 | Un solo historial (`tenant_changes`) para módulos y estado del tenant | La consola muestra un historial; dos tablas obligaban a unir y paginar dos fuentes. |
 | D13 | Rutas de la SPA en inglés (`/operator/...`); la UI dice «Plataforma» | Consistencia con el resto de rutas (`/catalog`, `/orders`, `/reports`). |
@@ -592,6 +614,11 @@ obligatorio, motivos por dirección, lote enviado); lista (búsqueda, resumen, s
   `Decommissioned`).
 
 ## Historial de revisión
+
+- 2026-10-08 — tenant operador sembrado: id fijo `01900000-0000-7000-8000-000000000006` (slug
+  `qcode`), creado por `QepSeedRunner` con dueño `Seed:OperatorOwnerEmail` (clave nueva, opcional,
+  validada si viene), y `Platform:OperatorTenantId` con ese id por defecto en `appsettings.json`.
+  Revisa D10, §1, «Errores y casos borde» y «Despliegue».
 
 - 2026-10-08 — segunda pasada pedida por el owner: dos revisiones adversariales independientes
   (backend + contrato; frontend). Se corrigieron: la regla de consistencia del lote (estaba mal
