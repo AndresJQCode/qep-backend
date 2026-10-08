@@ -212,4 +212,14 @@ public sealed class ProductAndPreviewHandlersTests
                 decimal.Parse(discount, System.Globalization.CultureInfo.InvariantCulture))]),
             TestContext.Current.CancellationToken));
     }
+
+    [Fact]
+    public async Task PreviewRejectsANullLineAsValidationFailure()
+    {
+        var bed = new PosTestBed();
+        bed.AddWorkedExampleProducts();
+
+        await Assert.ThrowsAsync<ValidationException>(() => Preview(bed, Discounter).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [null!]), TestContext.Current.CancellationToken));
+    }
 }

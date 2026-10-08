@@ -16,7 +16,7 @@ public sealed class PreviewPosSaleValidator : AbstractValidator<PreviewPosSaleCo
     {
         RuleFor(command => command.Lines).NotEmpty().Must(lines => lines.Count <= PosLimits.MaxLines)
             .WithMessage("A sale cannot have more than 200 lines.");
-        RuleForEach(command => command.Lines).ChildRules(line =>
+        RuleForEach(command => command.Lines).NotNull().ChildRules(line =>
         {
             line.RuleFor(value => value.ProductId).NotEmpty();
             line.RuleFor(value => value.Quantity)

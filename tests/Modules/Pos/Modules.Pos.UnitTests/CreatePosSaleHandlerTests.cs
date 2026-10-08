@@ -414,6 +414,9 @@ public sealed class CreatePosSaleHandlerTests
 
     public static TheoryData<PosSaleLineRequest[], PosPaymentRequest[]> InvalidBodies => new()
     {
+        // Un elemento null en el JSON es 422 validation.failed, no un NullReferenceException (500).
+        { [null!], [new("Cash", null, 20_000m, null)] },
+        { [new(Shampoo, 1m, 0m, 11_900m, 19)], [null!] },
         { [new(Shampoo, 1.005m, 0m, 11_900m, 19)], [new("Cash", null, 20_000m, null)] },
         { [new(Shampoo, 1m, 7.005m, 11_900m, 19)], [new("Cash", null, 20_000m, null)] },
         { [new(Shampoo, 1m, 0m, 11_900m, 19)], [new("cash", null, 20_000m, null)] },

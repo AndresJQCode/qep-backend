@@ -28,7 +28,7 @@ public sealed class CreatePosSaleValidator : AbstractValidator<CreatePosSaleComm
         RuleFor(command => command.CashSessionId).NotEmpty();
         RuleFor(command => command.Lines).NotEmpty()
             .Must(lines => lines is null || lines.Count <= PosLimits.MaxLines).WithMessage("A sale cannot have more than 200 lines.");
-        RuleForEach(command => command.Lines).ChildRules(line =>
+        RuleForEach(command => command.Lines).NotNull().ChildRules(line =>
         {
             line.RuleFor(value => value.ProductId).NotEmpty();
             line.RuleFor(value => value.Quantity)
@@ -44,7 +44,7 @@ public sealed class CreatePosSaleValidator : AbstractValidator<CreatePosSaleComm
         });
         RuleFor(command => command.Payments).NotEmpty()
             .Must(payments => payments is null || payments.Count <= PosLimits.MaxPayments).WithMessage("A sale cannot have more than 5 payments.");
-        RuleForEach(command => command.Payments).ChildRules(payment =>
+        RuleForEach(command => command.Payments).NotNull().ChildRules(payment =>
         {
             payment.RuleFor(value => value.Method)
                 .Must(method => Methods.Contains(method, StringComparer.Ordinal))
