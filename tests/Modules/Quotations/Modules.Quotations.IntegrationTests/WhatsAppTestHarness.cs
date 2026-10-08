@@ -1,7 +1,16 @@
+using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
+using Modules.Quotations.Application;
+using Modules.Quotations.Infrastructure.Whatsapp;
 using Modules.Tenancy.Application;
 using Npgsql;
+using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
 
@@ -86,5 +95,147 @@ internal static class WhatsAppTestHarness
         }
 
         return client;
+    }
+
+    /// <summary>Un cuerpo de Zenvia inventado: no puede aparecer en ningún camino de salida.</summary>
+    public const string SentinelZenviaBody = "zenvia-body-SENTINEL-5b2d1e";
+
+    public static readonly string[] SendPermissions = [.. ManagerPermissions, .. SettingsPermissions];
+
+    /// <summary>Reemplaza el sender global (el de la cuenta de QEP) por uno que anota. Mismo
+    /// mecanismo que <c>WithExportProcessors</c>: el real se saca primero.</summary>
+    public static WebApplicationFactory<Program> WithWhatsAppSender(
+        this WebApplicationFactory<Program> factory, IWhatsAppSender sender) =>
+        factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IWhatsAppSender>();
+            services.AddSingleton(sender);
+        }));
+
+    /// <summary>Reemplaza el HttpClient de Zenvia, que comparten la cuenta de QEP y las propias:
+    /// lo que salga hacia Zenvia lo ve el handler de la prueba.</summary>
+    public static WebApplicationFactory<Program> WithZenviaHandler(
+        this WebApplicationFactory<Program> factory, HttpMessageHandler handler) =>
+        factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<ZenviaHttpClient>();
+            services.AddSingleton(new ZenviaHttpClient(new HttpClient(handler)));
+        }));
+
+    /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider
+    /// registrados, así que esto ve lo mismo que la consola.</summary>
+    public static WebApplicationFactory<Program> WithCapturedLogs(
+        this WebApplicationFactory<Program> factory, CapturedLogs logs) =>
+        factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.AddSingleton<ILoggerProvider>(logs)));
+
+    /// <summary>Pisa la llave activa y declara las que se pasen. Se aplica después del
+    /// ConfigureWebHost del harness, así que gana.</summary>
+    public static WebApplicationFactory<Program> WithSecretProtection(
+        this WebApplicationFactory<Program> factory, string activeKeyId, params (string Id, string Value)[] keys) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Quotations:SecretProtection:ActiveKeyId", activeKeyId);
+            foreach (var (id, value) in keys)
+            {
+                builder.UseSetting($"Quotations:SecretProtection:Keys:{id}", value);
+            }
+        });
+
+    /// <summary>Lo mínimo que <c>Quotation.EnsureComplete</c> pide para enviar —un producto,
+    /// vigencia y cuenta de cobro— sin mandarla todavía (a diferencia de CreateSentQuotationAsync).
+    /// El cliente sembrado tiene teléfono: un envío por la cuenta propia no cae en
+    /// recipient_missing.</summary>
+    public static async Task<Guid> CreateSendableQuotationAsync(HttpClient client, Guid tenantId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(
+            client,
+            tenantId,
+            clientId,
+            billingAccount: new QuotationBillingAccountRequest(
+                billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency));
+        (await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 1m),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        return quotation.Id;
+    }
+
+    public static Task<HttpResponseMessage> SendAsync(
+        HttpClient client, Guid tenantId, Guid quotationId, object? body = null) =>
+        body is null
+            ? client.PostAsync($"{QuotationsUrl(tenantId)}/{quotationId}/send", null, TestContext.Current.CancellationToken)
+            : client.PostAsJsonAsync($"{QuotationsUrl(tenantId)}/{quotationId}/send", body, TestContext.Current.CancellationToken);
+
+    /// <summary>Mensaje y detalle de todas las fallas guardadas: lo que lee la pantalla de Log
+    /// con <c>platform.request_log.read</c>.</summary>
+    public static Task<string> RequestFailuresTextAsync(string connectionString) =>
+        ScalarAsync<string>(
+            connectionString,
+            "SELECT coalesce(string_agg(message || ' ' || detail, ' '), '') FROM platform.request_failures");
+}
+
+/// <summary>El sender de la cuenta de QEP, pero anotando. Propio de este proyecto: el de
+/// QuotationsTestDoubles es internal de las unitarias.</summary>
+internal sealed class RecordingIntegrationWhatsAppSender : IWhatsAppSender
+{
+    public ConcurrentQueue<WhatsAppQuotationMessage> Sent { get; } = new();
+
+    public Task SendQuotationAsync(WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+    {
+        Sent.Enqueue(message);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Zenvia de mentira: anota token y cuerpo de cada request y responde lo que la prueba
+/// pida.</summary>
+internal sealed class CapturingZenviaHandler(HttpStatusCode status, string responseBody) : HttpMessageHandler
+{
+    public ConcurrentQueue<(string? Token, string Json)> Requests { get; } = new();
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var token = request.Headers.TryGetValues("X-API-TOKEN", out var values) ? values.FirstOrDefault() : null;
+        var json = request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(cancellationToken);
+        Requests.Enqueue((token, json));
+        return new HttpResponseMessage(status) { Content = new StringContent(responseBody) };
+    }
+}
+
+/// <summary>Todo lo que se loguea, ya formateado y con la excepción entera (mensaje, internas y
+/// pila): es lo mismo que guarda el log JSON de producción.</summary>
+internal sealed class CapturedLogs : ILoggerProvider
+{
+    private readonly ConcurrentQueue<string> _entries = new();
+
+    public IReadOnlyCollection<string> Entries => _entries;
+
+    public string AllText => string.Join('\n', _entries);
+
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(_entries);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class CapturingLogger(ConcurrentQueue<string> entries) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            entries.Enqueue(formatter(state, exception) + (exception is null ? string.Empty : "\n" + exception));
     }
 }
