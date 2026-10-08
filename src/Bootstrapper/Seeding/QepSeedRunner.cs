@@ -1,12 +1,15 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Catalog.Infrastructure.Seed;
 using Modules.Companies.Infrastructure.Seed;
 using Modules.Geography.Application;
+using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Seed;
 using Modules.Quotations.Infrastructure.Seed;
 using Modules.Tenancy.Infrastructure.Seed;
+using Npgsql;
 
 namespace Bootstrapper.Seeding;
 
@@ -43,7 +46,32 @@ public static class QepSeedRunner
             LogLevel.Warning,
             new EventId(4103, nameof(LogOperatorSlugTaken)),
             "The operator tenant was not seeded: slug '{TenantSlug}' already belongs to tenant "
-            + "{TenantId}. To make that tenant the operator, set Platform:OperatorTenantId to its id.");
+            + "{TenantId}. Before pointing Platform:OperatorTenantId at it, verify who owns that tenant: "
+            + "whoever administers it gets platform-wide operator power.");
+
+    private static readonly Action<ILogger, string, Exception?> LogOperatorOwnerIsTheOwnerEmail =
+        LoggerMessage.Define<string>(
+            LogLevel.Warning,
+            new EventId(4104, nameof(LogOperatorOwnerIsTheOwnerEmail)),
+            "SECURITY: the operator tenant '{TenantSlug}' was NOT seeded because Seed:OperatorOwnerEmail "
+            + "is the same address as Seed:OwnerEmail. The operator owner gets platform-wide power: use an "
+            + "internal QCode address that nobody else uses.");
+
+    private static readonly Action<ILogger, string, string, Exception?> LogOperatorOwnerBelongsElsewhere =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Warning,
+            new EventId(4105, nameof(LogOperatorOwnerBelongsElsewhere)),
+            "SECURITY: the operator tenant '{TenantSlug}' was NOT seeded because Seed:OperatorOwnerEmail "
+            + "'{OperatorOwnerEmail}' already belongs to a user with a membership in another tenant. The "
+            + "operator owner gets platform-wide power: use an internal QCode address that nobody else uses.");
+
+    private static readonly Action<ILogger, string, string?, Exception?> LogOperatorSeedLostRace =
+        LoggerMessage.Define<string, string?>(
+            LogLevel.Warning,
+            new EventId(4106, nameof(LogOperatorSeedLostRace)),
+            "The operator tenant '{TenantSlug}' was not seeded by this instance: unique constraint "
+            + "'{Constraint}' was violated, most likely because another instance seeded it at the same "
+            + "time. Startup continues; the next start finds it already seeded.");
 
     /// <summary>
     /// Corre la semilla del ambiente desplegado. No hace nada si <c>Seed:Enabled</c> está
@@ -93,7 +121,22 @@ public static class QepSeedRunner
 
         // Al final y aparte: el tenant operador no depende de nada de lo anterior, y lo que le pase
         // —sin email, slug ocupado— se advierte sin tumbar el arranque ni tocar Origen botánico.
-        await SeedOperatorTenantAsync(services, options.OperatorOwnerEmail, logger, cancellationToken);
+        // Rolling update: dos pods pueden sembrar a la vez, y el que pierde choca contra un índice
+        // único (el email del usuario, el id o el slug del tenant). Sólo ese paso y sólo esa falla se
+        // atrapan: el otro pod ya lo sembró, y el próximo arranque lo encuentra hecho. Se atrapa acá y
+        // no en un seeder porque el paso escribe en dos módulos (Identity y Tenancy) con unidades de
+        // trabajo distintas; no es una capa Application, así que no rompe la regla de traducir
+        // errores de base fuera de ella.
+        try
+        {
+            await SeedOperatorTenantAsync(
+                services, options.OwnerEmail, options.OperatorOwnerEmail, logger, cancellationToken);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } postgres)
+        {
+            LogOperatorSeedLostRace(logger, TenancySeeder.OperatorTenantSlug, postgres.ConstraintName, null);
+        }
     }
 
     // Sin email se advierte y no se crea: en producción Seed:Enabled corre en cada arranque, y hasta
@@ -101,6 +144,7 @@ public static class QepSeedRunner
     // inválido no se llega acá: lo rechaza SeedOptionsValidator al arrancar.
     private static async Task SeedOperatorTenantAsync(
         IServiceProvider services,
+        string? ownerEmail,
         string? operatorOwnerEmail,
         ILogger logger,
         CancellationToken cancellationToken)
@@ -120,10 +164,34 @@ public static class QepSeedRunner
             case TenancySeeder.OperatorTenantSeedState.SlugTaken:
                 LogOperatorSlugTaken(logger, TenancySeeder.OperatorTenantSlug, slugHolderId!.Value, null);
                 return;
+            case TenancySeeder.OperatorTenantSeedState.Missing:
+                break;
+            default:
+                throw new InvalidOperationException($"Unknown operator tenant seed state '{state}'.");
         }
 
-        LogSeedEnabled(logger, TenancySeeder.OperatorTenantSlug, operatorOwnerEmail, null);
-        var ownerUserId = await services.SeedUserAsync(operatorOwnerEmail, cancellationToken);
+        // El dueño del operador recibe poder sobre toda la plataforma, así que un email equivocado no
+        // se siembra en silencio. Mismo email que Seed:OwnerEmail —en producción, quizá el del
+        // cliente— o un usuario que ya pertenece a otro tenant: se niega y lo advierte, sin tumbar el
+        // arranque. Los dos ya pasaron por SeedOptionsValidator, así que normalizan sin fallar.
+        var normalizedOperatorEmail = User.NormalizeEmail(operatorOwnerEmail);
+        if (!string.IsNullOrWhiteSpace(ownerEmail)
+            && User.NormalizeEmail(ownerEmail) == normalizedOperatorEmail)
+        {
+            LogOperatorOwnerIsTheOwnerEmail(logger, TenancySeeder.OperatorTenantSlug, null);
+            return;
+        }
+
+        if (await services.FindUserIdByEmailAsync(normalizedOperatorEmail, cancellationToken) is { } existingUserId
+            && await services.HasMembershipOutsideOperatorTenantAsync(existingUserId, cancellationToken))
+        {
+            LogOperatorOwnerBelongsElsewhere(
+                logger, TenancySeeder.OperatorTenantSlug, normalizedOperatorEmail, null);
+            return;
+        }
+
+        LogSeedEnabled(logger, TenancySeeder.OperatorTenantSlug, normalizedOperatorEmail, null);
+        var ownerUserId = await services.SeedUserAsync(normalizedOperatorEmail, cancellationToken);
         await services.SeedOperatorTenantWithOwnerAsync(ownerUserId, cancellationToken);
     }
 

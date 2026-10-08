@@ -667,6 +667,21 @@ Lo crea la [semilla de arranque](#semilla-de-arranque) cuando tiene `Seed:Operat
   quedaría literal, fallaría la validación de email y tumbaría los pods, porque el CI despliega
   `main` sin pruebas.
 
+> [!WARNING]
+> `Seed:OperatorOwnerEmail` **tiene que ser una dirección interna de QCode que no use nadie más**.
+> Quien la tenga administra toda la plataforma: ve todos los tenants, les prende y apaga módulos y
+> los puede inactivar. Por eso la semilla se niega a sembrar QCode —y lo advierte en el log, sin
+> tumbar el arranque— si el email es el mismo de `Seed:OwnerEmail` (advertencia `4104`) o si ya es
+> de un usuario con membresía en otro tenant (advertencia `4105`). Si dos pods siembran a la vez,
+> el que pierde la carrera lo registra (`4106`) y sigue arrancando.
+
+En `Development`, con el [stub de autenticación](#activar-y-desactivar-el-modo-de-desarrollo-auth)
+prendido, se puede actuar como operador sin sembrar nada: `X-Tenant-Id:
+01900000-0000-7000-8000-000000000006` más `X-Permissions` con los `operator.*` que hagan falta
+(`operator.tenants.read,operator.modules.manage,operator.tenants.manage`). El filtro de operador
+sólo los conserva en ese tenant. El stub existe únicamente en `Development`: fuera de ahí la API se
+niega a arrancar con él.
+
 Para habilitarla en producción:
 
 1. Desplegar el backend antes que el frontend. Sin el email, el despliegue no cambia nada visible:
@@ -678,8 +693,10 @@ Para habilitarla en producción:
    ve «Plataforma» (puede requerir recargar la SPA).
 
 Si QCode ya existía con slug `qcode` —registrado por el signup—, el log del arranque lo dice con la
-advertencia `4103` y el id de ese tenant. En ese caso, en vez del paso 2, agrega
-`Platform__OperatorTenantId: "<ese id>"` al ConfigMap.
+advertencia `4103` y el id de ese tenant. **Antes de apuntar la consola ahí, verifica quién es el
+dueño de ese tenant**: cualquiera puede registrarse con el slug `qcode`, y el admin del tenant al que
+apunte `Platform__OperatorTenantId` recibe poder sobre toda la plataforma. Si es el de QCode, en vez
+del paso 2 agrega `Platform__OperatorTenantId: "<ese id>"` al ConfigMap.
 
 **No uses la consola hasta que termine el rolling update de `AddOperatorConsole`.** Un pod viejo
 cuenta como contratada cualquier fila, también una `inactive`, e ignora el estado del tenant: un

@@ -78,6 +78,27 @@ public static class TenancySeeder
     }
 
     /// <summary>
+    /// true si el usuario tiene una membresía —en cualquier estado— en un tenant que no es el
+    /// operador. La semilla se niega a hacer operador a alguien que ya pertenece a otro tenant: un
+    /// email reutilizado o mal tipeado le daría poder sobre toda la plataforma sin que se note. El
+    /// tenant operador se excluye para que el pod que pierde una carrera de arranque no confunda la
+    /// membresía que acaba de crear el otro con una ajena.
+    /// </summary>
+    public static async Task<bool> HasMembershipOutsideOperatorTenantAsync(
+        this IServiceProvider services,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+
+        var operatorTenant = new TenantId(OperatorTenantId);
+        return await dbContext.Memberships.AnyAsync(
+            membership => membership.UserId == userId && membership.TenantId != operatorTenant,
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Siembra QCode con los siete módulos y su dueño admin, por el mismo camino que Origen
     /// botánico. Idempotente por id, como el resto.
     /// </summary>

@@ -9,7 +9,9 @@ namespace Modules.Tenancy.Infrastructure;
 /// deja una advertencia. Desde que <c>appsettings.json</c> trae por defecto el id fijo del tenant
 /// sembrado (<c>TenancySeeder.OperatorTenantId</c>), esto sólo pasa si alguien vació la clave a
 /// propósito para apagar la consola. Que el id exista como tenant no se mira acá: si no existe, nadie
-/// tiene membresía en él y la consola no es alcanzable. Es un servicio hospedado y no parte del validador para que el validador no dependa del host: las
+/// tiene membresía en él y la consola no es alcanzable.
+///
+/// Es un servicio hospedado y no parte del validador para que el validador no dependa del host: las
 /// pruebas que arman <c>AddTenancyInfrastructure</c> sin host siguen pudiendo validar. Pública sólo
 /// para probarla sin <c>InternalsVisibleTo</c>, igual que <see cref="TenantModuleDefaults"/>.
 /// </summary>

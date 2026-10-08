@@ -14,6 +14,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Modules.Identity.Infrastructure.Persistence;
+using Modules.Identity.Infrastructure.Seed;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Seed;
@@ -346,6 +347,99 @@ public sealed class SeedStartupTests
         var warning = Assert.Single(logs.Entries, entry => entry.EventId == 4103);
         Assert.Equal(LogLevel.Warning, warning.Level);
         Assert.Contains(registeredQcodeId.ToString(), warning.Message, StringComparison.Ordinal);
+        // Apuntar Platform:OperatorTenantId a un tenant ajeno le da poder de plataforma a su dueño:
+        // la advertencia tiene que pedir que se verifique quién es antes de hacerlo.
+        Assert.Contains("verify who owns that tenant", warning.Message, StringComparison.Ordinal);
+    }
+
+    // El dueño del operador recibe poder sobre toda la plataforma. Si el email es el mismo de
+    // Seed:OwnerEmail —en producción, posiblemente el del cliente—, se niega a sembrar y lo grita.
+    [Fact]
+    public async Task AnOperatorOwnerEmailEqualToTheOwnerEmailDoesNotSeedTheOperatorTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var logs = new CapturingLoggerProvider();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(), seedEnabled: true, operatorOwnerEmail: "Semilla@QCode.CO", logs: logs);
+        using var client = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        Assert.False(await dbContext.Tenants.AnyAsync(
+            tenant => tenant.Id == new TenantId(OperatorTenantId), TestContext.Current.CancellationToken));
+        Assert.True(await dbContext.Tenants.AnyAsync(
+            tenant => tenant.Id == new TenantId(TenancySeeder.SeedTenantId), TestContext.Current.CancellationToken));
+        var warning = Assert.Single(logs.Entries, entry => entry.EventId == 4104);
+        Assert.Equal(LogLevel.Warning, warning.Level);
+        Assert.Contains("Seed:OwnerEmail", warning.Message, StringComparison.Ordinal);
+    }
+
+    // Mismo riesgo con un email que ya usa alguien en otro tenant: un error de tipeo o una
+    // dirección reutilizada convertiría a esa persona en operador sin que nadie lo note.
+    [Fact]
+    public async Task AnOperatorOwnerEmailAlreadyMemberOfAnotherTenantDoesNotSeedTheOperatorTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using (var withoutSeed = new QepApiFactory(database.GetConnectionString(), seedEnabled: false))
+        {
+            using var bootstrap = withoutSeed.CreateClient();
+            var userId = await withoutSeed.Services.SeedUserAsync(OperatorEmail, TestContext.Current.CancellationToken);
+            await withoutSeed.Services.SeedTenantWithOwnerAsync(
+                Guid.CreateVersion7(), "cliente-x", "Cliente X", userId,
+                Membership.RegistrationOrigin, TestContext.Current.CancellationToken);
+        }
+
+        var logs = new CapturingLoggerProvider();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true, logs: logs);
+        using var client = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        Assert.False(await dbContext.Tenants.AnyAsync(
+            tenant => tenant.Id == new TenantId(OperatorTenantId), TestContext.Current.CancellationToken));
+        var warning = Assert.Single(logs.Entries, entry => entry.EventId == 4105);
+        Assert.Equal(LogLevel.Warning, warning.Level);
+        Assert.Contains(OperatorEmail, warning.Message, StringComparison.Ordinal);
+    }
+
+    // Rolling update: dos pods siembran a la vez y el segundo choca contra un índice único. Se
+    // simula con un trigger que levanta la misma violación que levantaría la carrera real; el
+    // arranque tiene que seguir, con una advertencia que nombra la restricción.
+    [Fact]
+    public async Task AConcurrentOperatorSeedThatLosesTheRaceDoesNotCrashStartup()
+    {
+        await using var database = await StartDatabaseAsync();
+        using (var withoutSeed = new QepApiFactory(database.GetConnectionString(), seedEnabled: false))
+        {
+            using var bootstrap = withoutSeed.CreateClient();
+            await using var setup = withoutSeed.Services.CreateAsyncScope();
+            await setup.ServiceProvider.GetRequiredService<TenancyDbContext>().Database.ExecuteSqlRawAsync(
+                """
+                CREATE FUNCTION tenancy.simulate_concurrent_seed() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.slug = 'qcode' THEN
+                        RAISE EXCEPTION 'simulated concurrent seed'
+                            USING ERRCODE = 'unique_violation', CONSTRAINT = 'IX_tenants_slug';
+                    END IF;
+                    RETURN NEW;
+                END $$;
+                CREATE TRIGGER simulate_concurrent_seed BEFORE INSERT ON tenancy.tenants
+                    FOR EACH ROW EXECUTE FUNCTION tenancy.simulate_concurrent_seed();
+                """,
+                TestContext.Current.CancellationToken);
+        }
+
+        var logs = new CapturingLoggerProvider();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true, logs: logs);
+        using var client = factory.CreateClient();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        Assert.False(await dbContext.Tenants.AnyAsync(
+            tenant => tenant.Id == new TenantId(OperatorTenantId), TestContext.Current.CancellationToken));
+        var warning = Assert.Single(logs.Entries, entry => entry.EventId == 4106);
+        Assert.Equal(LogLevel.Warning, warning.Level);
+        Assert.Contains("IX_tenants_slug", warning.Message, StringComparison.Ordinal);
     }
 
     // De punta a punta y con la configuración por defecto: auth real (no el stub), sin fijar

@@ -518,7 +518,10 @@ historial. Se documenta `Platform:OperatorTenantId`.
 | `Platform:OperatorTenantId` apunta a un tenant que no existe (p. ej. el default antes de sembrar QCode) | inofensivo: nadie tiene membresía en él, la consola no es alcanzable |
 | `Seed:Enabled` sin `Seed:OperatorOwnerEmail` | no se siembra QCode; advertencia `4102`; el arranque sigue |
 | `Seed:OperatorOwnerEmail` con un valor que no es email | el arranque falla (`ValidateOnStart`) |
-| El slug `qcode` ya es de otro tenant | no se siembra QCode; advertencia `4103` con el id de ese tenant; el arranque sigue |
+| El slug `qcode` ya es de otro tenant | no se siembra QCode; advertencia `4103` con el id de ese tenant, que pide verificar su dueño antes de apuntar `Platform:OperatorTenantId` ahí; el arranque sigue |
+| `Seed:OperatorOwnerEmail` igual a `Seed:OwnerEmail` | no se siembra QCode; advertencia `4104`; el arranque sigue |
+| `Seed:OperatorOwnerEmail` de un usuario con membresía en otro tenant | no se siembra QCode; advertencia `4105`; el arranque sigue |
+| Dos pods siembran QCode a la vez (rolling update) | el que choca con un índice único lo registra (`4106`) y sigue arrancando |
 | `Platform:OperatorTenantId` = `Guid.Empty` | el arranque falla (`ValidateOnStart`) |
 | Clave de módulo, estado o motivo desconocidos en el cuerpo o en `?module=` | `422 validation.failed` (nunca 500) |
 | Dos operadores cambian módulos del mismo tenant a la vez | el candado los serializa; el segundo valida contra el estado ya cambiado |
