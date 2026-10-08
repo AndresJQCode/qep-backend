@@ -9,6 +9,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using Modules.Authorization.Domain;
+using Modules.Authorization.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Testcontainers.PostgreSql;
@@ -107,6 +110,32 @@ public sealed class RealAuthenticationApiTests
         Assert.Contains(session!.ActiveTenants, tenant => tenant.TenantId == tenantId);
         Assert.Equal(HttpStatusCode.OK, (await GetSettingsAsync(owner, tenantId)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await GetProductsAsync(owner, tenantId)).StatusCode);   // módulos intactos
+    }
+
+    // Spec «Errores y casos borde» y criterio 2: un rol personalizado con operator.* insertado por SQL,
+    // fuera del tenant operador, no abre la consola. El filtro corre en ResolvePermissionsAsync.
+    [Fact]
+    public async Task ACustomRoleWithOperatorPermissionsDoesNotOpenTheConsole()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: Guid.CreateVersion7());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var roles = scope.ServiceProvider.GetRequiredService<AuthorizationDbContext>();
+            roles.Roles.Add(Role.Create(RoleId.New(), tenantId, "operador-falso", "Operador falso", "",
+                [OperatorPermissions.TenantsRead], DateTimeOffset.UtcNow));
+            await roles.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await scope.ServiceProvider.GetRequiredService<TenancyDbContext>().Database.ExecuteSqlAsync(
+                $"UPDATE tenancy.memberships SET roles = array_append(roles, 'operador-falso') WHERE tenant_id = {tenantId}",
+                TestContext.Current.CancellationToken);
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/operator/tenants");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        var response = await owner.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     private static async Task<HttpResponseMessage> GetSettingsAsync(HttpClient client, Guid tenantId)
@@ -628,7 +657,7 @@ public sealed class RealAuthenticationApiTests
         factory.CreateClient(
             new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
 
-    private sealed class QepApiFactory(string connectionString)
+    private sealed class QepApiFactory(string connectionString, Guid? operatorTenantId = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -664,6 +693,8 @@ public sealed class RealAuthenticationApiTests
             builder.UseSetting("Registration:PublicTenantSignupEnabled", "true");
             builder.UseSetting("Authentication:Audience", Audience);
             builder.UseSetting("Authentication:TestSigningKey", SigningKeyBase64);
+            // Siempre fijado, como en TenantModulesApiTests.QepApiFactory: vacío vale lo mismo que ausente.
+            builder.UseSetting("Platform:OperatorTenantId", operatorTenantId?.ToString() ?? string.Empty);
         }
     }
 }

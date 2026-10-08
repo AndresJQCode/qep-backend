@@ -190,4 +190,129 @@ public sealed class OperatorConsoleApiTests
     private sealed record CatalogPermission(string Permission);
     private sealed record RolePayload(string Role, string[] Permissions);
     internal sealed record ProblemPayload(string Code);
+
+    [Fact]
+    public async Task AnOperatorListsTenantsWithTheSummaryAndSearches()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (first, _) = await RegisterAsync(factory);
+        await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        var all = await GetOkAsync<TenantPagePayload>(client, Url("tenants"));
+        Assert.Equal(2, all.Total);
+        Assert.Equal(new SummaryPayload(2, 0, 0), all.Summary);
+        Assert.All(all.Items, item => Assert.Equal((6, 7, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
+
+        var slug = (await GetOkAsync<DetailPayload>(client, Url($"tenants/{first}"))).Slug;
+        var searched = await GetOkAsync<TenantPagePayload>(client, Url($"tenants?search={slug}"));
+        Assert.Equal(first, Assert.Single(searched.Items).TenantId);
+        Assert.Equal(1, searched.Total);
+        Assert.Equal(2, searched.Summary.Total);   // el resumen no se filtra
+
+        // Review Focus 2: el comodín es literal.
+        Assert.Equal(0, (await GetOkAsync<TenantPagePayload>(client, Url("tenants?search=%25"))).Total);
+        // Review Focus 4: más allá de la última página, vacío con el total intacto.
+        var beyond = await GetOkAsync<TenantPagePayload>(client, Url("tenants?page=5&pageSize=1"));
+        Assert.Empty(beyond.Items);
+        Assert.Equal(2, beyond.Total);
+    }
+
+    // Contrato con la SPA (se construye en paralelo): nombres exactos de §5.
+    [Fact]
+    public async Task TheDetailJsonMatchesTheContract()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        using var json = System.Text.Json.JsonDocument.Parse(
+            await client.GetStringAsync(Url($"tenants/{tenantId}"), TestContext.Current.CancellationToken));
+        var root = json.RootElement;
+        Assert.Equal(
+            ["tenantId", "slug", "displayName", "createdAt", "status", "statusChangedAt", "statusReason", "version", "isOperator", "modules"],
+            root.EnumerateObject().Select(property => property.Name));
+        var pos = root.GetProperty("modules")[6];
+        Assert.Equal(
+            ["key", "status", "enabled", "dependencies", "since", "source", "lastReason"],
+            pos.EnumerateObject().Select(property => property.Name));
+        Assert.Equal("none", pos.GetProperty("status").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, pos.GetProperty("since").ValueKind);
+        Assert.Equal("Active", root.GetProperty("status").GetString());
+        Assert.Equal(1, root.GetProperty("version").GetInt64());
+    }
+
+    [Fact]
+    public async Task AnUnknownTargetIsNotFoundForTheOperator()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        using var client = OperatorClient(factory);
+
+        await AssertProblemAsync(
+            await client.GetAsync(Url($"tenants/{Guid.CreateVersion7()}"), TestContext.Current.CancellationToken),
+            HttpStatusCode.NotFound, "tenancy.tenant.not_found");
+    }
+
+    // Spec «Errores y casos borde»: el permiso inyectado por X-Permissions en otro tenant no alcanza.
+    [Fact]
+    public async Task ANonOperatorTenantIsForbiddenEvenWithThePermissionInjected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var otherTenantId = Guid.CreateVersion7();
+        using var client = StubClient(factory, Guid.CreateVersion7(), otherTenantId, AllOperatorPermissions);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{otherTenantId}/operator/tenants", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // Doble capa: la política pasa (el claim es el operador) y el handler ve que la ruta no coincide.
+    [Fact]
+    public async Task TheRouteTenantMustMatchTheClaim()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        using var client = OperatorClient(factory);
+
+        await AssertProblemAsync(
+            await client.GetAsync($"/api/v1/tenants/{Guid.CreateVersion7()}/operator/tenants", TestContext.Current.CancellationToken),
+            HttpStatusCode.Forbidden, "authorization.denied");
+    }
+
+    [Fact]
+    public async Task OutOfRangePagingIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        using var client = OperatorClient(factory);
+
+        await AssertProblemAsync(
+            await client.GetAsync(Url("tenants?pageSize=0"), TestContext.Current.CancellationToken),
+            HttpStatusCode.UnprocessableEntity, "validation.failed");
+    }
+
+    private static HttpClient OperatorClient(QepApiFactory factory, Guid? subjectId = null) =>
+        StubClient(factory, subjectId ?? Guid.CreateVersion7(), OperatorTenantId, AllOperatorPermissions);
+
+    private static string Url(string path) => $"/api/v1/tenants/{OperatorTenantId}/operator/{path}";
+
+    private static async Task<T> GetOkAsync<T>(HttpClient client, string url)
+    {
+        var response = await client.GetAsync(url, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<T>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body;
+    }
+
+    private sealed record TenantPagePayload(List<TenantItemPayload> Items, int Total, int Page, int PageSize, SummaryPayload Summary);
+    private sealed record TenantItemPayload(Guid TenantId, string Slug, string DisplayName, string Status, DateTimeOffset CreatedAt, int ActiveModules, int TotalModules, bool IsOperator);
+    private sealed record SummaryPayload(int Total, int WithoutModules, int Inactive);
+    private sealed record DetailPayload(Guid TenantId, string Slug, string DisplayName, DateTimeOffset CreatedAt, string Status, DateTimeOffset? StatusChangedAt, string? StatusReason, long Version, bool IsOperator, List<ModulePayload> Modules);
+    private sealed record ModulePayload(string Key, string Status, bool Enabled, string[] Dependencies, DateTimeOffset? Since, string? Source, string? LastReason);
 }

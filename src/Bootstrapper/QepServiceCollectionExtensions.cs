@@ -67,6 +67,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RemoveTenantLogoCommand, TenantSettingsDto>,
             RemoveTenantLogoHandler>();
+        // Spec 2026-10-08 §5: la consola de operador.
+        services.AddScoped<
+            IQueryHandler<ListOperatorTenantsQuery, OperatorTenantPageDto>,
+            ListOperatorTenantsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetOperatorTenantQuery, OperatorTenantDetailDto>,
+            GetOperatorTenantHandler>();
         services.AddScoped<
             ICommandHandler<InviteMemberCommand, MembershipDto>,
             InviteMemberHandler>();
