@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Modules.Audit.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure.Messaging;
@@ -42,6 +43,14 @@ public static class TenancyInfrastructureExtensions
             .Bind(configuration.GetSection(EntitlementsOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<ITenantModuleDefaults, TenantModuleDefaults>();
+        // Spec 2026-10-08 §1: opcional, pero nunca Guid.Empty. ValidateOnStart, como Entitlements,
+        // para que un valor que no es Guid tumbe el arranque y no el primer request.
+        services.AddOptions<OperatorTenantOptions>()
+            .Bind(configuration.GetSection(OperatorTenantOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<OperatorTenantOptions>, OperatorTenantOptionsValidator>();
+        services.AddSingleton<IOperatorTenant, OperatorTenant>();
+        services.AddHostedService<OperatorTenantStartupWarning>();
         services.AddScoped<IMembershipDirectory, MembershipDirectory>();
         services.AddScoped<IMembershipRoleUsage, MembershipRoleUsage>();
         services.AddScoped<IActiveTenantsQuery, ActiveTenantsQuery>();
