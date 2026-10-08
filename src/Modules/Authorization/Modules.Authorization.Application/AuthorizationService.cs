@@ -7,7 +7,8 @@ public sealed class AuthorizationService(
     IMembershipDirectory membershipDirectory,
     ITenantRoleCatalog roleCatalog,
     ITenantModules tenantModules,
-    ModuleEntitlementMask entitlementMask)
+    ModuleEntitlementMask entitlementMask,
+    IOperatorTenant operatorTenant)
     : IAuthorizationService
 {
     public async Task<AuthorizationDecision> AuthorizeAsync(
@@ -50,6 +51,9 @@ public sealed class AuthorizationService(
         // debería pasar —hay membresía activa, luego hay tenant—; si pasa, fail closed: sólo núcleo.
         // AuthorizeAsync hereda el enmascarado.
         var modules = await tenantModules.FindAsync(tenantId, cancellationToken) ?? TenantModuleSet.Empty;
-        return entitlementMask.Apply(permissions, modules);
+        var masked = entitlementMask.Apply(permissions, modules);
+        // Paso 4 (spec 2026-10-08 §2): operator.* sólo sobrevive en el tenant operador, aunque un rol
+        // personalizado los traiga por SQL.
+        return OperatorPermissionFilter.Apply(masked, operatorTenant.IsOperator(tenantId));
     }
 }

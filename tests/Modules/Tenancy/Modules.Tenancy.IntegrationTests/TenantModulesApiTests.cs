@@ -287,7 +287,8 @@ public sealed class TenantModulesApiTests
 
     private sealed record EffectivePermissionsDto(Guid TenantId, string[] Permissions);
 
-    internal sealed class QepApiFactory(string connectionString, bool? grantDefaultModulesOnSignup = null)
+    internal sealed class QepApiFactory(
+        string connectionString, bool? grantDefaultModulesOnSignup = null, Guid? operatorTenantId = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -311,6 +312,11 @@ public sealed class TenantModulesApiTests
             if (grantDefaultModulesOnSignup is { } grant)
             {
                 builder.UseSetting("Entitlements:GrantDefaultModulesOnSignup", grant ? "true" : "false");
+            }
+
+            if (operatorTenantId is { } operatorId)
+            {
+                builder.UseSetting("Platform:OperatorTenantId", operatorId.ToString());
             }
         }
     }

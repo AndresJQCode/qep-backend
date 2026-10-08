@@ -15,7 +15,8 @@ internal sealed class DevelopmentAuthenticationHandler(
     ILoggerFactory logger,
     UrlEncoder encoder,
     ITenantModules tenantModules,
-    ModuleEntitlementMask entitlementMask)
+    ModuleEntitlementMask entitlementMask,
+    IOperatorTenant operatorTenant)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string AuthenticationSchemeName = "Development";
@@ -42,8 +43,10 @@ internal sealed class DevelopmentAuthenticationHandler(
         // y Companies) los permisos quedan como vienen; con fila, se enmascaran igual que por cookie.
         var requested = ResolvePermissions();
         var modules = await tenantModules.FindAsync(parsedTenantId, Context.RequestAborted);
-        var permissions = modules is null ? requested : entitlementMask.Apply(requested, modules);
-        foreach (var permission in permissions)
+        var masked = modules is null ? requested : entitlementMask.Apply(requested, modules);
+        // Spec 2026-10-08 §2: siempre, exista o no la fila del tenant. El stub no puede autodeclararse
+        // operador con X-Permissions.
+        foreach (var permission in OperatorPermissionFilter.Apply(masked, operatorTenant.IsOperator(parsedTenantId)))
         {
             claims.Add(new Claim(QepClaimTypes.Permission, permission));
         }

@@ -29,6 +29,12 @@ public sealed class AuthorizationServiceTests
             "Catalog",
             "low",
             ["tenancy.settings.read", "catalog.product.read"]),
+        new RoleDefinition("operator-admin",
+            "Operator",
+            "Operator role",
+            "Tenancy",
+            "high",
+            ["tenancy.settings.read", "operator.tenants.read"]),
     ],
     []);
 
@@ -38,11 +44,13 @@ public sealed class AuthorizationServiceTests
         new PermissionDefinition("tenancy.settings.update", "", "", "Tenancy", "high", []),
         new PermissionDefinition("advisorship.invite", "", "", "Tenancy", "medium", []),
         new PermissionDefinition("catalog.product.read", "", "", "Catalog", "low", [TenantModuleKeys.Catalog]),
+        new PermissionDefinition("operator.tenants.read", "", "", "Operator", "medium", []),
     ]);
 
     private static AuthorizationService NewService(
-        IReadOnlyCollection<string>? roles, TenantModuleSet? modules) =>
-        new(new FakeDirectory(roles), TenantCatalog(), new FixedTenantModules(modules), Mask);
+        IReadOnlyCollection<string>? roles, TenantModuleSet? modules, Guid? operatorTenantId = null) =>
+        new(new FakeDirectory(roles), TenantCatalog(), new FixedTenantModules(modules), Mask,
+            new FixedOperatorTenant(operatorTenantId));
 
     // Los casos de antes no son sobre módulos: con los siete prendidos significan lo mismo que
     // antes. Con null no, porque en el camino real null es fail closed (sólo núcleo).
@@ -153,6 +161,29 @@ public sealed class AuthorizationServiceTests
 
         Assert.False(decision.Allowed);
         Assert.Equal("permission_denied", decision.ReasonCode);
+    }
+
+    // Spec 2026-10-08 §2: el filtro va después del enmascarado; el admin del operador los conserva.
+    [Fact]
+    public async Task TheOperatorTenantKeepsItsOperatorPermissions()
+    {
+        var service = NewService(["operator-admin"], TenantModuleSet.FromStored(TenantModuleKeys.All), Tenant);
+
+        var permissions = await service.ResolvePermissionsAsync(
+            Subject, Tenant, TestContext.Current.CancellationToken);
+
+        Assert.Contains("operator.tenants.read", permissions!);
+    }
+
+    [Fact]
+    public async Task AnyOtherTenantLosesThemEvenWithTheRole()
+    {
+        var service = NewService(["operator-admin"], TenantModuleSet.FromStored(TenantModuleKeys.All), Guid.CreateVersion7());
+
+        var permissions = await service.ResolvePermissionsAsync(
+            Subject, Tenant, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["tenancy.settings.read"], permissions);
     }
 
     [Fact]

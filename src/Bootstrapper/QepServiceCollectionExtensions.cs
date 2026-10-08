@@ -696,7 +696,13 @@ public static class QepServiceCollectionExtensions
                 PosPermissions.SaleVoid,
                 PosPermissions.SaleDiscount,
                 PosPermissions.RegisterOperate,
-                PosPermissions.RegisterRead
+                PosPermissions.RegisterRead,
+                // Spec 2026-10-08 §2: el admin de fábrica es global, así que estos tres le llegan a
+                // todo admin; el filtro de operador los deja vivos sólo en el tenant operador. Quien
+                // asigna roles en QCode puede volver a alguien operador: aceptado (radio de explosión).
+                OperatorPermissions.TenantsRead,
+                OperatorPermissions.ModulesManage,
+                OperatorPermissions.TenantsManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1090,6 +1096,29 @@ public static class QepServiceCollectionExtensions
             "Pos",
             "medium",
             RequiredModules: [ModuleKeys.Pos]));
+        // Spec 2026-10-08 §2: categoría "Operator" (no "Platform", que es la del log de fallas) y
+        // núcleo, para que el enmascarado por módulos no las toque.
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.TenantsRead,
+            "Ver tenants de la plataforma",
+            "Permite listar los tenants, ver sus módulos y su historial.",
+            "Operator",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.ModulesManage,
+            "Gestionar módulos de los tenants",
+            "Permite activar o desactivar los módulos de cualquier tenant.",
+            "Operator",
+            "high",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.TenantsManage,
+            "Activar o inactivar tenants",
+            "Permite inactivar un tenant, lo que corta el acceso de toda la empresa, o reactivarlo.",
+            "Operator",
+            "high",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1342,7 +1371,16 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, PosPermissions.RegisterOperate))
             .AddPolicy(
                 PosPermissions.RegisterRead,
-                policy => AddPermissionRequirement(policy, PosPermissions.RegisterRead));
+                policy => AddPermissionRequirement(policy, PosPermissions.RegisterRead))
+            .AddPolicy(
+                OperatorPermissions.TenantsRead,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsRead))
+            .AddPolicy(
+                OperatorPermissions.ModulesManage,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.ModulesManage))
+            .AddPolicy(
+                OperatorPermissions.TenantsManage,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsManage));
     }
 
     private static void AddPermissionRequirement(

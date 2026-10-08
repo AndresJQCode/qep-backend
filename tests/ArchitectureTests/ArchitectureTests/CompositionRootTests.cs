@@ -7,6 +7,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Pos.Application;
+using Modules.Tenancy.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace ArchitectureTests;
@@ -163,12 +164,32 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec de
-    /// entitlements más las 6 de POS.</summary>
+    /// entitlements, las 6 de POS y las tres <c>operator.*</c> del spec de 2026-10-08.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFortyOneConstants()
+    public void PermissionDiscoveryFindsTheFortyFourConstants()
     {
-        // +6 de PosPermissions (spec 2026-10-07).
-        Assert.Equal(41, PermissionConstants().Length);
+        // +6 de PosPermissions (spec 2026-10-07), +3 de OperatorPermissions (spec 2026-10-08).
+        Assert.Equal(44, PermissionConstants().Length);
+    }
+
+    /// <summary>Spec 2026-10-08 §2: el admin de fábrica los lleva; el filtro decide dónde valen.</summary>
+    [Fact]
+    public void TheAdminRoleCarriesTheOperatorPermissionsAsCoreOperatorCategory()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] operatorPermissions =
+            [OperatorPermissions.TenantsRead, OperatorPermissions.ModulesManage, OperatorPermissions.TenantsManage];
+
+        Assert.All(operatorPermissions, permission =>
+            Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        Assert.All(
+            catalog.ListPermissions().Where(definition => operatorPermissions.Contains(definition.Permission)),
+            definition =>
+            {
+                Assert.Equal("Operator", definition.Category);
+                Assert.Empty(definition.RequiredModules!);
+            });
     }
 
     /// <summary>
