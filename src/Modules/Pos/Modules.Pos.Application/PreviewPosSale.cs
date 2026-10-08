@@ -58,6 +58,9 @@ public sealed class PreviewPosSaleHandler(
         var discount = VatIncludedLine.Round(sellable.Sum(line => line.DiscountAmount));
         var total = subtotal + tax;
 
+        // El mismo tope que PosSale.Create: si no se guarda, la caja no debe dejar cobrarlo.
+        PosSale.EnsureAmountsFit(sellable.Select(line => line.UnitPrice!.Value), subtotal, discount, tax, total);
+
         return new PosPreviewResponse(
             lines, subtotal, tax, discount, total,
             ZeroTotalNotAllowed: total == 0 && !canDiscount);

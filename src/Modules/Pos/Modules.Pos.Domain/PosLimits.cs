@@ -8,6 +8,12 @@ namespace Modules.Pos.Domain;
 public static class PosLimits
 {
     public const decimal MaxCashAmount = 100_000_000m;
+
+    /// <summary>
+    /// El mayor importe que cabe en las columnas de dinero de POS, todas numeric(14,2). No es un tope
+    /// de digitación como los demás: pasarlo hace que Npgsql tire 22003 y la API responda 500.
+    /// </summary>
+    public const decimal MaxAmount = 999_999_999_999.99m;
     public const decimal MaxCountedCash = 1_000_000_000m;
     public const decimal MaxQuantity = 99_999m;
     public const int MaxLines = 200;

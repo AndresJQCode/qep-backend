@@ -95,6 +95,8 @@ public sealed class PosSale
         var tax = VatIncludedLine.Round(builtLines.Sum(line => line.TaxAmount));
         var total = subtotal + tax;
 
+        EnsureAmountsFit(builtLines.Select(line => line.UnitPrice), subtotal, discount, tax, total);
+
         var (builtPayments, change) = BuildPayments(id, total, payments);
 
         var sale = new PosSale
@@ -119,6 +121,30 @@ public sealed class PosSale
         sale._lines.AddRange(builtLines);
         sale._payments.AddRange(builtPayments);
         return sale;
+    }
+
+    /// <summary>
+    /// Que cada importe que se guarda quepa en numeric(14,2) (decisión A, 2026-10-08). Público porque
+    /// la vista previa lo usa tal cual: la caja tiene que ver el mismo 422 antes de cobrar.
+    /// </summary>
+    /// <remarks>
+    /// Basta con el encabezado y los precios: todo importe de línea es ≥ 0 y queda dentro de su suma,
+    /// y los pagos tampoco lo pasan (tarjeta y transferencia ≤ total; el efectivo y el cambio, ≤ el
+    /// recibido, que ya tiene tope). El precio va aparte porque una cantidad chica lo deja crecer
+    /// sin mover el total.
+    /// </remarks>
+    public static void EnsureAmountsFit(
+        IEnumerable<decimal> unitPrices, decimal subtotal, decimal discountAmount, decimal taxAmount, decimal total)
+    {
+        ArgumentNullException.ThrowIfNull(unitPrices);
+
+        if (subtotal > PosLimits.MaxAmount || discountAmount > PosLimits.MaxAmount
+            || taxAmount > PosLimits.MaxAmount || total > PosLimits.MaxAmount
+            || unitPrices.Any(price => price > PosLimits.MaxAmount))
+        {
+            throw new PosDomainException(
+                "pos.sale.total_too_large", "The sale total or one of its amounts exceeds the maximum allowed.");
+        }
     }
 
     public void AssignNumber(long value)

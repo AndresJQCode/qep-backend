@@ -207,6 +207,45 @@ public sealed class PosSaleTests
         Assert.Equal(code, error.Code);
     }
 
+    // Decisión A (2026-10-08): lo que no cabe en numeric(14,2) es un 422 del dominio, no el 22003
+    // de Npgsql (500). Se paga con Cash(0) a propósito: el tope va antes que las reglas de pago.
+    public static TheoryData<PosSaleLineInput[]> AmountsThatDoNotFit => new()
+    {
+        // 99 999 × 20 000 000 = 1,99998e12: la cantidad cabe, el total no.
+        { [new(Shampoo, "SH-400", "Shampoo 400 ml", 99_999m, 20_000_000m, 0m, 19)] },
+        // Cada línea cabe; la suma de las dos no.
+        {
+            [
+                new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 600_000_000_000m, 0m, 19),
+                new(Avena, "AV-01", "Avena granel (kg)", 1m, 600_000_000_000m, 0m, 0),
+            ]
+        },
+        // Con 100 % de descuento el total es 0, pero el descuento también se guarda en (14,2).
+        { [new(Shampoo, "SH-400", "Shampoo 400 ml", 99_999m, 20_000_000m, 100m, 19)] },
+        // El total cabe (1e10), pero el precio unitario se guarda tal cual en sale_lines.unit_price.
+        { [new(Shampoo, "SH-400", "Shampoo 400 ml", 0.01m, 1_000_000_000_000m, 0m, 0)] },
+    };
+
+    [Theory]
+    [MemberData(nameof(AmountsThatDoNotFit))]
+    public void AnAmountThatDoesNotFitTheColumnIsRejectedBeforeThePayments(PosSaleLineInput[] lines)
+    {
+        var error = Assert.Throws<PosDomainException>(() => Sale(OpenSession(), lines, [Cash(0m)]));
+
+        Assert.Equal("pos.sale.total_too_large", error.Code);
+    }
+
+    [Fact]
+    public void ATotalExactlyAtTheMaximumIsAccepted()
+    {
+        var sale = Sale(
+            OpenSession(),
+            [new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, PosLimits.MaxAmount, 0m, 0)],
+            [Card(PosLimits.MaxAmount)]);
+
+        Assert.Equal(999_999_999_999.99m, sale.Total);
+    }
+
     [Fact]
     public void ASaleNeedsBetweenOneAndTwoHundredLines()
     {

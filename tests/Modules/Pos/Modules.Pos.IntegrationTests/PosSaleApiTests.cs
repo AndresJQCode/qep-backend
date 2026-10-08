@@ -396,6 +396,35 @@ public sealed class PosSaleApiTests
         Assert.Equal("POS-000003", (await next.Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken))!.SaleNumber);
     }
 
+    // Decisión A (2026-10-08): 99 999 × 20 000 000 no cabe en numeric(14,2). Antes llegaba a la base,
+    // Npgsql tiraba 22003 y la API respondía 500; ahora la vista previa y el POST dan el mismo 422.
+    [Fact]
+    public async Task ATotalThatDoesNotFitTheColumnIs422InThePreviewAndThePostNot500()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        var session = await world.OpenSessionAsync(world.Admin);
+        var pricey = await CreateProductAsync(
+            world.Tenant.Seeder, world.Tenant.TenantId, "MQ-01", "Maquinaria", 20_000_000m, world.Tax19);
+        var id = Guid.CreateVersion7();
+
+        var preview = await world.Admin.PostAsJsonAsync($"{world.Url}/sales/preview",
+            new { lines = new[] { new { productId = pricey, quantity = 99_999m, discountPercentage = 0m } } },
+            TestContext.Current.CancellationToken);
+        var sale = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
+            PosWorld.SaleBody(id, session.Id,
+                [new { productId = pricey, quantity = 99_999m, discountPercentage = 0m, expectedUnitPrice = 20_000_000m, expectedTaxPercentage = 19 }],
+                PosWorld.CashPayment(100_000_000m)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, preview.StatusCode);
+        Assert.Contains("pos.sale.total_too_large", await preview.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, sale.StatusCode);
+        Assert.Contains("pos.sale.total_too_large", await sale.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+        Assert.Equal(0, await SalesWithIdAsync(database, id));
+    }
+
     // Precio igual y tasa cambiada después del preview: el total no se mueve, el desglose sí.
     [Fact]
     public async Task OnlyTheTaxRateChangedAfterThePreviewIsPriceChanged()

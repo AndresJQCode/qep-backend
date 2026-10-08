@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Pos.Application;
+using Modules.Pos.Domain;
 using static Modules.Pos.UnitTests.PosFixtures;
 
 namespace Modules.Pos.UnitTests;
@@ -161,6 +162,19 @@ public sealed class ProductAndPreviewHandlersTests
             new PreviewPosSaleCommand(TenantId, WorkedExampleCart()), TestContext.Current.CancellationToken));
 
         Assert.Equal("pos.sale.discount_not_allowed", error.Code);
+    }
+
+    // La caja ve el mismo 422 que daría el POST antes de cobrar, con el mismo código.
+    [Fact]
+    public async Task PreviewRejectsATotalThatDoesNotFitLikeTheSale()
+    {
+        var bed = new PosTestBed();
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 20_000_000m, 19, id: Shampoo);
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() => Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [new(Shampoo, 99_999m, 0m)]), TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.total_too_large", error.Code);
     }
 
     // Un carrito con productos a precio 0 se tiene que poder dibujar; lo que no se puede es cobrarlo.
