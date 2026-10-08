@@ -452,6 +452,15 @@ y su `UPDATE` de caja afecta cero filas. Lo normal es que el duplicado salga com
 `PosUnitOfWork` expone `BeginTransactionAsync`, igual que `IQuotationsUnitOfWork`, para el
 contador, y `ResetAsync()` (rollback de la transacción abierta + `ChangeTracker.Clear()`) para
 releer después de un choque sin arrastrar las entidades del intento fallido.
+
+**Candado por id de venta** (decisión 55). `IPosSaleIdLock.AcquireAsync(tenantId, saleId)`
+(puerto de Application) lo implementa `PosSaleIdLock` en Infrastructure con
+`SELECT pg_advisory_xact_lock(key)`, donde `key` son los primeros 8 bytes (big-endian, como
+`int64`) del SHA-256 de los 16 bytes del `tenantId` seguidos de los 16 del `saleId`: estable entre
+procesos y versiones, a diferencia de `GetHashCode`. Es de transacción: se suelta solo con el
+commit o el rollback, así que exige una transacción abierta y, si no la hay, lanza
+`InvalidOperationException` (un candado de sesión tomado fuera de transacción se soltaría en el
+acto o quedaría pegado a la conexión del pool).
 `PosSaleNumberGenerator` copia `OrderNumberGenerator` sin la columna `year`.
 
 ## Aplicación (`Modules.Pos.Application`)
@@ -560,7 +569,10 @@ dar el mismo total (dos productos del mismo precio intercambiados).
    (`403 authorization.denied`, `422 validation.failed`) sale **antes** de buscar la repetición:
    no prueba que un envío anterior del mismo id no haya quedado, y el cliente no lo toma como
    definitivo cuando reintenta un cobro incierto (ver «Ciclo de vida del id»).
-2. **Repetición**: `sales.FindAsync(tenantId, id)`. Si existe, su `CashierId` es el llamador **y**
+2. **Transacción, candado y repetición.** Se abre la transacción de la venta y, adentro, se toma
+   `IPosSaleIdLock.AcquireAsync(tenantId, id)`: dos requests con el mismo id se serializan, y un
+   reintento que llega mientras el primer envío sigue en vuelo espera su commit o su rollback
+   antes de buscar (decisión 55). Después, `sales.FindAsync(tenantId, id)`. Si existe, su `CashierId` es el llamador **y**
    su huella es la del request → devolver esa venta con **200** (no 201), sin tocar nada. Si
    existe con otro cajero o con otra huella → `pos.sale.id_conflict` (422). Es la red de
    seguridad del servidor: el cliente no debería reusar un id con otro carrito (ver «Diálogo de
@@ -579,7 +591,7 @@ dar el mismo total (dos productos del mismo precio intercambiados).
 6. `PosSale.Create` (valida líneas y pagos; cliente `PosFinalConsumer`). Si `Total = 0` y el
    llamador no tiene `pos.sale.discount` → `403 pos.sale.discount_not_allowed` (un total en cero
    sin descuento sólo sale de productos con precio 0, y regalar también es un descuento).
-7. Transacción: número (`PosSaleNumberGenerator`), `sales.Add`, `session.RegisterSale`,
+7. En la misma transacción del paso 2: número (`PosSaleNumberGenerator`), `sales.Add`, `session.RegisterSale`,
    auditoría `pos.sale.created`, `SaveChanges`, `Commit`. El número se pide **después** de
    todas las validaciones y adentro de la transacción: un 422 o un 412 no gastan número.
 8. **Choque al guardar.** Si el guardado da `pos.sale.id_taken` **o**
@@ -1582,7 +1594,10 @@ operaciones manuales.
 - Choque al guardar, **los dos órdenes**: el doble de `PosUnitOfWork` lanza
   `RequestConcurrencyException` en el primer guardado y después el repositorio encuentra la venta
   → 200 con ella y `ResetAsync` llamado; lo mismo con `pos.sale.id_taken`; concurrencia sin venta
-  → 412 relanzado; `id_taken` sin venta en el tenant → `id_conflict`.
+  → 412 relanzado; `id_taken` sin venta en el tenant → `id_conflict`; la venta que aparece tras
+  el choque es de otro cajero o tiene otra huella → `id_conflict`.
+- Candado por id: el handler abre la transacción y toma `IPosSaleIdLock` **antes** de buscar la
+  repetición (orden registrado por los dobles), y el doble del candado exige transacción abierta.
 - Descuento: línea con 10 % sin `pos.sale.discount` → 403 `pos.sale.discount_not_allowed` en
   preview y en venta, antes de pedir número; total 0 sin el permiso → preview 200 con
   `zeroTotalNotAllowed: true` y venta 403; con el permiso la auditoría lleva
@@ -1632,6 +1647,9 @@ Casos:
 - Idempotencia: mismo POST dos veces → 201 y 200, una fila, un número; mismo id con otra cantidad
   → 422 `pos.sale.id_conflict` y la venta original intacta; dos POST idénticos en paralelo,
   repetido 20 veces → cada vez una fila, las dos respuestas 2xx y el mismo `saleNumber`.
+- Candado por id (decisión 55): un primer envío retenido adentro de su transacción (candado
+  tomado, sin commit) y un reintento con el mismo id → el reintento espera; al commitear el
+  primero, el reintento responde 200 con esa venta aunque entre medio haya cambiado el precio.
 - Índice parcial: segunda apertura → `pos.session.already_open`.
 - Concurrencia cierre/venta, **determinista**: dos `PosDbContext` sobre la misma caja; A la carga,
   B registra una venta y commitea, A cierra y guarda → `DbUpdateConcurrencyException` traducida a
@@ -1921,6 +1939,20 @@ Casos:
     Caja de … · empresa", el encabezado dibuja "Caja de {cajero}" con "desde las HH:MM" y la
     empresa en una segunda línea; "Punto de venta" queda como `<h1>` sólo para lectores de
     pantalla. Misma información, sin unir rótulos con "·".
+55. **[ORQ] Los requests con el mismo id de venta se serializan con un candado de Postgres.** Sin
+    él, un reintento que llega mientras el primer envío sigue sin commitear (el frontend corta a
+    los 20 s, pero el servidor puede seguir trabajando: el aborto no siempre cruza el proxy, o el
+    commit ya va en camino) no ve la venta en el paso 2. Si después falla con un código definitivo
+    (precio cambiado, producto inactivado o permiso de descuento quitado en ese lapso), el frontend
+    suelta el id y desbloquea el carrito, el primer envío commitea igual, y el cobro siguiente es
+    una **venta duplicada**. Dos POST idénticos simultáneos ya terminaban bien (412 → relectura
+    → 200); éste no. Con `pg_advisory_xact_lock` sobre `(tenantId, saleId)`, tomado adentro de
+    la transacción abierta **antes** del paso 2, el reintento espera el commit o el rollback del
+    primero y lo encuentra (200) o encuentra el camino libre. Se eligió un candado consultivo y no
+    un `SELECT … FOR UPDATE`: no hay fila que bloquear hasta que la venta exista. La clave es un
+    hash estable de 64 bits (SHA-256 truncado), no `hashtext`, para no depender de una función
+    interna de Postgres. Application sólo ve el puerto (`IPosSaleIdLock`); EF y Npgsql quedan en
+    Infrastructure, como exige `PosLayerTests`.
 
 ## DECISIÓN-PENDIENTE
 

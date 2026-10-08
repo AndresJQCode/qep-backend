@@ -63,8 +63,10 @@ internal sealed class InMemoryCashSessionRepository : ICashSessionRepository
 /// <summary>
 /// Sólo encuentra lo "commiteado" (Stored), como una consulta real: lo agregado sin guardar no
 /// aparece en FindAsync. FakeUnitOfWork pasa Added a Stored al guardar y lo descarta en Reset.
+/// Cada búsqueda queda en <paramref name="calls"/>, para probar en qué orden corre.
 /// </summary>
-internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository sessions) : IPosSaleRepository
+internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository sessions, List<string>? calls = null)
+    : IPosSaleRepository
 {
     public List<PosSale> Stored { get; } = [];
 
@@ -72,8 +74,11 @@ internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository se
 
     public InMemoryCashSessionRepository Sessions { get; } = sessions;
 
-    public Task<PosSale?> FindAsync(Guid tenantId, PosSaleId id, CancellationToken cancellationToken) =>
-        Task.FromResult(Stored.SingleOrDefault(sale => sale.TenantId == tenantId && sale.Id == id));
+    public Task<PosSale?> FindAsync(Guid tenantId, PosSaleId id, CancellationToken cancellationToken)
+    {
+        calls?.Add($"find:{id}");
+        return Task.FromResult(Stored.SingleOrDefault(sale => sale.TenantId == tenantId && sale.Id == id));
+    }
 
     public void Add(PosSale sale) => Added.Add(sale);
 
@@ -86,9 +91,12 @@ internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository se
     public void Discard() => Added.Clear();
 }
 
-internal sealed class FakeUnitOfWork(InMemoryPosSaleRepository sales) : IPosUnitOfWork
+internal sealed class FakeUnitOfWork(InMemoryPosSaleRepository sales, List<string>? calls = null) : IPosUnitOfWork
 {
     public int SaveCalls { get; private set; }
+
+    /// <summary>Hay una transacción abierta: entre BeginTransaction y su Commit, Dispose o un Reset.</summary>
+    public bool InTransaction { get; private set; }
 
     public int ResetCalls { get; private set; }
 
@@ -109,12 +117,23 @@ internal sealed class FakeUnitOfWork(InMemoryPosSaleRepository sales) : IPosUnit
         return Task.FromResult(1);
     }
 
-    public Task<IPosTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<IPosTransaction>(new FakeTransaction(this));
+    public Task<IPosTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        if (InTransaction)
+        {
+            // Como EF: una conexión no abre una transacción adentro de otra.
+            throw new InvalidOperationException("A transaction is already open.");
+        }
+
+        calls?.Add("begin");
+        InTransaction = true;
+        return Task.FromResult<IPosTransaction>(new FakeTransaction(this));
+    }
 
     public Task ResetAsync(CancellationToken cancellationToken)
     {
         ResetCalls++;
+        InTransaction = false;
         sales.Discard();
         return Task.CompletedTask;
     }
@@ -124,10 +143,32 @@ internal sealed class FakeUnitOfWork(InMemoryPosSaleRepository sales) : IPosUnit
         public Task CommitAsync(CancellationToken cancellationToken)
         {
             owner.Commits++;
+            owner.InTransaction = false;
             return Task.CompletedTask;
         }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            owner.InTransaction = false;
+            return ValueTask.CompletedTask;
+        }
+    }
+}
+
+/// <summary>
+/// Como pg_advisory_xact_lock: sin transacción abierta no hay candado que dure, así que lo exige.
+/// </summary>
+internal sealed class FakeSaleIdLock(FakeUnitOfWork unitOfWork, List<string> calls) : IPosSaleIdLock
+{
+    public Task AcquireAsync(Guid tenantId, PosSaleId saleId, CancellationToken cancellationToken)
+    {
+        if (!unitOfWork.InTransaction)
+        {
+            throw new InvalidOperationException("The sale id lock needs an open transaction.");
+        }
+
+        calls.Add($"lock:{tenantId}:{saleId}");
+        return Task.CompletedTask;
     }
 }
 
@@ -235,8 +276,9 @@ internal sealed class PosTestBed
 
     public PosTestBed()
     {
-        Sales = new InMemoryPosSaleRepository(Sessions);
-        UnitOfWork = new FakeUnitOfWork(Sales);
+        Sales = new InMemoryPosSaleRepository(Sessions, Calls);
+        UnitOfWork = new FakeUnitOfWork(Sales, Calls);
+        SaleIdLock = new FakeSaleIdLock(UnitOfWork, Calls);
         Memberships.Active[(UserId, PosFixtures.TenantId)] = PosFixtures.Cashier.Value;
         Cashiers.Names[PosFixtures.Cashier.Value] = "Laura Gómez";
     }
@@ -248,6 +290,11 @@ internal sealed class PosTestBed
     public InMemoryPosSaleRepository Sales { get; }
 
     public FakeUnitOfWork UnitOfWork { get; }
+
+    /// <summary>Lo que hicieron la unidad de trabajo, el candado y el repositorio de ventas, en orden.</summary>
+    public List<string> Calls { get; } = [];
+
+    public FakeSaleIdLock SaleIdLock { get; }
 
     public FakeNumberGenerator Numbers { get; } = new();
 

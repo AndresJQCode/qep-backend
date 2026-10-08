@@ -28,6 +28,7 @@ public static class PosInfrastructureExtensions
         services.AddScoped<IPosSaleRepository, PosSaleRepository>();
         services.AddScoped<IPosSaleNumberGenerator, PosSaleNumberGenerator>();
         services.AddScoped<IPosUnitOfWork, PosUnitOfWork>();
+        services.AddScoped<IPosSaleIdLock, PosSaleIdLock>();
         services.AddScoped<IPosAuditPublisher, PosAuditPublisher>();
         services.AddScoped<IUserReferenceProbe, PosUserReferenceProbe>();
 

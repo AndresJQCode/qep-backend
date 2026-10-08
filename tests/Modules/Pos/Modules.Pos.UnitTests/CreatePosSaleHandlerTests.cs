@@ -28,7 +28,7 @@ public sealed class CreatePosSaleHandlerTests
             payments ?? [new("Card", 20_000m, null, "1234"), new("Cash", null, 20_000m, null)]);
 
     private static CreatePosSaleHandler Handler(PosTestBed bed, params string[] permissions) =>
-        new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.Audit, bed.Products, bed.Cashiers,
+        new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Products, bed.Cashiers,
             bed.Memberships, bed.Context(permissions), bed.Clock, bed.TenantClock, new CreatePosSaleValidator());
 
     // La venta "del otro request" que el choque deja en la base: mismo id, mismo cajero, misma huella.
@@ -63,6 +63,35 @@ public sealed class CreatePosSaleHandlerTests
         var audit = Assert.Single(bed.Audit.Entries);
         Assert.Equal(("pos.sale.created", "pos_sale"), (audit.Action, audit.ResourceType));
         Assert.Equal(["discount:1:SH-400:10"], audit.ChangedFields.ToArray());
+    }
+
+    // Decisión 55: la transacción se abre y el candado se toma antes de buscar la repetición, para
+    // que un reintento espere el commit del primer envío en vuelo y lo encuentre.
+    [Fact]
+    public async Task TheSaleIdLockIsTakenInsideTheTransactionBeforeTheReplayLookup()
+    {
+        var (bed, session) = Arrange();
+        var command = Command(session);
+
+        await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            ["begin", $"lock:{TenantId}:{command.Id}", $"find:{command.Id}"],
+            bed.Calls.Take(3).ToArray());
+    }
+
+    [Fact]
+    public async Task ARepeatAlsoTakesTheLockBeforeFindingTheSale()
+    {
+        var (bed, session) = Arrange();
+        var command = Command(session);
+        await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
+        bed.Calls.Clear();
+
+        var repeat = await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.False(repeat.Created);
+        Assert.Equal(["begin", $"lock:{TenantId}:{command.Id}", $"find:{command.Id}"], bed.Calls.ToArray());
     }
 
     [Fact]

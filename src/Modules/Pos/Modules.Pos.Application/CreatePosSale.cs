@@ -76,6 +76,7 @@ public sealed class CreatePosSaleHandler(
     IPosSaleRepository sales,
     IPosSaleNumberGenerator numbers,
     IPosUnitOfWork unitOfWork,
+    IPosSaleIdLock saleIdLock,
     IPosAuditPublisher auditPublisher,
     IPosProductLookup products,
     IPosCashierLookup cashiers,
@@ -98,48 +99,55 @@ public sealed class CreatePosSaleHandler(
         var cashier = await PosCashierResolver.ResolveAsync(membershipDirectory, executionContext, command.TenantId, cancellationToken);
         var fingerprint = PosSaleFingerprint.Compute(command);
         var saleId = new PosSaleId(command.Id);
+        PosSale sale;
 
-        // 2. Repetición: antes de mirar la caja, para que reintentar sea idempotente aunque la caja
-        // ya no esté abierta.
-        if (await FindReplayAsync(command.TenantId, saleId, cashier, fingerprint, cancellationToken) is { } replay)
-        {
-            return new PosSaleCreation(await RespondAsync(replay, cancellationToken), Created: false);
-        }
-
-        // 3. Caja.
-        var session = await sessions.FindOpenByCashierAsync(command.TenantId, cashier, cancellationToken)
-            ?? throw new PosDomainException("pos.session.not_open", "The cashier has no open cash session.");
-        if (session.Id.Value != command.CashSessionId)
-        {
-            throw new PosDomainException(
-                "pos.sale.session_mismatch", "The cash session sent is not the cashier's open one.");
-        }
-
-        // 4. Productos: el precio y la tasa que se cobran son siempre los del catálogo.
-        var lines = await ResolveLinesAsync(command, cancellationToken);
-
-        // 5. Descuento.
-        var canDiscount = executionContext.HasPermission(PosPermissions.SaleDiscount);
-        if (!canDiscount && command.Lines.Any(line => line.DiscountPercentage > 0))
-        {
-            throw DiscountNotAllowed();
-        }
-
-        // 6. Venta (valida líneas y pagos). Un total en cero sin descuento sólo sale de productos
-        // con precio 0, y regalar también es un descuento.
-        var now = clock.UtcNow;
-        var sale = PosSale.Create(
-            saleId, fingerprint, session, lines, command.Payments.Select(ToInput).ToArray(), now);
-        if (sale.Total == 0 && !canDiscount)
-        {
-            throw DiscountNotAllowed();
-        }
-
-        // 7. Número adentro de la transacción y después de todas las validaciones: un 422 o un 412
-        // no gastan número.
+        // La transacción y el candado van antes de todo lo demás: dos requests con el mismo id se
+        // serializan, y un reintento que llega con el primer envío en vuelo espera su commit o su
+        // rollback antes de buscar (spec, decisión 55). Lo que lanzan los pasos 3 a 6 revierte la
+        // transacción al salir, sin haber escrito nada.
         try
         {
             await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+            await saleIdLock.AcquireAsync(command.TenantId, saleId, cancellationToken);
+
+            // 2. Repetición: antes de mirar la caja, para que reintentar sea idempotente aunque la
+            // caja ya no esté abierta.
+            if (await FindReplayAsync(command.TenantId, saleId, cashier, fingerprint, cancellationToken) is { } replay)
+            {
+                return new PosSaleCreation(await RespondAsync(replay, cancellationToken), Created: false);
+            }
+
+            // 3. Caja.
+            var session = await sessions.FindOpenByCashierAsync(command.TenantId, cashier, cancellationToken)
+                ?? throw new PosDomainException("pos.session.not_open", "The cashier has no open cash session.");
+            if (session.Id.Value != command.CashSessionId)
+            {
+                throw new PosDomainException(
+                    "pos.sale.session_mismatch", "The cash session sent is not the cashier's open one.");
+            }
+
+            // 4. Productos: el precio y la tasa que se cobran son siempre los del catálogo.
+            var lines = await ResolveLinesAsync(command, cancellationToken);
+
+            // 5. Descuento.
+            var canDiscount = executionContext.HasPermission(PosPermissions.SaleDiscount);
+            if (!canDiscount && command.Lines.Any(line => line.DiscountPercentage > 0))
+            {
+                throw DiscountNotAllowed();
+            }
+
+            // 6. Venta (valida líneas y pagos). Un total en cero sin descuento sólo sale de
+            // productos con precio 0, y regalar también es un descuento.
+            var now = clock.UtcNow;
+            sale = PosSale.Create(
+                saleId, fingerprint, session, lines, command.Payments.Select(ToInput).ToArray(), now);
+            if (sale.Total == 0 && !canDiscount)
+            {
+                throw DiscountNotAllowed();
+            }
+
+            // 7. Número adentro de la misma transacción y después de todas las validaciones: un
+            // 422 o un 412 no gastan número.
             sale.AssignNumber(await numbers.NextAsync(command.TenantId, cancellationToken));
             sales.Add(sale);
             session.RegisterSale(sale, now);
