@@ -527,6 +527,8 @@ public sealed class TenantLogoApiTests
                 defaultCulture = "es-CO",
                 timeZone = "America/Bogota",
                 dateFormat = "dd/MM/yyyy",
+                defaultCurrency = "COP",
+                numberFormat = "1.234,56",
             }),
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);

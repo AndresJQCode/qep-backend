@@ -568,6 +568,8 @@ public sealed class RealAuthenticationApiTests
         defaultCulture = "es-CO",
         timeZone = "America/Bogota",
         dateFormat = "dd/MM/yyyy",
+        defaultCurrency = "COP",
+        numberFormat = "1.234,56",
     };
 
     private static string NewEmail() => $"real-auth-{Guid.NewGuid():N}@example.com";
