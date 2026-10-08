@@ -15,7 +15,7 @@ public sealed class RoleCommandsTests
             [
                 new RoleDefinition(
                     SystemRoleKeys.Admin, "Administrador", "", "Tenancy", "high",
-                    ["advisorship.manage", "advisorship.roles.manage", "catalog.product.read"]),
+                    ["advisorship.manage", "advisorship.roles.manage", "catalog.product.read", "operator.tenants.read"]),
                 new RoleDefinition(
                     SystemRoleKeys.Advisor, "Asesor", "", "Tenancy", "medium",
                     ["catalog.product.read"]),
@@ -27,6 +27,8 @@ public sealed class RoleCommandsTests
                     "advisorship.roles.manage", "Definir roles", "", "Tenancy", "high", RequiredModules: []),
                 new PermissionDefinition(
                     "catalog.product.read", "Ver productos", "", "Catalog", "low", RequiredModules: []),
+                new PermissionDefinition(
+                    "operator.tenants.read", "Ver tenants", "", "Operator", "medium", RequiredModules: []),
             ]);
 
     private sealed class Repo : IRoleRepository
@@ -293,5 +295,33 @@ public sealed class RoleCommandsTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(1, uow.Saves);
+    }
+
+    // ---- operator.* (spec 2026-10-08 D11) ----
+
+    // operator.* sólo vive en roles de sistema, en cualquier tenant.
+    [Fact]
+    public async Task CreateRejectsAnOperatorPermission()
+    {
+        var error = await Assert.ThrowsAsync<AuthorizationDomainException>(() =>
+            CreateHandler(new Repo(), new Uow()).HandleAsync(
+                new CreateRoleCommand(Tenant, "operador", "Operador", "", ["operator.tenants.read"]),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("authorization.role.permission_operator_only", error.Code);
+    }
+
+    [Fact]
+    public async Task UpdateRejectsAnOperatorPermission()
+    {
+        var role = CustomRole("ventas", "catalog.product.read");
+        var repo = new Repo(role);
+
+        var error = await Assert.ThrowsAsync<AuthorizationDomainException>(() =>
+            UpdateHandler(repo, new Uow(), new Usage()).HandleAsync(
+                new UpdateRoleCommand(Tenant, role.Id, "Ventas", "", ["catalog.product.read", " operator.modules.manage"], role.Version),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("authorization.role.permission_operator_only", error.Code);
     }
 }
