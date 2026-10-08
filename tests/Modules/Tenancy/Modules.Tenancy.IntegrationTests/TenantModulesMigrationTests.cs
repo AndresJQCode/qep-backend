@@ -160,6 +160,8 @@ public sealed class TenantModulesMigrationTests
     [InlineData("INSERT INTO tenancy.tenant_changes (id, tenant_id, batch_id, kind, module_key, to_status, reason, actor_user_id, occurred_at) VALUES (gen_random_uuid(), '01900000-0000-7000-8000-00000000e001', gen_random_uuid(), 'tenant_status', 'pos', 'Suspended', 'nonpayment', gen_random_uuid(), now());")]
     [InlineData("INSERT INTO tenancy.tenant_changes (id, tenant_id, batch_id, kind, module_key, to_status, reason, actor_user_id, occurred_at) VALUES (gen_random_uuid(), '01900000-0000-7000-8000-00000000e001', gen_random_uuid(), 'module', NULL, 'active', 'contract', gen_random_uuid(), now());")]
     [InlineData("INSERT INTO tenancy.tenant_changes (id, tenant_id, batch_id, kind, module_key, to_status, reason, actor_user_id, occurred_at) VALUES (gen_random_uuid(), '01900000-0000-7000-8000-00000000e001', gen_random_uuid(), 'module', 'pos', 'active', 'refund', gen_random_uuid(), now());")]
+    [InlineData("INSERT INTO tenancy.tenant_changes (id, tenant_id, batch_id, kind, module_key, to_status, reason, actor_user_id, occurred_at) VALUES (gen_random_uuid(), '01900000-0000-7000-8000-00000000e001', gen_random_uuid(), 'plan', NULL, 'active', 'contract', gen_random_uuid(), now());")]
+    [InlineData("UPDATE tenancy.tenant_modules SET source = 'bogus';")]
     public async Task TheChecksRejectWhatTheSpecForbids(string sql)
     {
         await using var database = await StartDatabaseAsync();

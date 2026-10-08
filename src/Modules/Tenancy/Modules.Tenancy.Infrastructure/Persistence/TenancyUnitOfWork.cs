@@ -41,7 +41,7 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
         await dbContext.Database.ExecuteSqlAsync(
             $"SELECT pg_advisory_xact_lock(hashtext({UserLifecycleLockKey.For(email)}))",
             cancellationToken);
-        return new TransactionScope(transaction);
+        return new LockedTransactionScope(transaction);
     }
 
     public async Task<ITenantChangeScope> BeginTenantChangeScopeAsync(
@@ -50,13 +50,14 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
     {
         var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         await dbContext.Database.ExecuteSqlAsync(
-            $"SELECT pg_advisory_xact_lock(hashtext({TenantChangeLock.KeyFor(tenantId.Value)}))",
+            // Forma de dos claves: un espacio aparte del de UserLifecycleLockKey (ver TenantChangeLock).
+            $"SELECT pg_advisory_xact_lock({TenantChangeLock.Namespace}, hashtext({TenantChangeLock.KeyFor(tenantId.Value)}))",
             cancellationToken);
-        return new TransactionScope(transaction);
+        return new LockedTransactionScope(transaction);
     }
 
     // Antes UserLifecycleScope: las dos operaciones son una transacción con un lock adentro.
-    private sealed class TransactionScope(IDbContextTransaction transaction) : IUserLifecycleScope, ITenantChangeScope
+    private sealed class LockedTransactionScope(IDbContextTransaction transaction) : IUserLifecycleScope, ITenantChangeScope
     {
         public Task CommitAsync(CancellationToken cancellationToken) =>
             transaction.CommitAsync(cancellationToken);

@@ -5,6 +5,7 @@ using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure;
 using Modules.Tenancy.Infrastructure.Persistence;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
@@ -104,6 +105,46 @@ public sealed class TenantChangePersistenceTests
         await using var free = await second.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>()
             .BeginTenantChangeScopeAsync(other, TestContext.Current.CancellationToken)
             .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+    }
+
+    // El candado vive en el espacio de dos claves (namespace, hashtext): un lock de una sola clave con el
+    // mismo hash —el espacio de UserLifecycleLockKey— no lo bloquea, y el de dos claves sí.
+    [Fact]
+    public async Task TheLockLivesInItsOwnTwoKeySpace()
+    {
+        await using var database = await StartDatabaseAsync();
+        await using var provider = await MigratedServicesAsync(database);
+        var tenantId = await SeedTenantAsync(provider);
+        var key = TenantChangeLock.KeyFor(tenantId.Value);
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using (var singleKey = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var hold = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtext(@key))", connection, singleKey);
+            hold.Parameters.AddWithValue("key", key);
+            await hold.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+            await using var scope = provider.CreateAsyncScope();
+            await using var free = await scope.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>()
+                .BeginTenantChangeScopeAsync(tenantId, TestContext.Current.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+
+        await using var twoKeys = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using (var hold = new NpgsqlCommand("SELECT pg_advisory_xact_lock(@space, hashtext(@key))", connection, twoKeys))
+        {
+            hold.Parameters.AddWithValue("space", TenantChangeLock.Namespace);
+            hold.Parameters.AddWithValue("key", key);
+            await hold.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var waitingScope = provider.CreateAsyncScope();
+        var waiting = waitingScope.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>()
+            .BeginTenantChangeScopeAsync(tenantId, TestContext.Current.CancellationToken);
+        Assert.NotSame(waiting, await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken)));
+        await twoKeys.CommitAsync(TestContext.Current.CancellationToken);
+        await using var acquired = await waiting.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
     }
 
     // §3: dos activaciones simultáneas de una clave sin fila; sin la traducción sería un 500.

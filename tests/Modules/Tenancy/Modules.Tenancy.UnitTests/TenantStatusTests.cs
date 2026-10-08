@@ -60,14 +60,35 @@ public sealed class TenantStatusTests
         Assert.Equal(3, tenant.Version);
     }
 
-    [Fact]
-    public void ReactivateRejectsNonpayment()
+    [Theory]
+    [InlineData(ChangeReason.Nonpayment)]
+    [InlineData(ChangeReason.Cancellation)]
+    public void ReactivateRejectsAReasonOfTheOtherDirection(ChangeReason reason)
     {
         var tenant = NewTenant();
         tenant.Suspend(ChangeReason.Nonpayment, Later);
 
         Assert.Equal("tenancy.tenant.reason_not_allowed",
-            Assert.Throws<TenantDomainException>(() => tenant.Reactivate(ChangeReason.Nonpayment, Later)).Code);
+            Assert.Throws<TenantDomainException>(() => tenant.Reactivate(reason, Later)).Code);
+    }
+
+    // Decisión P5 del plan: nadie asigna hoy estos estados, pero si llegaran el mensaje no puede hablar de
+    // ajustes, que es lo que dice EnsureActive.
+    [Theory]
+    [InlineData(TenantStatus.Provisioning)]
+    [InlineData(TenantStatus.Failed)]
+    [InlineData(TenantStatus.Decommissioning)]
+    [InlineData(TenantStatus.Decommissioned)]
+    public void SuspendOrReactivateFromAnotherStatusIsNotActiveWithItsOwnMessage(TenantStatus status)
+    {
+        var tenant = NewTenant();
+        typeof(Tenant).GetProperty(nameof(Tenant.Status))!.SetValue(tenant, status);
+
+        var suspend = Assert.Throws<TenantDomainException>(() => tenant.Suspend(ChangeReason.Nonpayment, Later));
+        var reactivate = Assert.Throws<TenantDomainException>(() => tenant.Reactivate(ChangeReason.Contract, Later));
+
+        Assert.Equal(("tenancy.tenant.not_active", "Only an active tenant can be suspended."), (suspend.Code, suspend.Message));
+        Assert.Equal(("tenancy.tenant.not_active", "Only a suspended tenant can be reactivated."), (reactivate.Code, reactivate.Message));
     }
 
     [Fact]

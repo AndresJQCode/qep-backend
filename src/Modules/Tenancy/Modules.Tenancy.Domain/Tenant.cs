@@ -215,7 +215,12 @@ public sealed class Tenant
             throw new TenantDomainException("tenancy.tenant.already_inactive", "The tenant is already inactive.");
         }
 
-        EnsureActive();
+        // No EnsureActive: su mensaje habla de ajustes y aquí confundiría a quien lea el log.
+        if (Status != TenantStatus.Active)
+        {
+            throw new TenantDomainException("tenancy.tenant.not_active", "Only an active tenant can be suspended.");
+        }
+
         EnsureReason(TenantChangeVocabulary.SuspensionReasons, reason, "suspend");
         Status = TenantStatus.Suspended;
         Version++;
