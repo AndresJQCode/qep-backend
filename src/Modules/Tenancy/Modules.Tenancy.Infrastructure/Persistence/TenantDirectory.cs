@@ -24,6 +24,12 @@ internal sealed class TenantDirectory(TenancyDbContext dbContext) : ITenantDirec
             .Select(tenant => tenant.TimeZone)
             .SingleOrDefaultAsync(cancellationToken);
 
+    public async Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        await dbContext.Tenants
+            .Where(tenant => tenant.Id == tenantId)
+            .Select(tenant => tenant.DefaultCurrency)
+            .SingleOrDefaultAsync(cancellationToken);
+
     public async Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) =>
         await dbContext.Tenants
             .Where(tenant => tenant.Id == tenantId)

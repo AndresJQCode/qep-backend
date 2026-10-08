@@ -16,6 +16,9 @@ public interface ITenantDirectory
 
     Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken);
 
+    /// <summary>La moneda por defecto del tenant ("COP" o "USD"), o null si no tiene fila.</summary>
+    Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken);
+
     /// <summary>El logo vigente del tenant, o null sin logo. Es la única lectura que Quotations
     /// necesita de Tenancy para imprimir el logo en el PDF (decisión 9 del spec 2026-09-19).</summary>
     Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken);

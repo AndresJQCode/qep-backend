@@ -35,6 +35,7 @@ public static class TenancyInfrastructureExtensions
         // Spec 2026-09-17: el día de negocio es el del tenant. Scoped para memorizar el huso por
         // request (TenantClock).
         services.AddScoped<ITenantClock, TenantClock>();
+        services.AddScoped<ITenantDefaultCurrency, TenantDefaultCurrency>();
         services.AddScoped<IMembershipRepository, MembershipRepository>();
         services.AddScoped<IMembershipActivation, MembershipActivationService>();
         services.AddScoped<IInvitationService, InvitationService>();

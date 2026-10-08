@@ -198,6 +198,9 @@ public sealed class QuotationTenantLogoLookupTests
         public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult(logoFileId);
 
