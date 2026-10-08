@@ -1,7 +1,10 @@
 using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -82,4 +85,183 @@ public sealed partial class UpdateWhatsAppSettingsValidator : AbstractValidator<
                 .WithMessage(TemplateIdInvalidMessage);
         });
     }
+}
+
+/// <summary>
+/// Guarda la configuración de WhatsApp (spec 2026-10-07, «Casos de uso»). Mismo esqueleto que
+/// <see cref="UpdateOrdersExportLayoutHandler"/>, en este orden:
+/// <list type="number">
+/// <item>autoriza antes de validar (hallazgo B1 del spec del layout: un 422 a quien no tiene permiso
+/// confirma que el cuerpo se leyó);</item>
+/// <item>gate de capacidad: <c>tenancy.*</c> es núcleo y el enmascaramiento no apaga este endpoint
+/// aunque el tenant no tenga cotizaciones;</item>
+/// <item>formato (validador);</item>
+/// <item>fila o <see cref="TenantWhatsAppSettings.CreateEmpty"/>, y versión (412);</item>
+/// <item>en Own, lo requerido según la fila, todo junto en una sola ValidationException;</item>
+/// <item>fuera de Own, los campos propios del cuerpo se ignoran;</item>
+/// <item>drenaje de rotación, que se salta si la key no descifra (decisión 25);</item>
+/// <item>un solo Configure: una versión por guardado;</item>
+/// <item>si cambió algo: Add si no había fila, una auditoría por clase de cambio, un guardado.</item>
+/// </list>
+/// </summary>
+public sealed class UpdateWhatsAppSettingsHandler(
+    ITenantWhatsAppSettingsRepository repository,
+    IQuotationsUnitOfWork unitOfWork,
+    IQuotationAuditPublisher auditPublisher,
+    IWhatsAppSecretProtector protector,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<UpdateWhatsAppSettingsCommand> validator)
+    : ICommandHandler<UpdateWhatsAppSettingsCommand, WhatsAppSettingsDto>
+{
+    public const string ModeChangedAction = "quotations.whatsapp_settings.mode_changed";
+    public const string ApiKeyReplacedAction = "quotations.whatsapp_settings.api_key_replaced";
+    public const string UpdatedAction = "quotations.whatsapp_settings.updated";
+
+    public const string ProviderRequiredMessage = "Elige el proveedor de tu cuenta de WhatsApp.";
+    public const string ApiKeyRequiredMessage = "Pega la API key de tu cuenta de Zenvia.";
+    public const string ApiKeyUnreadableMessage = "La API key guardada ya no se puede leer: vuelve a pegarla.";
+    public const string FromNumberRequiredMessage = "Escribe el número emisor de tu cuenta de Zenvia.";
+    public const string TemplateIdRequiredMessage = "Escribe el id de la plantilla aprobada.";
+
+    public async Task<WhatsAppSettingsDto> HandleAsync(
+        UpdateWhatsAppSettingsCommand command,
+        CancellationToken cancellationToken)
+    {
+        QuotationsAuthorization.EnsureAuthorized(
+            executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
+        await TenantModuleGuard.EnsureEnabledAsync(
+            tenantModules, command.TenantId, TenantModuleKeys.Quotations, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+
+        var now = clock.UtcNow;
+        var stored = await repository.FindAsync(command.TenantId, cancellationToken);
+        var settings = stored ?? TenantWhatsAppSettings.CreateEmpty(command.TenantId, now);
+        if (settings.Version != command.ExpectedVersion)
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The WhatsApp settings changed after they were loaded.");
+        }
+
+        if (!WhatsAppModes.TryParse(command.Mode, out var mode))
+        {
+            // El validador ya lo rechazó; llegar acá es un error de programación.
+            throw new InvalidOperationException("The WhatsApp mode was not validated.");
+        }
+
+        // Decisión 28: fuera de Own los campos de la cuenta propia ni se validan ni se guardan.
+        var own = mode == WhatsAppMode.Own;
+        WhatsAppProvider? provider = own && command.Provider is not null ? WhatsAppProvider.Zenvia : null;
+        var apiKey = own ? command.ApiKey?.Trim() : null;
+        var fromNumber = own ? command.FromNumber?.Trim() : null;
+        var templateId = own ? command.TemplateId?.Trim() : null;
+
+        if (own)
+        {
+            EnsureOwnIsComplete(settings, provider, apiKey, fromNumber, templateId);
+        }
+
+        var rekeyed = apiKey is null ? Drain(settings) : null;
+        var newToken = apiKey is null ? null : protector.Protect(command.TenantId, apiKey);
+        var changes = settings.Configure(mode, provider, newToken, rekeyed, fromNumber, templateId, now);
+        if (!changes.Any)
+        {
+            return WhatsAppSettingsMappings.ToDto(settings, protector);
+        }
+
+        if (stored is null)
+        {
+            repository.Add(settings);
+        }
+
+        Audit(command.TenantId, changes, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return WhatsAppSettingsMappings.ToDto(settings, protector);
+    }
+
+    // Lo requerido en Own depende de la fila: por eso no es del validador (decisión 29). Un error
+    // por campo, todos juntos, en el mismo mapa errors que el validador.
+    private void EnsureOwnIsComplete(
+        TenantWhatsAppSettings settings,
+        WhatsAppProvider? provider,
+        string? apiKey,
+        string? fromNumber,
+        string? templateId)
+    {
+        var failures = new List<ValidationFailure>();
+        if (provider is null && settings.Provider is null)
+        {
+            failures.Add(new ValidationFailure(nameof(UpdateWhatsAppSettingsCommand.Provider), ProviderRequiredMessage));
+        }
+
+        if (apiKey is null)
+        {
+            if (settings.ApiToken is null)
+            {
+                failures.Add(new ValidationFailure(nameof(UpdateWhatsAppSettingsCommand.ApiKey), ApiKeyRequiredMessage));
+            }
+            else if (!protector.TryUnprotect(settings.TenantId, settings.ApiToken, out _))
+            {
+                failures.Add(new ValidationFailure(nameof(UpdateWhatsAppSettingsCommand.ApiKey), ApiKeyUnreadableMessage));
+            }
+        }
+
+        if (fromNumber is null && settings.FromNumber is null)
+        {
+            failures.Add(new ValidationFailure(nameof(UpdateWhatsAppSettingsCommand.FromNumber), FromNumberRequiredMessage));
+        }
+
+        if (templateId is null && settings.TemplateId is null)
+        {
+            failures.Add(new ValidationFailure(nameof(UpdateWhatsAppSettingsCommand.TemplateId), TemplateIdRequiredMessage));
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new ValidationException(failures);
+        }
+    }
+
+    // Red adicional de la rotación (spec, «Rotación», punto 4): la key guardada en una llave que no
+    // es la activa se re-cifra en cualquier PUT que no traiga apiKey. Si no descifra, se salta.
+    private ProtectedSecret? Drain(TenantWhatsAppSettings settings)
+    {
+        var active = protector.ActiveKeyId;
+        if (settings.ApiToken is not { } current || active is null ||
+            string.Equals(current.KeyId, active, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return protector.TryUnprotect(settings.TenantId, current, out var plaintext)
+            ? protector.Protect(settings.TenantId, plaintext!)
+            : null;
+    }
+
+    // El publicador no lleva campos: la acción dice la clase de cambio. Ni el modo de destino, ni
+    // el número, ni la plantilla, ni la key.
+    private void Audit(Guid tenantId, WhatsAppSettingsChanges changes, DateTimeOffset now)
+    {
+        if (changes.ModeChanged)
+        {
+            Publish(tenantId, ModeChangedAction, now);
+        }
+
+        if (changes.ApiKeyReplaced)
+        {
+            Publish(tenantId, ApiKeyReplacedAction, now);
+        }
+
+        if (changes.DetailsChanged || changes.KeyRotated)
+        {
+            Publish(tenantId, UpdatedAction, now);
+        }
+    }
+
+    private void Publish(Guid tenantId, string action, DateTimeOffset now) =>
+        auditPublisher.Publish(
+            tenantId, executionContext.SubjectId, action, tenantId.ToString(), "success", now);
 }
