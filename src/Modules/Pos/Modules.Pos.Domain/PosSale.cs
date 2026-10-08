@@ -41,6 +41,9 @@ public sealed class PosSale
 
     public string CustomerIdentificationNumber { get; private set; }
 
+    /// <summary>Copiada de la caja, nunca leída en vivo: una caja no mezcla monedas.</summary>
+    public string Currency { get; private set; } = "COP";
+
     public IReadOnlyList<PosSaleLine> Lines => _lines;
 
     public IReadOnlyList<PosPayment> Payments => _payments;
@@ -106,6 +109,7 @@ public sealed class PosSale
             TenantId = session.TenantId,
             CashSessionId = session.Id,
             CashierId = session.CashierId,
+            Currency = session.Currency,
             CustomerId = null,
             CustomerName = PosFinalConsumer.Name,
             CustomerIdentificationType = null,

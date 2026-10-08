@@ -33,6 +33,7 @@ public sealed class OpenCashSessionHandler(
     IExecutionContext executionContext,
     IClock clock,
     ITenantClock tenantClock,
+    ITenantDefaultCurrency defaultCurrency,
     IValidator<OpenCashSessionCommand> validator)
     : ICommandHandler<OpenCashSessionCommand, PosOpenSessionResponse>
 {
@@ -52,6 +53,8 @@ public sealed class OpenCashSessionHandler(
 
         var company = await ResolveCompanyAsync(command, cancellationToken);
         var name = await cashiers.FindNameAsync(command.TenantId, cashier.Value, cancellationToken) ?? cashier.Value.ToString();
+        // Se congela al abrir: un cambio de moneda del tenant sólo lo toma la próxima caja.
+        var currency = await defaultCurrency.GetAsync(command.TenantId, cancellationToken);
         var now = clock.UtcNow;
         var session = CashSession.Open(
             CashSessionId.New(),
@@ -59,6 +62,7 @@ public sealed class OpenCashSessionHandler(
             cashier,
             name,
             new PosCompanySnapshot(company.Id, company.Name, company.TaxId, company.Address, company.Phone),
+            currency,
             command.OpeningFloat!.Value,
             now);
 

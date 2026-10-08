@@ -8,6 +8,18 @@ public sealed class PosSaleTests
 {
     private static decimal D(string value) => decimal.Parse(value, CultureInfo.InvariantCulture);
 
+    // La moneda es la de la caja, congelada al abrir: cambiar la del tenant con la caja abierta no
+    // mezcla monedas dentro de un mismo arqueo.
+    [Fact]
+    public void ASaleInheritsTheSessionCurrencyNotALiveValue()
+    {
+        var session = OpenSession(currency: "USD");
+
+        var sale = Sale(session);
+
+        Assert.Equal("USD", sale.Currency);
+    }
+
     [Fact]
     public void CreateComputesTheWorkedExampleToTheCent()
     {

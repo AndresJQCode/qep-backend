@@ -17,6 +17,7 @@ public sealed record PosPaymentTotalResponse(string Method, decimal Amount);
 /// <param name="OpenedBeforeToday">Fecha local de apertura &lt; hoy del tenant: la pantalla avisa de una caja que quedó abierta desde otro día.</param>
 /// <param name="ExpectedCash">Vivo: base + efectivo neto.</param>
 /// <param name="Version">La que el cierre manda en If-Match (1 al abrir, +1 por venta o anulación).</param>
+/// <param name="Currency">La moneda congelada al abrir la caja, no la vigente del tenant.</param>
 public sealed record PosOpenSessionResponse(
     Guid Id,
     string Status,
@@ -30,7 +31,8 @@ public sealed record PosOpenSessionResponse(
     decimal SalesTotal,
     decimal ExpectedCash,
     long Version,
-    IReadOnlyList<PosPaymentTotalResponse> PaymentTotals);
+    IReadOnlyList<PosPaymentTotalResponse> PaymentTotals,
+    string Currency);
 
 /// <param name="Session">null sin caja abierta: no tener caja es un estado, no un 404.</param>
 /// <param name="Companies">Viaja aquí porque el cajero no tiene companies.company.read y el selector de apertura la necesita.</param>

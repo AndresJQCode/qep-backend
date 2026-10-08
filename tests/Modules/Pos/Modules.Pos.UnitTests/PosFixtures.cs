@@ -18,13 +18,15 @@ internal static class PosFixtures
         "Cra 50 # 10-20, Rionegro",
         "6045551234");
 
-    public static CashSession OpenSession(decimal openingFloat = 100_000m, MemberId? cashier = null) =>
+    public static CashSession OpenSession(
+        decimal openingFloat = 100_000m, MemberId? cashier = null, string currency = "COP") =>
         CashSession.Open(
             CashSessionId.New(),
             TenantId,
             cashier ?? Cashier,
             "Laura Gómez",
             Company,
+            currency,
             openingFloat,
             Now);
 

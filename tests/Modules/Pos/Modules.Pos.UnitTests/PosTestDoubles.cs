@@ -46,6 +46,17 @@ internal sealed class FakeTenantClock(DateTimeOffset utcNow) : ITenantClock
         Task.FromResult(new TenantCalendar(UtcNow, Bogota));
 }
 
+public sealed class FakeTenantDefaultCurrency(string currency = "COP") : ITenantDefaultCurrency
+{
+    public List<Guid> RequestedTenantIds { get; } = [];
+
+    public Task<string> GetAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        RequestedTenantIds.Add(tenantId);
+        return Task.FromResult(currency);
+    }
+}
+
 internal sealed class InMemoryCashSessionRepository : ICashSessionRepository
 {
     public List<CashSession> Sessions { get; } = [];
@@ -349,6 +360,9 @@ internal sealed class PosTestBed
     public FakeClock Clock { get; } = new(PosFixtures.Now);
 
     public FakeTenantClock TenantClock { get; } = new(PosFixtures.Now);
+
+    /// <summary>La moneda por defecto del tenant que lee la apertura de caja.</summary>
+    public FakeTenantDefaultCurrency DefaultCurrency { get; init; } = new();
 
     /// <summary>El usuario autenticado de las pruebas; instancia para que Context no sea estático (CA1822).</summary>
     public Guid SubjectId { get; } = UserId;

@@ -31,7 +31,7 @@ public sealed class PosPersistenceTests
     }
 
     private static CashSession NewSession(Guid tenantId, PosCompanySnapshot company, MemberId cashier) =>
-        CashSession.Open(CashSessionId.New(), tenantId, cashier, "Laura Gómez", company, 100_000m, Now);
+        CashSession.Open(CashSessionId.New(), tenantId, cashier, "Laura Gómez", company, "COP", 100_000m, Now);
 
     [Fact]
     public async Task TwoOpenSessionsForTheSameCashierAreRejectedByThePartialIndex()

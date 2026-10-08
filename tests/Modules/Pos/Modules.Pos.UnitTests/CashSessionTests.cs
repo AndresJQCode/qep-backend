@@ -30,6 +30,14 @@ public sealed class CashSessionTests
         Assert.Null(session.ClosedAt);
     }
 
+    [Fact]
+    public void OpenSnapshotsTheCurrencyItWasGiven()
+    {
+        var session = OpenSession(currency: "USD");
+
+        Assert.Equal("USD", session.Currency);
+    }
+
     [Theory]
     [InlineData("-1")]
     [InlineData("100000000.01")]

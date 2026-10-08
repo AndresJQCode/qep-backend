@@ -28,7 +28,8 @@ internal static class PosSessionMapping
             session.SalesTotal,
             session.LiveExpectedCash,
             session.Version,
-            PaymentTotals(session));
+            PaymentTotals(session),
+            session.Currency);
     }
 
     public static PosSessionSummaryResponse ToSummary(CashSession session, TenantCalendar calendar) =>

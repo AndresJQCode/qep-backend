@@ -15,7 +15,7 @@ public sealed class RegisterHandlersTests
 
     private static OpenCashSessionHandler Open(PosTestBed bed, params string[] permissions) =>
         new(bed.Sessions, bed.Companies, bed.Cashiers, bed.UnitOfWork, bed.Audit, bed.Memberships,
-            bed.Context(permissions), bed.Clock, bed.TenantClock, new OpenCashSessionValidator());
+            bed.Context(permissions), bed.Clock, bed.TenantClock, bed.DefaultCurrency, new OpenCashSessionValidator());
 
     private static CloseCashSessionHandler Close(PosTestBed bed, params string[] permissions) =>
         new(bed.Sessions, bed.UnitOfWork, bed.Audit, bed.Memberships, bed.Context(permissions),
@@ -80,7 +80,7 @@ public sealed class RegisterHandlersTests
     {
         var bed = new PosTestBed();
         var session = CashSession.Open(
-            CashSessionId.New(), TenantId, Cashier, "Laura Gómez", Company, 100_000m,
+            CashSessionId.New(), TenantId, Cashier, "Laura Gómez", Company, "COP", 100_000m,
             new DateTimeOffset(2026, 10, 7, 4, 0, 0, TimeSpan.Zero));
         bed.Sessions.Add(session);
 
@@ -123,6 +123,21 @@ public sealed class RegisterHandlersTests
         var audit = Assert.Single(bed.Audit.Entries);
         Assert.Equal(("pos.session.opened", "cash_session", session.Id.ToString()), (audit.Action, audit.ResourceType, audit.ResourceId));
         Assert.Equal(PosTestBed.UserId, audit.ActorId);
+    }
+
+    [Fact]
+    public async Task OpenReadsTheTenantDefaultCurrencyOnce()
+    {
+        var currency = new FakeTenantDefaultCurrency("USD");
+        var bed = new PosTestBed { DefaultCurrency = currency };
+        bed.AddCompany();
+
+        var response = await Open(bed, Operator).HandleAsync(
+            new OpenCashSessionCommand(TenantId, null, 0m), TestContext.Current.CancellationToken);
+
+        Assert.Equal("USD", response.Currency);
+        Assert.Equal("USD", Assert.Single(bed.Sessions.Sessions).Currency);
+        Assert.Equal([TenantId], currency.RequestedTenantIds);
     }
 
     [Fact]

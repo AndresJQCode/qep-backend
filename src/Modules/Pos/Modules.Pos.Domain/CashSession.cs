@@ -35,6 +35,12 @@ public sealed class CashSession
 
     public string? CompanyPhone { get; private set; }
 
+    /// <summary>
+    /// La moneda por defecto del tenant al abrir, congelada: si el tenant la cambia con la caja
+    /// abierta, esta caja sigue vendiendo en la suya y sólo la siguiente toma la nueva.
+    /// </summary>
+    public string Currency { get; private set; } = "COP";
+
     public CashSessionStatus Status { get; private set; }
 
     public decimal OpeningFloat { get; private set; }
@@ -79,6 +85,7 @@ public sealed class CashSession
         MemberId cashier,
         string cashierName,
         PosCompanySnapshot company,
+        string currency,
         decimal openingFloat,
         DateTimeOffset at)
     {
@@ -100,6 +107,8 @@ public sealed class CashSession
             CompanyTaxId = company.TaxId,
             CompanyAddress = company.Address,
             CompanyPhone = company.Phone,
+            // Ya viene normalizada por Tenancy (ITenantDefaultCurrency).
+            Currency = currency,
             Status = CashSessionStatus.Open,
             OpeningFloat = openingFloat,
             OpenedAt = at,

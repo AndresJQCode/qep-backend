@@ -51,6 +51,7 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         session.Property(value => value.CompanyTaxId).HasColumnName("company_tax_id").HasMaxLength(32);
         session.Property(value => value.CompanyAddress).HasColumnName("company_address").HasMaxLength(200);
         session.Property(value => value.CompanyPhone).HasColumnName("company_phone").HasMaxLength(32);
+        session.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         session.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(10);
         session.Property(value => value.OpeningFloat).HasColumnName("opening_float").HasPrecision(14, 2);
         session.Property(value => value.SalesCount).HasColumnName("sales_count");
@@ -105,6 +106,7 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         sale.Property(value => value.CustomerName).HasColumnName("customer_name").HasMaxLength(160);
         sale.Property(value => value.CustomerIdentificationType).HasColumnName("customer_identification_type").HasMaxLength(10);
         sale.Property(value => value.CustomerIdentificationNumber).HasColumnName("customer_identification_number").HasMaxLength(32);
+        sale.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         sale.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         sale.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         sale.Property(value => value.DiscountAmount).HasColumnName("discount_amount").HasPrecision(14, 2);
