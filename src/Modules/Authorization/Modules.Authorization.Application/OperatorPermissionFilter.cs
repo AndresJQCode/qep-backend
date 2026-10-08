@@ -1,10 +1,10 @@
 namespace Modules.Authorization.Application;
 
 /// <summary>
-/// Spec 2026-10-08 §2: quita todo permiso <c>operator.*</c> fuera del tenant operador. Se aplica en los
-/// mismos lugares que <see cref="ModuleEntitlementMask"/> y justo después de él: la cookie real
-/// (<see cref="AuthorizationService"/>), el stub, <c>/authorization/catalog</c> y
-/// <c>/authorization/roles</c>. Comparación ordinal, como todo permiso del repo. Puro.
+/// Spec 2026-10-08 §2: quita todo permiso <c>operator.*</c> fuera del tenant operador. Se aplica justo
+/// después de <see cref="ModuleEntitlementMask"/> en la cookie real (<see cref="AuthorizationService"/>),
+/// el stub y <c>/authorization/catalog</c>; y además en <c>/authorization/roles</c>, que no pasa por el
+/// enmascarado. Comparación ordinal, como todo permiso del repo. Puro.
 /// </summary>
 public static class OperatorPermissionFilter
 {

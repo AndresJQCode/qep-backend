@@ -12,6 +12,9 @@ public sealed class RolePermissionChecker(ITenantRoleCatalog roleCatalog)
         string permission,
         CancellationToken cancellationToken)
     {
+        // Lee el catálogo de roles crudo: no pasa por OperatorPermissionFilter, así que el admin de
+        // cualquier tenant "tiene" operator.*. No la uses para decidir acceso de operador; eso va por
+        // los permisos efectivos (AuthorizationService) y por IOperatorTenant.
         var permissions = await roleCatalog.PermissionsForAsync(
             tenantId.Value,
             roles,

@@ -320,10 +320,10 @@ public sealed class TenantModulesApiTests
                 builder.UseSetting("Entitlements:GrantDefaultModulesOnSignup", grant ? "true" : "false");
             }
 
-            if (operatorTenantId is { } operatorId)
-            {
-                builder.UseSetting("Platform:OperatorTenantId", operatorId.ToString());
-            }
+            // Siempre fijado, aunque la prueba no pida operador: un Platform:OperatorTenantId en los
+            // user-secrets de quien corre las pruebas convertiría en operador a un tenant ajeno.
+            // Vacío vale lo mismo que ausente (OperatorTenantOptionsTests).
+            builder.UseSetting("Platform:OperatorTenantId", operatorTenantId?.ToString() ?? string.Empty);
         }
     }
 }

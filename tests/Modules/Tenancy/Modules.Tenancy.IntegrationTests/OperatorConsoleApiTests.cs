@@ -35,6 +35,22 @@ public sealed class OperatorConsoleApiTests
         Assert.Equal(["tenancy.settings.read"], await EffectivePermissionsAsync(elsewhere, otherTenantId));
     }
 
+    // Spec 2026-10-08 §2: en el stub el filtro corre siempre, también cuando el tenant tiene fila y
+    // pasa por el enmascarado de módulos.
+    [Fact]
+    public async Task TheStubDropsOperatorPermissionsInARegisteredNonOperatorTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(factory, ownerId, tenantId, "operator.tenants.read", "tenancy.settings.read");
+
+        var permissions = await EffectivePermissionsAsync(client, tenantId);
+
+        Assert.DoesNotContain("operator.tenants.read", permissions);
+        Assert.Contains("tenancy.settings.read", permissions);
+    }
+
     // Spec «Errores y casos borde»: sin la clave, nadie es operador.
     [Fact]
     public async Task WithoutAnOperatorConfiguredTheStubDropsThemEverywhere()

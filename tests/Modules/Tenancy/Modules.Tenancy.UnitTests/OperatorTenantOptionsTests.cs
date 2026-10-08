@@ -26,6 +26,20 @@ public sealed class OperatorTenantOptionsTests
         Assert.False(provider.GetRequiredService<IOperatorTenant>().IsOperator(Guid.Empty));
     }
 
+    // Un env var de k8s declarado sin valor (Platform__OperatorTenantId="") llega como cadena vacía:
+    // tiene que valer lo mismo que la clave ausente, no tumbar el arranque.
+    [Fact]
+    public void AnEmptyValuePassesStartupAndNobodyIsOperator()
+    {
+        using var provider = BuildProvider(new() { ["Platform:OperatorTenantId"] = string.Empty });
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+
+        Assert.Null(provider.GetRequiredService<IOptions<OperatorTenantOptions>>().Value.OperatorTenantId);
+        Assert.False(provider.GetRequiredService<IOperatorTenant>().IsOperator(QCode));
+        Assert.False(provider.GetRequiredService<IOperatorTenant>().IsOperator(Guid.Empty));
+    }
+
     [Fact]
     public void TheConfiguredTenantIsTheOnlyOperator()
     {
@@ -42,7 +56,7 @@ public sealed class OperatorTenantOptionsTests
     {
         using var provider = BuildProvider(new() { ["Platform:OperatorTenantId"] = Guid.Empty.ToString() });
 
-        var error = Assert.ThrowsAny<Exception>(provider.GetRequiredService<IStartupValidator>().Validate);
+        var error = Assert.Throws<OptionsValidationException>(provider.GetRequiredService<IStartupValidator>().Validate);
 
         Assert.Contains("Platform:OperatorTenantId", error.Message, StringComparison.Ordinal);
     }
