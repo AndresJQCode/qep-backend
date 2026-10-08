@@ -51,11 +51,6 @@ internal static class ReportingApiHarness
     public static DateOnly TodayInBogota() =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BogotaTimeZone).DateTime);
 
-    /// <summary>La llave de protección de secretos del host de pruebas, generada en el proceso
-    /// (32 bytes aleatorios en base64).</summary>
-    private static readonly string TestSecretProtectionKey =
-        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-
     public static string ReportsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/reports";
 
     /// <summary>
@@ -639,11 +634,6 @@ internal static class ReportingApiHarness
             builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
             builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
             builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
-            // Mismo criterio: la llave se fija, nunca se hereda de los user-secrets de quien corre las
-            // pruebas. Se genera en el proceso, así que ningún literal con forma de llave vive en el repo.
-            builder.UseSetting("Quotations:SecretProtection:ActiveKeyId", "test");
-            builder.UseSetting("Quotations:SecretProtection:Keys:test", TestSecretProtectionKey);
-            builder.UseSetting("Quotations:SecretProtection:Keys:k1", string.Empty);
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IObjectStorage>();

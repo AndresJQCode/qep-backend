@@ -1,9 +1,8 @@
 using System.Globalization;
-using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -15,14 +14,13 @@ namespace Modules.Quotations.Infrastructure.Whatsapp;
 /// implementación que `InfobipEmailChannel` en Notifications: un `HttpClient` sencillo, sin
 /// `IHttpClientFactory` — este módulo tampoco lo usa en ningún otro lado.
 ///
-/// Ya no lee `Quotations:WhatsApp:*` por su cuenta (spec 2026-10-07): recibe la cuenta con la que
-/// sale el envío como <see cref="ZenviaSenderSettings"/>. `AddWhatsAppSender` lo arma para la cuenta
-/// de QEP (sólo si las tres claves están presentes; `LogWhatsAppSender` es el default en su
-/// ausencia) y `WhatsAppChannelResolver` lo arma por envío para una cuenta propia.
+/// Sólo se registra cuando `Quotations:WhatsApp:ApiToken`/`FromNumber`/`TemplateId` están
+/// las tres presentes (`QuotationsInfrastructureExtensions.AddWhatsAppSender`) — `LogWhatsAppSender`
+/// es el default en su ausencia, así que acá adentro esas tres claves ya se asumen no vacías.
 /// </summary>
 internal sealed partial class ZenviaWhatsAppSender(
     HttpClient httpClient,
-    ZenviaSenderSettings settings,
+    IOptions<QuotationsOptions> options,
     ILogger<ZenviaWhatsAppSender> logger)
     : IWhatsAppSender
 {
@@ -32,11 +30,7 @@ internal sealed partial class ZenviaWhatsAppSender(
 
     private const string UnknownMessageId = "(unknown)";
 
-    // Spec 2026-10-07: el código de error de Zenvia sólo entra al mensaje si tiene esta forma. El
-    // patrón impide que un texto libre del cuerpo se cuele por ese campo. Cierra con `\z` y no con `$`,
-    // porque `$` también acepta un salto de línea final.
-    [GeneratedRegex("^[A-Za-z0-9_.-]{1,64}\\z", RegexOptions.CultureInvariant)]
-    private static partial Regex ZenviaErrorCodePattern();
+    private readonly WhatsAppOptions settings = options.Value.WhatsApp;
 
     // "Accepted", no "sent": un 2xx significa que Zenvia encoló el mensaje, y la entrega la
     // resuelve Meta después, de forma asíncrona. El {MessageId} es el único hilo que conecta
@@ -98,7 +92,9 @@ internal sealed partial class ZenviaWhatsAppSender(
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw Failure(response.StatusCode, body);
+            throw new QuotationsDomainException(
+                "quotation.whatsapp.send_failed",
+                $"Zenvia responded {(int)response.StatusCode}: {body}");
         }
 
         // El guard es por CA1873: `ReadMessageId` parsea el cuerpo, y el `LoggerMessage`
@@ -126,51 +122,6 @@ internal sealed partial class ZenviaWhatsAppSender(
         catch (JsonException)
         {
             return UnknownMessageId;
-        }
-    }
-
-    /// <summary>
-    /// Cuenta de QEP: como siempre, <c>send_failed</c> con el cuerpo (decisión 14 del spec).
-    /// Cuenta propia: 401/403 son <c>credentials_rejected</c> —lo único que el administrador puede
-    /// arreglar desde Configuración— y nunca el cuerpo crudo, que podría devolver lo que la persona
-    /// pegó: sólo el estado y, si cumple el patrón, el código de Zenvia.
-    /// </summary>
-    private QuotationsDomainException Failure(HttpStatusCode status, string body)
-    {
-        var statusCode = (int)status;
-        if (settings.Account == ZenviaAccount.Qep)
-        {
-            return new QuotationsDomainException(
-                "quotation.whatsapp.send_failed", $"Zenvia responded {statusCode}: {body}");
-        }
-
-        var zenviaCode = ReadErrorCode(body);
-        var message = zenviaCode is null
-            ? $"Zenvia responded {statusCode}."
-            : $"Zenvia responded {statusCode} (code: {zenviaCode}).";
-
-        return status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-            ? new QuotationsDomainException("quotation.whatsapp.credentials_rejected", message)
-            : new QuotationsDomainException("quotation.whatsapp.send_failed", message);
-    }
-
-    // Tolerante, como ReadMessageId: la forma de error de Zenvia no está verificada en el código.
-    private static string? ReadErrorCode(string body)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            return document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.TryGetProperty("code", out var code)
-                && code.ValueKind == JsonValueKind.String
-                && code.GetString() is { } value
-                && ZenviaErrorCodePattern().IsMatch(value)
-                    ? value
-                    : null;
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 

@@ -37,11 +37,6 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // prueba es OrdersExportLayoutPersistenceTests.TwoFirstSavesForTheSameTenantEndInAConcurrencyConflict.
     private const string OrdersExportLayoutKey = "PK_orders_export_layouts";
 
-    // La PK de la configuración de WhatsApp (spec 2026-10-07): mismo caso que el layout. Sin fila,
-    // dos primeros PUT con If-Match "1" intentan INSERT y el segundo choca acá: es un 412, no un
-    // 422, porque el tenant no hizo nada mal.
-    private const string TenantWhatsAppSettingsKey = "PK_tenant_whatsapp_settings";
-
     // IOrderNumberGenerator recibe el mismo QuotationsDbContext scoped que esta clase, así que su
     // SQL crudo corre en esta conexión y queda dentro de la transacción. Si alguna vez se
     // registrara con un DbContext propio, el incremento volvería a autocommitearse aparte.
@@ -123,19 +118,6 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "The orders export layout was created by another request while this one was being committed.",
-                exception);
-        }
-        catch (DbUpdateException exception)
-            when (exception.InnerException is PostgresException postgres &&
-                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
-                  string.Equals(
-                      postgres.ConstraintName,
-                      TenantWhatsAppSettingsKey,
-                      StringComparison.Ordinal))
-        {
-            throw new RequestConcurrencyException(
-                "concurrency.conflict",
-                "The WhatsApp settings were created by another request while this one was being committed.",
                 exception);
         }
     }

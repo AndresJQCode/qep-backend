@@ -15,20 +15,7 @@ namespace Modules.Quotations.Application;
 /// pantalla mande la cotizacion a donde quiera.
 /// </summary>
 public sealed record SendQuotationCommand(
-    Guid TenantId, Guid QuotationId, string? Recipient = null) : ICommand<SendQuotationResult>;
-
-/// <summary>Qué pasó con el WhatsApp (spec 2026-10-07). <c>Accepted</c> y no <c>Sent</c>: un 2xx
-/// de Zenvia significa que encoló el mensaje; la entrega la resuelve Meta después.</summary>
-public enum QuotationWhatsAppOutcome
-{
-    Accepted,
-    Disabled
-}
-
-/// <summary>La cotización enviada y si salió un WhatsApp. El endpoint lo suma a la respuesta como
-/// <c>whatsAppOutcome</c>: con Disabled, un 200 con la cotización en Sent no se distingue de un
-/// envío real si nadie lo dice (la trampa del "envío fantasma").</summary>
-public sealed record SendQuotationResult(QuotationDto Quotation, QuotationWhatsAppOutcome WhatsApp);
+    Guid TenantId, Guid QuotationId, string? Recipient = null) : ICommand<QuotationDto>;
 
 /// <summary>A quien va el mensaje. Texto en el borde, enum adentro: llega por HTTP y un valor
 /// que no matchea es un 422 con codigo, no un cast que revienta.</summary>
@@ -46,14 +33,14 @@ public sealed class SendQuotationHandler(
     IQuotationPdfStorage pdfStorage,
     IQuotationCustomerLookup customerLookup,
     IQuotationProductLookup productLookup,
-    IWhatsAppChannelResolver channelResolver,
+    IWhatsAppSender whatsAppSender,
     IMembershipDirectory membershipDirectory,
     IQuotationSendFailureLog sendFailureLog,
     IExecutionContext executionContext,
     IClock clock)
-    : ICommandHandler<SendQuotationCommand, SendQuotationResult>
+    : ICommandHandler<SendQuotationCommand, QuotationDto>
 {
-    public async Task<SendQuotationResult> HandleAsync(
+    public async Task<QuotationDto> HandleAsync(
         SendQuotationCommand command,
         CancellationToken cancellationToken)
     {
@@ -82,9 +69,6 @@ public sealed class SendQuotationHandler(
         // único que separa "hay que revisar el teléfono del cliente" de "está caído Zenvia".
         var stage = QuotationSendStage.Advisor;
         MemberId? sentBy = null;
-        // Spec 2026-10-07: con WhatsApp desactivado, "el mensaje salió" deja de ser cierto, y el
-        // historial de una falla de Persistence tiene que decirlo.
-        var whatsAppSkipped = false;
 
         try
         {
@@ -93,13 +77,6 @@ public sealed class SendQuotationHandler(
             // el dato disponible para anotar quién intentó, si algo falla más adelante.
             sentBy = await QuotationAdvisorResolver.ResolveAsync(
                 membershipDirectory, executionContext, command.TenantId, cancellationToken);
-
-            // Spec 2026-10-07: por dónde sale el WhatsApp, una lectura por envío y sin caché. Una
-            // key que no descifra es settings_unreadable, de dominio: el catch la relanza tal cual
-            // y la pantalla manda a Configuración.
-            stage = QuotationSendStage.Channel;
-            var channel = await channelResolver.ResolveAsync(command.TenantId, cancellationToken);
-            whatsAppSkipped = channel.Sender is null;
 
             // El documento se genera acá, no lo sube el navegador: así el PDF que recibe el
             // cliente no depende de qué pantalla lo pidió ni de qué versión del frontend estaba
@@ -117,15 +94,9 @@ public sealed class SendQuotationHandler(
             // el mensaje entero, minutos después de que Zenvia ya respondió 200. Por eso se
             // publica una copia con clave aleatoria, que además evita que Meta sirva de su caché
             // el documento viejo en un reenvío. La copia la limpia el lifecycle del bucket.
-            // Sin WhatsApp no hay copia: sólo existe para Meta (spec 2026-10-07, decisión 10).
-            string? documentUrl = null;
-            if (channel.Sender is not null)
-            {
-                stage = QuotationSendStage.Publish;
-                documentUrl = await pdfStorage.PublishAsync(pdf.StorageKey, cancellationToken);
-            }
+            stage = QuotationSendStage.Publish;
+            var documentUrl = await pdfStorage.PublishAsync(pdf.StorageKey, cancellationToken);
 
-            // Validar al cliente es regla del envío, no del canal: corre también sin WhatsApp.
             stage = QuotationSendStage.Recipient;
             var customer = await customerLookup.FindAsync(
                 command.TenantId, quotation.ClientId, cancellationToken);
@@ -135,25 +106,21 @@ public sealed class SendQuotationHandler(
             // cotización tiene que seguir en borrador — "Enviar" significa que de verdad llegó, no
             // que quedó marcada como enviada sin que nadie la haya recibido. Así la persona
             // simplemente reintenta el mismo botón en vez de quedar en un estado a medio camino
-            // que ningún otro flujo sabe destrabar. Con WhatsApp desactivado el destinatario del
-            // cuerpo se ignora: no hay a quién mandarle nada.
-            if (channel.Sender is { } sender)
-            {
-                // A quien se le manda. Se resuelve despues de validar al cliente porque el default
-                // --y el respaldo de nombre-- sigue saliendo de ahi.
-                var (toPhone, fullName) = ResolveRecipient(command.Recipient, quotation, customer!);
+            // que ningún otro flujo sabe destrabar.
+            // A quien se le manda. Se resuelve despues de validar al cliente porque el default
+            // --y el respaldo de nombre-- sigue saliendo de ahi.
+            var (toPhone, fullName) = ResolveRecipient(command.Recipient, quotation, customer!);
 
-                stage = QuotationSendStage.WhatsApp;
-                await sender.SendQuotationAsync(
-                    new WhatsAppQuotationMessage(
-                        ToPhone: toPhone,
-                        FullName: fullName,
-                        OrderNumber: quotation.QuotationNumber,
-                        Total: quotation.Total,
-                        ValidUntil: quotation.ValidUntil!.Value,
-                        DocumentUrl: documentUrl!),
-                    cancellationToken);
-            }
+            stage = QuotationSendStage.WhatsApp;
+            await whatsAppSender.SendQuotationAsync(
+                new WhatsAppQuotationMessage(
+                    ToPhone: toPhone,
+                    FullName: fullName,
+                    OrderNumber: quotation.QuotationNumber,
+                    Total: quotation.Total,
+                    ValidUntil: quotation.ValidUntil!.Value,
+                    DocumentUrl: documentUrl),
+                cancellationToken);
 
             stage = QuotationSendStage.Persistence;
             var now = clock.UtcNow;
@@ -164,7 +131,7 @@ public sealed class SendQuotationHandler(
                 quotation.Id,
                 isResend ? QuotationHistoryEventType.Resent : QuotationHistoryEventType.Sent,
                 sentBy,
-                HistorySummary(isResend, whatsAppSkipped),
+                isResend ? QuotationChangeSummary.Resent() : QuotationChangeSummary.Sent(),
                 now));
             auditPublisher.Publish(
                 command.TenantId,
@@ -175,13 +142,11 @@ public sealed class SendQuotationHandler(
                 now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
-            return new SendQuotationResult(
-                quotation.ToDto(),
-                whatsAppSkipped ? QuotationWhatsAppOutcome.Disabled : QuotationWhatsAppOutcome.Accepted);
+            return quotation.ToDto();
         }
         catch (Exception exception)
         {
-            await RecordFailureAsync(quotation, stage, sentBy, whatsAppSkipped);
+            await RecordFailureAsync(quotation, stage, sentBy);
 
             // Un error de dominio ya se explica solo: tiene código propio y un mensaje escrito
             // para el caso. Se relanza tal cual, para no esconder
@@ -202,17 +167,6 @@ public sealed class SendQuotationHandler(
         }
     }
 
-    // Spec 2026-10-07, punto 4: el evento sigue siendo Sent/Resent (es lo que cambió de estado),
-    // pero el resumen dice que no salió WhatsApp.
-    private static string HistorySummary(bool isResend, bool whatsAppSkipped) =>
-        (isResend, whatsAppSkipped) switch
-        {
-            (true, true) => QuotationChangeSummary.ResentWithoutWhatsApp(),
-            (false, true) => QuotationChangeSummary.SentWithoutWhatsApp(),
-            (true, false) => QuotationChangeSummary.Resent(),
-            (false, false) => QuotationChangeSummary.Sent(),
-        };
-
     /// <summary>
     /// Anota el intento fallido en la línea de tiempo de la cotización, en español y sin detalle
     /// técnico. Fuera de la transacción del request, que se descarta — ver
@@ -225,15 +179,14 @@ public sealed class SendQuotationHandler(
     private async Task RecordFailureAsync(
         Quotation quotation,
         QuotationSendStage stage,
-        MemberId? attemptedBy,
-        bool whatsAppSkipped)
+        MemberId? attemptedBy)
     {
         var historyEntry = QuotationHistoryEntry.Create(
             QuotationHistoryEntryId.New(),
             quotation.Id,
             QuotationHistoryEventType.SendFailed,
             attemptedBy,
-            QuotationChangeSummary.SendFailed(stage, whatsAppSkipped),
+            QuotationChangeSummary.SendFailed(stage),
             clock.UtcNow);
 
         // `CancellationToken.None` y no el del request: si la falla **fue** una cancelación —el

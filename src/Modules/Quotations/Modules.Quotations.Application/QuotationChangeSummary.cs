@@ -51,14 +51,6 @@ public static class QuotationChangeSummary
 
     public static string Resent() => "Reenviada al cliente con su PDF.";
 
-    /// <summary>Spec 2026-10-07: con WhatsApp desactivado el evento sigue siendo Sent, pero quien
-    /// lee el historial tiene que saber que al cliente no le llegó nada.</summary>
-    public static string SentWithoutWhatsApp() =>
-        "Marcada como enviada sin WhatsApp: el envío por WhatsApp está desactivado para la empresa.";
-
-    public static string ResentWithoutWhatsApp() =>
-        "Marcada como reenviada sin WhatsApp: el envío por WhatsApp está desactivado para la empresa.";
-
     /// <summary>
     /// Un intento de envío que falló, contado para quien vende y no para quien programa.
     ///
@@ -67,18 +59,15 @@ public static class QuotationChangeSummary
     /// cruda de Zenvia, ni la URL del PDF. Todo eso vive en <c>quotation_send_failures</c>,
     /// que es de dónde lo saca el reporte de fallas de envío.
     /// </summary>
-    public static string SendFailed(QuotationSendStage stage, bool whatsAppSkipped) =>
-        Trim($"No se pudo enviar la cotización: {StageReason(stage, whatsAppSkipped)}");
+    public static string SendFailed(QuotationSendStage stage) =>
+        Trim($"No se pudo enviar la cotización: {StageReason(stage)}");
 
     // En segunda persona y accionable donde se puede hacer algo, y neutro donde no: decirle
     // "revisa" a alguien por una caída de Zenvia lo manda a buscar un problema que no tiene.
-    // whatsAppSkipped (spec 2026-10-07): con WhatsApp desactivado, "el mensaje salió" es falso.
-    private static string StageReason(QuotationSendStage stage, bool whatsAppSkipped) => stage switch
+    private static string StageReason(QuotationSendStage stage) => stage switch
     {
         QuotationSendStage.Advisor =>
             "no pudimos identificar a la asesora que la envía.",
-        QuotationSendStage.Channel =>
-            "no pudimos leer la configuración de WhatsApp de la empresa. Pide a un administrador que la revise en Configuración.",
         QuotationSendStage.Pdf =>
             "falló la generación del PDF.",
         QuotationSendStage.Publish =>
@@ -87,8 +76,6 @@ public static class QuotationChangeSummary
             "el cliente no tiene un número de WhatsApp válido. Revisa sus datos de contacto.",
         QuotationSendStage.WhatsApp =>
             "WhatsApp rechazó el mensaje.",
-        QuotationSendStage.Persistence when whatsAppSkipped =>
-            "no pudimos registrar el envío. No se mandó ningún WhatsApp, así que puedes reintentar.",
         QuotationSendStage.Persistence =>
             "el mensaje salió pero no pudimos registrar el envío. Revisa con el cliente antes de reintentar.",
         _ => "falló por un motivo no previsto."
