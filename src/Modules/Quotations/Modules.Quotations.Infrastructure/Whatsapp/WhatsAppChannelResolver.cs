@@ -57,6 +57,8 @@ internal sealed class WhatsAppChannelResolver(
                 exception);
         }
 
+        // Los `!` de FromNumber y TemplateId son seguros por el mismo CHECK
+        // (CK_tenant_whatsapp_settings_own_complete): en modo Own ambos son NOT NULL.
         return new ZenviaWhatsAppSender(
             zenviaHttpClient.Client,
             new ZenviaSenderSettings(

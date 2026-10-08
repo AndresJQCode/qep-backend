@@ -223,6 +223,8 @@ public sealed class ZenviaWhatsAppSenderTests
         "con espacios",
         new string('A', 65),
         "texto<libre>",
+        // `$` acepta un salto de línea final; el patrón tiene que cerrar con `\z`.
+        "XYZ\n",
     };
 
     [Theory]

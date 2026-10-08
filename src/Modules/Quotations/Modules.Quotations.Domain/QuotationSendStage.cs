@@ -8,8 +8,8 @@ namespace Modules.Quotations.Domain;
 /// tiene que corregir, y que falle WhatsApp es de Zenvia o de Meta. Cada uno se destraba en un
 /// lado distinto.
 ///
-/// Se guarda como texto (<c>HasConversion&lt;string&gt;()</c>), igual que
-/// <see cref="QuotationHistoryEventType"/>: sumar un paso no necesita migración.
+/// Nunca se persiste: viaja sólo en memoria, dentro del error del envío, así que sumar un paso
+/// no necesita migración.
 /// </summary>
 public enum QuotationSendStage
 {

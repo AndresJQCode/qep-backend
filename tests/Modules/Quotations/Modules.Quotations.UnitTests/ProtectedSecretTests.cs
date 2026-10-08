@@ -4,7 +4,7 @@ namespace Modules.Quotations.UnitTests;
 
 /// <summary>
 /// Un <see cref="ProtectedSecret"/> con una mitad nula no puede existir (spec 2026-10-07): sin esto,
-/// <c>TryUnprotect</c> romperia su contrato de no lanzar ante una fila a medias.
+/// <c>TryUnprotect</c> rompería su contrato de no lanzar ante una fila a medias.
 /// </summary>
 public sealed class ProtectedSecretTests
 {

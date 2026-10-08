@@ -1,3 +1,4 @@
+using FluentValidation;
 using Modules.Quotations.Application;
 
 namespace Modules.Quotations.UnitTests;
@@ -117,6 +118,7 @@ public sealed class UpdateWhatsAppSettingsValidatorTests
 
         Assert.NotEmpty(errors);
         Assert.All(errors, error => Assert.DoesNotContain("SENTINEL", error.ErrorMessage, StringComparison.Ordinal));
+        Assert.DoesNotContain("SENTINEL", new ValidationException(errors).Message, StringComparison.Ordinal);
     }
 
     [Fact]

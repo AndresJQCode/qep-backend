@@ -33,8 +33,9 @@ internal sealed partial class ZenviaWhatsAppSender(
     private const string UnknownMessageId = "(unknown)";
 
     // Spec 2026-10-07: el código de error de Zenvia sólo entra al mensaje si tiene esta forma. El
-    // patrón impide que un texto libre del cuerpo se cuele por ese campo.
-    [GeneratedRegex("^[A-Za-z0-9_.-]{1,64}$", RegexOptions.CultureInvariant)]
+    // patrón impide que un texto libre del cuerpo se cuele por ese campo. Cierra con `\z` y no con `$`,
+    // porque `$` también acepta un salto de línea final.
+    [GeneratedRegex("^[A-Za-z0-9_.-]{1,64}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex ZenviaErrorCodePattern();
 
     // "Accepted", no "sent": un 2xx significa que Zenvia encoló el mensaje, y la entrega la
