@@ -208,6 +208,13 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         membership.Property(value => value.TenantId)
             .HasColumnName("tenant_id")
             .HasConversion(id => id.Value, value => new TenantId(value));
+        // La mitad del ciclo tenant ↔ membership que sí se declara (la otra, owner_membership_id,
+        // se omite arriba). Sin ella la base aceptaba membresías con tenant_id fantasma: la regla
+        // "sin FK entre agregados" aplica a user_id, que cruza a Identity, no a una referencia
+        // dentro del mismo módulo. Restrict: un tenant no se borra, se suspende.
+        membership.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
         membership.Property(value => value.State)
             .HasColumnName("state")
             .HasConversion<string>()
