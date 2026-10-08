@@ -76,7 +76,7 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
-                "Tenant settings changed while the update was being committed.",
+                "The tenant changed while the update was being committed.",
                 exception);
         }
         // SDD-CT-06. Registrarse con un slug que alguien ya tomó es un error normal de usuario, no
