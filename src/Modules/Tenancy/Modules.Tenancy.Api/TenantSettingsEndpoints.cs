@@ -70,10 +70,32 @@ public static class TenantSettingsEndpoints
         Guid tenantId,
         UpdateTenantSettingsRequest request,
         IRequestDispatcher dispatcher,
+        ITenantDirectory tenantDirectory,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var expectedVersion = IfMatchHeader.RequireVersion(httpContext);
+
+        // Ventana de despliegue: un frontend anterior a la moneda y al formato de número no manda
+        // esos dos campos. Sin ellos se conserva lo guardado, en vez de un 422 que esa versión no
+        // sabe mostrar. El validador del comando sigue exigiendo los dos.
+        var defaultCurrency = request.DefaultCurrency;
+        var numberFormat = request.NumberFormat;
+        if (string.IsNullOrWhiteSpace(defaultCurrency) || string.IsNullOrWhiteSpace(numberFormat))
+        {
+            var current = await tenantDirectory.GetRegionalSettingsAsync(
+                new TenantId(tenantId),
+                cancellationToken);
+            if (string.IsNullOrWhiteSpace(defaultCurrency))
+            {
+                defaultCurrency = current?.DefaultCurrency ?? string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(numberFormat))
+            {
+                numberFormat = current?.NumberFormat ?? string.Empty;
+            }
+        }
 
         var settings = await dispatcher.SendAsync(
             new UpdateTenantSettingsCommand(
@@ -82,8 +104,8 @@ public static class TenantSettingsEndpoints
                 request.DefaultCulture,
                 request.TimeZone,
                 request.DateFormat,
-                request.DefaultCurrency,
-                request.NumberFormat,
+                defaultCurrency,
+                numberFormat,
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -143,8 +165,8 @@ public sealed record UpdateTenantSettingsRequest(
     string DefaultCulture,
     string TimeZone,
     string DateFormat,
-    string DefaultCurrency,
-    string NumberFormat);
+    string? DefaultCurrency,
+    string? NumberFormat);
 
 public sealed record SetTenantLogoRequest(Guid FileId);
 

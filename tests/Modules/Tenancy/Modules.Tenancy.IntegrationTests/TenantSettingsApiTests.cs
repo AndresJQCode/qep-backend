@@ -38,6 +38,42 @@ public sealed class TenantSettingsApiTests
         Assert.Equal("1,234.56", body.GetProperty("numberFormat").GetString());
     }
 
+    // Ventana de despliegue: un frontend anterior a la moneda y al formato de número no manda
+    // esos dos campos. El PUT no debe fallar ni pisarlos: conserva lo guardado.
+    [Fact]
+    public async Task PutWithoutCurrencyAndNumberFormatKeepsTheStoredValues()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(
+            client, TenantId, etag, NewDisplayName(), defaultCurrency: "USD", numberFormat: "1,234.56");
+        first.EnsureSuccessStatusCode();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{TenantId}/settings")
+        {
+            Content = JsonContent.Create(new
+            {
+                displayName = NewDisplayName(),
+                defaultCulture = "es-CO",
+                timeZone = "America/Bogota",
+                dateFormat = "dd/MM/yyyy",
+            })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", first.Headers.ETag!.Tag);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("USD", body.GetProperty("defaultCurrency").GetString());
+        Assert.Equal("1,234.56", body.GetProperty("numberFormat").GetString());
+    }
+
     [Fact]
     public async Task PutWithUnsupportedCurrencyIsA422WithTheDomainCode()
     {

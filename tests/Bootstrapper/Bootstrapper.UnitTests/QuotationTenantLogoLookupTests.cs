@@ -206,6 +206,11 @@ public sealed class QuotationTenantLogoLookupTests
 
         public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
+            TenantId tenantId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     // Anota si alguien llamó a DownloadAsync; el resto de la interfaz no lo necesita este puerto.

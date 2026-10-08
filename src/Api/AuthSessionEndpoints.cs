@@ -7,6 +7,7 @@ using Modules.Authorization.Application;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Api;
 
@@ -57,6 +58,7 @@ public static class AuthSessionEndpoints
         IMembershipActivation membershipActivation,
         IActiveTenantsQuery activeTenantsQuery,
         ITenantRoleCatalog roleCatalog,
+        ITenantDirectory tenantDirectory,
         ISessionService sessionService,
         IOptions<QepSessionOptions> sessionOptions,
         IHostEnvironment environment,
@@ -112,6 +114,7 @@ public static class AuthSessionEndpoints
         var tenants = await ToActiveTenantResponsesAsync(
             activeTenants,
             roleCatalog,
+            tenantDirectory,
             cancellationToken);
 
         var issued = await sessionService.IssueAsync(
@@ -128,6 +131,7 @@ public static class AuthSessionEndpoints
         HttpContext httpContext,
         IActiveTenantsQuery activeTenantsQuery,
         ITenantRoleCatalog roleCatalog,
+        ITenantDirectory tenantDirectory,
         IUserDirectory userDirectory,
         CancellationToken cancellationToken)
     {
@@ -145,12 +149,14 @@ public static class AuthSessionEndpoints
         var tenants = await ToActiveTenantResponsesAsync(
             activeTenants,
             roleCatalog,
+            tenantDirectory,
             cancellationToken);
         return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, tenants));
     }
 
     /// <summary>
-    /// Le pone a cada rol de cada tenant activo el nombre que ve la persona.
+    /// Le pone a cada rol de cada tenant activo el nombre que ve la persona, y a cada tenant su
+    /// formato regional.
     /// </summary>
     /// <remarks>
     /// Se resuelve acá y no en Tenancy porque el catálogo de roles es de Authorization, que ya
@@ -166,6 +172,7 @@ public static class AuthSessionEndpoints
     private static async Task<IReadOnlyCollection<ActiveTenantResponse>> ToActiveTenantResponsesAsync(
         IReadOnlyCollection<ActiveTenantSummary> activeTenants,
         ITenantRoleCatalog roleCatalog,
+        ITenantDirectory tenantDirectory,
         CancellationToken cancellationToken)
     {
         var responses = new List<ActiveTenantResponse>(activeTenants.Count);
@@ -176,6 +183,9 @@ public static class AuthSessionEndpoints
                 definition => definition.Role,
                 definition => definition.DisplayName,
                 StringComparer.Ordinal);
+            var regional = await tenantDirectory.GetRegionalSettingsAsync(
+                new TenantId(tenant.TenantId),
+                cancellationToken);
 
             responses.Add(new ActiveTenantResponse(
                 tenant.TenantId,
@@ -184,7 +194,11 @@ public static class AuthSessionEndpoints
                     .Select(role => new SessionRoleResponse(
                         role,
                         displayNames.GetValueOrDefault(role, role)))
-                    .ToArray()));
+                    .ToArray(),
+                regional?.TimeZone,
+                regional?.DateFormat,
+                regional?.DefaultCurrency,
+                regional?.NumberFormat));
         }
 
         return responses;
@@ -236,10 +250,20 @@ public sealed record SessionResponse(
 /// <see cref="ActiveTenantSummary"/> de Tenancy: el nombre del rol sale del catálogo de
 /// Authorization, que Tenancy no puede consultar.
 /// </summary>
+/// <remarks>
+/// El formato regional viaja acá y no sólo en <c>GET /settings</c>: ese endpoint exige
+/// <c>tenancy.settings.read</c>, que roles como <c>cashier</c> no tienen, y la SPA necesita el
+/// formato antes de la primera pintura. No es sensible: es cómo se muestran fechas y montos de un
+/// tenant al que la persona pertenece. Null sólo si el tenant no tiene fila.
+/// </remarks>
 public sealed record ActiveTenantResponse(
     Guid TenantId,
     string DisplayName,
-    IReadOnlyCollection<SessionRoleResponse> Roles);
+    IReadOnlyCollection<SessionRoleResponse> Roles,
+    string? TimeZone,
+    string? DateFormat,
+    string? DefaultCurrency,
+    string? NumberFormat);
 
 /// <summary>
 /// <c>Role</c> es la clave que guarda la membresía; <c>DisplayName</c>, el nombre que ve la

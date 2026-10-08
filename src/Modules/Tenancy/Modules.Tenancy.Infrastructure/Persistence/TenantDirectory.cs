@@ -41,4 +41,16 @@ internal sealed class TenantDirectory(TenancyDbContext dbContext) : ITenantDirec
             .Where(tenant => tenant.Id == tenantId)
             .Select(tenant => (TenantStatus?)tenant.Status)
             .SingleOrDefaultAsync(cancellationToken);
+
+    public async Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
+        TenantId tenantId,
+        CancellationToken cancellationToken) =>
+        await dbContext.Tenants
+            .Where(tenant => tenant.Id == tenantId)
+            .Select(tenant => new TenantRegionalSettings(
+                tenant.TimeZone,
+                tenant.DateFormat,
+                tenant.DefaultCurrency,
+                tenant.NumberFormat))
+            .SingleOrDefaultAsync(cancellationToken);
 }

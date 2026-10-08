@@ -21,6 +21,7 @@ internal sealed class FixedTenantDirectory(TenantStatus? status) : ITenantDirect
     public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FixedOperatorTenant(Guid? operatorTenantId) : IOperatorTenant

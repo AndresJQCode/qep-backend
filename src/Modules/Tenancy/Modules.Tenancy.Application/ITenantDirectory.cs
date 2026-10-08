@@ -28,4 +28,16 @@ public interface ITenantDirectory
     /// su semántica de null («no enmascarar»), porque usarlo para "inactivo" le daría al stub todo lo de
     /// X-Permissions sin enmascarar.</summary>
     Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>El formato regional del tenant en una sola lectura, o null si no tiene fila. Lo usa
+    /// <c>/auth/me</c>: el formato llega a todo miembro sin pedir <c>tenancy.settings.read</c>
+    /// —no es sensible— y antes de la primera pintura de la SPA.</summary>
+    Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken);
 }
+
+/// <summary>Los cuatro valores que deciden cómo se muestran fechas, horas y montos del tenant.</summary>
+public sealed record TenantRegionalSettings(
+    string TimeZone,
+    string DateFormat,
+    string DefaultCurrency,
+    string NumberFormat);

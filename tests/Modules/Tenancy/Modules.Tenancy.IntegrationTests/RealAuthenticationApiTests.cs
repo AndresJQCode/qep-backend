@@ -501,6 +501,50 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(new[] { new SessionRolePayload("admin", "Administrador") }, tenant.Roles);
     }
 
+    // Final review 2026-10-08: el formato regional viaja en /auth/me para que llegue a todo
+    // miembro —GET /settings exige tenancy.settings.read y cashier no lo tiene— y antes de la
+    // primera pintura.
+    [Fact]
+    public async Task CurrentSessionCarriesEachTenantsRegionalSettings()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        var etag = await GetSettingsEtagAsync(owner, tenantId);
+
+        using var update = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{tenantId}/settings")
+        {
+            Content = JsonContent.Create(new
+            {
+                displayName = "Regional Co",
+                defaultCulture = "es-CO",
+                timeZone = "America/New_York",
+                dateFormat = "MM/dd/yyyy",
+                defaultCurrency = "USD",
+                numberFormat = "1,234.56",
+            }),
+        };
+        update.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        update.Headers.Add("X-Qep-Client", "web");
+        update.Headers.TryAddWithoutValidation("If-Match", etag);
+        var updated = await owner.SendAsync(update, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+
+        var session = await owner.GetFromJsonAsync<RegionalSessionPayload>(
+            "/api/v1/auth/me",
+            TestContext.Current.CancellationToken);
+
+        var tenant = Assert.Single(session!.ActiveTenants);
+        Assert.Equal(tenantId, tenant.TenantId);
+        Assert.Equal("America/New_York", tenant.TimeZone);
+        Assert.Equal("MM/dd/yyyy", tenant.DateFormat);
+        Assert.Equal("USD", tenant.DefaultCurrency);
+        Assert.Equal("1,234.56", tenant.NumberFormat);
+    }
+
     // Todo cliente de esta suite se crea acá, y sobre https. Ver CreateClient.
     private static async Task<(HttpClient Client, Guid TenantId)> RegisterOwnerAndTenantAsync(
         QepApiFactory factory)
@@ -640,6 +684,16 @@ public sealed class RealAuthenticationApiTests
         IReadOnlyList<SessionRolePayload>? Roles);
 
     private sealed record SessionRolePayload(string Role, string DisplayName);
+
+    private sealed record RegionalSessionPayload(IReadOnlyList<RegionalTenantPayload> ActiveTenants);
+
+    // Nullable: un backend que no manda los campos deserializa a null y la prueba lo reporta.
+    private sealed record RegionalTenantPayload(
+        Guid TenantId,
+        string? TimeZone,
+        string? DateFormat,
+        string? DefaultCurrency,
+        string? NumberFormat);
 
     /// <summary>
     /// Cliente sobre **https**, y no es cosmético: es lo que hace que la cookie de sesión viaje.

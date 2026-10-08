@@ -89,12 +89,6 @@ public sealed class RegistrationApiTests
         Assert.Equal("Active", membership![0]);
     }
 
-    /// <summary>
-    /// SDD-CT-06. tenants.slug es único (IX_tenants_slug), y elegir un nombre que alguien ya
-    /// tomó es el error más probable en la pantalla de registro. Antes de esta prueba la
-    /// violación de unicidad llegaba al handler como una DbUpdateException cruda y volvía como
-    /// 500 server.unexpected, así que un error normal de usuario parecía el servidor cayéndose.
-    /// </summary>
     [Fact]
     public async Task RegisterWithOnlyNameAndSlugAppliesTheRegionalDefaults()
     {
@@ -124,6 +118,12 @@ public sealed class RegistrationApiTests
         Assert.Equal("1.234,56", settings.GetProperty("numberFormat").GetString());
     }
 
+    /// <summary>
+    /// SDD-CT-06. tenants.slug es único (IX_tenants_slug), y elegir un nombre que alguien ya
+    /// tomó es el error más probable en la pantalla de registro. Antes de esta prueba la
+    /// violación de unicidad llegaba al handler como una DbUpdateException cruda y volvía como
+    /// 500 server.unexpected, así que un error normal de usuario parecía el servidor cayéndose.
+    /// </summary>
     [Fact]
     public async Task RegisterTenantRejectsASlugAlreadyTaken()
     {
