@@ -500,12 +500,13 @@ public static class QepServiceCollectionExtensions
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
         services.AddScoped<IProductImageLookup, ProductImageLookup>();
 
+        services.AddScoped<IProductExportStorage, ProductExportStorage>();
+
         // Pos (spec 2026-10-07): Catalog, Companies y Tenancy/Identity entran por adaptadores
         // (PosLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules).
         services.AddScoped<IPosProductLookup, PosProductLookup>();
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
-        services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
