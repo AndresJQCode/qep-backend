@@ -8,8 +8,8 @@ namespace Modules.Quotations.Domain;
 /// tiene que corregir, y que falle WhatsApp es de Zenvia o de Meta. Cada uno se destraba en un
 /// lado distinto.
 ///
-/// Se guarda como texto (<c>HasConversion&lt;string&gt;()</c>), igual que
-/// <see cref="QuotationHistoryEventType"/>: sumar un paso no necesita migración.
+/// Nunca se persiste: viaja sólo en memoria, dentro del error del envío, así que sumar un paso
+/// no necesita migración.
 /// </summary>
 public enum QuotationSendStage
 {
@@ -30,5 +30,10 @@ public enum QuotationSendStage
 
     /// <summary>Guardar la cotización ya enviada. El mensaje salió: ver
     /// <c>QuotationSendFailure.Stage</c> para por qué este caso es el más incómodo.</summary>
-    Persistence
+    Persistence,
+
+    /// <summary>Leer la configuración de WhatsApp del tenant (spec 2026-10-07). Falla cuando la
+    /// API key guardada de una cuenta propia no se puede descifrar. Va al final: se guarda como
+    /// texto, el orden no se persiste.</summary>
+    Channel
 }

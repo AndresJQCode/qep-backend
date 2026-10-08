@@ -141,6 +141,7 @@ app.MapGeographyEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
+app.MapWhatsAppSettingsEndpoints();
 app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
 app.MapPosEndpoints();

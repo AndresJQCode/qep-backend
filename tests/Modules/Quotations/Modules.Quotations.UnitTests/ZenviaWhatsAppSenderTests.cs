@@ -1,10 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
-using Modules.Quotations.Infrastructure;
 using Modules.Quotations.Infrastructure.Whatsapp;
 
 namespace Modules.Quotations.UnitTests;
@@ -174,26 +172,114 @@ public sealed class ZenviaWhatsAppSenderTests
         Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
     }
 
+    // Spec 2026-10-07, «Sólo escritura y nunca en un log»: el sender de una cuenta propia nunca
+    // mete el cuerpo de Zenvia en el mensaje —que llega a ProblemDetails, al log y a
+    // platform.request_failures—; sólo el estado y, si cumple el patrón, el código de Zenvia.
+    private const string SentinelBody = "cuerpo-SENTINEL-de-zenvia";
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task ATenantAccountWithRejectedCredentialsSaysSoWithoutTheBody(HttpStatusCode status)
+    {
+        var (sender, _, _) = NewSender(status, $$"""{"message":"{{SentinelBody}}"}""", ZenviaAccount.Tenant);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.credentials_rejected", error.Code);
+        Assert.Equal($"Zenvia responded {(int)status}.", error.Message);
+        Assert.DoesNotContain(SentinelBody, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATenantAccountWithAnotherFailureIsSendFailedWithoutTheBody()
+    {
+        var (sender, _, _) = NewSender(HttpStatusCode.InternalServerError, SentinelBody, ZenviaAccount.Tenant);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.send_failed", error.Code);
+        Assert.Equal("Zenvia responded 500.", error.Message);
+    }
+
+    [Fact]
+    public async Task ATenantAccountCarriesTheZenviaErrorCodeButNotTheBody()
+    {
+        var (sender, _, _) = NewSender(
+            HttpStatusCode.BadRequest, $$"""{"code":"XYZ","message":"{{SentinelBody}}"}""", ZenviaAccount.Tenant);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.send_failed", error.Code);
+        Assert.Equal("Zenvia responded 400 (code: XYZ).", error.Message);
+        Assert.DoesNotContain(SentinelBody, error.Message, StringComparison.Ordinal);
+    }
+
+    public static TheoryData<string> CodesOutsideThePattern => new()
+    {
+        "con espacios",
+        new string('A', 65),
+        "texto<libre>",
+        // `$` acepta un salto de línea final; el patrón tiene que cerrar con `\z`.
+        "XYZ\n",
+    };
+
+    [Theory]
+    [MemberData(nameof(CodesOutsideThePattern))]
+    public async Task ATenantAccountDropsACodeOutsideThePattern(string code)
+    {
+        var body = JsonSerializer.Serialize(new { code });
+        var (sender, _, _) = NewSender(HttpStatusCode.BadRequest, body, ZenviaAccount.Tenant);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken));
+
+        Assert.Equal("Zenvia responded 400.", error.Message);
+    }
+
+    // La cuenta de QEP: el administrador del tenant no puede arreglar sus credenciales, así que un
+    // 401 no es "revisa tu API key". Y conserva el cuerpo, que es la única pista para diagnosticar
+    // la plantilla de QEP (decisión 14).
+    [Fact]
+    public async Task TheQepAccountTreatsRejectedCredentialsAsAGenericSendFailure()
+    {
+        var (sender, _, _) = NewSender(HttpStatusCode.Unauthorized, SentinelBody, ZenviaAccount.Qep);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.send_failed", error.Code);
+        Assert.Contains(SentinelBody, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ZenviaSenderSettingsToStringHidesTheToken()
+    {
+        var settings = new ZenviaSenderSettings(
+            "token-SENTINEL", FromNumber, TemplateId, "https://api.zenvia.com", ZenviaAccount.Tenant);
+
+        Assert.DoesNotContain("token-SENTINEL", settings.ToString(), StringComparison.Ordinal);
+        Assert.Contains("***", settings.ToString(), StringComparison.Ordinal);
+    }
+
     private static (IWhatsAppSender Sender, RequestCapture Capture, RecordingLogger Logger)
-        NewSender(HttpStatusCode status = HttpStatusCode.OK, string responseBody = "{}")
+        NewSender(
+            HttpStatusCode status = HttpStatusCode.OK,
+            string responseBody = "{}",
+            ZenviaAccount account = ZenviaAccount.Qep)
     {
         var capture = new RequestCapture();
         var logger = new RecordingLogger();
-        var options = Options.Create(new QuotationsOptions
-        {
-            WhatsApp = new WhatsAppOptions
-            {
-                ApiToken = "token-de-prueba",
-                FromNumber = FromNumber,
-                TemplateId = TemplateId,
-                BaseUrl = "https://api.zenvia.com",
-            },
-        });
+        var settings = new ZenviaSenderSettings(
+            "token-de-prueba", FromNumber, TemplateId, "https://api.zenvia.com", account);
 
         return (
             new ZenviaWhatsAppSender(
                 new HttpClient(new CapturingHandler(capture, status, responseBody)),
-                options,
+                settings,
                 logger),
             capture,
             logger);

@@ -31,6 +31,14 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-07: el canal de WhatsApp antes de enviar. Permiso de enviar y no de
+        // Configuración (los roles son editables). Va en este grupo porque es parte del envío; no
+        // choca con /{quotationId:guid} por la restricción de guid, igual que /export.
+        group.MapGet("/whatsapp-channel", GetWhatsAppChannelAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
+            .Produces<WhatsAppChannelResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapGet("/{quotationId:guid}", GetQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationRead)
             .Produces<QuotationResponse>()
@@ -212,6 +220,15 @@ public static class QuotationEndpoints
             cancellationToken);
 
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));
+    }
+
+    private static async Task<IResult> GetWhatsAppChannelAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var channel = await dispatcher.QueryAsync(new GetWhatsAppChannelQuery(tenantId), cancellationToken);
+        return Results.Ok(new WhatsAppChannelResponse(channel.Enabled, channel.Mode));
     }
 
     private static async Task<IResult> GetQuotationAsync(
@@ -444,11 +461,12 @@ public static class QuotationEndpoints
         CancellationToken cancellationToken,
         SendQuotationRequest? request = null)
     {
-        var quotation = await dispatcher.SendAsync(
+        var result = await dispatcher.SendAsync(
             new SendQuotationCommand(tenantId, quotationId, request?.Recipient),
             cancellationToken);
 
-        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+        var response = await composer.ComposeAsync(tenantId, result.Quotation, cancellationToken);
+        return Results.Ok(response with { WhatsAppOutcome = result.WhatsApp.ToString() });
     }
 
     private static async Task<IResult> VoidQuotationAsync(

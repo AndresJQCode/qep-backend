@@ -87,6 +87,9 @@ data:
   # apuntar a su id. Sin esta clave, ese cambio exigiría reconstruir y desplegar la imagen.
   # El token y el número emisor son credenciales y viven en prod-secret.yaml.
   Quotations__WhatsApp__TemplateId: "#{QUOTATIONS_WHATSAPP_TEMPLATE_ID}#"
+  # Spec 2026-10-07: id (no secreto) de la llave con la que se cifra. Rotar = dos despliegues: declarar
+  # Keys__k2 con ésta todavía en k1, y después cambiar ésta a k2 (README § WhatsApp por tenant).
+  Quotations__SecretProtection__ActiveKeyId: "k1"
   # Copia pública de cada comprobante de pago nuevo, para que el Excel de pedidos lo enlace (spec
   # 2026-09-15). Literal y no token: no es un secreto ni cambia por despliegue. Exige
   # Storage__R2__PublicBucket y Storage__R2__PublicBaseUrl, de arriba: sin ellos
