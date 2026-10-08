@@ -201,6 +201,45 @@ public sealed class Tenant
         return true;
     }
 
+    /// <summary>
+    /// Spec 2026-10-08 §4 (O8): inactivo bloquea todo acceso, no borra nada y conserva los módulos (D8).
+    /// Sube <see cref="Version"/> (el If-Match del endpoint) y <b>no emite eventos</b>: OutboxWriter
+    /// lanza ante un evento sin mapear y nadie fuera de Tenancy consume este cambio; alcanzan el
+    /// historial y la auditoría. Los demás valores de <see cref="TenantStatus"/> no se asignan hoy:
+    /// desde ellos es <c>tenancy.tenant.not_active</c> (decisión P5 del plan).
+    /// </summary>
+    public void Suspend(ChangeReason reason, DateTimeOffset occurredAt)
+    {
+        if (Status == TenantStatus.Suspended)
+        {
+            throw new TenantDomainException("tenancy.tenant.already_inactive", "The tenant is already inactive.");
+        }
+
+        EnsureActive();
+        EnsureReason(TenantChangeVocabulary.SuspensionReasons, reason, "suspend");
+        Status = TenantStatus.Suspended;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
+    public void Reactivate(ChangeReason reason, DateTimeOffset occurredAt)
+    {
+        if (Status == TenantStatus.Active)
+        {
+            throw new TenantDomainException("tenancy.tenant.already_active", "The tenant is already active.");
+        }
+
+        if (Status != TenantStatus.Suspended)
+        {
+            throw new TenantDomainException("tenancy.tenant.not_active", "Only a suspended tenant can be reactivated.");
+        }
+
+        EnsureReason(TenantChangeVocabulary.ReactivationReasons, reason, "reactivate");
+        Status = TenantStatus.Active;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
     public IReadOnlyCollection<IDomainEvent> PullDomainEvents()
     {
         var events = _domainEvents.ToArray();
@@ -215,6 +254,16 @@ public sealed class Tenant
             throw new TenantDomainException(
                 "tenancy.tenant.not_active",
                 "Only an active tenant can update settings.");
+        }
+    }
+
+    private static void EnsureReason(IReadOnlySet<ChangeReason> allowed, ChangeReason reason, string verb)
+    {
+        if (!allowed.Contains(reason))
+        {
+            throw new TenantDomainException(
+                "tenancy.tenant.reason_not_allowed",
+                $"'{TenantChangeVocabulary.ToText(reason)}' is not a reason to {verb} a tenant.");
         }
     }
 
