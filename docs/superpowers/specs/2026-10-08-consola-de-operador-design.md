@@ -482,8 +482,12 @@ Screaming architecture (`SDD-ADR-07`): todo vive en `src/features/operator/`
   de esa pantalla no cambia en esta entrega (DECISIÓN-PENDIENTE).
 - **Textos** en español colombiano tuteando; comentarios de código en inglés (convención del front).
 - **Caché de módulos del tenant administrado:** después de un cambio, el detalle se reemplaza con la
-  respuesta del `POST`. Los usuarios **del tenant afectado** siguen con el `staleTime` de 5 minutos
-  de `useTenantModules` (DECISIÓN-PENDIENTE heredada).
+  respuesta del `POST`. Los usuarios **del tenant afectado** lo ven en su siguiente navegación o
+  acción: decisión del owner del 2026-10-08 (resuelve la DECISIÓN-PENDIENTE heredada). Módulos y
+  permisos pasaron a `staleTime: 0`, y cualquier 403 de la API los vuelve a leer desde un solo
+  lugar (`query-client.ts` + `session-invalidation.ts`). Un 403 se sostiene hasta un éxito, y un
+  módulo apagado no se abre por una falla transitoria. No hay aviso en vivo: un usuario quieto en
+  una pantalla no lo ve hasta que hace algo, pero la API ya lo bloquea en el request siguiente.
 
 ### 7. Migración
 
@@ -613,8 +617,6 @@ obligatorio, motivos por dirección, lote enviado); lista (búsqueda, resumen, s
 - **Qué ve el usuario de un tenant inactivo.** Hoy queda como «sin empresas activas». ¿Un mensaje
   propio («La cuenta de tu empresa está inactiva; escríbenos a …») con un contacto? Requiere que la
   sesión sepa que existe un tenant inactivo, lo que hoy no expone.
-- **Propagación inmediata** de un cambio de módulos a los usuarios del tenant afectado (hoy hasta 5
-  minutos por el `staleTime`). Heredada del spec de entitlements.
 - **Workers, outbox y enlaces públicos** de un tenant inactivo (envíos programados, PDF públicos,
   comprobantes): siguen funcionando. ¿Se cortan?
 - **Retención de datos** de un tenant que «ya no continúa» (Ley 1581).
