@@ -59,6 +59,9 @@ public static class QuotationsInfrastructureExtensions
         // Spec 2026-10-07: la configuración de WhatsApp por tenant. Scoped: la leen el PUT/GET, el
         // envío y el re-cifrado, cada uno en su scope.
         services.AddScoped<ITenantWhatsAppSettingsRepository, TenantWhatsAppSettingsRepository>();
+        // Spec 2026-10-07: el canal de cada envío. Scoped porque lee la fila por el DbContext del
+        // request; depende del IWhatsAppSender global (singleton) que registra AddWhatsAppSender.
+        services.AddScoped<IWhatsAppChannelResolver, WhatsAppChannelResolver>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
         // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).

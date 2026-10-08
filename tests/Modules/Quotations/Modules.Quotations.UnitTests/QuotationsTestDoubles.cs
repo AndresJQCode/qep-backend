@@ -910,6 +910,11 @@ internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
     public static FixedTenantModules WithoutOrders => new(
         TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders])));
 
+    public static FixedTenantModules AllEnabled() => new(TenantModuleSet.FromStored(TenantModuleKeys.All));
+
+    public static FixedTenantModules Without(TenantModuleKey key) =>
+        new(TenantModuleSet.FromStored(TenantModuleKeys.All.Where(candidate => candidate != key)));
+
     public int FindCalls { get; private set; }
 
     public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
