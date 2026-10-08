@@ -31,6 +31,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     internal DbSet<ExportJob> ExportJobs => Set<ExportJob>();
 
     internal DbSet<OrdersExportLayout> OrdersExportLayouts => Set<OrdersExportLayout>();
+    internal DbSet<TenantWhatsAppSettings> WhatsAppSettings => Set<TenantWhatsAppSettings>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -46,6 +47,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureOrderNumberCounter(modelBuilder);
         ConfigureExportJob(modelBuilder);
         ConfigureOrdersExportLayout(modelBuilder);
+        ConfigureTenantWhatsAppSettings(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -626,6 +628,61 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         });
         layout.Navigation(value => value.Columns)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-07, «Modelo de datos». PK por tenant nombrada a propósito: dos primeros PUT
+    /// simultáneos chocan acá y QuotationsUnitOfWork lo traduce a 412 por nombre. La key cifrada es
+    /// un owned opcional en dos columnas de la misma fila (como BillingAccount en quotations); el
+    /// CHECK token_pair garantiza que viajan juntas. Sin FK a tenancy.tenants: un DbContext por
+    /// módulo, mismo criterio que orders_export_layouts.
+    /// </summary>
+    private static void ConfigureTenantWhatsAppSettings(ModelBuilder modelBuilder)
+    {
+        var settings = modelBuilder.Entity<TenantWhatsAppSettings>();
+        settings.ToTable("tenant_whatsapp_settings", "quotations", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tenant_whatsapp_settings_mode",
+                "mode IN ('Shared', 'Own', 'Disabled')");
+            table.HasCheckConstraint(
+                "CK_tenant_whatsapp_settings_provider",
+                "provider IS NULL OR provider IN ('Zenvia')");
+            table.HasCheckConstraint(
+                "CK_tenant_whatsapp_settings_token_pair",
+                "(api_token_ciphertext IS NULL) = (api_token_key_id IS NULL)");
+            table.HasCheckConstraint(
+                "CK_tenant_whatsapp_settings_own_complete",
+                "mode <> 'Own' OR (provider IS NOT NULL AND api_token_ciphertext IS NOT NULL "
+                + "AND from_number IS NOT NULL AND template_id IS NOT NULL)");
+        });
+        settings.HasKey(value => value.TenantId).HasName("PK_tenant_whatsapp_settings");
+        settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        settings.Property(value => value.Mode)
+            .HasColumnName("mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        settings.Property(value => value.Provider)
+            .HasColumnName("provider")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        settings.Property(value => value.ApiTokenUpdatedAt).HasColumnName("api_token_updated_at");
+        settings.Property(value => value.FromNumber)
+            .HasColumnName("from_number")
+            .HasMaxLength(TenantWhatsAppSettings.FromNumberMaxLength);
+        settings.Property(value => value.TemplateId)
+            .HasColumnName("template_id")
+            .HasMaxLength(TenantWhatsAppSettings.TemplateIdMaxLength);
+        settings.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        settings.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        settings.OwnsOne(value => value.ApiToken, token =>
+        {
+            token.Property(value => value.KeyId)
+                .HasColumnName("api_token_key_id")
+                .HasMaxLength(ProtectedSecret.KeyIdMaxLength);
+            token.Property(value => value.Ciphertext).HasColumnName("api_token_ciphertext");
+        });
+        settings.Navigation(value => value.ApiToken).IsRequired(false);
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

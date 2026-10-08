@@ -56,6 +56,9 @@ public static class QuotationsInfrastructureExtensions
         // El layout de columnas del Excel de pedidos (spec 2026-09-24): lo leen el PUT/GET del
         // tenant y el processor, cada uno en su scope.
         services.AddScoped<IOrdersExportLayoutRepository, OrdersExportLayoutRepository>();
+        // Spec 2026-10-07: la configuración de WhatsApp por tenant. Scoped: la leen el PUT/GET, el
+        // envío y el re-cifrado, cada uno en su scope.
+        services.AddScoped<ITenantWhatsAppSettingsRepository, TenantWhatsAppSettingsRepository>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
         // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).

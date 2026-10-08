@@ -7,6 +7,13 @@ namespace Modules.Quotations.Domain;
 /// </summary>
 public sealed record ProtectedSecret(string KeyId, byte[] Ciphertext)
 {
+    // Spec 2026-10-07: una mitad nula no existe. Sin esto, una fila con una sola de las dos columnas
+    // llegaría hasta TryUnprotect, que promete no lanzar. Se redeclaran las propiedades posicionales
+    // para validar al construir (el CHECK token_pair ya impide la fila a medias en la base).
+    public string KeyId { get; init; } = KeyId ?? throw new ArgumentNullException(nameof(KeyId));
+
+    public byte[] Ciphertext { get; init; } = Ciphertext ?? throw new ArgumentNullException(nameof(Ciphertext));
+
     /// <summary>El ancho de <c>api_token_key_id</c> y del patrón de ids <c>^[a-z0-9]{1,32}$</c>.</summary>
     public const int KeyIdMaxLength = 32;
 
