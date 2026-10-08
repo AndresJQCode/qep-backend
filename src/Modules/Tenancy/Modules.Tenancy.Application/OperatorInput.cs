@@ -13,6 +13,10 @@ internal static class OperatorInput
     public const int MaxPageSize = 100;
     public const int MaxSearchLength = 100;
 
+    /// <summary>Tope de <c>page</c>: con él, <c>(page - 1) * pageSize</c> no da la vuelta a un OFFSET negativo
+    /// (un 500 de Postgres) con ningún <c>pageSize</c> válido.</summary>
+    public const int MaxPage = int.MaxValue / MaxPageSize;
+
     public static bool IsModuleKey(string? value) =>
         value is not null && TenantModuleKeys.All.Any(key => string.Equals(key.Value, value, StringComparison.Ordinal));
 

@@ -50,7 +50,29 @@ public static class OperatorEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        group.MapGet("/tenants/{targetTenantId:guid}/history", ListHistoryAsync)
+            .RequireAuthorization(OperatorPermissions.TenantsRead)
+            .Produces<OperatorHistoryPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> ListHistoryAsync(
+        Guid tenantId,
+        Guid targetTenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? module = null,
+        int page = 1,
+        int pageSize = 25)
+    {
+        var result = await dispatcher.QueryAsync(
+            new ListTenantHistoryQuery(new TenantId(tenantId), new TenantId(targetTenantId), module, page, pageSize),
+            cancellationToken);
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> ListTenantsAsync(

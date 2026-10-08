@@ -468,6 +468,51 @@ public sealed class OperatorConsoleApiTests
             HttpStatusCode.UnprocessableEntity, "tenancy.tenant.operator_cannot_be_suspended");
     }
 
+    [Fact]
+    public async Task TheHistoryGroupsByBatchNewestFirstAndFiltersByModule()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        var (_, actorId) = await RegisterAsync(factory);   // un usuario que existe, para resolver su correo
+        using var client = OperatorClient(factory, actorId);
+
+        await PostChangesAsync(client, tenantId, "cancellation", null, ("customers", "inactive"), ("quotations", "inactive"), ("orders", "inactive"));
+        await PostChangesAsync(client, tenantId, "courtesy", "Prueba de un mes", ("pos", "active"));
+        await ReadDetailAsync(await PostStatusAsync(client, tenantId, "\"1\"", "inactive", "nonpayment"));
+
+        var all = await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history"));
+        Assert.Equal(3, all.Total);
+        Assert.Equal(["tenant_status", "module", "module"], all.Items.Select(batch => batch.Kind));
+        Assert.Equal(["customers", "quotations", "orders"], all.Items[2].Changes.Select(change => change.ModuleKey));
+        Assert.NotNull(all.Items[0].ActorEmail);
+        Assert.Equal(actorId, all.Items[0].ActorUserId);
+
+        var pos = await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history?module=pos"));
+        Assert.Equal(("Prueba de un mes", "courtesy"), (Assert.Single(pos.Items).Note, pos.Items[0].Reason));
+
+        // Review Focus 4: más allá de la última página.
+        var beyond = await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history?page=4&pageSize=1"));
+        Assert.Empty(beyond.Items);
+        Assert.Equal(3, beyond.Total);
+    }
+
+    [Fact]
+    public async Task AnUnknownModuleFilterOrAnOverflowingPageIsUnprocessable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        await AssertProblemAsync(
+            await client.GetAsync(Url($"tenants/{tenantId}/history?module=inventory"), TestContext.Current.CancellationToken),
+            HttpStatusCode.UnprocessableEntity, "validation.failed");
+        await AssertProblemAsync(
+            await client.GetAsync(Url($"tenants/{tenantId}/history?page={int.MaxValue}&pageSize=100"), TestContext.Current.CancellationToken),
+            HttpStatusCode.UnprocessableEntity, "validation.failed");
+    }
+
     private static async Task<HttpResponseMessage> PostStatusAsync(
         HttpClient client, Guid tenantId, string? ifMatch, string status, string reason)
     {
@@ -523,4 +568,7 @@ public sealed class OperatorConsoleApiTests
     private sealed record SummaryPayload(int Total, int WithoutModules, int Inactive);
     private sealed record DetailPayload(Guid TenantId, string Slug, string DisplayName, DateTimeOffset CreatedAt, string Status, DateTimeOffset? StatusChangedAt, string? StatusReason, long Version, bool IsOperator, List<ModulePayload> Modules);
     private sealed record ModulePayload(string Key, string Status, bool Enabled, string[] Dependencies, DateTimeOffset? Since, string? Source, string? LastReason);
+    private sealed record HistoryPayload(List<BatchPayload> Items, int Total, int Page, int PageSize);
+    private sealed record BatchPayload(Guid BatchId, string Kind, DateTimeOffset OccurredAt, Guid ActorUserId, string? ActorEmail, string Reason, string? Note, List<ChangePayload> Changes);
+    private sealed record ChangePayload(string? ModuleKey, string? FromStatus, string ToStatus);
 }

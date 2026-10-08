@@ -53,6 +53,15 @@ internal sealed class FixedOperatorTenantReader : IOperatorTenantReader
         Asked.Add($"find:{tenantId}");
         return Task.FromResult(Snapshots.GetValueOrDefault(tenantId));
     }
+
+    public TenantChangeBatchPage History { get; set; } = new([], 0);
+
+    public Task<TenantChangeBatchPage> ListHistoryAsync(
+        TenantId tenantId, TenantModuleKey? moduleKey, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        Asked.Add($"history:{moduleKey?.Value}:{page}:{pageSize}");
+        return Task.FromResult(History);
+    }
 }
 
 internal static class OperatorSnapshots

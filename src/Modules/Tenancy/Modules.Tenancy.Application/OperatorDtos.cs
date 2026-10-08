@@ -40,3 +40,17 @@ public sealed record OperatorTenantModuleDto(
 {
     public const string NoRowStatus = "none";
 }
+
+/// <summary>Lotes del más reciente al más antiguo, paginados <b>por lote</b> y no por fila: la cascada de
+/// una operación se dibuja junta. El historial es inmutable: no hay endpoint para editarlo ni borrarlo.</summary>
+public sealed record OperatorHistoryPageDto(IReadOnlyList<OperatorHistoryBatchDto> Items, int Total, int Page, int PageSize);
+
+/// <param name="Kind"><c>module</c> o <c>tenant_status</c>, el mismo texto que la columna.</param>
+/// <param name="ActorEmail">Resuelto por Identity; null si el usuario ya no existe y la UI muestra el id corto.</param>
+public sealed record OperatorHistoryBatchDto(
+    Guid BatchId, string Kind, DateTimeOffset OccurredAt, Guid ActorUserId, string? ActorEmail, string Reason,
+    string? Note, IReadOnlyList<OperatorHistoryChangeDto> Changes);
+
+/// <param name="ModuleKey">null en un cambio de estado del tenant.</param>
+/// <param name="FromStatus">null = la fila del módulo no existía.</param>
+public sealed record OperatorHistoryChangeDto(string? ModuleKey, string? FromStatus, string ToStatus);

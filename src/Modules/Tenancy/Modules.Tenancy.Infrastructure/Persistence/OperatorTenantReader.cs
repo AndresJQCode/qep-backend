@@ -81,6 +81,59 @@ internal sealed class OperatorTenantReader(TenancyDbContext dbContext) : IOperat
             modules, lastReasons, lastStatus);
     }
 
+    public async Task<TenantChangeBatchPage> ListHistoryAsync(
+        TenantId tenantId, TenantModuleKey? moduleKey, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        var rows = dbContext.TenantChanges.AsNoTracking().Where(change => change.TenantId == tenantId);
+        // §5: con el filtro, los lotes que tocan ese módulo (con todos sus cambios) y ninguno de estado.
+        var scoped = moduleKey is null
+            ? rows
+            : rows.Where(change => change.Kind == TenantChangeKind.Module && change.ModuleKey == moduleKey);
+        var batches = scoped
+            .GroupBy(change => change.BatchId)
+            .Select(group => new { BatchId = group.Key, OccurredAt = group.Max(change => change.OccurredAt) });
+
+        var total = await batches.CountAsync(cancellationToken);
+        // Desempate por BatchId (UUID v7, crece con el tiempo): dos lotes en el mismo instante salen
+        // siempre en el mismo orden y la paginación no repite ni salta ninguno.
+        var pageIds = await batches
+            .OrderByDescending(batch => batch.OccurredAt)
+            .ThenByDescending(batch => batch.BatchId)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(batch => batch.BatchId)
+            .ToListAsync(cancellationToken);
+        if (pageIds.Count == 0)
+        {
+            return new TenantChangeBatchPage([], total);
+        }
+
+        // Sin el filtro de módulo: el lote viaja completo.
+        var changes = await rows.Where(change => pageIds.Contains(change.BatchId)).ToListAsync(cancellationToken);
+        var byBatch = changes.ToLookup(change => change.BatchId);
+        return new TenantChangeBatchPage(
+            pageIds
+                .Select(id => (IReadOnlyList<TenantChange>)byBatch[id]
+                    .OrderBy(change => change.ModuleKey is null ? -1 : IndexOf(change.ModuleKey))
+                    .ThenBy(change => change.Id)
+                    .ToArray())
+                .ToArray(),
+            total);
+    }
+
+    private static int IndexOf(TenantModuleKey key)
+    {
+        for (var index = 0; index < TenantModuleKeys.All.Count; index++)
+        {
+            if (TenantModuleKeys.All[index] == key)
+            {
+                return index;
+            }
+        }
+
+        return int.MaxValue;
+    }
+
     // Mismo escape que ProductRepository: la barra va primero.
     private static string? LikePattern(string? term)
     {

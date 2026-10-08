@@ -15,7 +15,18 @@ public interface IOperatorTenantReader
 
     /// <summary>null si el tenant no existe.</summary>
     Task<OperatorTenantSnapshot?> FindAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Una página de lotes del historial, del más reciente al más antiguo. Con
+    /// <paramref name="moduleKey"/>, los lotes que tocan ese módulo (con todos sus cambios) y ninguno de estado
+    /// del tenant.</summary>
+    Task<TenantChangeBatchPage> ListHistoryAsync(
+        TenantId tenantId, TenantModuleKey? moduleKey, int page, int pageSize, CancellationToken cancellationToken);
 }
+
+/// <param name="Batches">Lotes en el orden de la página; dentro de un lote, en el orden de
+/// <c>TenantModuleKeys.All</c>. Nunca vacíos.</param>
+/// <param name="Total">Lotes que cumplen el filtro, no filas.</param>
+public sealed record TenantChangeBatchPage(IReadOnlyList<IReadOnlyList<TenantChange>> Batches, int Total);
 
 /// <param name="Total">Los que cumplen la búsqueda, no sólo los de la página.</param>
 /// <param name="AllTenants">Todos, sin la búsqueda.</param>

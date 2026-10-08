@@ -81,6 +81,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ChangeTenantStatusCommand, OperatorTenantDetailDto>,
             ChangeTenantStatusHandler>();
         services.AddScoped<
+            IQueryHandler<ListTenantHistoryQuery, OperatorHistoryPageDto>,
+            ListTenantHistoryHandler>();
+        services.AddScoped<
             ICommandHandler<InviteMemberCommand, MembershipDto>,
             InviteMemberHandler>();
         services.AddScoped<
