@@ -94,8 +94,8 @@ Las claves obligatorias no se deducen de ese archivo sino de los validadores que
 corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
 `AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator`,
-`PaymentProofsOptionsValidator`, `ForwardedHeadersSettingsValidator` y
-`CorsSettingsValidator`): si algo
+`PaymentProofsOptionsValidator`, `ForwardedHeadersSettingsValidator`,
+`CorsSettingsValidator` y `OperatorTenantOptionsValidator`): si algo
 falta o está mal escrito, la API **no arranca**.
 
 `ConnectionStrings:QepDatabase` **no está en `appsettings.json`**, a propósito:
@@ -612,11 +612,12 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
 ## Módulos por tenant
 
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
-presencia de la fila es el módulo. Las claves son `catalog`, `customers`, `companies`, `quotations`,
-`orders`, `reporting` y `pos`; `quotations` exige `catalog`, `customers` y `companies`, `orders`
-exige `quotations` y `pos` exige `catalog` y `companies`. Un módulo sin su dependencia cuenta como
-apagado. Identidad, Tenancy, Authorization, Storage, Platform, Geography, Audit y Notifications son
-núcleo y no se apagan.
+fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
+conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting` y `pos`; `quotations` exige
+`catalog`, `customers` y `companies`, `orders` exige `quotations` y `pos` exige `catalog` y
+`companies`. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+Storage, Platform, Geography, Audit y Notifications son núcleo y no se apagan.
 
 Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
 desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
@@ -625,19 +626,67 @@ permiso), que siempre devuelve los siete con `enabled`, `contracted` y `missingD
 entera en hasta 5 minutos.
 
 Un tenant del signup nace con los seis sin `pos` mientras `Entitlements:GrantDefaultModulesOnSignup`
-esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con los siete.
+esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con los siete. Ni el
+signup ni la semilla escriben historial: el origen queda en `source`.
 
-No hay endpoint de administración. QCode lo hace por SQL. Local, sin leer el connection string:
+### Consola de operador
+
+La vía normal para prender y apagar módulos, y para inactivar o reactivar un tenant, es la **consola
+de operador**: la sección «Plataforma» de la SPA, que sólo aparece para el tenant configurado en
+`Platform:OperatorTenantId` (QCode). Cada operación queda en `tenancy.tenant_changes` con motivo,
+nota opcional, quién y cuándo, agrupada por lote; el historial no se edita ni se borra. Un lote que
+dejaría un módulo activo sin una dependencia se rechaza con
+`422 tenancy.modules.inconsistent_dependencies`: la consola arma la cascada sola.
+
+**Inactivar un tenant** lo saca del selector de sesión y todo request a ese tenant recibe 403,
+incluso con la sesión ya abierta. No toca sus módulos: reactivarlo deja todo como estaba. Los
+workers, el outbox y los enlaces públicos (PDF, comprobantes) de un tenant inactivo **siguen
+funcionando** (DECISIÓN-PENDIENTE del spec 2026-10-08). El tenant operador no se puede inactivar.
+
+### Tenant operador
+
+`Platform:OperatorTenantId` es **opcional en todo ambiente**:
+
+- Sin la clave no hay consola: los endpoints `/operator/*` responden 403 a todos y el resto de la
+  API funciona igual. En `Production`, además, se registra una advertencia al arrancar.
+- `Guid.Empty` tumba el arranque (`OperatorTenantOptionsValidator` con `ValidateOnStart`).
+- **No** va en `appsettings.json` ni como marcador en el ConfigMap: el id de QCode no está en el repo
+  y el CI despliega `main` sin pruebas, así que un valor de relleno tumbaría los pods. Su lugar en el
+  inventario es `src/Api/appsettings.example.json`.
+
+Para habilitarla en producción:
+
+1. Desplegar el backend antes que el frontend. Sin la clave, el despliegue no cambia nada visible.
+2. Obtener el id de QCode por el acceso a la base que QCode ya usa para operaciones manuales:
+   `SELECT id FROM tenancy.tenants WHERE slug = '<slug de QCode>';`
+3. Agregar `Platform__OperatorTenantId: "<id>"` al ConfigMap de producción y reiniciar el despliegue.
+4. El `admin` de QCode ve «Plataforma» (puede requerir recargar la SPA).
+
+**No uses la consola hasta que termine el rolling update de `AddOperatorConsole`.** Un pod viejo
+cuenta como contratada cualquier fila, también una `inactive`, e ignora el estado del tenant: un
+módulo apagado o un tenant inactivado mientras quedan pods viejos sigue disponible en los requests
+que ellos atiendan.
+
+Rollback: el `Down` de `AddOperatorConsole` borra las filas `inactive` (en el modelo anterior,
+apagado = sin fila), pasa `source = 'operator'` a `'manual'` y **devuelve el acceso a los tenants
+`Suspended`**, porque el código anterior ignora el estado del tenant.
+
+### SQL de respaldo
+
+El SQL queda para cuando la consola no está disponible. **No deja historial ni auditoría**: lo que
+se cambie por aquí no aparece en el historial de la consola. Tampoco revisa dependencias: apagar
+`customers` con `quotations` activo es posible, y `quotations` cuenta como apagado hasta que se
+repare. Local, sin leer el connection string:
 
 ```powershell
 # Ver los módulos de un tenant
-docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "SELECT module_key, source, enabled_at, note FROM tenancy.tenant_modules m JOIN tenancy.tenants t ON t.id = m.tenant_id WHERE t.slug = 'origen-botanico' ORDER BY module_key;"
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "SELECT module_key, status, status_changed_at, source, enabled_at, note FROM tenancy.tenant_modules m JOIN tenancy.tenants t ON t.id = m.tenant_id WHERE t.slug = 'origen-botanico' ORDER BY module_key;"
 
-# Prender pos
-docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, note) SELECT id, 'pos', now(), 'manual', 'Activado por QCode' FROM tenancy.tenants WHERE slug = 'origen-botanico' ON CONFLICT (tenant_id, module_key) DO NOTHING;"
+# Prender pos (no deja historial)
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, note, status, status_changed_at) SELECT id, 'pos', now(), 'manual', 'Activado por QCode', 'active', now() FROM tenancy.tenants WHERE slug = 'origen-botanico' ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now();"
 
-# Apagar orders
-docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "DELETE FROM tenancy.tenant_modules m USING tenancy.tenants t WHERE t.id = m.tenant_id AND t.slug = 'origen-botanico' AND m.module_key = 'orders';"
+# Apagar orders (no deja historial)
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "UPDATE tenancy.tenant_modules m SET status = 'inactive', status_changed_at = now() FROM tenancy.tenants t WHERE t.id = m.tenant_id AND t.slug = 'origen-botanico' AND m.module_key = 'orders';"
 ```
 
 **Después de desplegar `AddTenantModules`** (checklist del despliegue): un pod viejo puede crear
@@ -682,9 +731,13 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
+| `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 **403, nunca 404**, cuando el recurso pertenece a otro tenant.
+
+Excepción: en `/operator/*` un `targetTenantId` inexistente es **404**. El operador ve todos los
+tenants por diseño, así que el 404 no le revela nada (spec 2026-10-08, D7).
 
 ### Health check
 
