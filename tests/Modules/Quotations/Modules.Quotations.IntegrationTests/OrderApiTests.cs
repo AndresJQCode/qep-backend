@@ -78,6 +78,70 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    // A pedido (2026-10-08): la fecha del comprobante la escribe quien lo adjunta en el asistente y
+    // viaja en `paidOn`, por comprobante, como fecha ISO sin hora. Se guarda con el comprobante y
+    // vuelve tal cual, en la respuesta de la conversión y en el GET: hasta ahora el backend la
+    // ignoraba y la única fecha que quedaba era la de subida.
+    [Fact]
+    public async Task ConvertKeepsThePaidOnDateOfEachProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived",
+                null,
+                [new OrderPaymentProofRequest(proofFileId, quotation.Total, new DateOnly(2026, 10, 6))]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        // Como texto crudo: el contrato con el frontend es el nombre `paidOn` y la fecha ISO sin
+        // hora, y deserializar al record no probaría ninguna de las dos cosas.
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var json = JsonDocument.Parse(body);
+        var proofJson = Assert.Single(json.RootElement.GetProperty("paymentProofs").EnumerateArray());
+        Assert.Equal("2026-10-06", proofJson.GetProperty("paidOn").GetString());
+
+        var fetched = await client.GetFromJsonAsync<OrderResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        Assert.Equal(new DateOnly(2026, 10, 6), Assert.Single(fetched.PaymentProofs).PaidOn);
+    }
+
+    // Sin `paidOn` el comprobante queda sin fecha de pago: null en la respuesta, no la fecha de
+    // subida disfrazada. Que sea obligatoria es una decisión pendiente (2026-10-08).
+    [Fact]
+    public async Task ConvertWithoutPaidOnLeavesTheProofWithoutAPaymentDate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.Null(Assert.Single(order.PaymentProofs).PaidOn);
+    }
+
     // Reloj en la frontera de fin de año de Bogotá: el pedido numera con el año del tenant (spec
     // 2026-09-17, punto 2b).
     [Fact]

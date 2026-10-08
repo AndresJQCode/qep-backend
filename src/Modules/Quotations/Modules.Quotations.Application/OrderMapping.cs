@@ -46,5 +46,5 @@ internal static class OrderMapping
         row.Quotation.Total);
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(
-        proof.Id.Value, proof.FileId, proof.Amount, proof.UploadedAt);
+        proof.Id.Value, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn);
 }

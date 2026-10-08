@@ -157,7 +157,7 @@ public sealed class SaveOrderEditsHandler(
             var attachedInputs = await copies.PublishAsync(
                 command.TenantId,
                 command.Proofs.Add
-                    .Select(addition => new OrderPaymentProofRequest(addition.FileId!.Value, addition.Amount))
+                    .Select(addition => new OrderPaymentProofRequest(addition.FileId!.Value, addition.Amount, addition.PaidOn))
                     .ToArray(),
                 cancellationToken);
             order.AttachPaymentProofs(attachedInputs, updatedBy, now);

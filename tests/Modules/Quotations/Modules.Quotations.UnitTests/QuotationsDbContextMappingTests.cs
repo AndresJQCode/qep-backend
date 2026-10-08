@@ -187,6 +187,25 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// La fecha de pago de un comprobante (a pedido, 2026-10-08): `date` y no `timestamp`, porque
+    /// es la fecha del soporte y no un instante; nullable, porque los comprobantes anteriores al
+    /// campo no la tienen.
+    /// </summary>
+    [Fact]
+    public void OrderPaymentProofPaidOnMapsToANullableDateColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var proof = model.FindEntityType(typeof(OrderPaymentProof))!;
+        var property = proof.FindProperty(nameof(OrderPaymentProof.PaidOn))!;
+
+        Assert.Equal("paid_on", property.GetColumnName());
+        Assert.True(property.IsNullable);
+        Assert.Equal("date", property.GetColumnType());
+    }
+
+    /// <summary>
     /// Spec 2026-09-16, D17: Storage consulta esta tabla en cada barrido, por archivo
     /// (IFileReferenceProbe) y por clave pública (IPublicObjectReferenceProbe). Un índice por columna,
     /// con nombre fijo: un nombre por convención no lo ve el compilador, lo ve la próxima migración.

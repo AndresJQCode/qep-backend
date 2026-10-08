@@ -33,7 +33,7 @@ internal sealed class PaymentProofCopies(IPaymentProofPublisher publisher)
                 _publicKeys.Add(publicKey);
             }
 
-            inputs.Add(new OrderPaymentProofInput(proof.FileId, proof.Amount, publicKey));
+            inputs.Add(new OrderPaymentProofInput(proof.FileId, proof.Amount, publicKey, proof.PaidOn));
         }
 
         return inputs.ToArray();

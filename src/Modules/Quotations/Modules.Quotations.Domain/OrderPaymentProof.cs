@@ -22,7 +22,8 @@ public sealed class OrderPaymentProof
         string? publicStorageKey,
         decimal amount,
         MemberId uploadedBy,
-        DateTimeOffset uploadedAt)
+        DateTimeOffset uploadedAt,
+        DateOnly? paidOn)
     {
         Id = id;
         OrderId = orderId;
@@ -31,6 +32,7 @@ public sealed class OrderPaymentProof
         Amount = amount;
         UploadedBy = uploadedBy;
         UploadedAt = uploadedAt;
+        PaidOn = paidOn;
     }
 
     public OrderPaymentProofId Id { get; private set; }
@@ -60,6 +62,13 @@ public sealed class OrderPaymentProof
 
     public DateTimeOffset UploadedAt { get; private set; }
 
+    /// <summary>La fecha del soporte de pago, tal como la escribe quien adjunta el comprobante (a
+    /// pedido, 2026-10-08): el día en que el cliente pagó, que no es el día en que se subió el
+    /// archivo (<see cref="UploadedAt"/>) y es la que el Excel de pedidos muestra en «Fecha Pago N».
+    /// Fecha y no instante, porque el soporte no trae hora. Null en los comprobantes anteriores al
+    /// campo y en los que se adjuntan sin ella: no se inventa a partir de la subida.</summary>
+    public DateOnly? PaidOn { get; private set; }
+
     internal static OrderPaymentProof Create(
         OrderPaymentProofId id,
         OrderId orderId,
@@ -67,7 +76,8 @@ public sealed class OrderPaymentProof
         string? publicStorageKey,
         decimal amount,
         MemberId uploadedBy,
-        DateTimeOffset uploadedAt)
+        DateTimeOffset uploadedAt,
+        DateOnly? paidOn)
     {
         if (fileId == Guid.Empty)
         {
@@ -83,7 +93,8 @@ public sealed class OrderPaymentProof
                 "The payment proof amount must be greater than zero.");
         }
 
-        return new OrderPaymentProof(id, orderId, fileId, publicStorageKey, amount, uploadedBy, uploadedAt);
+        return new OrderPaymentProof(
+            id, orderId, fileId, publicStorageKey, amount, uploadedBy, uploadedAt, paidOn);
     }
 
     /// <summary>Corrige el monto de un comprobante ya cargado (a pedido, 2026-09) — sólo desde

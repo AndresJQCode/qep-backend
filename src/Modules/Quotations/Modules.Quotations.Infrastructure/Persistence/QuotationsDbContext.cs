@@ -505,6 +505,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("uploaded_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
         proof.Property(value => value.UploadedAt).HasColumnName("uploaded_at");
+        // La fecha del soporte (a pedido, 2026-10-08): `date`, porque es un día y no un instante, y
+        // nullable, porque los comprobantes anteriores al campo no la tienen y no se inventa.
+        proof.Property(value => value.PaidOn).HasColumnName("paid_on").HasColumnType("date");
         // La clave de la copia pública (spec 2026-09-15, P5): nullable, porque los comprobantes
         // privados no tienen. La clave mide 51 caracteres (`payment-proofs/` + 32 hex + extensión);
         // 200 deja margen.
