@@ -200,6 +200,9 @@ public sealed class QuotationTenantLogoLookupTests
 
         public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult(logoFileId);
+
+        public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     // Anota si alguien llamó a DownloadAsync; el resto de la interfaz no lo necesita este puerto.

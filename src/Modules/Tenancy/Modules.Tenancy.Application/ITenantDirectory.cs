@@ -19,4 +19,10 @@ public interface ITenantDirectory
     /// <summary>El logo vigente del tenant, o null sin logo. Es la única lectura que Quotations
     /// necesita de Tenancy para imprimir el logo en el PDF (decisión 9 del spec 2026-09-19).</summary>
     Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-08 §4: el estado del tenant, o null si no tiene fila (el tenant simulado del
+    /// stub). Es el puerto propio del stub para el estado: <see cref="ITenantModules.FindAsync"/> no cambia
+    /// su semántica de null («no enmascarar»), porque usarlo para "inactivo" le daría al stub todo lo de
+    /// X-Permissions sin enmascarar.</summary>
+    Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken);
 }

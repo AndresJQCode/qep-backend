@@ -86,6 +86,55 @@ public sealed class RealAuthenticationApiTests
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
+    // Spec 2026-10-08 §4 y criterio 5: misma cookie antes y después; los permisos se resuelven en cada
+    // request y la sesión se arma de nuevo en /auth/me. Reactivar deja todo como estaba (D8).
+    [Fact]
+    public async Task ASuspendedTenantLeavesTheSessionAndForbidsTheCookieUntilReactivated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+
+        await SetTenantStatusAsync(factory, tenantId, suspend: true);
+
+        var session = await owner.GetFromJsonAsync<SessionPayload>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(session!.ActiveTenants, tenant => tenant.TenantId == tenantId);
+        Assert.Equal(HttpStatusCode.Forbidden, (await GetSettingsAsync(owner, tenantId)).StatusCode);
+
+        await SetTenantStatusAsync(factory, tenantId, suspend: false);
+
+        session = await owner.GetFromJsonAsync<SessionPayload>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+        Assert.Contains(session!.ActiveTenants, tenant => tenant.TenantId == tenantId);
+        Assert.Equal(HttpStatusCode.OK, (await GetSettingsAsync(owner, tenantId)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await GetProductsAsync(owner, tenantId)).StatusCode);   // módulos intactos
+    }
+
+    private static async Task<HttpResponseMessage> GetSettingsAsync(HttpClient client, Guid tenantId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/settings");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    // Por el agregado, no por SQL: es el mismo camino que usará el handler de la consola.
+    private static async Task SetTenantStatusAsync(QepApiFactory factory, Guid tenantId, bool suspend)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = new TenantId(tenantId);
+        var tenant = await dbContext.Tenants.SingleAsync(value => value.Id == id, TestContext.Current.CancellationToken);
+        if (suspend)
+        {
+            tenant.Suspend(ChangeReason.Nonpayment, DateTimeOffset.UtcNow);
+        }
+        else
+        {
+            tenant.Reactivate(ChangeReason.Correction, DateTimeOffset.UtcNow);
+        }
+
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task GoogleBearerTokenCannotAuthenticateAnOrdinaryEndpoint()
     {

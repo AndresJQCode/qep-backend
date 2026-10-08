@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Bootstrapper.Authentication;
 
@@ -16,7 +17,8 @@ internal sealed class DevelopmentAuthenticationHandler(
     UrlEncoder encoder,
     ITenantModules tenantModules,
     ModuleEntitlementMask entitlementMask,
-    IOperatorTenant operatorTenant)
+    IOperatorTenant operatorTenant,
+    ITenantDirectory tenantDirectory)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string AuthenticationSchemeName = "Development";
@@ -32,23 +34,27 @@ internal sealed class DevelopmentAuthenticationHandler(
                 "Development requests require valid X-Subject-Id and X-Tenant-Id headers.");
         }
 
-        List<Claim> claims =
-        [
-            new(QepClaimTypes.SubjectId, subjectId),
-            new(QepClaimTypes.TenantId, tenantId)
-        ];
+        List<Claim> claims = [new(QepClaimTypes.SubjectId, subjectId)];
 
-        // Spec 2026-10-07, «Cuándo el stub enmascara»: el criterio es si el tenant tiene fila en
-        // tenancy.tenants. Sin fila (tenant simulado por casi todas las suites de Catalog, Customers
-        // y Companies) los permisos quedan como vienen; con fila, se enmascaran igual que por cookie.
-        var requested = ResolvePermissions();
-        var modules = await tenantModules.FindAsync(parsedTenantId, Context.RequestAborted);
-        var masked = modules is null ? requested : entitlementMask.Apply(requested, modules);
-        // Spec 2026-10-08 §2: siempre, exista o no la fila del tenant. El stub no puede autodeclararse
-        // operador con X-Permissions.
-        foreach (var permission in OperatorPermissionFilter.Apply(masked, operatorTenant.IsOperator(parsedTenantId)))
+        // Spec 2026-10-08 §4: con fila y no Active, ni claim de tenant ni permisos — el mismo efecto que
+        // el camino real. Sin fila (tenant simulado), sin cambio.
+        var status = await tenantDirectory.GetStatusAsync(new TenantId(parsedTenantId), Context.RequestAborted);
+        if (status is null or TenantStatus.Active)
         {
-            claims.Add(new Claim(QepClaimTypes.Permission, permission));
+            claims.Add(new Claim(QepClaimTypes.TenantId, tenantId));
+
+            // Spec 2026-10-07, «Cuándo el stub enmascara»: el criterio es si el tenant tiene fila en
+            // tenancy.tenants. Sin fila (tenant simulado por casi todas las suites de Catalog, Customers
+            // y Companies) los permisos quedan como vienen; con fila, se enmascaran igual que por cookie.
+            var requested = ResolvePermissions();
+            var modules = await tenantModules.FindAsync(parsedTenantId, Context.RequestAborted);
+            var masked = modules is null ? requested : entitlementMask.Apply(requested, modules);
+            // Spec 2026-10-08 §2: siempre, exista o no la fila del tenant. El stub no puede autodeclararse
+            // operador con X-Permissions.
+            foreach (var permission in OperatorPermissionFilter.Apply(masked, operatorTenant.IsOperator(parsedTenantId)))
+            {
+                claims.Add(new Claim(QepClaimTypes.Permission, permission));
+            }
         }
 
         // Claims de identidad opcionales que simulan un token de proveedor OIDC para el

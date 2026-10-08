@@ -39,7 +39,10 @@ internal sealed class MembershipRepository(TenancyDbContext dbContext) : IMember
         await (
             from membership in dbContext.Memberships
             join tenant in dbContext.Tenants on membership.TenantId equals tenant.Id
-            where membership.UserId == userId && membership.State == MembershipState.Active
+            // Spec 2026-10-08 §4: un tenant inactivo desaparece del selector de sesión (login y /auth/me).
+            where membership.UserId == userId
+                && membership.State == MembershipState.Active
+                && tenant.Status == TenantStatus.Active
             orderby tenant.DisplayName, tenant.Id
             // EF.Property y no membership.Roles: el mapeo ignora la propiedad y le da la columna
             // al campo privado (TenancyDbContext.cs:91-93).

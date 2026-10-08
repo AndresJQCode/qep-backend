@@ -1,5 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Testcontainers.PostgreSql;
 using static Modules.Tenancy.IntegrationTests.TenantModulesApiTests;
 
@@ -106,6 +110,43 @@ public sealed class OperatorConsoleApiTests
             TestContext.Current.CancellationToken);
 
         await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "authorization.role.permission_operator_only");
+    }
+
+    // Spec 2026-10-08 §4: el stub consulta el estado con ITenantDirectory, no con ITenantModules.
+    [Fact]
+    public async Task TheStubEmitsNoTenantClaimForASuspendedTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(factory, ownerId, tenantId, "tenancy.settings.read");
+        Assert.Contains("tenancy.settings.read", await EffectivePermissionsAsync(client, tenantId));
+
+        await SetTenantStatusAsync(factory, tenantId, suspend: true);
+
+        var me = await client.GetAsync($"/api/v1/tenants/{tenantId}/authorization/me", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Forbidden, me.StatusCode);
+        var modules = await client.GetAsync($"/api/v1/tenants/{tenantId}/modules", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Forbidden, modules.StatusCode);
+    }
+
+    // Por el agregado, igual que en RealAuthenticationApiTests (cada clase de pruebas lleva sus helpers).
+    internal static async Task SetTenantStatusAsync(QepApiFactory factory, Guid tenantId, bool suspend)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = new TenantId(tenantId);
+        var tenant = await dbContext.Tenants.SingleAsync(value => value.Id == id, TestContext.Current.CancellationToken);
+        if (suspend)
+        {
+            tenant.Suspend(ChangeReason.Nonpayment, DateTimeOffset.UtcNow);
+        }
+        else
+        {
+            tenant.Reactivate(ChangeReason.Correction, DateTimeOffset.UtcNow);
+        }
+
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static async Task<CatalogPayload> CatalogAsync(QepApiFactory factory, Guid tenantId)
