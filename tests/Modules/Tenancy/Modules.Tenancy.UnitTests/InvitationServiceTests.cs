@@ -362,6 +362,9 @@ public sealed class InvitationServiceTests
             string email,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException("Not used by invitation flows.");
+
+        public Task<ITenantChangeScope> BeginTenantChangeScopeAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class Audit : IAuditRecorder

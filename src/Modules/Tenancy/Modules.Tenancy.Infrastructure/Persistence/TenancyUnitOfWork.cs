@@ -27,6 +27,9 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
     /// </summary>
     private const string AdvisorCodeIndex = "IX_memberships_tenant_id_advisor_code";
 
+    /// <summary>PK de tenant_modules (AddTenantModules). Se reconoce por nombre, no sólo por el 23505.</summary>
+    private const string TenantModulesPrimaryKey = "PK_tenant_modules";
+
     public async Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
         string email,
         CancellationToken cancellationToken)
@@ -38,10 +41,22 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
         await dbContext.Database.ExecuteSqlAsync(
             $"SELECT pg_advisory_xact_lock(hashtext({UserLifecycleLockKey.For(email)}))",
             cancellationToken);
-        return new UserLifecycleScope(transaction);
+        return new TransactionScope(transaction);
     }
 
-    private sealed class UserLifecycleScope(IDbContextTransaction transaction) : IUserLifecycleScope
+    public async Task<ITenantChangeScope> BeginTenantChangeScopeAsync(
+        TenantId tenantId,
+        CancellationToken cancellationToken)
+    {
+        var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock(hashtext({TenantChangeLock.KeyFor(tenantId.Value)}))",
+            cancellationToken);
+        return new TransactionScope(transaction);
+    }
+
+    // Antes UserLifecycleScope: las dos operaciones son una transacción con un lock adentro.
+    private sealed class TransactionScope(IDbContextTransaction transaction) : IUserLifecycleScope, ITenantChangeScope
     {
         public Task CommitAsync(CancellationToken cancellationToken) =>
             transaction.CommitAsync(cancellationToken);
@@ -93,6 +108,19 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
             throw new TenantDomainException(
                 "tenancy.membership.advisor_code_taken",
                 "The advisor code is already in use in this tenant.");
+        }
+        // Spec 2026-10-08 §3: dos activaciones simultáneas de una clave sin fila. El candado de la consola
+        // lo evita; esto cubre a cualquier otro camino que inserte la misma clave. Sin la traducción, 500.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException
+            {
+                SqlState: UniqueViolation,
+                ConstraintName: TenantModulesPrimaryKey,
+            })
+        {
+            throw new TenantDomainException(
+                TenantModuleChangeBatch.NoChangesCode,
+                "The module row already exists.");
         }
     }
 }

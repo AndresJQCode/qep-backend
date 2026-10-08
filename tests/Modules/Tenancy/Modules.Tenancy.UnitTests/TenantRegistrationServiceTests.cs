@@ -80,6 +80,9 @@ public sealed class TenantRegistrationServiceTests
             steps.Add($"module:{tenantModule.ModuleKey.Value}");
             Added.Add(tenantModule);
         }
+
+        public Task<IReadOnlyList<TenantModule>> ListByTenantAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FixedDefaults(IReadOnlyCollection<TenantModuleKey> keys) : ITenantModuleDefaults

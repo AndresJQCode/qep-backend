@@ -17,6 +17,10 @@ public interface ITenantModules
 public interface ITenantModuleRepository
 {
     void Add(TenantModule tenantModule);
+
+    /// <summary>Todas las filas del tenant, inactivas incluidas y con tracking: es el estado guardado
+    /// que el lote de la consola valida y modifica (spec 2026-10-08 §3). Se lee con el candado tomado.</summary>
+    Task<IReadOnlyList<TenantModule>> ListByTenantAsync(TenantId tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Los módulos con los que nace un tenant del signup.</summary>

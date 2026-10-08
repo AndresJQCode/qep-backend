@@ -43,6 +43,9 @@ internal sealed class RecordingTenancyUnitOfWork(List<string> steps) : ITenancyU
     public Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
         string email, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<ITenantChangeScope> BeginTenantChangeScopeAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed record LogoStorageCall(string Method, Guid FileId, CancellationToken Token);
