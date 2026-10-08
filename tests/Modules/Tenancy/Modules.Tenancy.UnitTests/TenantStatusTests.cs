@@ -104,6 +104,6 @@ public sealed class TenantStatusTests
         tenant.Suspend(ChangeReason.Nonpayment, Later);
 
         Assert.Equal("tenancy.tenant.not_active", Assert.Throws<TenantDomainException>(() =>
-            tenant.UpdateSettings("Otro", "es-CO", "America/Bogota", "yyyy-MM-dd", Later)).Code);
+            tenant.UpdateSettings("Otro", "es-CO", "America/Bogota", "yyyy-MM-dd", tenant.DefaultCurrency, tenant.NumberFormat, Later)).Code);
     }
 }

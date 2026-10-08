@@ -55,6 +55,10 @@ public sealed class Tenant
 
     public string DateFormat { get; private set; } = string.Empty;
 
+    public string DefaultCurrency { get; private set; } = TenantCurrencies.Cop;
+
+    public string NumberFormat { get; private set; } = TenantNumberFormats.CommaDecimal;
+
     /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
     /// arma al leer con <see cref="LogoPublicKey"/> y la base pública configurada (decisión 3 del
@@ -120,6 +124,8 @@ public sealed class Tenant
         string defaultCulture,
         string timeZone,
         string dateFormat,
+        string defaultCurrency,
+        string numberFormat,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
@@ -128,12 +134,16 @@ public sealed class Tenant
         var validatedCulture = ValidateCulture(defaultCulture);
         var validatedTimeZone = ValidateTimeZone(timeZone);
         var validatedDateFormat = ValidateDateFormat(dateFormat);
+        var validatedCurrency = TenantCurrencies.Normalize(defaultCurrency);
+        var validatedNumberFormat = TenantNumberFormats.Normalize(numberFormat);
         List<string> changedFields = [];
 
         TrackChange(nameof(DisplayName), DisplayName, validatedDisplayName, changedFields);
         TrackChange(nameof(DefaultCulture), DefaultCulture, validatedCulture, changedFields);
         TrackChange(nameof(TimeZone), TimeZone, validatedTimeZone, changedFields);
         TrackChange(nameof(DateFormat), DateFormat, validatedDateFormat, changedFields);
+        TrackChange(nameof(DefaultCurrency), DefaultCurrency, validatedCurrency, changedFields);
+        TrackChange(nameof(NumberFormat), NumberFormat, validatedNumberFormat, changedFields);
 
         if (changedFields.Count == 0)
         {
@@ -144,6 +154,8 @@ public sealed class Tenant
         DefaultCulture = validatedCulture;
         TimeZone = validatedTimeZone;
         DateFormat = validatedDateFormat;
+        DefaultCurrency = validatedCurrency;
+        NumberFormat = validatedNumberFormat;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new TenantSettingsUpdatedDomainEvent(

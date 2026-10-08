@@ -17,6 +17,8 @@ public sealed class TenantTests
             "en-US",
             "America/New_York",
             "MM/dd/yyyy",
+            tenant.DefaultCurrency,
+            tenant.NumberFormat,
             CreatedAt.AddMinutes(5));
 
         Assert.True(changed);
@@ -29,6 +31,45 @@ public sealed class TenantTests
     }
 
     [Fact]
+    public void CreateDefaultsToPesosAndCommaDecimal()
+    {
+        var tenant = CreateTenant();
+
+        Assert.Equal(TenantCurrencies.Cop, tenant.DefaultCurrency);
+        Assert.Equal(TenantNumberFormats.CommaDecimal, tenant.NumberFormat);
+    }
+
+    [Fact]
+    public void UpdateSettingsChangesCurrencyAndNumberFormatAndTracksThem()
+    {
+        var tenant = CreateTenant();
+
+        var changed = tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            "usd", "1,234.56", CreatedAt.AddMinutes(5));
+
+        Assert.True(changed);
+        Assert.Equal("USD", tenant.DefaultCurrency);
+        Assert.Equal("1,234.56", tenant.NumberFormat);
+        var settingsUpdated = Assert.IsType<TenantSettingsUpdatedDomainEvent>(Assert.Single(tenant.DomainEvents));
+        Assert.Equal(["defaultCurrency", "numberFormat"], settingsUpdated.ChangedFields);
+    }
+
+    [Fact]
+    public void UpdateSettingsWithAnUnsupportedCurrencyThrowsAndChangesNothing()
+    {
+        var tenant = CreateTenant();
+
+        var exception = Assert.Throws<TenantDomainException>(() => tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            "EUR", tenant.NumberFormat, CreatedAt.AddMinutes(5)));
+
+        Assert.Equal("tenancy.settings.default_currency.invalid", exception.Code);
+        Assert.Equal(TenantCurrencies.Cop, tenant.DefaultCurrency);
+        Assert.Equal(1, tenant.Version);
+    }
+
+    [Fact]
     public void UpdateSettingsWithoutChangesDoesNotRaiseEvent()
     {
         var tenant = CreateTenant();
@@ -38,6 +79,8 @@ public sealed class TenantTests
             tenant.DefaultCulture,
             tenant.TimeZone,
             tenant.DateFormat,
+            tenant.DefaultCurrency,
+            tenant.NumberFormat,
             CreatedAt.AddMinutes(5));
 
         Assert.False(changed);
@@ -96,6 +139,8 @@ public sealed class TenantTests
                 tenant.DefaultCulture,
                 "SA Pacific Standard Time",
                 tenant.DateFormat,
+                tenant.DefaultCurrency,
+                tenant.NumberFormat,
                 CreatedAt.AddMinutes(5)));
 
         Assert.Equal("tenancy.settings.time_zone.invalid", exception.Code);

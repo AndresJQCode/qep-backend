@@ -62,6 +62,9 @@ public sealed class UpdateTenantSettingsHandler(
             command.DefaultCulture,
             command.TimeZone,
             command.DateFormat,
+            // Puente temporal: Task 3 los conecta al comando.
+            tenant.DefaultCurrency,
+            tenant.NumberFormat,
             clock.UtcNow);
 
         if (!changed)
