@@ -59,15 +59,21 @@ public sealed class RealAuthenticationApiTests
         var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
         Assert.Equal(HttpStatusCode.OK, (await GetProductsAsync(owner, tenantId)).StatusCode);
 
-        // Tercera copia deliberada del borrado de la fila (TenantModulesApiTests, QuotationsApiHarness):
-        // cada ensamblado de pruebas tiene su propia fábrica y no hay proyecto compartido.
+        // Tercera copia deliberada del apagado (TenantModulesApiTests, QuotationsApiHarness): cada
+        // ensamblado de pruebas tiene su propia fábrica y no hay proyecto compartido. Desde el spec
+        // 2026-10-08 §3 apagar deja la fila inactiva, no la borra.
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
             var id = new TenantId(tenantId);
+            var now = DateTimeOffset.UtcNow;
             await dbContext.TenantModules
                 .Where(module => module.TenantId == id && module.ModuleKey == TenantModuleKeys.Catalog)
-                .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(module => module.Status, TenantModuleStatus.Inactive)
+                        .SetProperty(module => module.StatusChangedAt, now),
+                    TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(HttpStatusCode.Forbidden, (await GetProductsAsync(owner, tenantId)).StatusCode);

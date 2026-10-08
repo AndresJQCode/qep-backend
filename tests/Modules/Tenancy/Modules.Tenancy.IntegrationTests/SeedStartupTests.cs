@@ -126,8 +126,8 @@ public sealed class SeedStartupTests
     }
 
     // Sólo al crear: el seeder devuelve antes si el tenant ya existe, así que correrlo otra vez no
-    // duplica (PK) ni resucita lo que alguien apagó a mano. Se borra una fila entre las dos
-    // corridas: si la segunda la repusiera, el módulo apagado volvería a prenderse solo.
+    // duplica (PK) ni resucita lo que alguien apagó a mano. Se apaga una fila entre las dos corridas
+    // (inactiva, spec 2026-10-08 §3): si la segunda la reactivara, el módulo volvería a prenderse solo.
     [Fact]
     public async Task SeedingTwiceDoesNotDuplicateTheModules()
     {
@@ -140,9 +140,14 @@ public sealed class SeedStartupTests
             var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
             var seedTenant = new TenantId(TenancySeeder.SeedTenantId);
             var pos = TenantModuleKeys.Pos;
+            var now = DateTimeOffset.UtcNow;
             await dbContext.TenantModules
                 .Where(module => module.TenantId == seedTenant && module.ModuleKey == pos)
-                .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(module => module.Status, TenantModuleStatus.Inactive)
+                        .SetProperty(module => module.StatusChangedAt, now),
+                    TestContext.Current.CancellationToken);
         }
 
         await factory.Services.SeedTenantWithOwnerAsync(
@@ -160,7 +165,7 @@ public sealed class SeedStartupTests
         var seedTenant = new TenantId(TenancySeeder.SeedTenantId);
         var rows = await dbContext.TenantModules
             .AsNoTracking()
-            .Where(module => module.TenantId == seedTenant)
+            .Where(module => module.TenantId == seedTenant && module.Status == TenantModuleStatus.Active)
             .ToListAsync(TestContext.Current.CancellationToken);
         Assert.All(rows, row => Assert.Equal(expectedSource, row.Source));
         return rows.Select(row => row.ModuleKey.Value).Order(StringComparer.Ordinal).ToList();

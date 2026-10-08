@@ -116,14 +116,15 @@ internal static class PosApiHarness
             """
             INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
             VALUES (@tenantId, 'pos', now(), 'manual')
-            ON CONFLICT (tenant_id, module_key) DO NOTHING
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
             """,
             ("tenantId", tenantId));
 
+    // Spec 2026-10-08 §3: apagar ya no borra la fila, la deja inactiva (el SQL de respaldo del README).
     public static Task DisablePosAsync(PostgreSqlContainer database, Guid tenantId) =>
         ExecuteSqlAsync(
             database,
-            "DELETE FROM tenancy.tenant_modules WHERE tenant_id = @tenantId AND module_key = 'pos'",
+            "UPDATE tenancy.tenant_modules SET status = 'inactive', status_changed_at = now() WHERE tenant_id = @tenantId AND module_key = 'pos'",
             ("tenantId", tenantId));
 
     public static async Task ExecuteSqlAsync(

@@ -52,7 +52,10 @@ internal static class QuotationsApiHarness
 
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
 
-    /// <summary>Spec 2026-10-07: apaga un módulo borrando su fila, como lo hace QCode por SQL.</summary>
+    /// <summary>
+    /// Spec 2026-10-08 §3: apaga un módulo dejando su fila en <c>inactive</c>, como el SQL de respaldo
+    /// del README. Ya no se borra: contratado = fila activa, y la fila inactiva es la que se reactiva.
+    /// </summary>
     public static async Task DisableModuleAsync(
         QepApiFactory factory, Guid tenantId, Modules.Tenancy.Domain.TenantModuleKey key)
     {
@@ -60,20 +63,41 @@ internal static class QuotationsApiHarness
         var dbContext = scope.ServiceProvider
             .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
         var id = new Modules.Tenancy.Domain.TenantId(tenantId);
+        var now = DateTimeOffset.UtcNow;
         await dbContext.TenantModules
             .Where(module => module.TenantId == id && module.ModuleKey == key)
-            .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(module => module.Status, Modules.Tenancy.Domain.TenantModuleStatus.Inactive)
+                    .SetProperty(module => module.StatusChangedAt, now),
+                TestContext.Current.CancellationToken);
     }
 
-    /// <summary>Lo prende otra vez con origen <c>manual</c>, el que escribe el SQL de «Operación».</summary>
+    /// <summary>
+    /// Lo prende otra vez: reactiva la fila si existe (inactiva) o la crea con origen <c>manual</c>, el
+    /// que escribe el SQL de «Operación». Crearla siempre chocaría con la PK de la fila inactiva.
+    /// </summary>
     public static async Task EnableModuleAsync(
         QepApiFactory factory, Guid tenantId, Modules.Tenancy.Domain.TenantModuleKey key)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider
             .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
-        dbContext.TenantModules.Add(Modules.Tenancy.Domain.TenantModule.Create(
-            new Modules.Tenancy.Domain.TenantId(tenantId), key, "manual", DateTimeOffset.UtcNow, note: null));
+        var id = new Modules.Tenancy.Domain.TenantId(tenantId);
+        var now = DateTimeOffset.UtcNow;
+        var row = await dbContext.TenantModules
+            .SingleOrDefaultAsync(
+                module => module.TenantId == id && module.ModuleKey == key,
+                TestContext.Current.CancellationToken);
+        if (row is null)
+        {
+            dbContext.TenantModules.Add(Modules.Tenancy.Domain.TenantModule.Create(id, key, "manual", now, note: null));
+        }
+        else if (row.Status != Modules.Tenancy.Domain.TenantModuleStatus.Active)
+        {
+            row.Activate(now);
+        }
+
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 

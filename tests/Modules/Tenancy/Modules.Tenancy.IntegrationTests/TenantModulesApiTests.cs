@@ -247,14 +247,20 @@ public sealed class TenantModulesApiTests
         return client;
     }
 
+    // Spec 2026-10-08 §3: apagar deja la fila inactiva; contratado = fila activa.
     internal static async Task DisableAsync(QepApiFactory factory, Guid tenantId, TenantModuleKey key)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
         var id = new TenantId(tenantId);
+        var now = DateTimeOffset.UtcNow;
         await dbContext.TenantModules
             .Where(module => module.TenantId == id && module.ModuleKey == key)
-            .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(module => module.Status, TenantModuleStatus.Inactive)
+                    .SetProperty(module => module.StatusChangedAt, now),
+                TestContext.Current.CancellationToken);
     }
 
     internal static async Task<List<(string Key, string Source)>> RowsAsync(QepApiFactory factory, Guid tenantId)
