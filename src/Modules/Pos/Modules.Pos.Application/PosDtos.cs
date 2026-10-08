@@ -45,6 +45,7 @@ public sealed record RegisterContextResponse(
     Guid? DefaultCompanyId,
     string DefaultCurrency);
 
+/// <param name="Currency">La de la caja, congelada al abrir: la lista y el cierre no la toman de la caja abierta hoy.</param>
 /// <param name="CashDifference">Con signo y calculada: negativo = faltante. La pantalla sólo elige el color.</param>
 public sealed record PosSessionSummaryResponse(
     Guid Id,
@@ -54,6 +55,7 @@ public sealed record PosSessionSummaryResponse(
     DateTimeOffset OpenedAtLocal,
     DateTimeOffset? ClosedAtLocal,
     decimal OpeningFloat,
+    string Currency,
     int SalesCount,
     int VoidedCount,
     decimal SalesTotal,
@@ -174,6 +176,7 @@ public sealed record PosSaleResponse(
     bool Voidable,
     string? VoidBlockedReason);
 
+/// <param name="Currency">La de la venta: una fila de una caja en otra moneda no se rotula con la de hoy.</param>
 public sealed record PosSaleListItemResponse(
     Guid Id,
     string SaleNumber,
@@ -181,6 +184,7 @@ public sealed record PosSaleListItemResponse(
     string CashierName,
     string CustomerName,
     decimal Total,
+    string Currency,
     string Status,
     IReadOnlyList<string> PaymentMethods,
     bool Voidable,

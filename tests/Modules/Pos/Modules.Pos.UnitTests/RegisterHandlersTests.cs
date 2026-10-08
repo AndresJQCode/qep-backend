@@ -258,6 +258,19 @@ public sealed class RegisterHandlersTests
     }
 
     [Fact]
+    public async Task TheClosingSummaryCarriesTheSessionCurrency()
+    {
+        var bed = new PosTestBed();
+        var session = bed.OpenSessionInStore(currency: "USD");
+
+        var summary = await Close(bed, Operator).HandleAsync(
+            new CloseCashSessionCommand(TenantId, session.Id.Value, session.Version, 100_000m, null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("USD", summary.Currency);
+    }
+
+    [Fact]
     public async Task ClosingAnAlreadyClosedSessionIsNotOpen()
     {
         var bed = new PosTestBed();

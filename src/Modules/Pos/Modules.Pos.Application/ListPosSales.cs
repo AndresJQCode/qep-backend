@@ -66,6 +66,7 @@ public sealed class ListPosSalesHandler(
                 row.CashierName,
                 row.Sale.CustomerName,
                 row.Sale.Total,
+                row.Sale.Currency,
                 row.Sale.Status.ToString(),
                 row.Sale.Payments.OrderBy(payment => payment.Position).Select(payment => payment.Method.ToString()).ToArray(),
                 voidable,

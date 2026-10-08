@@ -41,6 +41,7 @@ internal static class PosSessionMapping
             calendar.ToLocal(session.OpenedAt),
             session.ClosedAt is { } closedAt ? calendar.ToLocal(closedAt) : null,
             session.OpeningFloat,
+            session.Currency,
             session.SalesCount,
             session.VoidedCount,
             session.SalesTotal,

@@ -227,6 +227,26 @@ public sealed class SaleReadAndVoidHandlersTests
             new ListPosSalesQuery(TenantId, null, new DateOnly(2026, 10, 8), new DateOnly(2026, 10, 7), null, null, 1, 20), TestContext.Current.CancellationToken));
     }
 
+    // Cada fila trae su moneda: una caja que corrió en USD no se rotula con la de la caja abierta hoy.
+    [Fact]
+    public async Task ListsAndSessionSummariesCarryTheirOwnCurrency()
+    {
+        var bed = new PosTestBed();
+        var session = bed.OpenSessionInStore(currency: "USD");
+        StoreSale(bed, session);
+
+        var sales = await List(bed, Reader).HandleAsync(
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
+        var sessions = await Sessions(bed, Reader).HandleAsync(
+            new ListCashSessionsQuery(TenantId, null, null, null, 1, 20), TestContext.Current.CancellationToken);
+        var summary = await Session(bed, Reader).HandleAsync(
+            new GetCashSessionQuery(TenantId, session.Id.Value), TestContext.Current.CancellationToken);
+
+        Assert.Equal("USD", Assert.Single(sales.Items).Currency);
+        Assert.Equal("USD", Assert.Single(sessions.Items).Currency);
+        Assert.Equal("USD", summary.Currency);
+    }
+
     // Decisión 32: el cajero lee sus propias cajas, abiertas y cerradas, para reimprimir un cierre.
     [Fact]
     public async Task TheCashierReadsTheirOwnClosedSessionButNotSomeoneElses()
