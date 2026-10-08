@@ -1,3 +1,6 @@
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Modules.Tenancy.Application;
 using Npgsql;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -31,5 +34,57 @@ internal static class WhatsAppTestHarness
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         return await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static string WhatsAppSettingsUrl(Guid tenantId) =>
+        $"/api/v1/tenants/{tenantId}/quotations/whatsapp-settings";
+
+    public static string WhatsAppChannelUrl(Guid tenantId) =>
+        $"/api/v1/tenants/{tenantId}/quotations/whatsapp-channel";
+
+    public static readonly string[] SettingsPermissions =
+        [TenancyPermissions.SettingsRead, TenancyPermissions.SettingsUpdate];
+
+    /// <summary>El cuerpo va como objeto anónimo a propósito: así una prueba manda exactamente lo
+    /// que quiere (campos ausentes incluidos), sin un record que los rellene con null.</summary>
+    public static async Task<HttpResponseMessage> PutSettingsAsync(
+        HttpClient client, Guid tenantId, object body, string? ifMatch)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, WhatsAppSettingsUrl(tenantId))
+        {
+            Content = JsonContent.Create(body),
+        };
+        request.Headers.TryAddWithoutValidation("X-Qep-Client", "web");
+        if (ifMatch is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    public static object OwnBody(string apiKey = SentinelApiKey) => new
+    {
+        mode = "Own",
+        provider = "Zenvia",
+        apiKey,
+        fromNumber = FromNumber,
+        templateId = TemplateId,
+    };
+
+    /// <summary><see cref="QuotationsApiHarness.CreateClient"/> pide un <c>QepApiFactory</c>; un
+    /// host derivado con <c>WithWebHostBuilder</c> no lo es. Mismos headers del stub.</summary>
+    public static HttpClient CreateClientFor(
+        WebApplicationFactory<Program> factory, Guid subjectId, Guid tenantId, params string[] permissions)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Subject-Id", subjectId.ToString());
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString());
+        if (permissions.Length > 0)
+        {
+            client.DefaultRequestHeaders.Add("X-Permissions", string.Join(',', permissions));
+        }
+
+        return client;
     }
 }
