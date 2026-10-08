@@ -121,6 +121,9 @@ public sealed class PosRegisterEdgeApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var world = await PosWorld.ArrangeAsync(factory, database);
+        // El rango se toma de «hoy» antes de vender y de «hoy» después de anular: si la corrida
+        // cruza la medianoche de Bogotá, las ventas siguen dentro de [from, to].
+        var from = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-5)).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         var session = await world.OpenSessionAsync(world.Admin);
         var firstId = Guid.CreateVersion7();
         var secondId = Guid.CreateVersion7();
@@ -128,13 +131,13 @@ public sealed class PosRegisterEdgeApiTests
         await PostSaleAsync(world, secondId, session.Id);
         var voided = await world.Admin.PostAsJsonAsync($"{world.Url}/sales/{secondId}/void", new { reason = "Error de digitación" }, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, voided.StatusCode);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-5)).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var to = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-5)).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
-        var all = await GetPageAsync<PosSaleListItemResponse>(world, $"/sales?sessionId={session.Id}&from={today}&to={today}");
+        var all = await GetPageAsync<PosSaleListItemResponse>(world, $"/sales?sessionId={session.Id}&from={from}&to={to}");
         var completed = await GetPageAsync<PosSaleListItemResponse>(world, "/sales?status=Completed");
         var byNumber = await GetPageAsync<PosSaleListItemResponse>(world, "/sales?number=POS-000002");
         var open = await GetPageAsync<PosSessionSummaryResponse>(world, "/sessions?status=Open");
-        var dated = await GetPageAsync<PosSessionSummaryResponse>(world, $"/sessions?from={today}&to={today}");
+        var dated = await GetPageAsync<PosSessionSummaryResponse>(world, $"/sessions?from={from}&to={to}");
         var closedList = await GetPageAsync<PosSessionSummaryResponse>(world, "/sessions?status=Closed");
 
         Assert.Equal(2, all.Total);
@@ -197,9 +200,18 @@ public sealed class PosRegisterEdgeApiTests
             "UPDATE pos.sales SET cash_session_id = @foreign WHERE tenant_id = @t",
             ("foreign", foreign.Id), ("t", world.Tenant.TenantId));
 
+        var foreignCashier = (await other.Admin.GetFromJsonAsync<RegisterContextResponse>(
+            $"{other.Url}/register", TestContext.Current.CancellationToken))!.Cashier.Name;
+        var ownCashier = (await world.Admin.GetFromJsonAsync<RegisterContextResponse>(
+            $"{world.Url}/register", TestContext.Current.CancellationToken))!.Cashier.Name;
+
         var response = await world.Admin.GetAsync($"{world.Url}/sales", TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        // Lo que importa es que la lista no responda: el status exacto (hoy un 500) no es contrato.
+        // Si los dos cajeros se llamaran igual la prueba no distinguiría nada.
+        Assert.NotEqual(ownCashier, foreignCashier);
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+        Assert.DoesNotContain(foreignCashier, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
     }
 
     private static Task<HttpResponseMessage> CloseAsync(PosWorld world, Guid sessionId, long version, decimal counted)
