@@ -107,27 +107,42 @@ public sealed class TenantChangePersistenceTests
             .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
     }
 
-    // Dos cambios en el mismo instante: gana el de Id mayor (UUID v7, el último escrito), siempre. Se
-    // insertan en orden de Id para que un ORDER BY sin desempate devuelva el primero.
+    // Dos cambios en el mismo instante: gana siempre el de Id mayor. Ojo: el Id mayor NO es
+    // necesariamente el último escrito — Guid.CreateVersion7 no es monótono dentro del mismo
+    // milisegundo (el resto son bits aleatorios), y suponerlo hacía que esta prueba fallara a veces.
+    // Lo que se garantiza es un desempate determinista, así que el esperado se calcula con los Id
+    // reales. Guid.CompareTo ordena igual que el uuid de Postgres (orden de bytes big-endian).
     [Fact]
-    public async Task TheLastReasonBreaksTiesByTheNewestId()
+    public async Task TheLastReasonBreaksTiesByTheHighestId()
     {
         await using var database = await StartDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var tenantId = await SeedTenantAsync(provider);
         var actor = Guid.CreateVersion7();
 
+        var moduleChanges = new[]
+        {
+            TenantChange.ForModule(tenantId, Guid.CreateVersion7(), TenantModuleKeys.Pos, null, TenantModuleStatus.Active,
+                ChangeReason.Courtesy, null, actor, Now),
+            TenantChange.ForModule(tenantId, Guid.CreateVersion7(), TenantModuleKeys.Pos, TenantModuleStatus.Active,
+                TenantModuleStatus.Active, ChangeReason.Correction, null, actor, Now),
+        };
+        var statusChanges = new[]
+        {
+            TenantChange.ForTenantStatus(tenantId, Guid.CreateVersion7(), TenantStatus.Active, TenantStatus.Suspended,
+                ChangeReason.Nonpayment, null, actor, Now),
+            TenantChange.ForTenantStatus(tenantId, Guid.CreateVersion7(), TenantStatus.Suspended, TenantStatus.Active,
+                ChangeReason.Contract, null, actor, Now),
+        };
+
         await using (var scope = provider.CreateAsyncScope())
         {
             var changes = scope.ServiceProvider.GetRequiredService<ITenantChangeRepository>();
-            changes.Add(TenantChange.ForModule(tenantId, Guid.CreateVersion7(), TenantModuleKeys.Pos, null, TenantModuleStatus.Active,
-                ChangeReason.Courtesy, null, actor, Now));
-            changes.Add(TenantChange.ForModule(tenantId, Guid.CreateVersion7(), TenantModuleKeys.Pos, TenantModuleStatus.Active,
-                TenantModuleStatus.Active, ChangeReason.Correction, null, actor, Now));
-            changes.Add(TenantChange.ForTenantStatus(tenantId, Guid.CreateVersion7(), TenantStatus.Active, TenantStatus.Suspended,
-                ChangeReason.Nonpayment, null, actor, Now));
-            changes.Add(TenantChange.ForTenantStatus(tenantId, Guid.CreateVersion7(), TenantStatus.Suspended, TenantStatus.Active,
-                ChangeReason.Contract, null, actor, Now));
+            foreach (var change in moduleChanges.Concat(statusChanges))
+            {
+                changes.Add(change);
+            }
+
             await scope.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
@@ -136,8 +151,8 @@ public sealed class TenantChangePersistenceTests
             .FindAsync(tenantId, TestContext.Current.CancellationToken);
 
         Assert.NotNull(snapshot);
-        Assert.Equal(ChangeReason.Correction, snapshot.LastModuleReasons[TenantModuleKeys.Pos]);
-        Assert.Equal(ChangeReason.Contract, snapshot.LastStatusChange?.Reason);
+        Assert.Equal(moduleChanges.MaxBy(change => change.Id)!.Reason, snapshot.LastModuleReasons[TenantModuleKeys.Pos]);
+        Assert.Equal(statusChanges.MaxBy(change => change.Id)!.Reason, snapshot.LastStatusChange?.Reason);
     }
 
     // El candado vive en el espacio de dos claves (namespace, hashtext): un lock de una sola clave con el
