@@ -3,6 +3,9 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -23,6 +26,7 @@ public sealed class AuditRecordingTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateAdminClient(factory);
+        await SeedTenantAsync(factory);
         var email = NewEmail();
 
         var response = await InviteAsync(client, email);
@@ -150,6 +154,29 @@ public sealed class AuditRecordingTests
         }
 
         return values;
+    }
+
+    /// <summary>
+    /// Desde la FK de <c>memberships.tenant_id</c> a <c>tenants</c> (ae19c5c), invitar en un tenant que
+    /// no existe en la base falla con 23503: el stub de desarrollo deja autodeclarar el tenant, pero la
+    /// membresía nueva necesita su fila. Mismo patrón que <c>SeedSeededTenantAsync</c> en las pruebas
+    /// de Tenancy. El <c>ownerMembershipId</c> es nuevo y nunca se persiste, así que no aparece en
+    /// ningún roster.
+    /// </summary>
+    private static async Task SeedTenantAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        dbContext.Tenants.Add(Tenant.Create(
+            new TenantId(Guid.Parse(SeededTenantId)),
+            "auditoria",
+            "Auditoría",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     private static string NewEmail() => $"invitee-{Guid.NewGuid():N}@example.com";
