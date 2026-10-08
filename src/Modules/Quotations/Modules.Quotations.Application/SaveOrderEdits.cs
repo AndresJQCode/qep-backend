@@ -149,7 +149,8 @@ public sealed class SaveOrderEditsHandler(
                 }
 
                 corrections.Add(new OrderPaymentProofAmountUpdate(
-                    new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId, newPublicStorageKey));
+                    new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId, newPublicStorageKey,
+                    update.PaidOn));
             }
 
             order.CorrectPaymentProofs(corrections, now);

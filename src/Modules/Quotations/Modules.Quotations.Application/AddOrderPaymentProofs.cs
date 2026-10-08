@@ -163,7 +163,7 @@ public sealed class AddOrderPaymentProofsHandler(
 
                 updatedProofs.Add(new OrderPaymentProofAmountUpdate(
                     new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId,
-                    newPublicStorageKey));
+                    newPublicStorageKey, update.PaidOn));
             }
 
             order.AddPaymentProofs(

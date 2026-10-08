@@ -267,6 +267,49 @@ public sealed class OrderEditsApiTests
         Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.payment-proofs-detached.v1"));
     }
 
+    // A pedido (2026-10-08): «Editar pedido» corrige la fecha del soporte de un comprobante que ya
+    // existe en `proofs.update[].paidOn`, igual que el monto. Antes el campo no viajaba en la
+    // corrección y la pantalla lo mandaba sin efecto.
+    [Fact]
+    public async Task SaveCorrectsThePaidOnDateOfAnExistingProof()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var converted = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(
+                "FullPaymentReceived", null,
+                [new OrderPaymentProofRequest(proofFileId, quotation.Total, new DateOnly(2026, 10, 1))]),
+            TestContext.Current.CancellationToken);
+        converted.EnsureSuccessStatusCode();
+        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        var existing = Assert.Single(order.PaymentProofs);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)],
+                new OrderEditProofsRequest(
+                    null,
+                    [new OrderPaymentProofUpdateRequest(
+                        existing.Id, quotation.Total, PaidOn: new DateOnly(2026, 10, 7))],
+                    null),
+                null));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadDetailAsync(response);
+        var corrected = Assert.Single(saved.Order.PaymentProofs);
+        Assert.Equal(existing.Id, corrected.Id);
+        Assert.Equal(new DateOnly(2026, 10, 7), corrected.PaidOn);
+    }
+
     // Atomicidad: el proofId ajeno falla después de aplicar los productos en memoria, y nada
     // persiste. El fileId inexistente falla antes de mutar, con su propio código.
     [Fact]
