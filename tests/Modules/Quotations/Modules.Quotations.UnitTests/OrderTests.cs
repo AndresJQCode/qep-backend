@@ -1040,4 +1040,108 @@ public sealed class OrderTests
         Assert.Equal(OrderStatus.Invoiced, order.Status);
         Assert.Equal(3, order.Version);
     }
+
+    // A pedido (2026-10-08): la fecha del comprobante la escribe quien lo adjunta —es la del
+    // soporte de pago, no la del día en que se subió— y viaja con él desde que nace.
+    [Fact]
+    public void CreateKeepsThePaidOnDateOfEachProof()
+    {
+        var paidOn = new DateOnly(2026, 10, 6);
+
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 50_000m, PaidOn: paidOn)]);
+
+        Assert.Equal(paidOn, Assert.Single(order.PaymentProofs).PaidOn);
+    }
+
+    // Los comprobantes anteriores al campo no tienen fecha: null, no un valor inventado.
+    [Fact]
+    public void AProofWithoutPaidOnStaysWithoutADate()
+    {
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 50_000m)]);
+
+        Assert.Null(Assert.Single(order.PaymentProofs).PaidOn);
+    }
+
+    [Fact]
+    public void AddPaymentProofsKeepsThePaidOnDateOfTheNewProof()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PartialPaymentReceived);
+        var fileId = Guid.CreateVersion7();
+        var paidOn = new DateOnly(2026, 10, 7);
+
+        order.AddPaymentProofs(
+            [new OrderPaymentProofInput(fileId, 30_000m, PaidOn: paidOn)],
+            OrderPaymentStatus.FullPaymentReceived,
+            null,
+            new MemberId(Guid.CreateVersion7()),
+            Now.AddDays(1));
+
+        var added = Assert.Single(order.PaymentProofs, proof => proof.FileId == fileId);
+        Assert.Equal(paidOn, added.PaidOn);
+    }
+
+    [Fact]
+    public void AttachPaymentProofsKeepsThePaidOnDateOfTheNewProof()
+    {
+        var order = NewOrder();
+        var fileId = Guid.CreateVersion7();
+        var paidOn = new DateOnly(2026, 10, 7);
+
+        order.AttachPaymentProofs(
+            [new OrderPaymentProofInput(fileId, 30_000m, PaidOn: paidOn)], new MemberId(Guid.CreateVersion7()), Now.AddDays(1));
+
+        var added = Assert.Single(order.PaymentProofs, proof => proof.FileId == fileId);
+        Assert.Equal(paidOn, added.PaidOn);
+    }
+
+    // A pedido (2026-10-08): al corregir un comprobante, la fecha del soporte se corrige con el
+    // monto. La pantalla precarga las dos y manda las dos, así que el valor que viene reemplaza
+    // al guardado —null la borra— igual que el monto, y no como `NewFileId`, que null conserva.
+    [Fact]
+    public void CorrectPaymentProofsUpdatesThePaidOnDate()
+    {
+        var order = NewOrder(
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m, PaidOn: new DateOnly(2026, 10, 1))]);
+        var proof = Assert.Single(order.PaymentProofs);
+        var paidOn = new DateOnly(2026, 10, 7);
+
+        order.CorrectPaymentProofs(
+            [new OrderPaymentProofAmountUpdate(proof.Id, 100_000m, PaidOn: paidOn)], Now.AddDays(1));
+
+        Assert.Equal(paidOn, proof.PaidOn);
+    }
+
+    [Fact]
+    public void CorrectPaymentProofsWithoutPaidOnClearsTheDate()
+    {
+        var order = NewOrder(
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m, PaidOn: new DateOnly(2026, 10, 1))]);
+        var proof = Assert.Single(order.PaymentProofs);
+
+        order.CorrectPaymentProofs([new OrderPaymentProofAmountUpdate(proof.Id, 100_000m)], Now.AddDays(1));
+
+        Assert.Null(proof.PaidOn);
+    }
+
+    [Fact]
+    public void AddPaymentProofsUpdatesThePaidOnDateOfAnExistingProof()
+    {
+        var order = NewOrder(
+            paymentStatus: OrderPaymentStatus.PartialPaymentReceived,
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 50_000m)]);
+        var existingProofId = Assert.Single(order.PaymentProofs).Id;
+        var paidOn = new DateOnly(2026, 10, 7);
+
+        order.AddPaymentProofs(
+            [],
+            OrderPaymentStatus.PartialPaymentReceived,
+            null,
+            ConvertedBy,
+            Now.AddDays(1),
+            [new OrderPaymentProofAmountUpdate(existingProofId, 60_000m, PaidOn: paidOn)]);
+
+        var corrected = Assert.Single(order.PaymentProofs);
+        Assert.Equal(60_000m, corrected.Amount);
+        Assert.Equal(paidOn, corrected.PaidOn);
+    }
 }

@@ -746,7 +746,8 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
                 .ToDictionary(
                     row => row.Order.Id,
                     row => (IReadOnlyList<OrderExportPaymentProof>)row.Order.PaymentProofs
-                        .Select(proof => new OrderExportPaymentProof(proof.Id, proof.PublicStorageKey, proof.UploadedAt, proof.Amount))
+                        .Select(proof => new OrderExportPaymentProof(
+                            proof.Id, proof.PublicStorageKey, proof.UploadedAt, proof.Amount, proof.PaidOn))
                         .ToArray()));
     }
 

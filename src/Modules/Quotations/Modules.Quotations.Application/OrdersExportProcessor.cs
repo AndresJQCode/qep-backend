@@ -69,7 +69,8 @@ public sealed class OrdersExportProcessor(
     /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
     /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
     /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido). De
-    /// última, "Total facturado" (ajuste 2026-10-05, <see cref="Quotation.Total"/>).
+    /// últimas, "Total facturado" (ajuste 2026-10-05, <see cref="Quotation.Total"/>) y "Retencion"
+    /// (ajuste 2026-10-06, <see cref="Quotation.RetentionAmount"/>).
     ///
     /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02), las "Forma de pago
     /// N" (ajuste 2026-10-03) y "Transportadora" (ajuste 2026-10-05) están en el catálogo pero
@@ -358,6 +359,11 @@ public sealed class OrdersExportProcessor(
                 // "Total consignado" para que el ERP lo cuadre contra él. Total y no NetTotal: la
                 // retención no rebaja la factura, sólo lo que se cobra.
                 ExportCell.OfNumber(quotation.Total),
+                // "Retencion" (ajuste 2026-10-06): la retención del pedido entero, número como "Total
+                // facturado" para que el ERP cuadre lo facturado contra lo que se cobra (NetTotal =
+                // Total − RetentionAmount). Sin retención sale 0 y no vacía: a diferencia de "Total
+                // consignado", acá 0 dice la verdad —no se retiene nada—.
+                ExportCell.OfNumber(quotation.RetentionAmount),
             ];
         }
     }
@@ -499,12 +505,23 @@ public sealed class OrdersExportProcessor(
                 ? ExportCell.OfNumber(code)
                 : ExportCell.OfText(string.Empty);
 
+    // "Fecha Pago N": la fecha del soporte que escribió quien adjuntó el comprobante (a pedido,
+    // 2026-10-08), sin hora porque el soporte no la trae. Un comprobante sin ella —anterior al campo,
+    // o adjuntado sin mandarla— sigue mostrando el instante de subida en la hora local del tenant,
+    // como siempre: es lo único que se sabe de él, y una celda vacía diría que no hubo pago.
     private static ExportCell PaymentDateCell(
-        IReadOnlyList<OrderExportPaymentProof> proofs, int index, TenantCalendar calendar) =>
-        index >= proofs.Count
-            ? ExportCell.OfText(string.Empty)
-            : ExportCell.OfText(calendar.ToLocal(proofs[index].UploadedAt)
-                .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+        IReadOnlyList<OrderExportPaymentProof> proofs, int index, TenantCalendar calendar)
+    {
+        if (index >= proofs.Count)
+        {
+            return ExportCell.OfText(string.Empty);
+        }
+
+        var proof = proofs[index];
+        return ExportCell.OfText(proof.PaidOn is { } paidOn
+            ? paidOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+            : calendar.ToLocal(proof.UploadedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+    }
 
     // "V. Comprobante N" y "URL Comprobante N" (2026-09-24): el monto como número, porque el ERP lo
     // suma, y el enlace con la URL como texto. Sin copia pública, o con la opción apagada —UrlFor

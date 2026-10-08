@@ -397,7 +397,7 @@ public static class OrderEndpoints
                 .ToArray(),
             new OrderEditProofs(
                 (request.Proofs?.Add ?? [])
-                    .Select(addition => new OrderEditProofAddition(addition.FileId, addition.Amount))
+                    .Select(addition => new OrderEditProofAddition(addition.FileId, addition.Amount, addition.PaidOn))
                     .ToArray(),
                 request.Proofs?.Update ?? [],
                 request.Proofs?.RemoveIds ?? []));
@@ -477,7 +477,7 @@ public static class OrderEndpoints
         order.Version,
         order.PaymentProofs
             .Select(proof => new OrderPaymentProofResponse(
-                proof.Id, proof.FileId, proof.Amount, proof.UploadedAt))
+                proof.Id, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn))
             .ToArray());
 
     // Copia de RoleEndpoints.TryParseVersion (src/Api): este proyecto no puede referenciar Api, y

@@ -34,7 +34,7 @@ internal sealed class ImageSharpPaymentProofImageProcessor : IPaymentProofImageP
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var info = Image.Identify(content)
+            var info = Image.Identify(ImageSharpConfiguration.DecoderOptions, content)
                 ?? throw InvalidImage();
             if ((long)info.Width * info.Height > MaximumSourcePixels)
             {
@@ -43,7 +43,7 @@ internal sealed class ImageSharpPaymentProofImageProcessor : IPaymentProofImageP
                     "The image dimensions exceed the processing limit.");
             }
 
-            using var image = Image.Load(content);
+            using var image = Image.Load(ImageSharpConfiguration.DecoderOptions, content);
             image.Mutate(context => context.AutoOrient());
 
             // Sin agrandar (D7): ResizeMode.Max también sube una imagen chica hasta el tope, así que

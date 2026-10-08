@@ -106,7 +106,14 @@ type SendQuotationRequest = { pdfFileId: string };
 type ConvertQuotationToOrderRequest = {
   paymentStatus: "FullPaymentReceived" | "PartialPaymentReceived" | "PaymentPending";
   notes: string | null;
-  paymentProofs: { fileId: string; amount: number }[]; // vacío sólo permitido si paymentStatus = PaymentPending
+  // `paidOn` (2026-10-08) es la fecha del soporte de pago que escribe quien adjunta el comprobante,
+  // como fecha ISO sin hora (`"2026-10-06"`). Se guarda con el comprobante y es la que el Excel de
+  // pedidos muestra en `Fecha Pago N`; sin ella el comprobante queda con `paidOn: null` y el Excel
+  // cae a la fecha de subida. Que sea obligatoria es decisión pendiente. Mismo campo en
+  // `POST /orders/{orderId}/proofs` y en `proofs.add` de `PUT /orders/{orderId}`. Al corregir un
+  // comprobante que ya existe (`updatedProofs[]` y `proofs.update[]`) también viaja junto al
+  // `amount`, y reemplaza la guardada: null o ausente la borra, no es un PATCH parcial.
+  paymentProofs: { fileId: string; amount: number; paidOn?: string | null }[]; // vacío sólo permitido si paymentStatus = PaymentPending
 };
 
 type QuotationResponse = {
@@ -139,7 +146,9 @@ type OrderResponse = {
   ritualCollectionSyncId: string | null;
   createdAt: string; updatedAt: string;
   version: number; // el If-Match de PUT /orders/{orderId}
-  paymentProofs: { id, fileId, amount, uploadedAt }[];
+  // `uploadedAt` es el instante de la subida; `paidOn` la fecha del soporte que mandó el frontend
+  // al adjuntar (2026-10-08), o null si no la trajo.
+  paymentProofs: { id, fileId, amount, uploadedAt, paidOn: string | null }[];
 };
 
 type AddOrderItemsRequest = { toAdd: { productId: string; quantity: number }[] }; // al menos uno

@@ -149,7 +149,8 @@ public sealed class SaveOrderEditsHandler(
                 }
 
                 corrections.Add(new OrderPaymentProofAmountUpdate(
-                    new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId, newPublicStorageKey));
+                    new OrderPaymentProofId(update.ProofId), update.Amount, update.NewFileId, newPublicStorageKey,
+                    update.PaidOn));
             }
 
             order.CorrectPaymentProofs(corrections, now);
@@ -157,7 +158,7 @@ public sealed class SaveOrderEditsHandler(
             var attachedInputs = await copies.PublishAsync(
                 command.TenantId,
                 command.Proofs.Add
-                    .Select(addition => new OrderPaymentProofRequest(addition.FileId!.Value, addition.Amount))
+                    .Select(addition => new OrderPaymentProofRequest(addition.FileId!.Value, addition.Amount, addition.PaidOn))
                     .ToArray(),
                 cancellationToken);
             order.AttachPaymentProofs(attachedInputs, updatedBy, now);

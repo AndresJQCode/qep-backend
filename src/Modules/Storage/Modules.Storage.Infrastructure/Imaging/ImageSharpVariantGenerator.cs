@@ -21,7 +21,7 @@ internal sealed class ImageSharpVariantGenerator : IImageVariantGenerator
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var info = Image.Identify(content)
+            var info = Image.Identify(ImageSharpConfiguration.DecoderOptions, content)
                 ?? throw InvalidImage();
             if ((long)info.Width * info.Height > MaximumSourcePixels)
             {
@@ -30,7 +30,7 @@ internal sealed class ImageSharpVariantGenerator : IImageVariantGenerator
                     "The image dimensions exceed the processing limit.");
             }
 
-            using var image = Image.Load(content);
+            using var image = Image.Load(ImageSharpConfiguration.DecoderOptions, content);
             image.Mutate(context => context
                 .AutoOrient()
                 .Resize(new ResizeOptions

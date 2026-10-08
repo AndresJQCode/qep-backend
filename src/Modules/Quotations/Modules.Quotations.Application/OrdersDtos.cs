@@ -1,6 +1,7 @@
 namespace Modules.Quotations.Application;
 
-public sealed record OrderPaymentProofDto(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
+public sealed record OrderPaymentProofDto(
+    Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt, DateOnly? PaidOn);
 
 public sealed record OrderDto(
     Guid Id,
@@ -36,16 +37,26 @@ public sealed record OrderDto(
     IReadOnlyCollection<OrderPaymentProofDto> PaymentProofs);
 
 /// <summary>Un comprobante de pago, tal como viaja en el request de conversión (US-14): el
-/// archivo ya se subió a Storage por fuera de este llamado, acá sólo se referencia.</summary>
-public sealed record OrderPaymentProofRequest(Guid FileId, decimal Amount);
+/// archivo ya se subió a Storage por fuera de este llamado, acá sólo se referencia.
+/// <paramref name="PaidOn"/> es la fecha del soporte que escribe quien lo adjunta (a pedido,
+/// 2026-10-08), fecha ISO sin hora; el pedido la guarda con el comprobante y el Excel la muestra en
+/// «Fecha Pago N». Último y con default: el asistente de conversión y <c>POST /orders/{id}/proofs</c>
+/// comparten este record y hay quien lo construye posicionalmente. Que sea obligatoria queda como
+/// decisión pendiente.</summary>
+public sealed record OrderPaymentProofRequest(Guid FileId, decimal Amount, DateOnly? PaidOn = null);
 
 /// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
 /// <see cref="OrderPaymentProofRequest"/>, lleva el id del comprobante a corregir. El monto
 /// siempre se corrige; <paramref name="NewFileId"/> además reemplaza el archivo (a pedido,
 /// 2026-09-15) cuando el que se subió no era el correcto — null para corregir sólo el
-/// monto.</summary>
+/// monto. <paramref name="PaidOn"/> (a pedido, 2026-10-08) es la fecha del soporte, igual que en
+/// <see cref="OrderPaymentProofRequest"/>: la pantalla de edición la precarga con la guardada y la
+/// manda junto al monto, así que lo que llega reemplaza lo guardado y null (o ausente) la borra —
+/// no es un PATCH parcial, mismo criterio que <c>Notes</c>. Distinto de <paramref name="NewFileId"/>,
+/// donde null conserva el archivo porque subir uno es caro. Último parámetro, con default, porque
+/// los tres anteriores ya se pasan posicionalmente.</summary>
 public sealed record OrderPaymentProofUpdateRequest(
-    Guid ProofId, decimal Amount, Guid? NewFileId = null);
+    Guid ProofId, decimal Amount, Guid? NewFileId = null, DateOnly? PaidOn = null);
 
 /// <summary>US-13 a US-16: el asistente de conversión. No lleva cliente/productos/totales —
 /// todo eso se hereda de la cotización, que ya existe.</summary>
@@ -93,8 +104,9 @@ public sealed record CancelOrderRequest(string? Reason);
 public sealed record OrderEditItemRequest(Guid ProductId, decimal Quantity);
 
 /// <summary>Un comprobante nuevo del borrador. <paramref name="FileId"/> se omite en
-/// <c>POST /orders/{orderId}/preview</c>: los archivos se suben recién al guardar.</summary>
-public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount);
+/// <c>POST /orders/{orderId}/preview</c>: los archivos se suben recién al guardar.
+/// <paramref name="PaidOn"/>, igual que en <see cref="OrderPaymentProofRequest"/>.</summary>
+public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount, DateOnly? PaidOn = null);
 
 /// <summary>Los comprobantes del borrador. Ausentes o null equivalen a vacíos.</summary>
 public sealed record OrderEditProofsRequest(
@@ -120,7 +132,12 @@ public sealed record SaveOrderEditsRequest(
     /// quotation.retail.floor_not_allowed.</summary>
     bool IsRetail = false);
 
-public sealed record OrderPaymentProofResponse(Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt);
+/// <summary><c>PaidOn</c> es la fecha del soporte que mandó el frontend al adjuntar (a pedido,
+/// 2026-10-08), o null si el comprobante no la trajo; <c>UploadedAt</c> sigue siendo el instante
+/// de la subida. Las dos viajan: la pantalla muestra la primera y conserva la segunda como
+/// referencia de cuándo se cargó.</summary>
+public sealed record OrderPaymentProofResponse(
+    Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt, DateOnly? PaidOn);
 
 public sealed record OrderResponse(
     Guid Id,

@@ -92,12 +92,14 @@ public sealed class PreviewOrderEditsHandler(
 
         order.CorrectPaymentProofs(
             query.Proofs.Update
-                .Select(update => new OrderPaymentProofAmountUpdate(new OrderPaymentProofId(update.ProofId), update.Amount))
+                .Select(update => new OrderPaymentProofAmountUpdate(
+                    new OrderPaymentProofId(update.ProofId), update.Amount, PaidOn: update.PaidOn))
                 .ToArray(),
             now);
         order.AttachPaymentProofs(
             query.Proofs.Add
-                .Select(addition => new OrderPaymentProofInput(Guid.CreateVersion7(), addition.Amount))
+                .Select(addition => new OrderPaymentProofInput(
+                    Guid.CreateVersion7(), addition.Amount, PaidOn: addition.PaidOn))
                 .ToArray(),
             updatedBy,
             now);
