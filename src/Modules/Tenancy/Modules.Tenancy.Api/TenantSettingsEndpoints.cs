@@ -82,6 +82,8 @@ public static class TenantSettingsEndpoints
                 request.DefaultCulture,
                 request.TimeZone,
                 request.DateFormat,
+                request.DefaultCurrency,
+                request.NumberFormat,
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -129,6 +131,8 @@ public static class TenantSettingsEndpoints
             settings.DefaultCulture,
             settings.TimeZone,
             settings.DateFormat,
+            settings.DefaultCurrency,
+            settings.NumberFormat,
             settings.Version,
             settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null));
     }
@@ -138,7 +142,9 @@ public sealed record UpdateTenantSettingsRequest(
     string DisplayName,
     string DefaultCulture,
     string TimeZone,
-    string DateFormat);
+    string DateFormat,
+    string DefaultCurrency,
+    string NumberFormat);
 
 public sealed record SetTenantLogoRequest(Guid FileId);
 
@@ -154,5 +160,7 @@ public sealed record TenantSettingsResponse(
     string DefaultCulture,
     string TimeZone,
     string DateFormat,
+    string DefaultCurrency,
+    string NumberFormat,
     long Version,
     TenantLogoResponse? Logo);

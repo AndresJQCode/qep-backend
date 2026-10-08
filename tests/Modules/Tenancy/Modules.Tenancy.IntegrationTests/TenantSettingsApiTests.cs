@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -17,6 +18,42 @@ public sealed class TenantSettingsApiTests
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
     private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
+
+    [Fact]
+    public async Task PutChangesDefaultCurrencyAndNumberFormat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(
+            client, TenantId, etag, NewDisplayName(), defaultCurrency: "USD", numberFormat: "1,234.56");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("USD", body.GetProperty("defaultCurrency").GetString());
+        Assert.Equal("1,234.56", body.GetProperty("numberFormat").GetString());
+    }
+
+    [Fact]
+    public async Task PutWithUnsupportedCurrencyIsA422WithTheDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), defaultCurrency: "EUR");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.settings.default_currency.invalid", problem.GetProperty("code").GetString());
+    }
 
     [Fact]
     public async Task GetAndPutWithCurrentEtagUpdatesSettings()
@@ -233,7 +270,9 @@ public sealed class TenantSettingsApiTests
         HttpClient client,
         string tenantId,
         string ifMatch,
-        string displayName)
+        string displayName,
+        string defaultCurrency = "COP",
+        string numberFormat = "1.234,56")
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put,
@@ -244,7 +283,9 @@ public sealed class TenantSettingsApiTests
                 displayName,
                 defaultCulture = "es-CO",
                 timeZone = "America/Bogota",
-                dateFormat = "dd/MM/yyyy"
+                dateFormat = "dd/MM/yyyy",
+                defaultCurrency,
+                numberFormat
             })
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);

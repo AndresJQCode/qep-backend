@@ -11,6 +11,8 @@ internal static class TenantMappings
             tenant.DefaultCulture,
             tenant.TimeZone,
             tenant.DateFormat,
+            tenant.DefaultCurrency,
+            tenant.NumberFormat,
             tenant.Version,
             LogoOf(tenant, logoStorage));
 

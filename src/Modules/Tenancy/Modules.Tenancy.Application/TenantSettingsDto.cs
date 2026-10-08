@@ -8,6 +8,8 @@ public sealed record TenantSettingsDto(
     string DefaultCulture,
     string TimeZone,
     string DateFormat,
+    string DefaultCurrency,
+    string NumberFormat,
     long Version,
     TenantLogoDto? Logo);
 

@@ -11,6 +11,8 @@ public sealed record UpdateTenantSettingsCommand(
     string DefaultCulture,
     string TimeZone,
     string DateFormat,
+    string DefaultCurrency,
+    string NumberFormat,
     long ExpectedVersion,
     string CorrelationId) : ICommand<TenantSettingsDto>;
 
@@ -23,6 +25,8 @@ public sealed class UpdateTenantSettingsValidator
         RuleFor(command => command.DefaultCulture).NotEmpty().MaximumLength(20);
         RuleFor(command => command.TimeZone).NotEmpty().MaximumLength(100);
         RuleFor(command => command.DateFormat).NotEmpty().MaximumLength(30);
+        RuleFor(command => command.DefaultCurrency).NotEmpty().MaximumLength(3);
+        RuleFor(command => command.NumberFormat).NotEmpty().MaximumLength(10);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -62,9 +66,8 @@ public sealed class UpdateTenantSettingsHandler(
             command.DefaultCulture,
             command.TimeZone,
             command.DateFormat,
-            // Puente temporal: Task 3 los conecta al comando.
-            tenant.DefaultCurrency,
-            tenant.NumberFormat,
+            command.DefaultCurrency,
+            command.NumberFormat,
             clock.UtcNow);
 
         if (!changed)

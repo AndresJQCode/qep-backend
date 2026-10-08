@@ -97,9 +97,9 @@ public static class RegistrationEndpoints
             new TenantRegistrationData(
                 request.DisplayName,
                 request.Slug,
-                request.DefaultCulture,
-                request.TimeZone,
-                request.DateFormat),
+                string.IsNullOrWhiteSpace(request.DefaultCulture) ? DefaultCulture : request.DefaultCulture,
+                string.IsNullOrWhiteSpace(request.TimeZone) ? DefaultTimeZone : request.TimeZone,
+                string.IsNullOrWhiteSpace(request.DateFormat) ? DefaultDateFormat : request.DateFormat),
             httpContext.TraceIdentifier,
             cancellationToken);
 
@@ -118,6 +118,12 @@ public static class RegistrationEndpoints
             new RegisterTenantResponse(tenantId, ownerUserId));
     }
 
+    // Public signup asks only for name and identifier; the rest is tenant configuration that lives
+    // in /settings. The optional fields stay for the integration harnesses that still post them.
+    private const string DefaultCulture = "es-CO";
+    private const string DefaultTimeZone = "America/Bogota";
+    private const string DefaultDateFormat = "dd/MM/yyyy";
+
     private static bool IsEnabled(IConfiguration configuration) =>
         configuration.GetValue<bool>(FlagKey);
 }
@@ -127,8 +133,8 @@ public sealed record RegistrationPolicyResponse(bool PublicTenantSignupEnabled);
 public sealed record RegisterTenantRequest(
     string DisplayName,
     string Slug,
-    string DefaultCulture,
-    string TimeZone,
-    string DateFormat);
+    string? DefaultCulture = null,
+    string? TimeZone = null,
+    string? DateFormat = null);
 
 public sealed record RegisterTenantResponse(Guid TenantId, Guid OwnerUserId);
