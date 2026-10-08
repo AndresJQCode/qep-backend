@@ -31,6 +31,9 @@ public sealed class PreviewPosSaleValidator : AbstractValidator<PreviewPosSaleCo
 
 public sealed class PreviewPosSaleHandler(
     IPosProductLookup products,
+    ICashSessionRepository sessions,
+    IMembershipDirectory membershipDirectory,
+    ITenantDefaultCurrency tenantDefaultCurrency,
     IExecutionContext executionContext,
     IValidator<PreviewPosSaleCommand> validator)
     : ICommandHandler<PreviewPosSaleCommand, PosPreviewResponse>
@@ -51,7 +54,9 @@ public sealed class PreviewPosSaleHandler(
         var found = await products.FindManyAsync(
             command.TenantId, command.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
 
-        var lines = command.Lines.Select(line => ToLine(line, found)).ToArray();
+        var currency = await PosSellingCurrency.ResolveAsync(
+            sessions, membershipDirectory, tenantDefaultCurrency, executionContext, command.TenantId, cancellationToken);
+        var lines = command.Lines.Select(line => ToLine(line, found, currency)).ToArray();
         var sellable = lines.Where(line => line.Sellable).ToArray();
         var subtotal = VatIncludedLine.Round(sellable.Sum(line => line.Subtotal));
         var tax = VatIncludedLine.Round(sellable.Sum(line => line.TaxAmount));
@@ -67,7 +72,7 @@ public sealed class PreviewPosSaleHandler(
     }
 
     private static PosPreviewLineResponse ToLine(
-        PosPreviewLineRequest line, IReadOnlyDictionary<Guid, PosProductRef> found)
+        PosPreviewLineRequest line, IReadOnlyDictionary<Guid, PosProductRef> found, string currency)
     {
         if (!found.TryGetValue(line.ProductId, out var product))
         {
@@ -76,18 +81,19 @@ public sealed class PreviewPosSaleHandler(
                 0m, 0m, 0m, 0m, false, PosProductMapping.NotFound);
         }
 
-        var reason = PosProductMapping.UnsellableReason(product);
+        var price = product.PriceIn(currency);
+        var reason = PosProductMapping.UnsellableReason(product, currency);
         if (reason is not null)
         {
             return new PosPreviewLineResponse(
-                line.ProductId, product.Code, product.Name, line.Quantity, product.PriceCop, product.TaxPercentage,
+                line.ProductId, product.Code, product.Name, line.Quantity, price, product.TaxPercentage,
                 line.DiscountPercentage, 0m, 0m, 0m, 0m, false, reason);
         }
 
         var amounts = VatIncludedLine.Compute(
-            line.Quantity, product.PriceCop!.Value, line.DiscountPercentage, product.TaxPercentage);
+            line.Quantity, price!.Value, line.DiscountPercentage, product.TaxPercentage);
         return new PosPreviewLineResponse(
-            line.ProductId, product.Code, product.Name, line.Quantity, product.PriceCop, product.TaxPercentage,
+            line.ProductId, product.Code, product.Name, line.Quantity, price, product.TaxPercentage,
             line.DiscountPercentage, amounts.DiscountAmount, amounts.TaxAmount, amounts.Subtotal, amounts.LineTotal,
             true, null);
     }

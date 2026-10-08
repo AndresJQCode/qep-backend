@@ -12,13 +12,16 @@ public sealed class ProductAndPreviewHandlersTests
     private static readonly string[] Discounter = [PosPermissions.SaleCreate, PosPermissions.SaleDiscount];
 
     private static SearchPosProductsHandler Search(PosTestBed bed, params string[] permissions) =>
-        new(bed.Products, bed.Context(permissions), new SearchPosProductsValidator());
+        new(bed.Products, bed.Sessions, bed.Memberships, bed.DefaultCurrency, bed.Context(permissions),
+            new SearchPosProductsValidator());
 
     private static FindPosProductByCodeHandler ByCode(PosTestBed bed, params string[] permissions) =>
-        new(bed.Products, bed.Context(permissions), new FindPosProductByCodeValidator());
+        new(bed.Products, bed.Sessions, bed.Memberships, bed.DefaultCurrency, bed.Context(permissions),
+            new FindPosProductByCodeValidator());
 
     private static PreviewPosSaleHandler Preview(PosTestBed bed, params string[] permissions) =>
-        new(bed.Products, bed.Context(permissions), new PreviewPosSaleValidator());
+        new(bed.Products, bed.Sessions, bed.Memberships, bed.DefaultCurrency, bed.Context(permissions),
+            new PreviewPosSaleValidator());
 
     private static PosPreviewLineRequest[] WorkedExampleCart() =>
     [
@@ -135,6 +138,57 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.Null(notFound.Code);
         Assert.Null(notFound.Name);
         Assert.Equal(0m, notFound.LineTotal);
+    }
+
+    // La vista previa cotiza en la moneda con la que el POST va a cobrar: la de la caja abierta.
+    [Fact]
+    public async Task PreviewInAUsdSessionPricesWithTheUsdListAndMarksAProductWithoutIt()
+    {
+        var bed = new PosTestBed();
+        bed.OpenSessionInStore(currency: "USD");
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 40_000m, 0, id: Shampoo, priceUsd: 10m);
+        bed.Products.Add("JB-03", "Jabón", 2_990m, 0, id: Jabon);
+
+        var preview = await Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [new(Shampoo, 2m, 0m), new(Jabon, 1m, 0m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(20m, preview.Total);
+        Assert.Equal(10m, preview.Lines[0].UnitPrice);
+        Assert.Equal((false, "PriceMissing", (decimal?)null), (preview.Lines[1].Sellable, preview.Lines[1].UnsellableReason, preview.Lines[1].UnitPrice));
+    }
+
+    // Sin caja todavía, el catálogo se muestra en la moneda con la que se abriría: la del tenant.
+    [Fact]
+    public async Task SearchWithoutASessionPricesInTheTenantDefaultCurrency()
+    {
+        var bed = new PosTestBed { DefaultCurrency = new FakeTenantDefaultCurrency("USD") };
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 40_000m, 0, priceUsd: 10m);
+        bed.Products.Add("CR-77", "Crema", 25_000m, 19);
+
+        var page = await Search(bed, Seller).HandleAsync(
+            new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
+
+        var shampoo = page.Items.Single(item => item.Code == "SH-400");
+        var cream = page.Items.Single(item => item.Code == "CR-77");
+        Assert.Equal(10m, shampoo.UnitPrice);
+        Assert.True(shampoo.Sellable);
+        Assert.Equal((false, "PriceMissing", (decimal?)null), (cream.Sellable, cream.UnsellableReason, cream.UnitPrice));
+    }
+
+    // La caja abierta manda sobre la moneda vigente del tenant: se congeló al abrir.
+    [Fact]
+    public async Task ByCodeWithAnOpenSessionPricesInTheSessionCurrencyNotTheTenantDefault()
+    {
+        var bed = new PosTestBed { DefaultCurrency = new FakeTenantDefaultCurrency("USD") };
+        bed.OpenSessionInStore(currency: "COP");
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 40_000m, 0, priceUsd: 10m);
+
+        var found = await ByCode(bed, Seller).HandleAsync(
+            new FindPosProductByCodeQuery(TenantId, "SH-400"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(40_000m, found.UnitPrice);
+        Assert.True(found.Sellable);
     }
 
     // Review Focus 2.

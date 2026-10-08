@@ -11,7 +11,8 @@ public sealed class RegisterHandlersTests
     private static readonly string[] Operator = [PosPermissions.RegisterOperate];
 
     private static GetRegisterContextHandler Context(PosTestBed bed, params string[] permissions) =>
-        new(bed.Sessions, bed.Companies, bed.Cashiers, bed.Memberships, bed.Context(permissions), bed.TenantClock);
+        new(bed.Sessions, bed.Companies, bed.Cashiers, bed.Memberships, bed.Context(permissions), bed.TenantClock,
+            bed.DefaultCurrency);
 
     private static OpenCashSessionHandler Open(PosTestBed bed, params string[] permissions) =>
         new(bed.Sessions, bed.Companies, bed.Cashiers, bed.UnitOfWork, bed.Audit, bed.Memberships,
@@ -35,6 +36,23 @@ public sealed class RegisterHandlersTests
         Assert.Equal(new PosCashierResponse(Cashier.Value, "Laura Gómez"), context.Cashier);
         Assert.Equal(company.Id, context.DefaultCompanyId);
         Assert.Equal([company.Id], context.Companies.Select(option => option.Id).ToArray());
+    }
+
+    // La moneda de la caja viaja en Session.Currency; ésta es la del tenant, para la pantalla sin caja.
+    [Fact]
+    public async Task RegisterContextCarriesTheTenantDefaultCurrencyEvenWithASessionInAnother()
+    {
+        var bed = new PosTestBed { DefaultCurrency = new FakeTenantDefaultCurrency("USD") };
+        var withoutSession = await Context(bed, Operator).HandleAsync(
+            new GetRegisterContextQuery(TenantId), TestContext.Current.CancellationToken);
+        bed.OpenSessionInStore(currency: "COP");
+
+        var withSession = await Context(bed, Operator).HandleAsync(
+            new GetRegisterContextQuery(TenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal("USD", withoutSession.DefaultCurrency);
+        Assert.Equal("USD", withSession.DefaultCurrency);
+        Assert.Equal("COP", withSession.Session!.Currency);
     }
 
     [Fact]

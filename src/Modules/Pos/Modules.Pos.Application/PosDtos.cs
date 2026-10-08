@@ -37,11 +37,13 @@ public sealed record PosOpenSessionResponse(
 /// <param name="Session">null sin caja abierta: no tener caja es un estado, no un 404.</param>
 /// <param name="Companies">Viaja aquí porque el cajero no tiene companies.company.read y el selector de apertura la necesita.</param>
 /// <param name="DefaultCompanyId">null cuando hay que elegir (cero o más de una activa).</param>
+/// <param name="DefaultCurrency">La vigente del tenant, para la pantalla sin caja; con caja abierta manda Session.Currency.</param>
 public sealed record RegisterContextResponse(
     PosCashierResponse Cashier,
     PosOpenSessionResponse? Session,
     IReadOnlyList<PosCompanyOption> Companies,
-    Guid? DefaultCompanyId);
+    Guid? DefaultCompanyId,
+    string DefaultCurrency);
 
 /// <param name="CashDifference">Con signo y calculada: negativo = faltante. La pantalla sólo elige el color.</param>
 public sealed record PosSessionSummaryResponse(
@@ -147,6 +149,7 @@ public sealed record PosVoidResponse(string Reason, DateTimeOffset VoidedAtLocal
 /// de IVA y cambio. El frontend no arma nada.
 /// </summary>
 /// <param name="Voidable">Estado de la venta, no del que pregunta: Completed y su caja Open. Sin él la lista de ventas tendría que pedir una caja por fila.</param>
+/// <param name="Currency">La de la venta, copiada de su caja: todos los importes están en ella.</param>
 /// <param name="VoidBlockedReason">AlreadyVoided o SessionClosed; null con Voidable.</param>
 public sealed record PosSaleResponse(
     Guid Id,
@@ -163,6 +166,7 @@ public sealed record PosSaleResponse(
     decimal TaxAmount,
     decimal DiscountAmount,
     decimal Total,
+    string Currency,
     IReadOnlyList<PosTaxBreakdownResponse> TaxBreakdown,
     IReadOnlyList<PosPaymentResponse> Payments,
     decimal ChangeAmount,

@@ -65,6 +65,7 @@ internal sealed class PosProductLookup(
             item.Name,
             item.IsActive,
             item.PriceBaseCop,
+            item.PriceBaseUsd,
             // Sin tasa, o con una inexistente, cotiza con 0 % (QuotationProductPricingResolver).
             item.TaxRateId is { } id && percentages.TryGetValue(id, out var percentage) ? percentage : 0,
             // Mismas reglas que QuotationProductLookup: del tenant y disponible (preflight F-16);

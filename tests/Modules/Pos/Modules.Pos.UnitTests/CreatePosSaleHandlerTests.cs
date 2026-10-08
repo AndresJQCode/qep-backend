@@ -224,6 +224,38 @@ public sealed class CreatePosSaleHandlerTests
     }
 
     [Fact]
+    public async Task AUsdSessionPricesLinesWithTheUsdList()
+    {
+        var bed = new PosTestBed();
+        var product = bed.Products.Add("SH-400", "Shampoo 400 ml", 40_000m, 0, priceUsd: 10m);
+        var session = bed.OpenSessionInStore(currency: "USD");
+
+        var result = await Handler(bed, Seller).HandleAsync(
+            Command(session, lines: [new(product.Id, 2m, 0m, 10m, 0)], payments: [new("Card", 20m, null, null)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("USD", result.Sale.Currency);
+        Assert.Equal(20m, result.Sale.Total);
+    }
+
+    // Nunca cae a la lista COP: cobrar una caja en dólares al precio en pesos es un error de 4000x
+    // que nadie ve.
+    [Fact]
+    public async Task AUsdSessionRefusesAProductWithoutUsdPrice()
+    {
+        var bed = new PosTestBed();
+        var product = bed.Products.Add("SH-400", "Shampoo 400 ml", 40_000m, 0, priceUsd: null);
+        var session = bed.OpenSessionInStore(currency: "USD");
+
+        var exception = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, Seller).HandleAsync(
+            Command(session, lines: [new(product.Id, 1m, 0m, 40_000m, 0)], payments: [new("Card", 40_000m, null, null)]),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.product_price_unavailable", exception.Code);
+        Assert.Equal(0, bed.Numbers.Calls);
+    }
+
+    [Fact]
     public async Task ALineDiscountWithoutThePermissionIs403BeforeAnyNumber()
     {
         var (bed, session) = Arrange();

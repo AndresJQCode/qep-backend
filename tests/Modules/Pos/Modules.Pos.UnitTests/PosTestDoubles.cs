@@ -279,9 +279,12 @@ internal sealed class FakeProductLookup : IPosProductLookup
 {
     public List<(Guid TenantId, PosProductRef Product)> Products { get; } = [];
 
-    public PosProductRef Add(string code, string name, decimal? price, int tax, bool active = true, Guid? id = null, Guid? tenantId = null)
+    /// <param name="price">La lista COP; <paramref name="priceUsd"/> es la lista USD.</param>
+    public PosProductRef Add(
+        string code, string name, decimal? price, int tax, bool active = true, Guid? id = null, Guid? tenantId = null,
+        decimal? priceUsd = null)
     {
-        var product = new PosProductRef(id ?? Guid.CreateVersion7(), code, name, active, price, tax, null);
+        var product = new PosProductRef(id ?? Guid.CreateVersion7(), code, name, active, price, priceUsd, tax, null);
         Products.Add((tenantId ?? PosFixtures.TenantId, product));
         return product;
     }
@@ -370,9 +373,9 @@ internal sealed class PosTestBed
     public FakeExecutionContext Context(params string[] permissions) =>
         new(PosFixtures.TenantId, SubjectId, permissions);
 
-    public CashSession OpenSessionInStore(decimal openingFloat = 100_000m)
+    public CashSession OpenSessionInStore(decimal openingFloat = 100_000m, string currency = "COP")
     {
-        var session = PosFixtures.OpenSession(openingFloat);
+        var session = PosFixtures.OpenSession(openingFloat, currency: currency);
         Sessions.Add(session);
         return session;
     }

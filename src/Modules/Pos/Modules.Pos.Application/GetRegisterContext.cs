@@ -12,7 +12,8 @@ public sealed class GetRegisterContextHandler(
     IPosCashierLookup cashiers,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ITenantDefaultCurrency tenantDefaultCurrency)
     : IQueryHandler<GetRegisterContextQuery, RegisterContextResponse>
 {
     public async Task<RegisterContextResponse> HandleAsync(
@@ -24,11 +25,13 @@ public sealed class GetRegisterContextHandler(
         var session = await sessions.FindOpenByCashierAsync(query.TenantId, cashier, cancellationToken);
         var active = await companies.ListActiveAsync(query.TenantId, cancellationToken);
         var calendar = await tenantClock.GetAsync(query.TenantId, cancellationToken);
+        var defaultCurrency = await tenantDefaultCurrency.GetAsync(query.TenantId, cancellationToken);
 
         return new RegisterContextResponse(
             new PosCashierResponse(cashier.Value, name),
             session is null ? null : PosSessionMapping.ToOpenResponse(session, calendar),
             active.Select(company => new PosCompanyOption(company.Id, company.Name, company.TaxId)).ToArray(),
-            active.Count == 1 ? active[0].Id : null);
+            active.Count == 1 ? active[0].Id : null,
+            defaultCurrency);
     }
 }

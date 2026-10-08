@@ -49,6 +49,7 @@ internal static class PosSaleResponses
             sale.TaxAmount,
             sale.DiscountAmount,
             sale.Total,
+            sale.Currency,
             sale.TaxBreakdown()
                 .Select(entry => new PosTaxBreakdownResponse(entry.TaxPercentage, entry.Base, entry.TaxAmount))
                 .ToArray(),

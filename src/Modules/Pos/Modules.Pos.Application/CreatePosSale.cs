@@ -127,7 +127,7 @@ public sealed class CreatePosSaleHandler(
             }
 
             // 4. Productos: el precio y la tasa que se cobran son siempre los del catálogo.
-            var lines = await ResolveLinesAsync(command, cancellationToken);
+            var lines = await ResolveLinesAsync(command, session, cancellationToken);
 
             // 5. Descuento.
             var canDiscount = executionContext.HasPermission(PosPermissions.SaleDiscount);
@@ -195,7 +195,8 @@ public sealed class CreatePosSaleHandler(
             : throw new PosDomainException("pos.sale.id_conflict", "The sale id belongs to another sale.");
     }
 
-    private async Task<PosSaleLineInput[]> ResolveLinesAsync(CreatePosSaleCommand command, CancellationToken cancellationToken)
+    private async Task<PosSaleLineInput[]> ResolveLinesAsync(
+        CreatePosSaleCommand command, CashSession session, CancellationToken cancellationToken)
     {
         var found = await products.FindManyAsync(
             command.TenantId, command.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
@@ -212,10 +213,11 @@ public sealed class CreatePosSaleHandler(
                 throw new PosDomainException("pos.sale.product_inactive", $"Product '{product.Code}' is inactive.");
             }
 
-            if (product.PriceCop is not { } price)
+            // La lista de la caja, nunca la otra (PosProductMapping.PriceIn).
+            if (product.PriceIn(session.Currency) is not { } price)
             {
                 throw new PosDomainException(
-                    "pos.sale.product_price_unavailable", $"Product '{product.Code}' has no peso price.");
+                    "pos.sale.product_price_unavailable", $"Product '{product.Code}' has no {session.Currency} price.");
             }
 
             // Basta con que cambie uno: un cambio sólo de tasa no mueve el total (IVA incluido) pero

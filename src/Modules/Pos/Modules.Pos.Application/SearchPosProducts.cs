@@ -19,6 +19,9 @@ public sealed class SearchPosProductsValidator : AbstractValidator<SearchPosProd
 
 public sealed class SearchPosProductsHandler(
     IPosProductLookup products,
+    ICashSessionRepository sessions,
+    IMembershipDirectory membershipDirectory,
+    ITenantDefaultCurrency tenantDefaultCurrency,
     IExecutionContext executionContext,
     IValidator<SearchPosProductsQuery> validator)
     : IQueryHandler<SearchPosProductsQuery, PosPage<PosProductResponse>>
@@ -29,9 +32,11 @@ public sealed class SearchPosProductsHandler(
         PosAuthorization.EnsureAuthorized(executionContext, query.TenantId, PosPermissions.SaleCreate);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
+        var currency = await PosSellingCurrency.ResolveAsync(
+            sessions, membershipDirectory, tenantDefaultCurrency, executionContext, query.TenantId, cancellationToken);
         var (items, total) = await products.SearchAsync(
             query.TenantId, query.Search?.Trim(), query.Page, query.PageSize, cancellationToken);
         return new PosPage<PosProductResponse>(
-            items.Select(PosProductMapping.ToResponse).ToArray(), query.Page, query.PageSize, total);
+            items.Select(item => PosProductMapping.ToResponse(item, currency)).ToArray(), query.Page, query.PageSize, total);
     }
 }

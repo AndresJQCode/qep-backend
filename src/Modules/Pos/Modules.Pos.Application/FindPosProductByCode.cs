@@ -17,6 +17,9 @@ public sealed class FindPosProductByCodeValidator : AbstractValidator<FindPosPro
 
 public sealed class FindPosProductByCodeHandler(
     IPosProductLookup products,
+    ICashSessionRepository sessions,
+    IMembershipDirectory membershipDirectory,
+    ITenantDefaultCurrency tenantDefaultCurrency,
     IExecutionContext executionContext,
     IValidator<FindPosProductByCodeQuery> validator)
     : IQueryHandler<FindPosProductByCodeQuery, PosProductResponse>
@@ -30,6 +33,8 @@ public sealed class FindPosProductByCodeHandler(
         // 404 es correcto aquí: la búsqueda ya está acotada al tenant de la ruta.
         var product = await products.FindByCodeAsync(query.TenantId, query.Code, cancellationToken)
             ?? throw PosNotFound.ProductCode(query.Code);
-        return PosProductMapping.ToResponse(product);
+        var currency = await PosSellingCurrency.ResolveAsync(
+            sessions, membershipDirectory, tenantDefaultCurrency, executionContext, query.TenantId, cancellationToken);
+        return PosProductMapping.ToResponse(product, currency);
     }
 }

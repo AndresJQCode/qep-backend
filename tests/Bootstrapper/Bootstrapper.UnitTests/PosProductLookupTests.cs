@@ -58,6 +58,19 @@ public sealed class PosProductLookupTests
         Assert.Equal(0, images.Calls);
     }
 
+    // El POS elige la lista por la moneda de la caja; el adaptador entrega las dos.
+    [Fact]
+    public async Task AProductCarriesBothPriceLists()
+    {
+        var product = NewProduct(imageFileId: null, baseUsd: 3.25m);
+        var lookup = new PosProductLookup(
+            new StubProductRepository(product), new StubTaxRateRepository(), new StubImageLookup([]));
+
+        var found = await lookup.FindManyAsync(TenantId, [product.Id.Value], TestContext.Current.CancellationToken);
+
+        Assert.Equal((11_900m, 3.25m), (found[product.Id.Value].PriceCop, found[product.Id.Value].PriceUsd));
+    }
+
     private static PosProductLookup LookupFor(Guid fileId, ProductImageRef image, out Guid productId)
     {
         var product = NewProduct(fileId);
@@ -66,11 +79,11 @@ public sealed class PosProductLookupTests
             new StubProductRepository(product), new StubTaxRateRepository(), new StubImageLookup([image]));
     }
 
-    private static Product NewProduct(Guid? imageFileId) =>
+    private static Product NewProduct(Guid? imageFileId, decimal? baseUsd = null) =>
         Product.Create(
             ProductId.New(), TenantId, "Shampoo 400 ml", $"SH-{Guid.CreateVersion7():N}"[..12],
             new ProductDetails { ImageFileId = imageFileId },
-            new ProductPricing { BaseCop = 11_900m },
+            new ProductPricing { BaseCop = 11_900m, BaseUsd = baseUsd },
             Now);
 
     private sealed class StubImageLookup(IReadOnlyCollection<ProductImageRef> images) : IProductImageLookup

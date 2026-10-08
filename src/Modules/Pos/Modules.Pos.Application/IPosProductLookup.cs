@@ -1,8 +1,9 @@
 namespace Modules.Pos.Application;
 
 /// <summary>
-/// Puerto hacia Catalog (adaptador en Bootstrapper). Precio = lista COP con IVA incluido (regla
-/// detal); TaxPercentage 0 sin tasa o con tasa inexistente, como QuotationProductPricingResolver.
+/// Puerto hacia Catalog (adaptador en Bootstrapper). Viajan las dos listas base, con IVA incluido
+/// (regla detal); cuál se cobra lo decide la moneda de la caja (PosProductMapping.PriceIn).
+/// TaxPercentage 0 sin tasa o con tasa inexistente, como QuotationProductPricingResolver.
 /// </summary>
 public interface IPosProductLookup
 {
@@ -19,4 +20,11 @@ public interface IPosProductLookup
 }
 
 public sealed record PosProductRef(
-    Guid Id, string Code, string Name, bool IsActive, decimal? PriceCop, int TaxPercentage, string? ImageUrl);
+    Guid Id,
+    string Code,
+    string Name,
+    bool IsActive,
+    decimal? PriceCop,
+    decimal? PriceUsd,
+    int TaxPercentage,
+    string? ImageUrl);
