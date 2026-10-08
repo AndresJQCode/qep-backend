@@ -107,9 +107,16 @@ public static class QuotationsInfrastructureExtensions
     /// que no llama a nada externo. Así ningún `WebApplicationFactory` de las pruebas de
     /// integración —que no configuran Zenvia— tiene que empezar a hacerlo sólo porque "Enviar"
     /// ahora también manda un WhatsApp.
+    /// Desde el spec 2026-10-07 éste es el sender de la cuenta de QEP; el canal de cada envío lo
+    /// decide `WhatsAppChannelResolver`.
     /// </summary>
     private static void AddWhatsAppSender(IServiceCollection services, IConfigurationSection whatsApp)
     {
+        // Spec 2026-10-07: un solo HttpClient para la cuenta de QEP y las de cada tenant, siempre
+        // registrado (las cuentas propias lo necesitan aunque la de QEP no esté configurada).
+        // `new HttpClient()` sin IHttpClientFactory, mismo criterio que InfobipEmailChannel.
+        services.AddSingleton(_ => new ZenviaHttpClient(new HttpClient()));
+
         var configured =
             !string.IsNullOrWhiteSpace(whatsApp[nameof(WhatsAppOptions.ApiToken)]) &&
             !string.IsNullOrWhiteSpace(whatsApp[nameof(WhatsAppOptions.FromNumber)]) &&
@@ -117,13 +124,11 @@ public static class QuotationsInfrastructureExtensions
 
         if (configured)
         {
-            // `new HttpClient()` directo, sin `IHttpClientFactory` — mismo criterio que
-            // `InfobipEmailChannel` en Notifications, el único otro cliente HTTP saliente del
-            // backend.
             services.AddSingleton<IWhatsAppSender>(sp =>
                 new ZenviaWhatsAppSender(
-                    new HttpClient(),
-                    sp.GetRequiredService<IOptions<QuotationsOptions>>(),
+                    sp.GetRequiredService<ZenviaHttpClient>().Client,
+                    ZenviaSenderSettings.ForQep(
+                        sp.GetRequiredService<IOptions<QuotationsOptions>>().Value.WhatsApp),
                     sp.GetRequiredService<ILogger<ZenviaWhatsAppSender>>()));
         }
         else
