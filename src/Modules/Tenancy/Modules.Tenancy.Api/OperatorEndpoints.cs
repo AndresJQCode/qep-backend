@@ -132,8 +132,10 @@ public static class OperatorEndpoints
     }
 }
 
-/// <summary>Spec 2026-10-08 §5: todo nullable, para que una forma mala sea 422 del validador y no un 400
-/// del binder. La SPA manda <c>note: null</c> cuando la nota queda en blanco.</summary>
+/// <summary>Spec 2026-10-08 §5: todo nullable, para que un campo ausente, nulo o con un valor desconocido sea
+/// 422 del validador y no un 400 del binder. Un tipo JSON equivocado (un número donde va texto, un objeto
+/// donde va la lista) sigue siendo 400 del binder, como en el resto de la API. La SPA manda
+/// <c>note: null</c> cuando la nota queda en blanco.</summary>
 public sealed record ChangeTenantModulesRequest(
     IReadOnlyList<TenantModuleChangeInput>? Changes, string? Reason, string? Note);
 

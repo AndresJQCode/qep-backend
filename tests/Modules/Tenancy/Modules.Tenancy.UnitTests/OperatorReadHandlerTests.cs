@@ -108,6 +108,7 @@ public sealed class OperatorReadHandlerTests
     [InlineData(0, 25)]
     [InlineData(1, 0)]
     [InlineData(1, 101)]
+    [InlineData(int.MaxValue, 100)]   // (page - 1) * pageSize daría la vuelta a un OFFSET negativo: 500
     public async Task OutOfRangePagingIsAValidationError(int page, int pageSize) =>
         await Assert.ThrowsAsync<ValidationException>(() =>
             List(new FixedOperatorTenantReader(), new OperatorContext(Operator, OperatorPermissions.TenantsRead))

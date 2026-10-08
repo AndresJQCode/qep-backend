@@ -13,7 +13,7 @@ public sealed class ListOperatorTenantsValidator : AbstractValidator<ListOperato
     public ListOperatorTenantsValidator()
     {
         RuleFor(query => query.Search).MaximumLength(OperatorInput.MaxSearchLength);
-        RuleFor(query => query.Page).GreaterThanOrEqualTo(1);
+        RuleFor(query => query.Page).InclusiveBetween(1, OperatorInput.MaxPage);
         RuleFor(query => query.PageSize).InclusiveBetween(1, OperatorInput.MaxPageSize);
     }
 }

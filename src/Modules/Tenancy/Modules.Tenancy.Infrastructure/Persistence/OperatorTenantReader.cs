@@ -59,10 +59,12 @@ internal sealed class OperatorTenantReader(TenancyDbContext dbContext) : IOperat
             .ToListAsync(cancellationToken);
 
         // El último motivo por módulo se elige en memoria: el historial de un tenant es corto, y un
-        // "último por grupo" en SQL no se justifica hoy.
+        // "último por grupo" en SQL no se justifica hoy. Desempate por Id (UUID v7, crece con el tiempo):
+        // dos cambios en el mismo instante dan siempre el mismo "último".
         var moduleChanges = await dbContext.TenantChanges.AsNoTracking()
             .Where(change => change.TenantId == tenantId && change.Kind == TenantChangeKind.Module)
             .OrderByDescending(change => change.OccurredAt)
+            .ThenByDescending(change => change.Id)
             .Select(change => new { change.ModuleKey, change.Reason })
             .ToListAsync(cancellationToken);
         var lastReasons = moduleChanges
@@ -73,6 +75,7 @@ internal sealed class OperatorTenantReader(TenancyDbContext dbContext) : IOperat
         var lastStatus = await dbContext.TenantChanges.AsNoTracking()
             .Where(change => change.TenantId == tenantId && change.Kind == TenantChangeKind.TenantStatus)
             .OrderByDescending(change => change.OccurredAt)
+            .ThenByDescending(change => change.Id)
             .Select(change => new TenantStatusChange(change.OccurredAt, change.Reason))
             .FirstOrDefaultAsync(cancellationToken);
 

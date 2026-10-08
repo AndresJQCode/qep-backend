@@ -107,6 +107,39 @@ public sealed class TenantChangePersistenceTests
             .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
     }
 
+    // Dos cambios en el mismo instante: gana el de Id mayor (UUID v7, el último escrito), siempre. Se
+    // insertan en orden de Id para que un ORDER BY sin desempate devuelva el primero.
+    [Fact]
+    public async Task TheLastReasonBreaksTiesByTheNewestId()
+    {
+        await using var database = await StartDatabaseAsync();
+        await using var provider = await MigratedServicesAsync(database);
+        var tenantId = await SeedTenantAsync(provider);
+        var actor = Guid.CreateVersion7();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var changes = scope.ServiceProvider.GetRequiredService<ITenantChangeRepository>();
+            changes.Add(TenantChange.ForModule(tenantId, Guid.CreateVersion7(), TenantModuleKeys.Pos, null, TenantModuleStatus.Active,
+                ChangeReason.Courtesy, null, actor, Now));
+            changes.Add(TenantChange.ForModule(tenantId, Guid.CreateVersion7(), TenantModuleKeys.Pos, TenantModuleStatus.Active,
+                TenantModuleStatus.Active, ChangeReason.Correction, null, actor, Now));
+            changes.Add(TenantChange.ForTenantStatus(tenantId, Guid.CreateVersion7(), TenantStatus.Active, TenantStatus.Suspended,
+                ChangeReason.Nonpayment, null, actor, Now));
+            changes.Add(TenantChange.ForTenantStatus(tenantId, Guid.CreateVersion7(), TenantStatus.Suspended, TenantStatus.Active,
+                ChangeReason.Contract, null, actor, Now));
+            await scope.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var read = provider.CreateAsyncScope();
+        var snapshot = await read.ServiceProvider.GetRequiredService<IOperatorTenantReader>()
+            .FindAsync(tenantId, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(ChangeReason.Correction, snapshot.LastModuleReasons[TenantModuleKeys.Pos]);
+        Assert.Equal(ChangeReason.Contract, snapshot.LastStatusChange?.Reason);
+    }
+
     // El candado vive en el espacio de dos claves (namespace, hashtext): un lock de una sola clave con el
     // mismo hash —el espacio de UserLifecycleLockKey— no lo bloquea, y el de dos claves sí.
     [Fact]
