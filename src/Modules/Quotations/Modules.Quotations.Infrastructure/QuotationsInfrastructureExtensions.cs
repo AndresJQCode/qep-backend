@@ -81,6 +81,10 @@ public static class QuotationsInfrastructureExtensions
         services.AddSingleton<IWhatsAppSecretProtector, AesGcmWhatsAppSecretProtector>();
         services.AddScoped<IQuotationExpirationProcessor, QuotationExpirationProcessor>();
         services.AddHostedService<QuotationExpirationWorker>();
+        // Spec 2026-10-07: re-cifra al arrancar las API keys de WhatsApp guardadas con una llave
+        // que ya no es la activa. Corre una vez por arranque, despues de las migraciones
+        // (Program.cs las aplica antes de RunAsync).
+        services.AddHostedService<WhatsAppTokenRekeyWorker>();
 
         AddPdfRenderer(services);
         AddWhatsAppSender(services, section.GetSection(nameof(QuotationsOptions.WhatsApp)));
