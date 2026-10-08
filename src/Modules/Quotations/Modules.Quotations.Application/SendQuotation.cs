@@ -186,7 +186,7 @@ public sealed class SendQuotationHandler(
             quotation.Id,
             QuotationHistoryEventType.SendFailed,
             attemptedBy,
-            QuotationChangeSummary.SendFailed(stage),
+            QuotationChangeSummary.SendFailed(stage, whatsAppSkipped: false),
             clock.UtcNow);
 
         // `CancellationToken.None` y no el del request: si la falla **fue** una cancelación —el

@@ -30,5 +30,10 @@ public enum QuotationSendStage
 
     /// <summary>Guardar la cotización ya enviada. El mensaje salió: ver
     /// <c>QuotationSendFailure.Stage</c> para por qué este caso es el más incómodo.</summary>
-    Persistence
+    Persistence,
+
+    /// <summary>Leer la configuración de WhatsApp del tenant (spec 2026-10-07). Falla cuando la
+    /// API key guardada de una cuenta propia no se puede descifrar. Va al final: se guarda como
+    /// texto, el orden no se persiste.</summary>
+    Channel
 }
