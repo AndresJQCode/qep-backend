@@ -184,20 +184,29 @@ public sealed class ProductExportApiTests
 
     // Este archivo usa un tenant que no pasa por el registro. ExportProductsHandler nombra el archivo
     // con la hora del tenant (spec 2026-09-17, punto 8a), y sin su fila en tenancy.tenants
-    // TenantClock responde tenancy.tenant.not_found.
+    // TenantClock responde tenancy.tenant.not_found. Spec 2026-10-07: con fila el stub enmascara, así
+    // que el tenant nace con sus siete módulos, en el mismo SaveChangesAsync.
     private static async Task SeedTenantAsync(QepApiFactory factory)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId));
+        var now = DateTimeOffset.UtcNow;
         tenancy.Tenants.Add(Modules.Tenancy.Domain.Tenant.Create(
-            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
+            id,
             "catalog-export-tests",
             "Catalog Export Tests",
             "es-CO",
             "America/Bogota",
             "yyyy-MM-dd",
             Modules.Tenancy.Domain.MembershipId.New(),
-            DateTimeOffset.UtcNow));
+            now));
+        foreach (var key in Modules.Tenancy.Domain.TenantModuleKeys.All)
+        {
+            tenancy.TenantModules.Add(Modules.Tenancy.Domain.TenantModule.Create(
+                id, key, Modules.Tenancy.Domain.TenantModuleSources.Seed, now, note: null));
+        }
+
         await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 

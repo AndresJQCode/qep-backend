@@ -7,6 +7,8 @@ namespace Modules.Tenancy.Application;
 public sealed class TenantRegistrationService(
     ITenantRepository tenantRepository,
     IMembershipRepository membershipRepository,
+    ITenantModuleRepository tenantModuleRepository,
+    ITenantModuleDefaults tenantModuleDefaults,
     ITenancyUnitOfWork unitOfWork,
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
@@ -40,6 +42,14 @@ public sealed class TenantRegistrationService(
             membershipId,
             now);
         tenantRepository.Add(tenant);
+
+        // Spec 2026-10-07, «Alta por signup»: los módulos del tenant se commitean con el tenant y la
+        // membresía en el SaveChangesAsync de abajo, así que un tenant nunca existe sin las filas que
+        // le tocan. Cuáles, lo decide Entitlements:GrantDefaultModulesOnSignup.
+        foreach (var key in tenantModuleDefaults.ForNewTenants)
+        {
+            tenantModuleRepository.Add(TenantModule.Create(tenantId, key, TenantModuleSources.Signup, now, note: null));
+        }
 
         var membership = Membership.CreateActive(
             membershipId,

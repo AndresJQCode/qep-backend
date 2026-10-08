@@ -254,6 +254,42 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                     b.ToTable("tenants", "tenancy");
                 });
 
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantModule", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("ModuleKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("module_key");
+
+                    b.Property<DateTimeOffset>("EnabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("enabled_at");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("note");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("source");
+
+                    b.HasKey("TenantId", "ModuleKey");
+
+                    b.ToTable("tenant_modules", "tenancy", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos')");
+
+                            t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Tenancy.Infrastructure.Persistence.InboxMessage", b =>
                 {
                     b.Property<string>("Consumer")
@@ -349,6 +385,15 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId");
 
                     b.ToTable("tenant_settings_change_log", "tenancy");
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantModule", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Modules.Tenancy.Infrastructure.Persistence;
@@ -44,30 +45,46 @@ internal static class CustomersApiHarness
 
     // Este harness usa un tenant que no pasa por el registro. ExportCustomersHandler nombra el
     // archivo con la hora del tenant (spec 2026-09-17, punto 8a), y sin su fila en
-    // tenancy.tenants TenantClock responde tenancy.tenant.not_found. Idempotente: una prueba que
-    // ya sembro el tenant (o que reusa la misma base) no lo duplica.
+    // tenancy.tenants TenantClock responde tenancy.tenant.not_found.
+    //
+    // Spec 2026-10-07: con fila, el stub enmascara, así que el tenant también necesita sus módulos.
+    // Los siete y no sólo customers: TenantId (...0001) es el tenant de desarrollo que comparten
+    // TODAS las pruebas de Customers, y una vez sembrado el stub lo enmascara para cualquier request
+    // contra esta base, pida el permiso que pida. Inserta sólo las claves que faltan (ON CONFLICT DO
+    // NOTHING), así que se puede llamar dos veces sobre la misma base, o sobre un tenant ya sembrado
+    // sin módulos, sin duplicar ni fallar.
     public static async Task SeedTenantAsync(QepApiFactory factory, string tenantId = TenantId)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
         var id = new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId));
+        var now = DateTimeOffset.UtcNow;
         var existing = await tenancy.Tenants.FindAsync(
             [id], TestContext.Current.CancellationToken);
-        if (existing is not null)
+        if (existing is null)
         {
-            return;
+            tenancy.Tenants.Add(Modules.Tenancy.Domain.Tenant.Create(
+                id,
+                "customers-export-tests",
+                "Customers Export Tests",
+                "es-CO",
+                "America/Bogota",
+                "yyyy-MM-dd",
+                Modules.Tenancy.Domain.MembershipId.New(),
+                now));
+            await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        tenancy.Tenants.Add(Modules.Tenancy.Domain.Tenant.Create(
-            id,
-            "customers-export-tests",
-            "Customers Export Tests",
-            "es-CO",
-            "America/Bogota",
-            "yyyy-MM-dd",
-            Modules.Tenancy.Domain.MembershipId.New(),
-            DateTimeOffset.UtcNow));
-        await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
+        foreach (var key in Modules.Tenancy.Domain.TenantModuleKeys.All)
+        {
+            await tenancy.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+                VALUES ({id.Value}, {key.Value}, {now}, {Modules.Tenancy.Domain.TenantModuleSources.Seed})
+                ON CONFLICT (tenant_id, module_key) DO NOTHING
+                """,
+                TestContext.Current.CancellationToken);
+        }
     }
 
     // El stub de desarrollo concede solo los defaults de tenancy cuando X-Permissions no esta

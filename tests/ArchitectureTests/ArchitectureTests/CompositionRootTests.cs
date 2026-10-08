@@ -102,6 +102,98 @@ public sealed class CompositionRootTests
             services.Single(d => d.ServiceType == typeof(IRoleCatalog)).Lifetime);
     }
 
+    /// <summary>
+    /// Spec 2026-10-07, criterio 4: un permiso sin módulo declarado se enmascara siempre, así que
+    /// olvidarlo deja a todos sin ese permiso en silencio. Como el registro es a mano, esta prueba
+    /// lo convierte en regla: toda constante de toda clase <c>*Permissions</c> de los ensamblados
+    /// Application tiene su <see cref="PermissionDefinition"/> con <c>RequiredModules</c> no nulo.
+    /// </summary>
+    [Fact]
+    public void EveryPermissionConstantDeclaresItsModules()
+    {
+        var definitions = RegisteredPermissionDefinitions()
+            .GroupBy(definition => definition.Permission, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+        var unmapped = PermissionConstants()
+            .Where(permission =>
+                !definitions.TryGetValue(permission, out var definition) || definition.RequiredModules is null)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            unmapped.Length == 0,
+            "Estos permisos no tienen PermissionDefinition con RequiredModules en "
+                + "QepServiceCollectionExtensions, así que se enmascaran siempre: "
+                + string.Join(", ", unmapped));
+    }
+
+    /// <summary>
+    /// <see cref="ModuleEntitlementMask"/> indexa por nombre con <c>ToDictionary</c>: un permiso
+    /// registrado dos veces tumbaría el singleton al construirse. Esta prueba lo nombra antes.
+    /// </summary>
+    [Fact]
+    public void EveryRegisteredPermissionStringIsUnique()
+    {
+        var duplicated = RegisteredPermissionDefinitions()
+            .GroupBy(definition => definition.Permission, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            duplicated.Length == 0,
+            "Estos permisos están registrados más de una vez como PermissionDefinition: "
+                + string.Join(", ", duplicated));
+    }
+
+    /// <summary>Ningún permiso de un rol de sistema sale del fallback de metadata de RoleCatalog.</summary>
+    [Fact]
+    public void NoSystemRolePermissionComesFromTheMetadataFallback()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Empty(catalog.ListPermissions()
+            .Where(permission => permission.RequiredModules is null)
+            .Select(permission => permission.Permission));
+    }
+
+    /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec; el spec
+    /// de POS sube este número cuando declare las suyas.</summary>
+    [Fact]
+    public void PermissionDiscoveryFindsTheThirtyFiveConstants()
+    {
+        Assert.Equal(35, PermissionConstants().Length);
+    }
+
+    [Fact]
+    public void TheContainerCanBuildTheEntitlementMask()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+
+        Assert.NotNull(provider.GetRequiredService<ModuleEntitlementMask>());
+    }
+
+    private static PermissionDefinition[] RegisteredPermissionDefinitions() =>
+        BuildPlatformServices()
+            .Where(descriptor => descriptor.ServiceType == typeof(PermissionDefinition))
+            .Select(descriptor => (PermissionDefinition)descriptor.ImplementationInstance!)
+            .ToArray();
+
+    private static string[] PermissionConstants() =>
+        ApplicationAssemblies()
+            .SelectMany(assembly => assembly.GetTypes())
+            .Where(type =>
+                type is { IsAbstract: true, IsSealed: true } &&
+                type.Name.EndsWith("Permissions", StringComparison.Ordinal))
+            .SelectMany(type => type.GetFields(BindingFlags.Public | BindingFlags.Static))
+            .Where(field => field is { IsLiteral: true, IsInitOnly: false } && field.FieldType == typeof(string))
+            .Select(field => (string)field.GetRawConstantValue()!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
     private static ServiceCollection BuildPlatformServices()
     {
         var services = new ServiceCollection();

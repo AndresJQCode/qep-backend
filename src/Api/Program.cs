@@ -123,6 +123,7 @@ app.MapAuthSessionEndpoints();
 app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
 app.MapAuthorizationCatalogEndpoints();
+app.MapTenantModulesEndpoints();
 app.MapRoleEndpoints();
 app.MapTenantSettingsEndpoints();
 app.MapMembershipEndpoints();

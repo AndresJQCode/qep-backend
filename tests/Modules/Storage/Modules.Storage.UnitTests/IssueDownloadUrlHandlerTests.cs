@@ -1,5 +1,8 @@
+using BuildingBlocks.Application;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Storage.UnitTests;
 
@@ -59,6 +62,82 @@ public sealed class IssueDownloadUrlHandlerTests
             result.Url);
     }
 
+    [Fact]
+    public async Task AProductImageWithCatalogOffIsForbidden()
+    {
+        var image = AvailableFile(FileOwnerType.Product);
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            HandlerFor(image, new RecordingStorageAuditPublisher(), FixedTenantModules.AllBut(TenantModuleKeys.Catalog))
+                .HandleAsync(new IssueDownloadUrlCommand(TenantId, image.Id.Value), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.module_not_enabled", error.Code);
+    }
+
+    // Regresión de B10/B11: un comprobante ya movido al bucket público (PublicStorageKey) con orders
+    // apagado no devuelve su URL pública. El guard va antes de armarla, así que no se construye URL
+    // ni se audita ni se guarda nada.
+    [Fact]
+    public async Task AMovedPaymentProofWithOrdersOffIsForbiddenAndNoUrlIsBuilt()
+    {
+        var proof = AvailablePaymentProof();
+        proof.MoveToPublic("payment-proofs/abc.pdf", Now);
+        var audit = new RecordingStorageAuditPublisher();
+        var publicStorage = new UrlCountingPublicObjectStorage();
+        var unitOfWork = new CountingStorageUnitOfWork();
+        var handler = new IssueDownloadUrlHandler(
+            new InMemoryFileResourceRepository(proof),
+            FixedTenantModules.AllBut(TenantModuleKeys.Orders),
+            new SigningObjectStorage(),
+            publicStorage,
+            unitOfWork,
+            audit,
+            new AllowAllExecutionContext(TenantId),
+            new FixedClock(Now));
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            handler.HandleAsync(
+                new IssueDownloadUrlCommand(TenantId, proof.Id.Value), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.module_not_enabled", error.Code);
+        Assert.Equal(0, publicStorage.GetUrlCalls);
+        Assert.Empty(audit.Actions);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
+    // El logo es núcleo: se descarga aunque el tenant no tenga ningún módulo.
+    [Fact]
+    public async Task ATenantLogoIsSignedWithNoModules()
+    {
+        var logo = AvailableFile(FileOwnerType.Tenant);
+
+        var result = await HandlerFor(logo, new RecordingStorageAuditPublisher(), new FixedTenantModules(TenantModuleSet.Empty))
+            .HandleAsync(new IssueDownloadUrlCommand(TenantId, logo.Id.Value), TestContext.Current.CancellationToken);
+
+        Assert.StartsWith(SigningObjectStorage.SignedBaseUrl, result.Url, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ASimulatedTenantStillGetsTheUrlOfAProof()
+    {
+        var proof = AvailablePaymentProof();
+
+        var result = await HandlerFor(proof, new RecordingStorageAuditPublisher(), FixedTenantModules.Simulated)
+            .HandleAsync(new IssueDownloadUrlCommand(TenantId, proof.Id.Value), TestContext.Current.CancellationToken);
+
+        Assert.StartsWith(SigningObjectStorage.SignedBaseUrl, result.Url, StringComparison.Ordinal);
+    }
+
+    private static FileResource AvailableFile(FileOwnerType ownerType)
+    {
+        var file = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.CreateVersion7(), ownerType,
+            "archivo.pdf", "application/pdf", 2048, $"staging/tenants/{TenantId:N}/archivo", Now);
+        file.CompleteUpload("checksum", 2048, Now);
+        file.MarkClean(Now);
+        return file;
+    }
+
     private static FileResource AvailablePaymentProof()
     {
         var proof = FileResource.CreatePendingUpload(
@@ -69,10 +148,38 @@ public sealed class IssueDownloadUrlHandlerTests
         return proof;
     }
 
+    /// <summary>El bucket público que cuenta cuántas URL se armaron.</summary>
+    private sealed class UrlCountingPublicObjectStorage : IPublicObjectStorage
+    {
+        public int GetUrlCalls { get; private set; }
+
+        public bool IsConfigured => true;
+
+        public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task DeleteAsync(string publicKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public string GetUrl(string publicKey)
+        {
+            GetUrlCalls++;
+            return $"{FixedPublicObjectStorage.BaseUrl}/{publicKey}";
+        }
+
+        public Task<PublicObjectPage> ListAsync(
+            string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
     private static IssueDownloadUrlHandler HandlerFor(
-        FileResource resource, RecordingStorageAuditPublisher audit) =>
+        FileResource resource, RecordingStorageAuditPublisher audit, ITenantModules? modules = null) =>
         new(
             new InMemoryFileResourceRepository(resource),
+            modules ?? FixedTenantModules.Simulated,
             new SigningObjectStorage(),
             new FixedPublicObjectStorage(),
             new CountingStorageUnitOfWork(),

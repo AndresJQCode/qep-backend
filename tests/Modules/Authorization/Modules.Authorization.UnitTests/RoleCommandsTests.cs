@@ -22,11 +22,11 @@ public sealed class RoleCommandsTests
             ],
             [
                 new PermissionDefinition(
-                    "advisorship.manage", "Gestionar miembros", "", "Tenancy", "high"),
+                    "advisorship.manage", "Gestionar miembros", "", "Tenancy", "high", RequiredModules: []),
                 new PermissionDefinition(
-                    "advisorship.roles.manage", "Definir roles", "", "Tenancy", "high"),
+                    "advisorship.roles.manage", "Definir roles", "", "Tenancy", "high", RequiredModules: []),
                 new PermissionDefinition(
-                    "catalog.product.read", "Ver productos", "", "Catalog", "low"),
+                    "catalog.product.read", "Ver productos", "", "Catalog", "low", RequiredModules: []),
             ]);
 
     private sealed class Repo : IRoleRepository

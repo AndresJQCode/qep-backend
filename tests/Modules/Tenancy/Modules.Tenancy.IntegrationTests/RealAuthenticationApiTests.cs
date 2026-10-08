@@ -6,7 +6,11 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
@@ -43,6 +47,37 @@ public sealed class RealAuthenticationApiTests
         var response = await owner.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // Spec 2026-10-07: el camino real, ExternalClaimsTransformation -> AuthorizationService. Mismo
+    // cliente y misma cookie antes y después: los permisos se resuelven en cada request.
+    [Fact]
+    public async Task TurningCatalogOffForbidsProductsThroughTheCookie()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        Assert.Equal(HttpStatusCode.OK, (await GetProductsAsync(owner, tenantId)).StatusCode);
+
+        // Tercera copia deliberada del borrado de la fila (TenantModulesApiTests, QuotationsApiHarness):
+        // cada ensamblado de pruebas tiene su propia fábrica y no hay proyecto compartido.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var id = new TenantId(tenantId);
+            await dbContext.TenantModules
+                .Where(module => module.TenantId == id && module.ModuleKey == TenantModuleKeys.Catalog)
+                .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await GetProductsAsync(owner, tenantId)).StatusCode);
+    }
+
+    private static async Task<HttpResponseMessage> GetProductsAsync(HttpClient client, Guid tenantId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/catalog/products");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
     [Fact]

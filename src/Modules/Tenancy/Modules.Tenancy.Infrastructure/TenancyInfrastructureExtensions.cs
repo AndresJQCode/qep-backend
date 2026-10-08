@@ -26,6 +26,8 @@ public static class TenancyInfrastructureExtensions
                     "__ef_migrations_history",
                     "platform")));
         services.AddScoped<ITenantRepository, TenantRepository>();
+        services.AddScoped<ITenantModules, TenantModules>();
+        services.AddScoped<ITenantModuleRepository, TenantModuleRepository>();
         services.AddScoped<ITenantDirectory, TenantDirectory>();
         // Spec 2026-09-17: el día de negocio es el del tenant. Scoped para memorizar el huso por
         // request (TenantClock).
@@ -34,6 +36,12 @@ public static class TenancyInfrastructureExtensions
         services.AddScoped<IMembershipActivation, MembershipActivationService>();
         services.AddScoped<IInvitationService, InvitationService>();
         services.AddScoped<ITenantRegistration, TenantRegistrationService>();
+        // Spec 2026-10-07: ValidateOnStart, como Notifications, para que un valor que no es
+        // booleano tumbe el arranque en vez del primer signup.
+        services.AddOptions<EntitlementsOptions>()
+            .Bind(configuration.GetSection(EntitlementsOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<ITenantModuleDefaults, TenantModuleDefaults>();
         services.AddScoped<IMembershipDirectory, MembershipDirectory>();
         services.AddScoped<IMembershipRoleUsage, MembershipRoleUsage>();
         services.AddScoped<IActiveTenantsQuery, ActiveTenantsQuery>();

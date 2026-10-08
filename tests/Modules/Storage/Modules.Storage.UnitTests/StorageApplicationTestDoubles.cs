@@ -21,6 +21,10 @@ internal sealed class InMemoryFileResourceRepository(params FileResource[] resou
         IReadOnlyCollection<FileResourceId> ids, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Lo que el handler pidió excluir en la última búsqueda (spec 2026-10-07). El filtro
+    /// es SQL y lo cubre integración; acá se fija qué le pide el handler al repositorio.</summary>
+    public IReadOnlyCollection<FileOwnerType>? LastExcludedOwnerTypes { get; private set; }
+
     public Task<(IReadOnlyList<FileResource> Items, int TotalCount)> SearchAsync(
         Guid tenantId,
         string? search,
@@ -29,11 +33,15 @@ internal sealed class InMemoryFileResourceRepository(params FileResource[] resou
         string? category,
         string? tag,
         FileOwnerFilter? owner,
+        IReadOnlyCollection<FileOwnerType> excludedOwnerTypes,
         int page,
         int pageSize,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken)
+    {
+        LastExcludedOwnerTypes = excludedOwnerTypes;
         // Todo lo sembrado, sin filtrar: los filtros son SQL y los cubre integración.
-        Task.FromResult<(IReadOnlyList<FileResource>, int)>((resources, resources.Length));
+        return Task.FromResult<(IReadOnlyList<FileResource>, int)>((resources, resources.Length));
+    }
 }
 
 /// <summary>El bucket privado: sólo firma descargas, con la clave a la vista para que la prueba vea
@@ -202,4 +210,81 @@ internal sealed class StubFileReferenceProbe(bool referenced) : IFileReferencePr
         Asked.Add(fileId);
         return Task.FromResult(referenced);
     }
+}
+
+/// <summary>El puerto de módulos con una respuesta fija; <c>null</c> = tenant simulado por el stub,
+/// que ni filtra ni bloquea (spec 2026-10-07). <see cref="Simulated"/> es el default de los
+/// constructores de prueba que no son sobre módulos.</summary>
+internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
+{
+    public static FixedTenantModules Simulated => new(null);
+
+    public static FixedTenantModules AllBut(params TenantModuleKey[] missing) =>
+        new(TenantModuleSet.FromStored(TenantModuleKeys.All.Except(missing)));
+
+    public List<Guid> Asked { get; } = [];
+
+    public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        Asked.Add(tenantId);
+        return Task.FromResult(set);
+    }
+}
+
+/// <summary>El bucket privado que no se puede tocar: cualquier llamada lanza. Un handler que lo usara
+/// antes del guard de módulo tiraría esta excepción en vez del 403, y la prueba lo ve.</summary>
+internal sealed class UntouchableObjectStorage : IObjectStorage
+{
+    private static InvalidOperationException Touched() => new("The private bucket must not be touched.");
+
+    public Task<Uri> CreatePresignedUploadUrlAsync(string key, string contentType, CancellationToken cancellationToken) =>
+        throw Touched();
+
+    public Task<Uri> CreatePresignedDownloadUrlAsync(string key, string? downloadFileName, CancellationToken cancellationToken) =>
+        throw Touched();
+
+    public Task<Uri> CreatePresignedDownloadUrlAsync(
+        string key, TimeSpan expiry, string? downloadFileName, CancellationToken cancellationToken) =>
+        throw Touched();
+
+    public Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken) => throw Touched();
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken) => throw Touched();
+
+    public Task PromoteAsync(
+        string sourceKey, string destinationKey, string expectedChecksum, CancellationToken cancellationToken) =>
+        throw Touched();
+
+    public Task<byte[]> DownloadAsync(string key, CancellationToken cancellationToken) => throw Touched();
+
+    public Task UploadAsync(string key, byte[] content, string contentType, CancellationToken cancellationToken) =>
+        throw Touched();
+}
+
+internal sealed class UntouchableContentInspector : IFileContentInspector
+{
+    public bool Matches(string name, string mimeType, byte[] content) =>
+        throw new InvalidOperationException("The content must not be inspected.");
+}
+
+internal sealed class UntouchableVariantGenerator : IImageVariantGenerator
+{
+    public bool Supports(string mimeType) => throw new InvalidOperationException("No variants must be generated.");
+
+    public Task<IReadOnlyList<GeneratedFileVariant>> GenerateAsync(byte[] content, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("No variants must be generated.");
+}
+
+internal sealed class UntouchablePaymentProofProcessor : IPaymentProofImageProcessor
+{
+    public bool Supports(string mimeType) => throw new InvalidOperationException("No proof must be processed.");
+
+    public Task<ProcessedPaymentProofImage> ProcessAsync(byte[] content, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("No proof must be processed.");
+}
+
+internal sealed class UntouchableScanner : IFileScanner
+{
+    public Task<FileScanResult> ScanAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("Nothing must be scanned.");
 }

@@ -609,6 +609,52 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
   queda un hueco en la serie. Diez de prefijo, más el año con separador, más diez dígitos no caben:
   haz la cuenta antes de configurar.
 
+## Módulos por tenant
+
+Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
+presencia de la fila es el módulo. Las claves son `catalog`, `customers`, `companies`, `quotations`,
+`orders`, `reporting` y `pos`; `quotations` exige `catalog`, `customers` y `companies`, `orders`
+exige `quotations` y `pos` exige `catalog` y `companies`. Un módulo sin su dependencia cuenta como
+apagado. Identidad, Tenancy, Authorization, Storage, Platform, Geography, Audit y Notifications son
+núcleo y no se apagan.
+
+Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
+desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
+trabajos en vuelo. La SPA lo lee de `GET /api/v1/tenants/{tenantId}/modules` (autenticado, sin
+permiso), que siempre devuelve los siete con `enabled`, `contracted` y `missingDependencies`, y se
+entera en hasta 5 minutos.
+
+Un tenant del signup nace con los seis sin `pos` mientras `Entitlements:GrantDefaultModulesOnSignup`
+esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con los siete.
+
+No hay endpoint de administración. QCode lo hace por SQL. Local, sin leer el connection string:
+
+```powershell
+# Ver los módulos de un tenant
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "SELECT module_key, source, enabled_at, note FROM tenancy.tenant_modules m JOIN tenancy.tenants t ON t.id = m.tenant_id WHERE t.slug = 'origen-botanico' ORDER BY module_key;"
+
+# Prender pos
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, note) SELECT id, 'pos', now(), 'manual', 'Activado por QCode' FROM tenancy.tenants WHERE slug = 'origen-botanico' ON CONFLICT (tenant_id, module_key) DO NOTHING;"
+
+# Apagar orders
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "DELETE FROM tenancy.tenant_modules m USING tenancy.tenants t WHERE t.id = m.tenant_id AND t.slug = 'origen-botanico' AND m.module_key = 'orders';"
+```
+
+**Después de desplegar `AddTenantModules`** (checklist del despliegue): un pod viejo puede crear
+tenants sin filas durante el rolling update. La consulta sólo lista —un tenant sin filas también puede
+ser legítimo— y la reparación se hace por slug, después de mirar cada uno:
+
+```powershell
+# Tenants sin módulos creados en el último día
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "SELECT t.id, t.slug, t.created_at FROM tenancy.tenants t WHERE NOT EXISTS (SELECT 1 FROM tenancy.tenant_modules m WHERE m.tenant_id = t.id) AND t.created_at >= now() - interval '1 day' ORDER BY t.created_at;"
+
+# Reparar uno: los seis del signup
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, note) SELECT t.id, m.key, now(), 'manual', 'Alta durante el despliegue de AddTenantModules' FROM tenancy.tenants t CROSS JOIN (VALUES ('catalog'),('customers'),('companies'),('quotations'),('orders'),('reporting')) AS m(key) WHERE t.slug = 'slug-del-tenant' ON CONFLICT (tenant_id, module_key) DO NOTHING;"
+```
+
+En producción, las mismas sentencias por el acceso a la base que QCode ya usa para operaciones
+manuales. Efecto inmediato, sin reiniciar la API.
+
 ## API implementada
 
 Inventario completo de la superficie HTTP. Las secciones siguientes desarrollan

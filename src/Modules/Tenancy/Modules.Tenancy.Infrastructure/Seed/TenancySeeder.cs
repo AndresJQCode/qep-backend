@@ -94,6 +94,14 @@ public static class TenancySeeder
             origin,
             now));
 
+        // Spec 2026-10-07, «Semilla»: los siete, pos incluido, en la misma escritura que el tenant.
+        // Sólo al crear: si el tenant ya existía el método devolvió arriba, y una base local vieja
+        // prende pos con el SQL de «Operación» (README § Módulos por tenant).
+        foreach (var key in TenantModuleKeys.All)
+        {
+            dbContext.TenantModules.Add(TenantModule.Create(id, key, TenantModuleSources.Seed, now, note: null));
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         return ownerMembershipId.Value;
     }

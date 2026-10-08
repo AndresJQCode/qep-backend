@@ -52,6 +52,31 @@ internal static class QuotationsApiHarness
 
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
 
+    /// <summary>Spec 2026-10-07: apaga un módulo borrando su fila, como lo hace QCode por SQL.</summary>
+    public static async Task DisableModuleAsync(
+        QepApiFactory factory, Guid tenantId, Modules.Tenancy.Domain.TenantModuleKey key)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider
+            .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+        var id = new Modules.Tenancy.Domain.TenantId(tenantId);
+        await dbContext.TenantModules
+            .Where(module => module.TenantId == id && module.ModuleKey == key)
+            .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Lo prende otra vez con origen <c>manual</c>, el que escribe el SQL de «Operación».</summary>
+    public static async Task EnableModuleAsync(
+        QepApiFactory factory, Guid tenantId, Modules.Tenancy.Domain.TenantModuleKey key)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider
+            .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+        dbContext.TenantModules.Add(Modules.Tenancy.Domain.TenantModule.Create(
+            new Modules.Tenancy.Domain.TenantId(tenantId), key, "manual", DateTimeOffset.UtcNow, note: null));
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
     /// <summary>El huso con el que nacen los tenants de este harness (ver
     /// <see cref="RegisterTenantAsync"/>).</summary>
     public static readonly TimeZoneInfo BogotaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");

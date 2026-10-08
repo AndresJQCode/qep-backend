@@ -162,6 +162,27 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
     }
 
     [Fact]
+    public async Task WithoutOrdersItIsForbiddenBeforeValidatingOrReading()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var audit = new RecordingExportAuditPublisher();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var modules = FixedTenantModules.WithoutOrders;
+        var handler = NewHandler(repository, audit, unitOfWork, tenantModules: modules);
+        var columns = DefaultInputs();
+        columns[3] = columns[3] with { Header = "   " };
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            handler.HandleAsync(NewCommand(columns, expectedVersion: 1), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.module_not_enabled", error.Code);
+        Assert.Equal(1, modules.FindCalls);
+        Assert.Equal(0, repository.FindCalls);
+        Assert.Empty(audit.Entries);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
+    [Fact]
     public async Task ForAnotherTenantIsForbidden()
     {
         var repository = new InMemoryOrdersExportLayoutRepository();
@@ -310,9 +331,11 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         InMemoryOrdersExportLayoutRepository repository,
         RecordingExportAuditPublisher audit,
         CountingQuotationsUnitOfWork unitOfWork,
-        IExecutionContext? executionContext = null) =>
+        IExecutionContext? executionContext = null,
+        ITenantModules? tenantModules = null) =>
         new(
             repository,
+            tenantModules ?? FixedTenantModules.Simulated,
             unitOfWork,
             audit,
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),

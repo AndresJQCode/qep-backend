@@ -192,7 +192,29 @@ public sealed class GetOrdersExportLayoutHandlerTests
             handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken));
     }
 
+    // Spec 2026-10-07: el permiso es de núcleo (tenancy.settings.read) pero lo que se configura es de
+    // orders, así que el handler lo chequea explícito, antes de leer el repositorio.
+    [Fact]
+    public async Task WithoutOrdersItIsForbiddenBeforeReadingTheRepository()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var modules = FixedTenantModules.WithoutOrders;
+        var handler = NewHandler(repository, tenantModules: modules);
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.module_not_enabled", error.Code);
+        Assert.Equal(1, modules.FindCalls);
+        Assert.Equal(0, repository.FindCalls);
+    }
+
     private static GetOrdersExportLayoutHandler NewHandler(
-        InMemoryOrdersExportLayoutRepository repository, IExecutionContext? executionContext = null) =>
-        new(repository, executionContext ?? new StubExecutionContext(SubjectId, TenantId));
+        InMemoryOrdersExportLayoutRepository repository,
+        IExecutionContext? executionContext = null,
+        ITenantModules? tenantModules = null) =>
+        new(
+            repository,
+            tenantModules ?? FixedTenantModules.Simulated,
+            executionContext ?? new StubExecutionContext(SubjectId, TenantId));
 }

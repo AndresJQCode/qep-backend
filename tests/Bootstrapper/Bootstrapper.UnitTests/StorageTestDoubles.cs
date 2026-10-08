@@ -43,6 +43,7 @@ internal sealed class InMemoryFileResourceRepository(params FileResource[] resou
         string? category,
         string? tag,
         FileOwnerFilter? owner,
+        IReadOnlyCollection<FileOwnerType> excludedOwnerTypes,
         int page,
         int pageSize,
         CancellationToken cancellationToken) =>

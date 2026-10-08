@@ -8,7 +8,10 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
+using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Modules.Quotations.IntegrationTests;
 
@@ -1150,6 +1153,110 @@ public sealed class OrderPaymentProofPublicationApiTests
 
         return false;
     }
+
+    // Spec 2026-10-07, criterio 6: con orders apagado el comprobante sale del listado y sus comandos
+    // por id dan 403 tenancy.module_not_enabled; el logo del tenant, que es núcleo, no cambia.
+    [Fact]
+    public async Task WithOrdersOffAProofLeavesTheListingAndItsCommandsAreForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var quotation = await NewSentQuotationAsync(client, factory, tenantId);
+        var proofId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        await ConvertAsync(client, tenantId, quotation.Id, "FullPaymentReceived", proofId);
+        var logoId = await CreateTenantLogoFileAsync(client, factory, tenantId);
+        Assert.Contains(proofId, await ListedFileIdsAsync(client, tenantId, query: string.Empty));
+        var totalBefore = await ListedTotalCountAsync(client, tenantId);
+
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Orders);
+
+        var listed = await ListedFileIdsAsync(client, tenantId, query: string.Empty);
+        Assert.DoesNotContain(proofId, listed);
+        Assert.Contains(logoId, listed);
+        Assert.Equal(totalBefore - 1, await ListedTotalCountAsync(client, tenantId));
+        await AssertModuleNotEnabledAsync(await client.PostAsync(
+            $"/api/v1/tenants/{tenantId}/files/{proofId}/download-url", content: null,
+            TestContext.Current.CancellationToken));
+        // El que hoy devolvería su PublicUrl.
+        await AssertModuleNotEnabledAsync(await client.PatchAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/files/{proofId}/metadata",
+            new { category = "comprobantes", tags = Array.Empty<string>() },
+            TestContext.Current.CancellationToken));
+        var logoUrl = await client.PostAsync(
+            $"/api/v1/tenants/{tenantId}/files/{logoId}/download-url", content: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, logoUrl.StatusCode);
+    }
+
+    // Review Focus 2 (decisión 31 del spec): un filtro explícito por el dueño de un módulo apagado
+    // da una página vacía, no el archivo ni un 403.
+    [Fact]
+    public async Task AnExplicitOwnerFilterOnADisabledModuleReturnsAnEmptyPage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), publicPaymentProofLinks: true);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var proofId = await CreateAvailablePaymentProofImageAsync(client, factory, tenantId);
+        var ownerId = await OwnerIdOfAsync(client, tenantId, proofId);
+        var filter = $"?ownerType=PaymentProof&ownerId={ownerId}";
+        Assert.Equal([proofId], await ListedFileIdsAsync(client, tenantId, filter));
+
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Orders);
+
+        var page = await client.GetFromJsonAsync<FilesPageDto>(
+            $"/api/v1/tenants/{tenantId}/files{filter}", TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        Assert.Empty(page.Items);
+        Assert.Equal(0, page.TotalCount);
+    }
+
+    private static async Task<Guid> CreateTenantLogoFileAsync(HttpClient client, QepApiFactory factory, Guid tenantId)
+    {
+        using var image = new Image<Rgba32>(64, 48, Color.CornflowerBlue);
+        await using var png = new MemoryStream();
+        await image.SaveAsPngAsync(png, TestContext.Current.CancellationToken);
+        return await CreateAvailableFileAsync(
+            client, factory, tenantId, "image/png", png.ToArray(), "logo.png", ownerType: "Tenant");
+    }
+
+    private static async Task<int> ListedTotalCountAsync(HttpClient client, Guid tenantId)
+    {
+        var page = await client.GetFromJsonAsync<FilesPageDto>(
+            $"/api/v1/tenants/{tenantId}/files", TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        return page.TotalCount;
+    }
+
+    private static async Task<Guid[]> ListedFileIdsAsync(HttpClient client, Guid tenantId, string query)
+    {
+        var page = await client.GetFromJsonAsync<FilesPageDto>(
+            $"/api/v1/tenants/{tenantId}/files{query}", TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        return page.Items.Select(item => item.Id).ToArray();
+    }
+
+    private static async Task<Guid> OwnerIdOfAsync(HttpClient client, Guid tenantId, Guid fileId)
+    {
+        var page = await client.GetFromJsonAsync<FilesPageDto>(
+            $"/api/v1/tenants/{tenantId}/files?pageSize=100", TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        return page.Items.Single(item => item.Id == fileId).OwnerId;
+    }
+
+    private static async Task AssertModuleNotEnabledAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var problem = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("tenancy.module_not_enabled", problem.RootElement.GetProperty("code").GetString());
+    }
+
+    private sealed record FilesPageDto(List<FileItemDto> Items, int TotalCount);
+
+    private sealed record FileItemDto(Guid Id, Guid OwnerId);
 
     private static async Task<QuotationResponse> NewSentQuotationAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId)

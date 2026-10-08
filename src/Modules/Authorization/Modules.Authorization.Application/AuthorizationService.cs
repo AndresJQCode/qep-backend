@@ -1,10 +1,13 @@
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Authorization.Application;
 
 public sealed class AuthorizationService(
     IMembershipDirectory membershipDirectory,
-    ITenantRoleCatalog roleCatalog)
+    ITenantRoleCatalog roleCatalog,
+    ITenantModules tenantModules,
+    ModuleEntitlementMask entitlementMask)
     : IAuthorizationService
 {
     public async Task<AuthorizationDecision> AuthorizeAsync(
@@ -41,6 +44,12 @@ public sealed class AuthorizationService(
 
         // Paso 2: resolver los permisos acotados al tenant — de sistema y custom. DirectGrant
         // y la Policy contextual quedan diferidos (ver docs/decisions/0002).
-        return await roleCatalog.PermissionsForAsync(tenantId, roles, cancellationToken);
+        var permissions = await roleCatalog.PermissionsForAsync(tenantId, roles, cancellationToken);
+
+        // Paso 3 (spec 2026-10-07): descartar los de módulos que el tenant no tiene. null no
+        // debería pasar —hay membresía activa, luego hay tenant—; si pasa, fail closed: sólo núcleo.
+        // AuthorizeAsync hereda el enmascarado.
+        var modules = await tenantModules.FindAsync(tenantId, cancellationToken) ?? TenantModuleSet.Empty;
+        return entitlementMask.Apply(permissions, modules);
     }
 }
