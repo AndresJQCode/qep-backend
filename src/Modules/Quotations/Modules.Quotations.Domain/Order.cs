@@ -254,9 +254,10 @@ public sealed class Order
     /// vuelva igual o corregida, nunca perdida. Null o vacío la borra, mismo criterio que al
     /// crear el pedido.
     ///
-    /// <paramref name="updatedProofs"/> corrige comprobantes que ya existen —el archivo y quién
-    /// lo subió no cambian, sólo el monto—, en la misma llamada que suma los nuevos: un solo
-    /// viaje de red para las dos cosas, en vez de uno por cada comprobante que se toca.
+    /// <paramref name="updatedProofs"/> corrige comprobantes que ya existen —quién lo subió no
+    /// cambia; sí el monto, la fecha del soporte y, si viene, el archivo—, en la misma llamada que
+    /// suma los nuevos: un solo viaje de red para las dos cosas, en vez de uno por cada
+    /// comprobante que se toca.
     /// </summary>
     public void AddPaymentProofs(
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
@@ -290,6 +291,7 @@ public sealed class Order
                     $"Payment proof '{update.ProofId}' was not found on this order.");
 
             proof.UpdateAmount(update.Amount);
+            proof.UpdatePaidOn(update.PaidOn);
             if (update.NewFileId is { } newFileId)
             {
                 proof.UpdateFile(newFileId, update.NewPublicStorageKey);
@@ -408,10 +410,11 @@ public sealed class Order
     }
 
     /// <summary>
-    /// Corrige monto y, si viene, archivo de comprobantes ya cargados (spec 2026-09-17). Misma
-    /// corrección que hace <see cref="AddPaymentProofs"/> con <c>updatedProofs</c>, sin exigir
-    /// comprobantes nuevos ni pisar el estado de pago. Todos los ids se buscan antes de corregir el
-    /// primero: uno ajeno no deja la mitad corregida en memoria. Sin correcciones no cambia nada.
+    /// Corrige monto, fecha del soporte y, si viene, archivo de comprobantes ya cargados (spec
+    /// 2026-09-17; la fecha desde 2026-10-08). Misma corrección que hace
+    /// <see cref="AddPaymentProofs"/> con <c>updatedProofs</c>, sin exigir comprobantes nuevos ni
+    /// pisar el estado de pago. Todos los ids se buscan antes de corregir el primero: uno ajeno no
+    /// deja la mitad corregida en memoria. Sin correcciones no cambia nada.
     /// </summary>
     public void CorrectPaymentProofs(
         IReadOnlyCollection<OrderPaymentProofAmountUpdate> updates, DateTimeOffset occurredAt)
@@ -434,6 +437,7 @@ public sealed class Order
         foreach (var (update, proof) in targets)
         {
             proof.UpdateAmount(update.Amount);
+            proof.UpdatePaidOn(update.PaidOn);
             if (update.NewFileId is { } newFileId)
             {
                 proof.UpdateFile(newFileId, update.NewPublicStorageKey);
@@ -561,9 +565,12 @@ public sealed record OrderPaymentProofInput(
 /// 2026-09-15) — null cuando sólo se corrige el monto. <paramref name="NewPublicStorageKey"/> es
 /// la copia pública que el handler ya publicó para ese archivo de reemplazo (o null si la opción
 /// está apagada) — mismo criterio que <see cref="OrderPaymentProofInput.PublicStorageKey"/> para
-/// un comprobante nuevo.</summary>
+/// un comprobante nuevo. <paramref name="PaidOn"/> (a pedido, 2026-10-08) reemplaza la fecha del
+/// soporte, y null la borra —ver <see cref="OrderPaymentProof.UpdatePaidOn"/>—; va al final, con
+/// default, porque los otros cuatro ya se pasan posicionalmente.</summary>
 public sealed record OrderPaymentProofAmountUpdate(
     OrderPaymentProofId ProofId,
     decimal Amount,
     Guid? NewFileId = null,
-    string? NewPublicStorageKey = null);
+    string? NewPublicStorageKey = null,
+    DateOnly? PaidOn = null);

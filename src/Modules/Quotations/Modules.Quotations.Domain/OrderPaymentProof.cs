@@ -113,6 +113,16 @@ public sealed class OrderPaymentProof
         Amount = amount;
     }
 
+    /// <summary>Corrige la fecha del soporte de un comprobante ya cargado (a pedido, 2026-10-08):
+    /// la pantalla de edición la precarga junto al monto y manda las dos, así que lo que llega
+    /// reemplaza lo guardado y null la borra — mismo criterio que <see cref="UpdateAmount"/> y que
+    /// <c>Order.Notes</c>, no el de <see cref="UpdateFile"/>, donde null conserva el archivo. Sin
+    /// validación: la fecha es la que escribió quien adjuntó, ver <see cref="PaidOn"/>.</summary>
+    internal void UpdatePaidOn(DateOnly? paidOn)
+    {
+        PaidOn = paidOn;
+    }
+
     /// <summary>Reemplaza el archivo de un comprobante ya cargado, y su copia pública con él (a
     /// pedido, 2026-09-15) — sólo desde <see cref="Order.AddPaymentProofs"/>, que ya validó contra
     /// Storage que el archivo nuevo existe, es del tenant y terminó de subir (mismo chequeo que un

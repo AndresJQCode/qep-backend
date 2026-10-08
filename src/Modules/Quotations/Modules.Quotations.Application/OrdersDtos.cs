@@ -49,9 +49,14 @@ public sealed record OrderPaymentProofRequest(Guid FileId, decimal Amount, DateO
 /// <see cref="OrderPaymentProofRequest"/>, lleva el id del comprobante a corregir. El monto
 /// siempre se corrige; <paramref name="NewFileId"/> además reemplaza el archivo (a pedido,
 /// 2026-09-15) cuando el que se subió no era el correcto — null para corregir sólo el
-/// monto.</summary>
+/// monto. <paramref name="PaidOn"/> (a pedido, 2026-10-08) es la fecha del soporte, igual que en
+/// <see cref="OrderPaymentProofRequest"/>: la pantalla de edición la precarga con la guardada y la
+/// manda junto al monto, así que lo que llega reemplaza lo guardado y null (o ausente) la borra —
+/// no es un PATCH parcial, mismo criterio que <c>Notes</c>. Distinto de <paramref name="NewFileId"/>,
+/// donde null conserva el archivo porque subir uno es caro. Último parámetro, con default, porque
+/// los tres anteriores ya se pasan posicionalmente.</summary>
 public sealed record OrderPaymentProofUpdateRequest(
-    Guid ProofId, decimal Amount, Guid? NewFileId = null);
+    Guid ProofId, decimal Amount, Guid? NewFileId = null, DateOnly? PaidOn = null);
 
 /// <summary>US-13 a US-16: el asistente de conversión. No lleva cliente/productos/totales —
 /// todo eso se hereda de la cotización, que ya existe.</summary>
