@@ -22,6 +22,8 @@ using Modules.Identity.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
+using Modules.Pos.Api;
+using Modules.Pos.Infrastructure;
 using Modules.Quotations.Api;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
@@ -140,6 +142,7 @@ app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
 app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
+app.MapPosEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -177,6 +180,10 @@ await app.Services.InitializeCompaniesDatabaseAsync(
 // suelto, sin FK real -- no hay dependencia de orden estricta, pero se inicializa al final del
 // grupo de modulos de negocio por consistencia con el resto de este archivo.
 await app.Services.InitializeQuotationsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+// Después de Companies: pos.cash_sessions lleva una FK real a companies.companies (spec,
+// decisión 8), así que esa tabla tiene que existir cuando esta migración corre.
+await app.Services.InitializePosDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

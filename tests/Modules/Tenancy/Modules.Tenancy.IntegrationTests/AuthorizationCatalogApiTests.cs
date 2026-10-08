@@ -81,8 +81,12 @@ public sealed class AuthorizationCatalogApiTests
             catalog.Permissions
                 .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal))
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
+        // Los únicos permisos de venta son los del punto de venta (spec 2026-10-07): la regla
+        // sigue cuidando que ningún permiso de pedidos se llame "sale".
         Assert.DoesNotContain(
-            catalog.Permissions, permission => permission.Permission.Contains("sale", StringComparison.Ordinal));
+            catalog.Permissions,
+            permission => permission.Permission.Contains("sale", StringComparison.Ordinal)
+                && !permission.Permission.StartsWith("pos.", StringComparison.Ordinal));
         // Spec 2026-09-16, decisión 5: anular es sólo de admin. Aprobar es de admin y facturación,
         // nunca del asesor: quien registra el pedido no es quien lo revisa. Facturar (spec
         // 2026-10-05, decisión 5) es de admin y facturación, y cubre también revertir.
@@ -105,6 +109,54 @@ public sealed class AuthorizationCatalogApiTests
         // Facturación no ve cotizaciones (decisión del owner, 2026-10-01): ve clientes y pedidos, y
         // aprueba y factura pedidos. Ningún permiso de quotations.quotation.*, ni siquiera el de lectura.
         Assert.Empty(PermissionsOf(catalog, "billing", "quotations.quotation."));
+    }
+
+    /// <summary>
+    /// Spec 2026-10-07 (módulo POS): seis permisos propios, todos de admin; el rol de sistema
+    /// `cashier` vende, abre y cierra su caja y lee sus ventas, sin descontar ni anular
+    /// (decisión 4). Asesor y facturación no ven el punto de venta.
+    /// </summary>
+    [Fact]
+    public async Task TheCatalogNamesThePosPermissionsAndTheCashierRole()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
+
+        var catalog = await client.GetFromJsonAsync<CatalogPayload>(
+            $"/api/v1/tenants/{TenantId}/authorization/catalog", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(catalog);
+        CatalogPermissionPayload[] expected =
+        [
+            new("pos.register.operate", "Abrir y cerrar su caja",
+                "Permite abrir y cerrar la caja propia del punto de venta.", "Pos", "medium"),
+            new("pos.register.read", "Ver todas las cajas y ventas",
+                "Permite consultar las cajas y las ventas de todos los cajeros del tenant.", "Pos", "medium"),
+            new("pos.sale.create", "Vender en caja",
+                "Permite registrar ventas en el punto de venta con la caja propia abierta.", "Pos", "medium"),
+            new("pos.sale.discount", "Dar descuentos en caja",
+                "Permite dar descuentos por línea y cobrar ventas en $0 en el punto de venta.", "Pos", "high"),
+            new("pos.sale.read", "Ver ventas y cierres de caja",
+                "Permite consultar las ventas del punto de venta y los cierres de caja propios.", "Pos", "low"),
+            new("pos.sale.void", "Anular ventas de caja",
+                "Permite anular, con un motivo, una venta cuya caja sigue abierta.", "Pos", "high"),
+        ];
+        Assert.Equal(
+            expected,
+            catalog.Permissions
+                .Where(permission => permission.Permission.StartsWith("pos.", StringComparison.Ordinal))
+                .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
+        Assert.Equal(
+            expected.Select(permission => permission.Permission).ToArray(),
+            PermissionsOf(catalog, "admin", "pos."));
+        Assert.Equal(
+            ["pos.register.operate", "pos.sale.create", "pos.sale.read"],
+            catalog.Roles.Single(role => role.Role == "cashier").Permissions
+                .Order(StringComparer.Ordinal).ToArray());
+        Assert.Empty(PermissionsOf(catalog, "advisor", "pos."));
+        Assert.Empty(PermissionsOf(catalog, "billing", "pos."));
     }
 
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>

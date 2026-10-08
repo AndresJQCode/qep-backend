@@ -66,6 +66,12 @@
     <Project Path="src/Modules/Platform/Modules.Platform.Domain/Modules.Platform.Domain.csproj" />
     <Project Path="src/Modules/Platform/Modules.Platform.Infrastructure/Modules.Platform.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Pos/">
+    <Project Path="src/Modules/Pos/Modules.Pos.Api/Modules.Pos.Api.csproj" />
+    <Project Path="src/Modules/Pos/Modules.Pos.Application/Modules.Pos.Application.csproj" />
+    <Project Path="src/Modules/Pos/Modules.Pos.Domain/Modules.Pos.Domain.csproj" />
+    <Project Path="src/Modules/Pos/Modules.Pos.Infrastructure/Modules.Pos.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Quotations/">
     <Project Path="src/Modules/Quotations/Modules.Quotations.Api/Modules.Quotations.Api.csproj" />
     <Project Path="src/Modules/Quotations/Modules.Quotations.Application/Modules.Quotations.Application.csproj" />
@@ -126,6 +132,10 @@
   <Folder Name="/tests/Modules/Notifications/">
     <Project Path="tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj" />
     <Project Path="tests/Modules/Notifications/Modules.Notifications.IntegrationTests/Modules.Notifications.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Pos/">
+    <Project Path="tests/Modules/Pos/Modules.Pos.IntegrationTests/Modules.Pos.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Pos/Modules.Pos.UnitTests/Modules.Pos.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Quotations/">
     <Project Path="tests/Modules/Platform/Modules.Platform.UnitTests/Modules.Platform.UnitTests.csproj" />

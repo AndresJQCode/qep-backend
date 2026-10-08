@@ -173,6 +173,16 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 product => product.TenantId == tenantId && product.Id == productId,
                 cancellationToken);
 
+    public Task<Product?> FindByCodeAsync(
+        Guid tenantId,
+        string code,
+        CancellationToken cancellationToken) =>
+        dbContext.Products
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                product => product.TenantId == tenantId && product.Code == code,
+                cancellationToken);
+
     // AsNoTracking y con las escalas: quien la llama arma una respuesta de lectura (el detalle
     // de una cotizacion), no muta el producto.
     public async Task<IReadOnlyList<Product>> ListByIdsAsync(
