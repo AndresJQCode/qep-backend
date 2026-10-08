@@ -163,19 +163,22 @@ public sealed class CreatePosSaleHandlerTests
         Assert.Equal(37_890m, Assert.Single(bed.Sales.Stored).Total);
     }
 
+    // Mismo cuerpo y misma caja en el request: la huella coincide, así que lo único que distingue
+    // la venta guardada es su cajero.
     [Fact]
     public async Task TheSameIdFromAnotherCashierIsAConflict()
     {
-        var (bed, _) = Arrange();
+        var (bed, mySession) = Arrange();
         var otherSession = OpenSession(cashier: new MemberId(Guid.CreateVersion7()));
         bed.Sessions.Add(otherSession);
-        var foreignCommand = Command(otherSession);
-        bed.Sales.Stored.Add(WinnerFor(foreignCommand, otherSession));
-        var mySession = bed.Sessions.Sessions[0];
+        var command = Command(mySession);
+        var foreign = WinnerFor(command, otherSession);
+        bed.Sales.Stored.Add(foreign);
 
-        var error = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, Discounter).HandleAsync(
-            Command(mySession, foreignCommand.Id), TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<PosDomainException>(() =>
+            Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken));
 
+        Assert.Equal(foreign.RequestFingerprint, PosSaleFingerprint.Compute(command));
         Assert.Equal("pos.sale.id_conflict", error.Code);
     }
 
@@ -306,6 +309,47 @@ public sealed class CreatePosSaleHandlerTests
         Assert.Equal(1, bed.UnitOfWork.ResetCalls);
         Assert.Equal(0, bed.UnitOfWork.Commits);
         Assert.Single(bed.Sales.Stored);
+    }
+
+    // La venta que aparece tras el choque no es de este request: otro cajero o otro carrito con el
+    // mismo id. Nunca se presenta como la propia.
+    [Fact]
+    public async Task AClashWhereTheSaleThatAppearsIsFromAnotherCashierIsAConflict()
+    {
+        var (bed, session) = Arrange();
+        var otherSession = OpenSession(cashier: new MemberId(Guid.CreateVersion7()));
+        bed.Sessions.Add(otherSession);
+        var command = Command(session);
+        bed.UnitOfWork.OnSave.Enqueue(() =>
+        {
+            bed.Sales.Stored.Add(WinnerFor(command, otherSession));
+            return new RequestConcurrencyException("concurrency.conflict", "clash");
+        });
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() =>
+            Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.id_conflict", error.Code);
+        Assert.Equal(0, bed.UnitOfWork.Commits);
+    }
+
+    [Fact]
+    public async Task AClashWhereTheSaleThatAppearsHasAnotherFingerprintIsAConflict()
+    {
+        var (bed, session) = Arrange();
+        var command = Command(session);
+        bed.UnitOfWork.OnSave.Enqueue(() =>
+        {
+            var other = Command(session, command.Id, payments: [new("Cash", null, 50_000m, null)]);
+            bed.Sales.Stored.Add(WinnerFor(other, session));
+            return new PosDomainException("pos.sale.id_taken", "taken");
+        });
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() =>
+            Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.id_conflict", error.Code);
+        Assert.Equal(0, bed.UnitOfWork.Commits);
     }
 
     // Fue un cierre de caja u otra venta del mismo cajero en otra pestaña, no un duplicado.
