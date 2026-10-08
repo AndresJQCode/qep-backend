@@ -50,6 +50,7 @@ internal sealed class PosSaleRepository(PosDbContext dbContext) : IPosSaleReposi
         var total = await query.CountAsync(cancellationToken);
         var page = await query
             .OrderByDescending(sale => sale.CreatedAt)
+            .ThenByDescending(sale => sale.Id)
             .Skip((filter.Page - 1) * filter.PageSize)
             .Take(filter.PageSize)
             .Include(sale => sale.Payments)
@@ -59,7 +60,7 @@ internal sealed class PosSaleRepository(PosDbContext dbContext) : IPosSaleReposi
         var sessionIds = page.Select(sale => sale.CashSessionId).Distinct().ToList();
         var sessions = await dbContext.CashSessions
             .AsNoTracking()
-            .Where(session => sessionIds.Contains(session.Id))
+            .Where(session => session.TenantId == filter.TenantId && sessionIds.Contains(session.Id))
             .Select(session => new { session.Id, session.CashierName, session.Status })
             .ToDictionaryAsync(session => session.Id, cancellationToken);
 

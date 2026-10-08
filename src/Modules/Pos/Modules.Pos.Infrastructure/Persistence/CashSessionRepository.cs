@@ -46,6 +46,7 @@ internal sealed class CashSessionRepository(PosDbContext dbContext) : ICashSessi
         var total = await query.CountAsync(cancellationToken);
         var items = await query
             .OrderByDescending(session => session.OpenedAt)
+            .ThenByDescending(session => session.Id)
             .Skip((filter.Page - 1) * filter.PageSize)
             .Take(filter.PageSize)
             .ToListAsync(cancellationToken);
