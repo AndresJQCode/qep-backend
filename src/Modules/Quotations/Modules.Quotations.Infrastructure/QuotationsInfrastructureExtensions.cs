@@ -10,6 +10,7 @@ using Modules.Quotations.Infrastructure.Expiration;
 using Modules.Quotations.Infrastructure.Exports;
 using Modules.Quotations.Infrastructure.Pdf;
 using Modules.Quotations.Infrastructure.Persistence;
+using Modules.Quotations.Infrastructure.SecretProtection;
 using Modules.Quotations.Infrastructure.Whatsapp;
 
 namespace Modules.Quotations.Infrastructure;
@@ -65,6 +66,13 @@ public static class QuotationsInfrastructureExtensions
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();
         services.AddSingleton<IValidateOptions<QuotationsOptions>, QuotationsOptionsValidator>();
+        // Spec 2026-10-07: la llave del cifrado de la API key de WhatsApp por tenant. Sección y
+        // validador propios, no parte de QuotationsOptions, para que sus reglas se prueben solas.
+        services.AddOptions<SecretProtectionOptions>()
+            .Bind(configuration.GetSection(SecretProtectionOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SecretProtectionOptions>, SecretProtectionOptionsValidator>();
+        services.AddSingleton<IWhatsAppSecretProtector, AesGcmWhatsAppSecretProtector>();
         services.AddScoped<IQuotationExpirationProcessor, QuotationExpirationProcessor>();
         services.AddHostedService<QuotationExpirationWorker>();
 
