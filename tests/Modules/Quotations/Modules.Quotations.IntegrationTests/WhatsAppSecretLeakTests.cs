@@ -27,6 +27,10 @@ public sealed class WhatsAppSecretLeakTests
         }
     }
 
+    // Control positivo: sin esto, un CapturedLogs que no engancha el host vuelve vacía la ausencia.
+    private static void AssertLogged(CapturedLogs logs, string expectedFragment) =>
+        Assert.Contains(logs.Entries, entry => entry.Contains(expectedFragment, StringComparison.Ordinal));
+
     private static Task<long> FailuresWithStatusAsync(string connectionString, int status) =>
         ScalarAsync<long>(connectionString, $"SELECT count(*) FROM platform.request_failures WHERE status_code = {status}");
 
@@ -50,6 +54,7 @@ public sealed class WhatsAppSecretLeakTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.True(await FailuresWithStatusAsync(database.GetConnectionString(), 422) >= 1);
+        AssertLogged(logs, "API request failed with code");
         await AssertNothingLeaksAsync(database.GetConnectionString(), logs, body, SentinelApiKey);
     }
 
@@ -71,6 +76,9 @@ public sealed class WhatsAppSecretLeakTests
 
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         Assert.True(await FailuresWithStatusAsync(database.GetConnectionString(), 500) >= 1);
+        AssertLogged(logs, "Unhandled API exception");
+        // El 500 tiene que venir de Protect (sin llave activa), no de otra falla cualquiera.
+        Assert.Contains("SecretProtection", await RequestFailuresTextAsync(database.GetConnectionString()), StringComparison.Ordinal);
         await AssertNothingLeaksAsync(database.GetConnectionString(), logs, body, SentinelApiKey);
     }
 
@@ -98,6 +106,8 @@ public sealed class WhatsAppSecretLeakTests
             "quotation.whatsapp.credentials_rejected",
             JsonDocument.Parse(body).RootElement.GetProperty("code").GetString());
         Assert.Equal(SentinelApiKey, Assert.Single(zenvia.Requests).Token);
+        Assert.True(await FailuresWithStatusAsync(database.GetConnectionString(), 422) >= 1);
+        AssertLogged(logs, "API request failed with code");
         await AssertNothingLeaksAsync(
             database.GetConnectionString(), logs, body, SentinelApiKey, SentinelZenviaBody);
     }
