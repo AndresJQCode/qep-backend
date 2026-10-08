@@ -162,30 +162,39 @@ public sealed class PosSaleApiTests
         var body = PosWorld.SaleBody(id, session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m));
         var key = PosSaleIdLock.KeyFor(world.Tenant.TenantId, id);
 
-        gate.Arm();
-        var firstSend = world.Admin.PostAsJsonAsync($"{world.Url}/sales", body, TestContext.Current.CancellationToken);
-        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
-        var retry = world.Admin.PostAsJsonAsync($"{world.Url}/sales", body, TestContext.Current.CancellationToken);
-        await WaitUntilAsync(
-            async () => await WaitingOnLockAsync(database, key) == 1,
-            "the retry to be waiting on the sale id advisory lock",
-            firstSend,
-            retry);
-        Assert.False(retry.IsCompleted);
-        await ExecuteSqlAsync(database, "UPDATE catalog.products SET price_base_cop = 13000 WHERE id = @id", ("id", world.Shampoo));
+        // Si una aserción falla antes de soltar la compuerta, el primer envío quedaría colgado dentro
+        // del candado; el finally lo libera siempre.
+        try
+        {
+            gate.Arm();
+            var firstSend = world.Admin.PostAsJsonAsync($"{world.Url}/sales", body, TestContext.Current.CancellationToken);
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            var retry = world.Admin.PostAsJsonAsync($"{world.Url}/sales", body, TestContext.Current.CancellationToken);
+            await WaitUntilAsync(
+                async () => await WaitingOnLockAsync(database, key) == 1,
+                "the retry to be waiting on the sale id advisory lock",
+                firstSend,
+                retry);
+            Assert.False(retry.IsCompleted);
+            await ExecuteSqlAsync(database, "UPDATE catalog.products SET price_base_cop = 13000 WHERE id = @id", ("id", world.Shampoo));
 
-        gate.Release.SetResult();
-        var responses = await Task.WhenAll(firstSend, retry);
+            gate.Release.SetResult();
+            var responses = await Task.WhenAll(firstSend, retry);
 
-        var texts = await Task.WhenAll(responses.Select(response => response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)));
-        Assert.True(responses[0].StatusCode == HttpStatusCode.Created, $"first: {responses[0].StatusCode} {texts[0]}");
-        Assert.True(responses[1].StatusCode == HttpStatusCode.OK, $"retry: {responses[1].StatusCode} {texts[1]}");
-        Assert.DoesNotContain("pos.sale.price_changed", texts[1], StringComparison.Ordinal);
-        var original = await responses[0].Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
-        var replayed = System.Text.Json.JsonSerializer.Deserialize<PosSaleResponse>(texts[1], System.Text.Json.JsonSerializerOptions.Web);
-        Assert.Equal(original!.SaleNumber, replayed!.SaleNumber);
-        Assert.Equal(11_900m, replayed.Total);
-        Assert.Equal(1, await SalesWithIdAsync(database, id));
+            var texts = await Task.WhenAll(responses.Select(response => response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)));
+            Assert.True(responses[0].StatusCode == HttpStatusCode.Created, $"first: {responses[0].StatusCode} {texts[0]}");
+            Assert.True(responses[1].StatusCode == HttpStatusCode.OK, $"retry: {responses[1].StatusCode} {texts[1]}");
+            Assert.DoesNotContain("pos.sale.price_changed", texts[1], StringComparison.Ordinal);
+            var original = await responses[0].Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
+            var replayed = System.Text.Json.JsonSerializer.Deserialize<PosSaleResponse>(texts[1], System.Text.Json.JsonSerializerOptions.Web);
+            Assert.Equal(original!.SaleNumber, replayed!.SaleNumber);
+            Assert.Equal(11_900m, replayed.Total);
+            Assert.Equal(1, await SalesWithIdAsync(database, id));
+        }
+        finally
+        {
+            gate.Release.TrySetResult();
+        }
     }
 
     /// <summary>
@@ -211,12 +220,12 @@ public sealed class PosSaleApiTests
                 (IPosProductLookup)ActivatorUtilities.CreateInstance(provider, original.ImplementationType!), this));
         }
 
-        public async Task PauseOnceAsync()
+        public async Task PauseOnceAsync(CancellationToken cancellationToken)
         {
             if (Interlocked.Exchange(ref armed, 0) == 1)
             {
                 Entered.SetResult();
-                await Release.Task;
+                await Release.Task.WaitAsync(cancellationToken);
             }
         }
     }
@@ -234,7 +243,7 @@ public sealed class PosSaleApiTests
             Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
         {
             var found = await inner.FindManyAsync(tenantId, productIds, cancellationToken);
-            await gate.PauseOnceAsync();
+            await gate.PauseOnceAsync(cancellationToken);
             return found;
         }
     }
