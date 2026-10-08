@@ -110,7 +110,9 @@ type ConvertQuotationToOrderRequest = {
   // como fecha ISO sin hora (`"2026-10-06"`). Se guarda con el comprobante y es la que el Excel de
   // pedidos muestra en `Fecha Pago N`; sin ella el comprobante queda con `paidOn: null` y el Excel
   // cae a la fecha de subida. Que sea obligatoria es decisión pendiente. Mismo campo en
-  // `POST /orders/{orderId}/proofs` y en `proofs.add` de `PUT /orders/{orderId}`.
+  // `POST /orders/{orderId}/proofs` y en `proofs.add` de `PUT /orders/{orderId}`. Al corregir un
+  // comprobante que ya existe (`updatedProofs[]` y `proofs.update[]`) también viaja junto al
+  // `amount`, y reemplaza la guardada: null o ausente la borra, no es un PATCH parcial.
   paymentProofs: { fileId: string; amount: number; paidOn?: string | null }[]; // vacío sólo permitido si paymentStatus = PaymentPending
 };
 
