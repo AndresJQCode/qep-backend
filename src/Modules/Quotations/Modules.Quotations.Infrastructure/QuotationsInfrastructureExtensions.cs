@@ -10,7 +10,6 @@ using Modules.Quotations.Infrastructure.Expiration;
 using Modules.Quotations.Infrastructure.Exports;
 using Modules.Quotations.Infrastructure.Pdf;
 using Modules.Quotations.Infrastructure.Persistence;
-using Modules.Quotations.Infrastructure.SecretProtection;
 using Modules.Quotations.Infrastructure.Whatsapp;
 
 namespace Modules.Quotations.Infrastructure;
@@ -56,12 +55,6 @@ public static class QuotationsInfrastructureExtensions
         // El layout de columnas del Excel de pedidos (spec 2026-09-24): lo leen el PUT/GET del
         // tenant y el processor, cada uno en su scope.
         services.AddScoped<IOrdersExportLayoutRepository, OrdersExportLayoutRepository>();
-        // Spec 2026-10-07: la configuración de WhatsApp por tenant. Scoped: la leen el PUT/GET, el
-        // envío y el re-cifrado, cada uno en su scope.
-        services.AddScoped<ITenantWhatsAppSettingsRepository, TenantWhatsAppSettingsRepository>();
-        // Spec 2026-10-07: el canal de cada envío. Scoped porque lee la fila por el DbContext del
-        // request; depende del IWhatsAppSender global (singleton) que registra AddWhatsAppSender.
-        services.AddScoped<IWhatsAppChannelResolver, WhatsAppChannelResolver>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
         // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).
@@ -72,19 +65,8 @@ public static class QuotationsInfrastructureExtensions
         var section = configuration.GetSection(QuotationsOptions.SectionName);
         services.AddOptions<QuotationsOptions>().Bind(section).ValidateOnStart();
         services.AddSingleton<IValidateOptions<QuotationsOptions>, QuotationsOptionsValidator>();
-        // Spec 2026-10-07: la llave del cifrado de la API key de WhatsApp por tenant. Sección y
-        // validador propios, no parte de QuotationsOptions, para que sus reglas se prueben solas.
-        services.AddOptions<SecretProtectionOptions>()
-            .Bind(configuration.GetSection(SecretProtectionOptions.SectionName))
-            .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<SecretProtectionOptions>, SecretProtectionOptionsValidator>();
-        services.AddSingleton<IWhatsAppSecretProtector, AesGcmWhatsAppSecretProtector>();
         services.AddScoped<IQuotationExpirationProcessor, QuotationExpirationProcessor>();
         services.AddHostedService<QuotationExpirationWorker>();
-        // Spec 2026-10-07: re-cifra al arrancar las API keys de WhatsApp guardadas con una llave
-        // que ya no es la activa. Corre una vez por arranque, despues de las migraciones
-        // (Program.cs las aplica antes de RunAsync).
-        services.AddHostedService<WhatsAppTokenRekeyWorker>();
 
         AddPdfRenderer(services);
         AddWhatsAppSender(services, section.GetSection(nameof(QuotationsOptions.WhatsApp)));
@@ -114,16 +96,9 @@ public static class QuotationsInfrastructureExtensions
     /// que no llama a nada externo. Así ningún `WebApplicationFactory` de las pruebas de
     /// integración —que no configuran Zenvia— tiene que empezar a hacerlo sólo porque "Enviar"
     /// ahora también manda un WhatsApp.
-    /// Desde el spec 2026-10-07 éste es el sender de la cuenta de QEP; el canal de cada envío lo
-    /// decide `WhatsAppChannelResolver`.
     /// </summary>
     private static void AddWhatsAppSender(IServiceCollection services, IConfigurationSection whatsApp)
     {
-        // Spec 2026-10-07: un solo HttpClient para la cuenta de QEP y las de cada tenant, siempre
-        // registrado (las cuentas propias lo necesitan aunque la de QEP no esté configurada).
-        // `new HttpClient()` sin IHttpClientFactory, mismo criterio que InfobipEmailChannel.
-        services.AddSingleton(_ => new ZenviaHttpClient(new HttpClient()));
-
         var configured =
             !string.IsNullOrWhiteSpace(whatsApp[nameof(WhatsAppOptions.ApiToken)]) &&
             !string.IsNullOrWhiteSpace(whatsApp[nameof(WhatsAppOptions.FromNumber)]) &&
@@ -131,11 +106,13 @@ public static class QuotationsInfrastructureExtensions
 
         if (configured)
         {
+            // `new HttpClient()` directo, sin `IHttpClientFactory` — mismo criterio que
+            // `InfobipEmailChannel` en Notifications, el único otro cliente HTTP saliente del
+            // backend.
             services.AddSingleton<IWhatsAppSender>(sp =>
                 new ZenviaWhatsAppSender(
-                    sp.GetRequiredService<ZenviaHttpClient>().Client,
-                    ZenviaSenderSettings.ForQep(
-                        sp.GetRequiredService<IOptions<QuotationsOptions>>().Value.WhatsApp),
+                    new HttpClient(),
+                    sp.GetRequiredService<IOptions<QuotationsOptions>>(),
                     sp.GetRequiredService<ILogger<ZenviaWhatsAppSender>>()));
         }
         else

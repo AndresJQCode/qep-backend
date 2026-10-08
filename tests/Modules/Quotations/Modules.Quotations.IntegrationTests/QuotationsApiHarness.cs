@@ -50,12 +50,6 @@ internal static class QuotationsApiHarness
     /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
     public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
 
-    /// <summary>La llave con la que las pruebas cifran la API key de WhatsApp (spec 2026-10-07).
-    /// Calculada, no escrita: un literal con forma de llave en el repo termina copiado a un
-    /// ambiente. Bytes 0..31.</summary>
-    public static string TestSecretProtectionKey { get; } =
-        Convert.ToBase64String(Enumerable.Range(0, 32).Select(index => (byte)index).ToArray());
-
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
 
     /// <summary>
@@ -931,12 +925,6 @@ internal static class QuotationsApiHarness
             builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
             builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
             builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
-            // Mismo criterio que Zenvia: fijadas, nunca heredadas de los user-secrets. "test" es la
-            // activa; "k1" —el id que el README sugiere para local— se vacía para que una llave
-            // mal pegada en la máquina de quien corre las pruebas no las tumbe al arrancar.
-            builder.UseSetting("Quotations:SecretProtection:ActiveKeyId", "test");
-            builder.UseSetting("Quotations:SecretProtection:Keys:test", TestSecretProtectionKey);
-            builder.UseSetting("Quotations:SecretProtection:Keys:k1", string.Empty);
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IObjectStorage>();

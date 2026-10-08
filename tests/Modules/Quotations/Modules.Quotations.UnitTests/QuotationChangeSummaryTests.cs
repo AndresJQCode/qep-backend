@@ -103,7 +103,7 @@ public sealed class QuotationChangeSummaryTests
     [Fact]
     public void SendFailedByRecipientTellsAdvisorToCheckContactDataInNeutralSpanish()
     {
-        var summary = QuotationChangeSummary.SendFailed(QuotationSendStage.Recipient, whatsAppSkipped: false);
+        var summary = QuotationChangeSummary.SendFailed(QuotationSendStage.Recipient);
 
         Assert.Equal(
             "No se pudo enviar la cotización: el cliente no tiene un número de WhatsApp " +
@@ -115,42 +115,13 @@ public sealed class QuotationChangeSummaryTests
     [Fact]
     public void SendFailedByPersistenceTellsAdvisorToCheckWithCustomerInNeutralSpanish()
     {
-        var summary = QuotationChangeSummary.SendFailed(QuotationSendStage.Persistence, whatsAppSkipped: false);
+        var summary = QuotationChangeSummary.SendFailed(QuotationSendStage.Persistence);
 
         Assert.Equal(
             "No se pudo enviar la cotización: el mensaje salió pero no pudimos registrar " +
             "el envío. Revisa con el cliente antes de reintentar.",
             summary);
     }
-
-    // Spec 2026-10-07, «Cómo se hace explícito que no salió nada», punto 4: el evento sigue siendo
-    // Sent/Resent, pero el resumen dice que no salió ningún WhatsApp.
-    [Fact]
-    public void SentWithoutWhatsAppSaysNoMessageLeft() =>
-        Assert.Equal(
-            "Marcada como enviada sin WhatsApp: el envío por WhatsApp está desactivado para la empresa.",
-            QuotationChangeSummary.SentWithoutWhatsApp());
-
-    [Fact]
-    public void ResentWithoutWhatsAppSaysNoMessageLeft() =>
-        Assert.Equal(
-            "Marcada como reenviada sin WhatsApp: el envío por WhatsApp está desactivado para la empresa.",
-            QuotationChangeSummary.ResentWithoutWhatsApp());
-
-    [Fact]
-    public void SendFailedByChannelSendsToTheSettings() =>
-        Assert.Equal(
-            "No se pudo enviar la cotización: no pudimos leer la configuración de WhatsApp de la " +
-            "empresa. Pide a un administrador que la revise en Configuración.",
-            QuotationChangeSummary.SendFailed(QuotationSendStage.Channel, whatsAppSkipped: false));
-
-    // Con Disabled el "el mensaje salió" de Persistence es falso: se puede reintentar sin miedo.
-    [Fact]
-    public void SendFailedByPersistenceWithoutWhatsAppSaysItIsSafeToRetry() =>
-        Assert.Equal(
-            "No se pudo enviar la cotización: no pudimos registrar el envío. No se mandó ningún " +
-            "WhatsApp, así que puedes reintentar.",
-            QuotationChangeSummary.SendFailed(QuotationSendStage.Persistence, whatsAppSkipped: true));
 
     // "Pedido" es masculino (spec 2026-09-14, D7). El sujeto sigue siendo la cotización, por eso
     // "Convertida".

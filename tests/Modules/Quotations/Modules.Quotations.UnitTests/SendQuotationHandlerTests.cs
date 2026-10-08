@@ -313,106 +313,6 @@ public sealed class SendQuotationHandlerTests
         Assert.Null(harness.FailureLog.HistoryEntry);
     }
 
-    // Spec 2026-10-07, «Envío»: con WhatsApp desactivado, PDF y snapshots como siempre, sin copia
-    // pública ni mensaje; la cotización pasa a Sent y el resultado lo dice.
-    [Fact]
-    public async Task WithWhatsAppDisabledTheQuotationIsSentWithoutPublishingOrSending()
-    {
-        var harness = NewHandler(mode: WhatsAppMode.Disabled);
-
-        var result = await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(QuotationWhatsAppOutcome.Disabled, result.WhatsApp);
-        Assert.Null(harness.Storage.PublishedKey);
-        Assert.Null(harness.Sender.Sent);
-        Assert.Equal(QuotationStatus.Sent, harness.Repository.Quotation.Status);
-        var entry = Assert.Single(harness.Repository.HistoryEntries);
-        Assert.Equal(QuotationHistoryEventType.Sent, entry.EventType);
-        Assert.Equal(
-            "Marcada como enviada sin WhatsApp: el envío por WhatsApp está desactivado para la empresa.",
-            entry.Details);
-        Assert.Equal("quotation.quotation.sent", Assert.Single(harness.Audit.Actions));
-    }
-
-    [Fact]
-    public async Task ResendingWithWhatsAppDisabledIsAResentWithItsOwnText()
-    {
-        var harness = NewHandler(alreadySent: true, mode: WhatsAppMode.Disabled);
-
-        var result = await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(QuotationWhatsAppOutcome.Disabled, result.WhatsApp);
-        var entry = Assert.Single(harness.Repository.HistoryEntries);
-        Assert.Equal(QuotationHistoryEventType.Resent, entry.EventType);
-        Assert.Equal(
-            "Marcada como reenviada sin WhatsApp: el envío por WhatsApp está desactivado para la empresa.",
-            entry.Details);
-    }
-
-    // El destinatario del cuerpo se ignora: Billing sin datos propios no falla con Disabled.
-    [Fact]
-    public async Task WithWhatsAppDisabledTheRecipientIsIgnored()
-    {
-        var harness = NewHandler(mode: WhatsAppMode.Disabled);
-
-        var result = await harness.Handler.HandleAsync(NewCommand("Billing"), TestContext.Current.CancellationToken);
-
-        Assert.Equal(QuotationWhatsAppOutcome.Disabled, result.WhatsApp);
-    }
-
-    [Theory]
-    [InlineData(WhatsAppMode.Shared)]
-    [InlineData(WhatsAppMode.Own)]
-    public async Task SharedAndOwnAreAccepted(WhatsAppMode mode)
-    {
-        var harness = NewHandler(mode: mode);
-
-        var result = await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(QuotationWhatsAppOutcome.Accepted, result.WhatsApp);
-        Assert.NotNull(harness.Sender.Sent);
-        Assert.Equal(RecordingPdfStorage.PublicUrl, harness.Sender.Sent.DocumentUrl);
-        Assert.Equal(
-            "Enviada al cliente con su PDF.",
-            Assert.Single(harness.Repository.HistoryEntries).Details);
-    }
-
-    // settings_unreadable es de dominio: se relanza tal cual, no como quotation.send.failed.
-    [Fact]
-    public async Task AChannelFailureKeepsItsCodeAndIsAnnotatedAtTheChannelStage()
-    {
-        var harness = NewHandler(channelFailure: new QuotationsDomainException(
-            "quotation.whatsapp.settings_unreadable", "The tenant's WhatsApp API key cannot be decrypted."));
-
-        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
-
-        Assert.Equal("quotation.whatsapp.settings_unreadable", error.Code);
-        Assert.Equal(
-            "No se pudo enviar la cotización: no pudimos leer la configuración de WhatsApp de la " +
-            "empresa. Pide a un administrador que la revise en Configuración.",
-            harness.FailureLog.HistoryEntry?.Details);
-        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
-        Assert.Null(harness.Storage.PublishedKey);
-    }
-
-    [Fact]
-    public async Task APersistenceFailureWithWhatsAppDisabledSaysNoMessageWasSent()
-    {
-        var harness = NewHandler(
-            mode: WhatsAppMode.Disabled,
-            unitOfWork: new CountingQuotationsUnitOfWork { Failure = new InvalidOperationException("db down") });
-
-        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
-
-        Assert.Equal("quotation.send.failed", error.Code);
-        Assert.Equal(
-            "No se pudo enviar la cotización: no pudimos registrar el envío. No se mandó ningún " +
-            "WhatsApp, así que puedes reintentar.",
-            harness.FailureLog.HistoryEntry?.Details);
-    }
-
     private static SendQuotationCommand NewCommand(string? recipient = null) =>
         new(TenantId, CurrentQuotationId, recipient);
 
@@ -443,10 +343,7 @@ public sealed class SendQuotationHandlerTests
         bool withValidUntil = true,
         bool alreadySent = false,
         Exception? whatsAppFailure = null,
-        QuotationPartyDetails? billing = null,
-        WhatsAppMode mode = WhatsAppMode.Shared,
-        Exception? channelFailure = null,
-        IQuotationsUnitOfWork? unitOfWork = null)
+        QuotationPartyDetails? billing = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -489,7 +386,7 @@ public sealed class SendQuotationHandlerTests
 
         var handler = new SendQuotationHandler(
             repository,
-            unitOfWork ?? new NoOpQuotationsUnitOfWork(),
+            new NoOpQuotationsUnitOfWork(),
             audit,
             new QuotationPdfProvider(
                 repository,
@@ -504,13 +401,9 @@ public sealed class SendQuotationHandlerTests
             {
                 [ProductId] = new(ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, Scales: []),
             }),
-            new StubWhatsAppChannelResolver(
-                mode == WhatsAppMode.Disabled
-                    ? new WhatsAppChannel(WhatsAppMode.Disabled, null)
-                    : new WhatsAppChannel(
-                        mode,
-                        whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure)),
-                channelFailure),
+            whatsAppFailure is null
+                ? sender
+                : new FailingWhatsAppSender(whatsAppFailure),
             new StubMembershipDirectory(AdvisorId.Value),
             failureLog,
             new StubExecutionContext(SubjectId, TenantId),
