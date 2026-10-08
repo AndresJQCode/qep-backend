@@ -11,4 +11,61 @@ internal sealed class PosSaleRepository(PosDbContext dbContext) : IPosSaleReposi
             sale => sale.TenantId == tenantId && sale.Id == id, cancellationToken);
 
     public void Add(PosSale sale) => dbContext.Sales.Add(sale);
+
+    public async Task<(IReadOnlyList<PosSaleListRow> Items, int Total)> ListAsync(
+        PosSaleFilter filter, CancellationToken cancellationToken)
+    {
+        var query = dbContext.Sales.AsNoTracking().IgnoreAutoIncludes().Where(sale => sale.TenantId == filter.TenantId);
+        if (filter.Cashier is { } cashier)
+        {
+            query = query.Where(sale => sale.CashierId == cashier);
+        }
+
+        if (filter.SessionId is { } sessionId)
+        {
+            query = query.Where(sale => sale.CashSessionId == sessionId);
+        }
+
+        if (filter.FromUtc is { } from)
+        {
+            query = query.Where(sale => sale.CreatedAt >= from);
+        }
+
+        if (filter.ToUtc is { } to)
+        {
+            query = query.Where(sale => sale.CreatedAt < to);
+        }
+
+        if (filter.Status is { } status)
+        {
+            query = query.Where(sale => sale.Status == status);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Number))
+        {
+            var number = filter.Number.Trim();
+            query = query.Where(sale => sale.SaleNumber == number);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var page = await query
+            .OrderByDescending(sale => sale.CreatedAt)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .Include(sale => sale.Payments)
+            .ToListAsync(cancellationToken);
+
+        // Una consulta por página, no una por fila: el estado de la caja decide voidable.
+        var sessionIds = page.Select(sale => sale.CashSessionId).Distinct().ToList();
+        var sessions = await dbContext.CashSessions
+            .AsNoTracking()
+            .Where(session => sessionIds.Contains(session.Id))
+            .Select(session => new { session.Id, session.CashierName, session.Status })
+            .ToDictionaryAsync(session => session.Id, cancellationToken);
+
+        return (page
+            .Select(sale => new PosSaleListRow(
+                sale, sessions[sale.CashSessionId].CashierName, sessions[sale.CashSessionId].Status))
+            .ToList(), total);
+    }
 }

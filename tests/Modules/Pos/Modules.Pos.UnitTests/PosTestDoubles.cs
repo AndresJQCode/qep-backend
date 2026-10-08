@@ -58,6 +58,21 @@ internal sealed class InMemoryCashSessionRepository : ICashSessionRepository
             session.TenantId == tenantId && session.CashierId == cashier && session.Status == CashSessionStatus.Open));
 
     public void Add(CashSession session) => Sessions.Add(session);
+
+    public Task<(IReadOnlyList<CashSession> Items, int Total)> ListAsync(
+        CashSessionFilter filter, CancellationToken cancellationToken)
+    {
+        var matches = Sessions
+            .Where(session => session.TenantId == filter.TenantId)
+            .Where(session => filter.Cashier is not { } cashier || session.CashierId == cashier)
+            .Where(session => filter.OpenedFromUtc is not { } from || session.OpenedAt >= from)
+            .Where(session => filter.OpenedToUtc is not { } to || session.OpenedAt < to)
+            .Where(session => filter.Status is not { } status || session.Status == status)
+            .OrderByDescending(session => session.OpenedAt)
+            .ToList();
+        return Task.FromResult<(IReadOnlyList<CashSession>, int)>(
+            (matches.Skip((filter.Page - 1) * filter.PageSize).Take(filter.PageSize).ToList(), matches.Count));
+    }
 }
 
 /// <summary>
@@ -81,6 +96,31 @@ internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository se
     }
 
     public void Add(PosSale sale) => Added.Add(sale);
+
+    public Task<(IReadOnlyList<PosSaleListRow> Items, int Total)> ListAsync(
+        PosSaleFilter filter, CancellationToken cancellationToken)
+    {
+        var matches = Stored
+            .Where(sale => sale.TenantId == filter.TenantId)
+            .Where(sale => filter.Cashier is not { } cashier || sale.CashierId == cashier)
+            .Where(sale => filter.SessionId is not { } sessionId || sale.CashSessionId == sessionId)
+            .Where(sale => filter.FromUtc is not { } from || sale.CreatedAt >= from)
+            .Where(sale => filter.ToUtc is not { } to || sale.CreatedAt < to)
+            .Where(sale => filter.Status is not { } status || sale.Status == status)
+            .Where(sale => filter.Number is null || sale.SaleNumber == filter.Number)
+            .OrderByDescending(sale => sale.CreatedAt)
+            .ToList();
+        var rows = matches
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .Select(sale =>
+            {
+                var session = Sessions.Sessions.Single(item => item.Id == sale.CashSessionId);
+                return new PosSaleListRow(sale, session.CashierName, session.Status);
+            })
+            .ToList();
+        return Task.FromResult<(IReadOnlyList<PosSaleListRow>, int)>((rows, matches.Count));
+    }
 
     public void Commit()
     {

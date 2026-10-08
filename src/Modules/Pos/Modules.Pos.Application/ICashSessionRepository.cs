@@ -10,4 +10,8 @@ public interface ICashSessionRepository
     Task<CashSession?> FindOpenByCashierAsync(Guid tenantId, MemberId cashier, CancellationToken cancellationToken);
 
     void Add(CashSession session);
+
+    /// <summary>Por apertura descendente.</summary>
+    Task<(IReadOnlyList<CashSession> Items, int Total)> ListAsync(
+        CashSessionFilter filter, CancellationToken cancellationToken);
 }

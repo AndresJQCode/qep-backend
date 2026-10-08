@@ -8,4 +8,8 @@ public interface IPosSaleRepository
     Task<PosSale?> FindAsync(Guid tenantId, PosSaleId id, CancellationToken cancellationToken);
 
     void Add(PosSale sale);
+
+    /// <summary>Por creación descendente; sin líneas, con pagos.</summary>
+    Task<(IReadOnlyList<PosSaleListRow> Items, int Total)> ListAsync(
+        PosSaleFilter filter, CancellationToken cancellationToken);
 }

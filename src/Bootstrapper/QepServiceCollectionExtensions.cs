@@ -226,6 +226,21 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CreatePosSaleCommand, PosSaleCreation>,
             CreatePosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<GetPosSaleQuery, PosSaleResponse>,
+            GetPosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<ListPosSalesQuery, PosPage<PosSaleListItemResponse>>,
+            ListPosSalesHandler>();
+        services.AddScoped<
+            ICommandHandler<VoidPosSaleCommand, PosSaleResponse>,
+            VoidPosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCashSessionsQuery, PosPage<PosSessionSummaryResponse>>,
+            ListCashSessionsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCashSessionQuery, PosSessionSummaryResponse>,
+            GetCashSessionHandler>();
         // CLI. Los siete van aca por la misma razon que los de empresas: el dispatcher resuelve
         // por registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y
         // falla recien en runtime con 500 al no encontrar handler.

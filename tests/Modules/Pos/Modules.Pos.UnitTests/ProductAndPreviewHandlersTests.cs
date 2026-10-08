@@ -222,4 +222,41 @@ public sealed class ProductAndPreviewHandlersTests
         await Assert.ThrowsAsync<ValidationException>(() => Preview(bed, Discounter).HandleAsync(
             new PreviewPosSaleCommand(TenantId, [null!]), TestContext.Current.CancellationToken));
     }
+
+    // Arrastre de B6: sin pos.sale.create, o con otro tenant en la ruta, la vista previa es 403.
+    [Fact]
+    public async Task PreviewWithoutTheCreatePermissionOrForAnotherTenantIs403()
+    {
+        var bed = new PosTestBed();
+        bed.AddWorkedExampleProducts();
+        var cart = new PosPreviewLineRequest[] { new(Shampoo, 1m, 0m) };
+
+        var noPermission = await Assert.ThrowsAsync<RequestForbiddenException>(() => Preview(bed, PosPermissions.SaleRead).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, cart), TestContext.Current.CancellationToken));
+        var otherTenant = await Assert.ThrowsAsync<RequestForbiddenException>(() => Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(Guid.CreateVersion7(), cart), TestContext.Current.CancellationToken));
+
+        Assert.Equal("authorization.denied", noPermission.Code);
+        Assert.Equal("authorization.denied", otherTenant.Code);
+    }
+
+    [Fact]
+    public async Task PreviewRejectsAnEmptyCartAndMoreThan200Lines()
+    {
+        var bed = new PosTestBed();
+        bed.AddWorkedExampleProducts();
+
+        var empty = await Assert.ThrowsAsync<ValidationException>(() => Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, []), TestContext.Current.CancellationToken));
+        var tooMany = await Assert.ThrowsAsync<ValidationException>(() => Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, Enumerable.Range(0, 201).Select(_ => new PosPreviewLineRequest(Shampoo, 1m, 0m)).ToArray()),
+            TestContext.Current.CancellationToken));
+        var atTheLimit = await Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, Enumerable.Range(0, 200).Select(_ => new PosPreviewLineRequest(Shampoo, 1m, 0m)).ToArray()),
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains(empty.Errors, failure => failure.PropertyName == "Lines");
+        Assert.Contains(tooMany.Errors, failure => failure.PropertyName == "Lines");
+        Assert.Equal(200, atTheLimit.Lines.Count);
+    }
 }
