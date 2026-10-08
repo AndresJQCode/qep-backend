@@ -329,7 +329,17 @@ public sealed class Tenant
     {
         try
         {
-            return TimeZoneInfo.FindSystemTimeZoneById(value.Trim()).Id;
+            // `FindSystemTimeZoneById` also resolves Windows ids ("SA Pacific Standard Time"), but
+            // the frontend renders local dates through `Intl.DateTimeFormat`, which only accepts IANA.
+            var timeZone = TimeZoneInfo.FindSystemTimeZoneById(value.Trim());
+            if (!timeZone.HasIanaId)
+            {
+                throw new TenantDomainException(
+                    "tenancy.settings.time_zone.invalid",
+                    "Time zone must be a valid IANA time zone.");
+            }
+
+            return timeZone.Id;
         }
         catch (TimeZoneNotFoundException)
         {

@@ -62,6 +62,46 @@ public sealed class TenantTests
         Assert.Equal("tenancy.settings.culture.invalid", exception.Code);
     }
 
+    // The browser formats every local date and time with `Intl.DateTimeFormat({ timeZone })`,
+    // which only understands IANA ids. `FindSystemTimeZoneById` also resolves Windows ids, so
+    // without the IANA check "SA Pacific Standard Time" would be stored and break every screen.
+    [Theory]
+    [InlineData("SA Pacific Standard Time")]
+    [InlineData("Mars/Olympus_Mons")]
+    [InlineData("")]
+    public void CreateWithANonIanaTimeZoneThrowsDomainException(string timeZone)
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Tenant.Create(
+                TenantId.New(),
+                "qcode-demo",
+                "QCode Demo",
+                "es-CO",
+                timeZone,
+                "yyyy-MM-dd",
+                MembershipId.New(),
+                CreatedAt));
+
+        Assert.Equal("tenancy.settings.time_zone.invalid", exception.Code);
+    }
+
+    [Fact]
+    public void UpdateSettingsWithAWindowsTimeZoneIdThrowsDomainException()
+    {
+        var tenant = CreateTenant();
+
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            tenant.UpdateSettings(
+                tenant.DisplayName,
+                tenant.DefaultCulture,
+                "SA Pacific Standard Time",
+                tenant.DateFormat,
+                CreatedAt.AddMinutes(5)));
+
+        Assert.Equal("tenancy.settings.time_zone.invalid", exception.Code);
+        Assert.Equal("America/Bogota", tenant.TimeZone);
+    }
+
     private static readonly MembershipId OwnerMembershipId = MembershipId.New();
 
     private static Tenant CreateTenant(MembershipId? owner = null) =>
