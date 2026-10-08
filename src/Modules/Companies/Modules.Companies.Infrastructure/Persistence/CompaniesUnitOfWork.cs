@@ -54,9 +54,14 @@ internal sealed class CompaniesUnitOfWork(CompaniesDbContext dbContext) : ICompa
         }
     }
 
+    // Dos SQLSTATE y no uno: una clave foránea NO ACTION (la de EF por defecto) da 23503, pero una
+    // declarada ON DELETE RESTRICT —como la de pos.cash_sessions.company_id— da 23001. Para quien
+    // aprieta «Eliminar» son la misma cosa: alguien referencia la empresa.
     private static bool IsForeignKeyViolation(DbUpdateException exception) =>
-        exception.InnerException is PostgresException postgres &&
-        postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation;
+        exception.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.RestrictViolation,
+        };
 
     // El estado sigue siendo Deleted cuando SaveChanges falla: EF sólo lo pasa a Detached después
     // de un commit exitoso. Si eso cambiara, esta rama dejaría de entrar y el caso volvería a
