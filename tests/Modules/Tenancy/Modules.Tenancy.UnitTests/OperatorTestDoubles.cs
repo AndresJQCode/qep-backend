@@ -67,3 +67,67 @@ internal static class OperatorSnapshots
         TenantModuleKeys.DefaultForNewTenants.Select(key =>
             new TenantModuleState(key, TenantModuleStatus.Active, DateTimeOffset.UnixEpoch, TenantModuleSources.Signup));
 }
+
+// Los Steps* anotan en una lista compartida el orden de candado, lecturas, save y commit: la consola
+// tiene que tomar el candado antes de leer (spec 2026-10-08 §3).
+
+internal sealed class StepsTenantRepository(List<string> steps, params Tenant[] tenants) : ITenantRepository
+{
+    public Task<Tenant?> GetAsync(TenantId id, CancellationToken cancellationToken)
+    {
+        steps.Add("read-tenant");
+        return Task.FromResult(tenants.SingleOrDefault(tenant => tenant.Id == id));
+    }
+
+    public void Add(Tenant tenant) => throw new NotSupportedException();
+}
+
+internal sealed class StepsTenantModuleRepository(List<string> steps, params TenantModule[] rows) : ITenantModuleRepository
+{
+    public List<TenantModule> Rows { get; } = [.. rows];
+    public List<TenantModule> Added { get; } = [];
+
+    public void Add(TenantModule tenantModule) => Added.Add(tenantModule);
+
+    public Task<IReadOnlyList<TenantModule>> ListByTenantAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        steps.Add("read-modules");
+        return Task.FromResult<IReadOnlyList<TenantModule>>(Rows.Where(row => row.TenantId == tenantId).ToList());
+    }
+}
+
+internal sealed class RecordingTenantChangeRepository : ITenantChangeRepository
+{
+    public List<TenantChange> Added { get; } = [];
+    public void Add(TenantChange change) => Added.Add(change);
+}
+
+/// <summary>Anota el candado, el SaveChanges y el commit en el orden en que pasan.</summary>
+internal sealed class StepsUnitOfWork(List<string> steps) : ITenancyUnitOfWork
+{
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        steps.Add("save");
+        return Task.FromResult(1);
+    }
+
+    public Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(string email, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ITenantChangeScope> BeginTenantChangeScopeAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        steps.Add($"lock:{tenantId}");
+        return Task.FromResult<ITenantChangeScope>(new Scope(steps));
+    }
+
+    private sealed class Scope(List<string> steps) : ITenantChangeScope
+    {
+        public Task CommitAsync(CancellationToken cancellationToken)
+        {
+            steps.Add("commit");
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+}

@@ -296,6 +296,136 @@ public sealed class OperatorConsoleApiTests
             HttpStatusCode.UnprocessableEntity, "validation.failed");
     }
 
+    [Fact]
+    public async Task DeactivatingReportingWritesRowHistoryAndAuditAndMasksOnTheNextRequest()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var operatorClient = OperatorClient(factory);
+        using var member = StubClient(factory, ownerId, tenantId, "reporting.all_advisors.read", "tenancy.settings.read");
+        Assert.Contains("reporting.all_advisors.read", await EffectivePermissionsAsync(member, tenantId));
+
+        var detail = await PostChangesAsync(operatorClient, tenantId, "cancellation", "No lo usan", ("reporting", "inactive"));
+
+        var reporting = detail.Modules.Single(module => module.Key == "reporting");
+        Assert.Equal(("inactive", false, "cancellation"), (reporting.Status, reporting.Enabled, reporting.LastReason));
+        Assert.DoesNotContain("reporting.all_advisors.read", await EffectivePermissionsAsync(member, tenantId));
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var id = new TenantId(tenantId);
+            var change = await dbContext.TenantChanges.AsNoTracking().SingleAsync(value => value.TenantId == id, TestContext.Current.CancellationToken);
+            Assert.Equal(("active", "inactive", "No lo usan"), (change.FromStatus, change.ToStatus, change.Note));
+            var audited = await dbContext.Database.SqlQuery<string>(
+                $"SELECT changed_fields::text AS \"Value\" FROM audit.entries WHERE action = 'tenancy.tenant_modules.changed' AND tenant_id = {tenantId}")
+                .SingleAsync(TestContext.Current.CancellationToken);
+            Assert.Contains("reporting:active->inactive", audited, StringComparison.Ordinal);
+        }
+
+        await PostChangesAsync(operatorClient, tenantId, "courtesy", null, ("reporting", "active"));
+        Assert.Contains("reporting.all_advisors.read", await EffectivePermissionsAsync(member, tenantId));
+    }
+
+    [Fact]
+    public async Task AnInconsistentBatchIsRejectedAndChangesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        await AssertProblemAsync(
+            await client.PostAsJsonAsync(Url($"tenants/{tenantId}/modules/changes"),
+                new { changes = new[] { new { key = "customers", status = "inactive" } }, reason = "cancellation" },
+                TestContext.Current.CancellationToken),
+            HttpStatusCode.UnprocessableEntity, "tenancy.modules.inconsistent_dependencies");
+        var detail = await GetOkAsync<DetailPayload>(client, Url($"tenants/{tenantId}"));
+        Assert.All(detail.Modules.Where(module => module.Key != "pos"), module => Assert.Equal("active", module.Status));
+    }
+
+    [Fact]
+    public async Task ActivatingPosCreatesTheRowFromTheConsole()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        var pos = (await PostChangesAsync(client, tenantId, "contract", null, ("pos", "active")))
+            .Modules.Single(module => module.Key == "pos");
+
+        Assert.Equal(("active", true, "operator"), (pos.Status, pos.Enabled, pos.Source));
+    }
+
+    [Theory]
+    [InlineData("""{"changes":[{"key":"inventory","status":"active"}],"reason":"contract"}""")]
+    [InlineData("""{"changes":[null],"reason":"contract"}""")]
+    [InlineData("""{"changes":[{"key":"POS","status":"active"}],"reason":"contract"}""")]
+    public async Task AnUnknownShapeIsValidationFailedNot500(string body)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+        using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+
+        await AssertProblemAsync(
+            await client.PostAsync(Url($"tenants/{tenantId}/modules/changes"), content, TestContext.Current.CancellationToken),
+            HttpStatusCode.UnprocessableEntity, "validation.failed");
+    }
+
+    [Fact]
+    public async Task ReadingIsNotEnoughToChangeModules()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = StubClient(factory, Guid.CreateVersion7(), OperatorTenantId, "operator.tenants.read");
+
+        var response = await client.PostAsJsonAsync(Url($"tenants/{tenantId}/modules/changes"),
+            new { changes = new[] { new { key = "pos", status = "active" } }, reason = "contract" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // Review Focus 3: A activa quotations y B desactiva customers a la vez. Cualquiera sea el orden,
+    // uno gana y el otro choca con la regla; nunca queda quotations activo sin customers.
+    [Fact]
+    public async Task TwoConcurrentBatchesLeaveAConsistentState()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var first = OperatorClient(factory);
+        using var second = OperatorClient(factory);
+        await PostChangesAsync(first, tenantId, "cancellation", null, ("quotations", "inactive"), ("orders", "inactive"));
+
+        var responses = await Task.WhenAll(
+            first.PostAsJsonAsync(Url($"tenants/{tenantId}/modules/changes"),
+                new { changes = new[] { new { key = "quotations", status = "active" } }, reason = "contract" }, TestContext.Current.CancellationToken),
+            second.PostAsJsonAsync(Url($"tenants/{tenantId}/modules/changes"),
+                new { changes = new[] { new { key = "customers", status = "inactive" } }, reason = "cancellation" }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.OK));
+        Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.UnprocessableEntity));
+        var modules = (await GetOkAsync<DetailPayload>(first, Url($"tenants/{tenantId}"))).Modules.ToDictionary(module => module.Key);
+        Assert.False(modules["quotations"].Status == "active" && modules["customers"].Status != "active");
+    }
+
+    private static async Task<DetailPayload> PostChangesAsync(
+        HttpClient client, Guid tenantId, string reason, string? note, params (string Key, string Status)[] changes)
+    {
+        var response = await client.PostAsJsonAsync(
+            Url($"tenants/{tenantId}/modules/changes"),
+            new { changes = changes.Select(change => new { key = change.Key, status = change.Status }).ToArray(), reason, note },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await response.Content.ReadFromJsonAsync<DetailPayload>(TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        return detail;
+    }
+
     private static HttpClient OperatorClient(QepApiFactory factory, Guid? subjectId = null) =>
         StubClient(factory, subjectId ?? Guid.CreateVersion7(), OperatorTenantId, AllOperatorPermissions);
 
