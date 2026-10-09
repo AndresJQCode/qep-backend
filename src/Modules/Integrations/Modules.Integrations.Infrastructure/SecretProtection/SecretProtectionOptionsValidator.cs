@@ -2,10 +2,10 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
-namespace Modules.Quotations.Infrastructure.SecretProtection;
+namespace Modules.Integrations.Infrastructure.SecretProtection;
 
 /// <summary>
-/// Falla rápido al arrancar (spec 2026-10-07, «Validación al arrancar»). En <c>Production</c>, todo:
+/// Falla rápido al arrancar (spec 2026-10-08, «Secreto en reposo»; viene de 6612298). En <c>Production</c>, todo:
 /// activa presente y con valor, todo id con el patrón y toda llave declarada de 32 bytes —una llave
 /// mal pegada en la variable del pipeline se descubre en el deploy, no cuando alguien guarda—.
 /// Fuera de <c>Production</c>, sólo la activa si está declarada: las pruebas de integración corren
@@ -48,7 +48,7 @@ internal sealed partial class SecretProtectionOptionsValidator(IHostEnvironment 
             {
                 failures.Add(
                     $"{SecretProtectionOptions.SectionName}:ActiveKeyId is required in Production: "
-                    + "without it no tenant can save its own WhatsApp API key.");
+                    + "without it no connection can be created or edited.");
             }
             else
             {

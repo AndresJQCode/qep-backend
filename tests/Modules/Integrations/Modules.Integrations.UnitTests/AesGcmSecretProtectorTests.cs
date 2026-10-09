@@ -1,25 +1,25 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
-using Modules.Quotations.Domain;
-using Modules.Quotations.Infrastructure.SecretProtection;
-using Modules.Quotations.Infrastructure.Whatsapp;
+using Modules.Integrations.Domain;
+using Modules.Integrations.Infrastructure.SecretProtection;
 
-namespace Modules.Quotations.UnitTests;
+namespace Modules.Integrations.UnitTests;
 
 /// <summary>
-/// Spec 2026-10-07, «Decisión: AES-256-GCM»: nonce aleatorio por cifrado, AAD atado al tenant,
-/// llave elegida por el <c>KeyId</c> de la fila, y errores que nombran la clave de configuración
-/// y nunca un valor.
+/// Spec 2026-10-08, «Secreto en reposo» (viene de 6612298): nonce aleatorio por cifrado, AAD atado a la
+/// conexión y al campo (D7), llave elegida por el <c>KeyId</c> de la fila, y errores que nombran la
+/// clave de configuración y nunca un valor.
 /// </summary>
-public sealed class AesGcmWhatsAppSecretProtectorTests
+public sealed class AesGcmSecretProtectorTests
 {
     private static readonly byte[] K1 = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
     private static readonly byte[] K2 = Enumerable.Range(100, 32).Select(i => (byte)i).ToArray();
-    private static readonly Guid TenantId = Guid.CreateVersion7();
+    private static readonly Guid ConnectionId = Guid.CreateVersion7();
+    private const string FieldKey = "apiToken";
     private const string Token = "zenvia-token-SENTINEL-123";
 
-    private static AesGcmWhatsAppSecretProtector Protector(string? active, params (string Id, byte[]? Key)[] keys)
+    private static AesGcmSecretProtector Protector(string? active, params (string Id, byte[]? Key)[] keys)
     {
         var options = new SecretProtectionOptions { ActiveKeyId = active };
         foreach (var (id, key) in keys)
@@ -27,7 +27,7 @@ public sealed class AesGcmWhatsAppSecretProtectorTests
             options.Keys[id] = key is null ? "" : Convert.ToBase64String(key);
         }
 
-        return new AesGcmWhatsAppSecretProtector(Options.Create(options));
+        return new AesGcmSecretProtector(Options.Create(options));
     }
 
     [Fact]
@@ -35,10 +35,10 @@ public sealed class AesGcmWhatsAppSecretProtectorTests
     {
         var protector = Protector("k1", ("k1", K1));
 
-        var secret = protector.Protect(TenantId, Token);
+        var secret = protector.Protect(ConnectionId, FieldKey, Token);
 
         Assert.Equal("k1", secret.KeyId);
-        Assert.Equal(Token, protector.Unprotect(TenantId, secret));
+        Assert.Equal(Token, protector.Unprotect(ConnectionId, FieldKey, secret));
     }
 
     [Fact]
@@ -46,26 +46,36 @@ public sealed class AesGcmWhatsAppSecretProtectorTests
     {
         var protector = Protector("k1", ("k1", K1));
 
-        var first = protector.Protect(TenantId, Token);
-        var second = protector.Protect(TenantId, Token);
+        var first = protector.Protect(ConnectionId, FieldKey, Token);
+        var second = protector.Protect(ConnectionId, FieldKey, Token);
 
         Assert.NotEqual(first.Ciphertext, second.Ciphertext);
         Assert.Equal(12 + Encoding.UTF8.GetByteCount(Token) + 16, first.Ciphertext.Length);
     }
 
     [Fact]
-    public void AnotherTenantCannotUnprotect()
+    public void AnotherConnectionCannotUnprotect()
     {
         var protector = Protector("k1", ("k1", K1));
-        var secret = protector.Protect(TenantId, Token);
+        var secret = protector.Protect(ConnectionId, FieldKey, Token);
 
-        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(Guid.CreateVersion7(), secret));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(Guid.CreateVersion7(), FieldKey, secret));
     }
 
-    // El AAD es exactamente el UTF-8 de "quotations.whatsapp.api_token:" + tenantId en formato D:
-    // un texto cifrado a mano con ese AAD descifra.
+    // D7: un texto cifrado copiado a otro campo de la misma conexión tampoco descifra.
     [Fact]
-    public void TheAssociatedDataIsThePrefixAndTheTenantInFormatD()
+    public void AnotherFieldCannotUnprotect()
+    {
+        var protector = Protector("k1", ("k1", K1));
+        var secret = protector.Protect(ConnectionId, FieldKey, Token);
+
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(ConnectionId, "otherSecret", secret));
+    }
+
+    // El AAD es exactamente "integrations.connection:" + connectionId en formato D + ":" + fieldKey: un
+    // texto cifrado a mano con ese AAD descifra.
+    [Fact]
+    public void TheAssociatedDataIsThePrefixTheConnectionInFormatDAndTheField()
     {
         var protector = Protector("k1", ("k1", K1));
         var plaintext = Encoding.UTF8.GetBytes(Token);
@@ -75,12 +85,12 @@ public sealed class AesGcmWhatsAppSecretProtectorTests
         using (var aes = new AesGcm(K1, 16))
         {
             aes.Encrypt(nonce, plaintext, ciphertext, tag,
-                Encoding.UTF8.GetBytes("quotations.whatsapp.api_token:" + TenantId.ToString("D")));
+                Encoding.UTF8.GetBytes("integrations.connection:" + ConnectionId.ToString("D") + ":" + FieldKey));
         }
 
         var manual = new ProtectedSecret("k1", [.. nonce, .. ciphertext, .. tag]);
 
-        Assert.Equal(Token, protector.Unprotect(TenantId, manual));
+        Assert.Equal(Token, protector.Unprotect(ConnectionId, FieldKey, manual));
     }
 
     [Fact]
@@ -89,23 +99,23 @@ public sealed class AesGcmWhatsAppSecretProtectorTests
         var protector = Protector("k1", ("k1", K1));
         var secret = new ProtectedSecret("k9", new byte[40]);
 
-        var error = Assert.Throws<InvalidOperationException>(() => protector.Unprotect(TenantId, secret));
+        var error = Assert.Throws<InvalidOperationException>(() => protector.Unprotect(ConnectionId, FieldKey, secret));
 
-        Assert.Contains("Quotations:SecretProtection:Keys:k9", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Integrations:SecretProtection:Keys:k9", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(Convert.ToBase64String(K1), error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void AfterChangingTheActiveKeyOldSecretsReadWithTheirKeyAndNewOnesUseTheNewKey()
     {
-        var old = Protector("k1", ("k1", K1)).Protect(TenantId, Token);
+        var old = Protector("k1", ("k1", K1)).Protect(ConnectionId, FieldKey, Token);
         var rotated = Protector("k2", ("k1", K1), ("k2", K2));
 
-        var fresh = rotated.Protect(TenantId, Token);
+        var fresh = rotated.Protect(ConnectionId, FieldKey, Token);
 
-        Assert.Equal(Token, rotated.Unprotect(TenantId, old));
+        Assert.Equal(Token, rotated.Unprotect(ConnectionId, FieldKey, old));
         Assert.Equal("k2", fresh.KeyId);
-        Assert.Equal(Token, rotated.Unprotect(TenantId, fresh));
+        Assert.Equal(Token, rotated.Unprotect(ConnectionId, FieldKey, fresh));
     }
 
     [Fact]
@@ -124,17 +134,17 @@ public sealed class AesGcmWhatsAppSecretProtectorTests
         var protector = Protector("", ("k1", K1));
 
         Assert.Null(protector.ActiveKeyId);
-        var error = Assert.Throws<InvalidOperationException>(() => protector.Protect(TenantId, Token));
-        Assert.Contains("Quotations:SecretProtection:ActiveKeyId", error.Message, StringComparison.Ordinal);
+        var error = Assert.Throws<InvalidOperationException>(() => protector.Protect(ConnectionId, FieldKey, Token));
+        Assert.Contains("Integrations:SecretProtection:ActiveKeyId", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(Token, error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void TryUnprotectIsFalseWithoutThrowingWhenTheKeyIsMissing()
     {
-        var secret = Protector("k1", ("k1", K1)).Protect(TenantId, Token);
+        var secret = Protector("k1", ("k1", K1)).Protect(ConnectionId, FieldKey, Token);
 
-        Assert.False(Protector("k2", ("k2", K2)).TryUnprotect(TenantId, secret, out var plaintext));
+        Assert.False(Protector("k2", ("k2", K2)).TryUnprotect(ConnectionId, FieldKey, secret, out var plaintext));
         Assert.Null(plaintext);
     }
 
@@ -142,26 +152,27 @@ public sealed class AesGcmWhatsAppSecretProtectorTests
     public void TryUnprotectIsFalseWhenAByteWasAltered()
     {
         var protector = Protector("k1", ("k1", K1));
-        var secret = protector.Protect(TenantId, Token);
+        var secret = protector.Protect(ConnectionId, FieldKey, Token);
         var damaged = secret.Ciphertext.ToArray();
         damaged[20] ^= 0xFF;
 
-        Assert.False(protector.TryUnprotect(TenantId, secret with { Ciphertext = damaged }, out _));
+        Assert.False(protector.TryUnprotect(ConnectionId, FieldKey, secret with { Ciphertext = damaged }, out _));
     }
 
     [Fact]
-    public void TryUnprotectIsFalseForAnotherTenant()
+    public void TryUnprotectIsFalseForAnotherConnectionOrField()
     {
         var protector = Protector("k1", ("k1", K1));
-        var secret = protector.Protect(TenantId, Token);
+        var secret = protector.Protect(ConnectionId, FieldKey, Token);
 
-        Assert.False(protector.TryUnprotect(Guid.CreateVersion7(), secret, out _));
+        Assert.False(protector.TryUnprotect(Guid.CreateVersion7(), FieldKey, secret, out _));
+        Assert.False(protector.TryUnprotect(ConnectionId, "otherSecret", secret, out _));
     }
 
     [Fact]
     public void TheCiphertextDoesNotContainTheTokenBytes()
     {
-        var secret = Protector("k1", ("k1", K1)).Protect(TenantId, Token);
+        var secret = Protector("k1", ("k1", K1)).Protect(ConnectionId, FieldKey, Token);
 
         Assert.True(secret.Ciphertext.AsSpan().IndexOf(Encoding.UTF8.GetBytes(Token)) < 0);
     }

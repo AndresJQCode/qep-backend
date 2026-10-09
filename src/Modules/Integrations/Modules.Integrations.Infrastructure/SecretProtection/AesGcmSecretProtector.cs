@@ -1,27 +1,26 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
-using Modules.Quotations.Application;
-using Modules.Quotations.Domain;
-using Modules.Quotations.Infrastructure.SecretProtection;
+using Modules.Integrations.Application;
+using Modules.Integrations.Domain;
 
-namespace Modules.Quotations.Infrastructure.Whatsapp;
+namespace Modules.Integrations.Infrastructure.SecretProtection;
 
 /// <summary>
-/// AES-256-GCM en la caja de .NET, sin Data Protection (spec 2026-10-07, decisión 1): la llave
-/// vive fuera de la base. Formato: <c>nonce(12) || ciphertext || tag(16)</c>, nonce aleatorio por
-/// cifrado. AAD = UTF-8 de <c>"quotations.whatsapp.api_token:" + tenantId.ToString("D")</c>:
-/// una fila copiada a otro tenant por SQL no descifra. El formato <c>D</c> es explícito porque
-/// cualquier otro no descifraría lo ya guardado.
+/// AES-256-GCM en la caja de .NET, sin Data Protection (viene de 6612298): la llave vive fuera de la
+/// base. Formato: <c>nonce(12) || ciphertext || tag(16)</c>, nonce aleatorio por cifrado. AAD = UTF-8
+/// de <c>"integrations.connection:" + connectionId.ToString("D") + ":" + fieldKey</c> (spec
+/// 2026-10-08, D7): un texto cifrado copiado a otra conexión o a otro campo no descifra. El prefijo
+/// viejo (<c>quotations.whatsapp.api_token:</c>) no se conserva: nada cifrado con él llegó a producción.
 ///
 /// Singleton: lee las opciones una vez, al arrancar, que es cuando se validaron.
 /// </summary>
-internal sealed class AesGcmWhatsAppSecretProtector(IOptions<SecretProtectionOptions> options)
-    : IWhatsAppSecretProtector
+internal sealed class AesGcmSecretProtector(IOptions<SecretProtectionOptions> options) : ISecretProtector
 {
     private const int NonceSize = 12;
     private const int TagSize = 16;
-    private const string AssociatedDataPrefix = "quotations.whatsapp.api_token:";
+    private const string AssociatedDataPrefix = "integrations.connection:";
 
     private readonly SecretProtectionOptions settings = options.Value;
 
@@ -29,11 +28,11 @@ internal sealed class AesGcmWhatsAppSecretProtector(IOptions<SecretProtectionOpt
 
     public bool HasKey(string keyId) => settings.KeyValue(keyId) is not null;
 
-    public ProtectedSecret Protect(Guid tenantId, string plaintext)
+    public ProtectedSecret Protect(Guid connectionId, string fieldKey, string plaintext)
     {
         var keyId = ActiveKeyId ?? throw new InvalidOperationException(
             $"{SecretProtectionOptions.SectionName}:ActiveKeyId is not configured: "
-            + "the WhatsApp API key cannot be encrypted.");
+            + "the connection secret cannot be encrypted.");
         var key = KeyBytes(keyId);
 
         var plain = Encoding.UTF8.GetBytes(plaintext);
@@ -46,12 +45,12 @@ internal sealed class AesGcmWhatsAppSecretProtector(IOptions<SecretProtectionOpt
             plain,
             output.AsSpan(NonceSize, plain.Length),
             output.AsSpan(NonceSize + plain.Length, TagSize),
-            AssociatedData(tenantId));
+            AssociatedData(connectionId, fieldKey));
 
         return new ProtectedSecret(keyId, output);
     }
 
-    public string Unprotect(Guid tenantId, ProtectedSecret secret)
+    public string Unprotect(Guid connectionId, string fieldKey, ProtectedSecret secret)
     {
         var key = KeyBytes(secret.KeyId);
         var data = secret.Ciphertext;
@@ -68,16 +67,17 @@ internal sealed class AesGcmWhatsAppSecretProtector(IOptions<SecretProtectionOpt
             data.AsSpan(NonceSize, length),
             data.AsSpan(NonceSize + length, TagSize),
             plain,
-            AssociatedData(tenantId));
+            AssociatedData(connectionId, fieldKey));
 
         return Encoding.UTF8.GetString(plain);
     }
 
-    public bool TryUnprotect(Guid tenantId, ProtectedSecret secret, out string? plaintext)
+    public bool TryUnprotect(
+        Guid connectionId, string fieldKey, ProtectedSecret secret, [NotNullWhen(true)] out string? plaintext)
     {
         try
         {
-            plaintext = Unprotect(tenantId, secret);
+            plaintext = Unprotect(connectionId, fieldKey, secret);
             return true;
         }
         catch (Exception exception) when (exception is InvalidOperationException or CryptographicException)
@@ -91,7 +91,7 @@ internal sealed class AesGcmWhatsAppSecretProtector(IOptions<SecretProtectionOpt
     {
         var value = settings.KeyValue(keyId) ?? throw new InvalidOperationException(
             $"{SecretProtectionOptions.KeyPath(keyId)} is not configured: "
-            + "a WhatsApp API key stored with that key cannot be used.");
+            + "a connection secret stored with that key cannot be used.");
         try
         {
             var key = Convert.FromBase64String(value);
@@ -109,6 +109,6 @@ internal sealed class AesGcmWhatsAppSecretProtector(IOptions<SecretProtectionOpt
             $"{SecretProtectionOptions.KeyPath(keyId)} must be 32 bytes encoded in base64.");
     }
 
-    private static byte[] AssociatedData(Guid tenantId) =>
-        Encoding.UTF8.GetBytes(AssociatedDataPrefix + tenantId.ToString("D"));
+    private static byte[] AssociatedData(Guid connectionId, string fieldKey) =>
+        Encoding.UTF8.GetBytes(AssociatedDataPrefix + connectionId.ToString("D") + ":" + fieldKey);
 }

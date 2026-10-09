@@ -1,12 +1,12 @@
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
-using Modules.Quotations.Infrastructure.SecretProtection;
+using Modules.Integrations.Infrastructure.SecretProtection;
 
-namespace Modules.Quotations.UnitTests;
+namespace Modules.Integrations.UnitTests;
 
 /// <summary>
-/// Spec 2026-10-07, «Validación al arrancar»: en producción todo exigido (falla rápido por una
-/// llave mal pegada en el pipeline); fuera de producción sólo la activa, para que unos
+/// Spec 2026-10-08, «Secreto en reposo» (viene de 6612298): en producción todo exigido —una llave mal
+/// pegada en el pipeline se descubre en el deploy—; fuera de producción sólo la activa, para que unos
 /// user-secrets mal cargados no tumben las pruebas de integración. Ningún mensaje lleva un valor.
 /// </summary>
 public sealed class SecretProtectionOptionsValidatorTests
@@ -46,7 +46,7 @@ public sealed class SecretProtectionOptionsValidatorTests
         var result = ValidatorFor(Environments.Production).Validate(null, Options(active, ("k1", GoodKey)));
 
         Assert.True(result.Failed);
-        Assert.Contains("Quotations:SecretProtection:ActiveKeyId", result.FailureMessage, StringComparison.Ordinal);
+        Assert.Contains("Integrations:SecretProtection:ActiveKeyId", result.FailureMessage, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -57,7 +57,7 @@ public sealed class SecretProtectionOptionsValidatorTests
         var result = ValidatorFor(Environments.Production).Validate(null, Options("k1", ("k1", value)));
 
         Assert.True(result.Failed);
-        Assert.Contains("Quotations:SecretProtection:Keys:k1", result.FailureMessage, StringComparison.Ordinal);
+        Assert.Contains("Integrations:SecretProtection:Keys:k1", result.FailureMessage, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -70,7 +70,7 @@ public sealed class SecretProtectionOptionsValidatorTests
             .Validate(null, Options("k1", ("k1", GoodKey), (id, GoodKey)));
 
         Assert.True(result.Failed);
-        Assert.Contains($"Quotations:SecretProtection:Keys:{id}", result.FailureMessage, StringComparison.Ordinal);
+        Assert.Contains($"Integrations:SecretProtection:Keys:{id}", result.FailureMessage, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -81,7 +81,7 @@ public sealed class SecretProtectionOptionsValidatorTests
             .Validate(null, Options("k1", ("k1", GoodKey), ("k2", bad)));
 
         Assert.True(result.Failed);
-        Assert.Contains("Quotations:SecretProtection:Keys:k2", result.FailureMessage, StringComparison.Ordinal);
+        Assert.Contains("Integrations:SecretProtection:Keys:k2", result.FailureMessage, StringComparison.Ordinal);
         Assert.DoesNotContain(bad, result.FailureMessage, StringComparison.Ordinal);
     }
 
@@ -110,7 +110,7 @@ public sealed class SecretProtectionOptionsValidatorTests
         var result = ValidatorFor(Environments.Development).Validate(null, Options("k1", ("k1", NotBase64)));
 
         Assert.True(result.Failed);
-        Assert.Contains("Quotations:SecretProtection:Keys:k1", result.FailureMessage, StringComparison.Ordinal);
+        Assert.Contains("Integrations:SecretProtection:Keys:k1", result.FailureMessage, StringComparison.Ordinal);
         Assert.DoesNotContain(NotBase64, result.FailureMessage, StringComparison.Ordinal);
     }
 
@@ -143,11 +143,11 @@ public sealed class SecretProtectionOptionsValidatorTests
         Assert.DoesNotContain(GoodKey, result.FailureMessage, StringComparison.Ordinal);
     }
 
-    private sealed class StubHostEnvironment(string environmentName) : IHostEnvironment
+    internal sealed class StubHostEnvironment(string environmentName) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = environmentName;
 
-        public string ApplicationName { get; set; } = "Modules.Quotations.UnitTests";
+        public string ApplicationName { get; set; } = "Modules.Integrations.UnitTests";
 
         public string ContentRootPath { get; set; } = string.Empty;
 
