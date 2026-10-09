@@ -26,6 +26,7 @@ using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
+using Modules.Integrations.Application;
 using Modules.Integrations.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Application;
@@ -724,7 +725,11 @@ public static class QepServiceCollectionExtensions
                 // asigna roles en QCode puede volver a alguien operador: aceptado (radio de explosión).
                 OperatorPermissions.TenantsRead,
                 OperatorPermissions.ModulesManage,
-                OperatorPermissions.TenantsManage
+                OperatorPermissions.TenantsManage,
+                // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
+                // código, así que no hay migración de datos.
+                IntegrationsPermissions.ConnectionRead,
+                IntegrationsPermissions.ConnectionManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1141,6 +1146,24 @@ public static class QepServiceCollectionExtensions
             "Operator",
             "high",
             RequiredModules: []));
+
+        // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
+        // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
+        // clientes.
+        services.AddSingleton(new PermissionDefinition(
+            IntegrationsPermissions.ConnectionRead,
+            "Ver integraciones",
+            "Permite ver las conexiones del tenant con plataformas externas, sin sus credenciales.",
+            "Integrations",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            IntegrationsPermissions.ConnectionManage,
+            "Gestionar integraciones",
+            "Permite conectar, probar, pausar, reanudar y eliminar conexiones con plataformas externas y cambiar sus credenciales.",
+            "Integrations",
+            "high",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1402,7 +1425,13 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, OperatorPermissions.ModulesManage))
             .AddPolicy(
                 OperatorPermissions.TenantsManage,
-                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsManage));
+                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsManage))
+            .AddPolicy(
+                IntegrationsPermissions.ConnectionRead,
+                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))
+            .AddPolicy(
+                IntegrationsPermissions.ConnectionManage,
+                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionManage));
     }
 
     private static void AddPermissionRequirement(
