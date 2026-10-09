@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
+using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Persistence;
 using Modules.Integrations.Infrastructure.SecretProtection;
 using Modules.Integrations.Infrastructure.Verification;
@@ -58,6 +59,14 @@ public static class IntegrationsInfrastructureExtensions
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, ZenviaConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
+
+        // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production
+        // ValidateOnStart exige las cinco claves; fuera, el módulo arranca sin ellas y D-M3 decide.
+        services.AddOptions<MetaAppOptions>()
+            .Bind(configuration.GetSection(MetaAppOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<MetaAppOptions>, MetaAppOptionsValidator>();
+        services.AddSingleton<IMetaAppSettings, MetaAppSettings>();
 
         return services;
     }

@@ -30,6 +30,15 @@ internal static class IntegrationsApiHarness
     /// <summary>Un cuerpo de Zenvia inventado: no puede aparecer en ningún camino de salida.</summary>
     public const string SentinelZenviaBody = "zenvia-body-SENTINEL-5b2d1e";
 
+    public const string MetaAppId = "100200300";
+
+    public const string MetaConfigId = "400500600";
+
+    /// <summary>Centinelas: la prueba de fugas los persigue igual que al token de Zenvia.</summary>
+    public const string SentinelMetaAppSecret = "meta-app-secret-SENTINEL-9e8d7c";
+
+    public const string SentinelMetaVerifyToken = "meta-verify-token-SENTINEL-6b5a4f-0123456789";
+
     public const string FromNumber = "573001234567";
 
     public const string ZenviaBaseUrl = "https://zenvia.test";
@@ -164,6 +173,13 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);
             builder.UseSetting("Integrations:SecretProtection:Keys:k1", string.Empty);
             builder.UseSetting("Integrations:Zenvia:BaseUrl", ZenviaBaseUrl);
+            // Spec 2026-10-09 §9: fijadas, nunca heredadas. Con las cinco, whatsapp-cloud es visible
+            // (D-M3); las pruebas que quieren el caso contrario las vacían con WithoutMetaApp.
+            builder.UseSetting("Meta:App:AppId", MetaAppId);
+            builder.UseSetting("Meta:App:ConfigId", MetaConfigId);
+            builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:App:AppSecret", SentinelMetaAppSecret);
+            builder.UseSetting("Meta:App:WebhookVerifyToken", SentinelMetaVerifyToken);
             builder.ConfigureTestServices(services => services
                 .AddHttpClient(ZenviaConnectionTester.HttpClientName)
                 .ConfigurePrimaryHttpMessageHandler(() => ZenviaHandler));
@@ -354,6 +370,18 @@ internal static class IntegrationsApiHarness
             foreach (var (id, value) in keys)
             {
                 builder.UseSetting($"Integrations:SecretProtection:Keys:{id}", value);
+            }
+        });
+
+    private static readonly string[] MetaAppRequiredKeys = ["AppId", "ConfigId", "AppSecret", "WebhookVerifyToken"];
+
+    /// <summary>Vacía la sección Meta:App (D-M3): whatsapp-cloud desaparece del catálogo.</summary>
+    public static WebApplicationFactory<Program> WithoutMetaApp(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            foreach (var key in MetaAppRequiredKeys)
+            {
+                builder.UseSetting($"Meta:App:{key}", string.Empty);
             }
         });
 
