@@ -10,6 +10,11 @@ namespace Modules.Integrations.Infrastructure.Meta;
 internal sealed record MetaGraphResponse(HttpStatusCode Status, string Body, MetaGraphError? Error, string? UnreachableReason)
 {
     public bool IsSuccess => UnreachableReason is null && (int)Status is >= 200 and < 300;
+
+    /// <summary>Sin <see cref="Body"/>: Graph puede repetir el token o el <c>code</c> en el cuerpo, y el
+    /// <c>ToString</c> de un record lo imprimiría en cualquier log o mensaje que lo interpole.</summary>
+    public override string ToString() =>
+        $"MetaGraphResponse {{ Status = {(int)Status}, Error = {Error}, UnreachableReason = {UnreachableReason} }}";
 }
 
 /// <summary>

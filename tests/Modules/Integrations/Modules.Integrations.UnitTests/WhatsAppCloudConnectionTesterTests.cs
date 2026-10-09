@@ -65,6 +65,36 @@ public sealed class WhatsAppCloudConnectionTesterTests : IDisposable
         Assert.Equal($"Bearer {Token}", request.Authorization);
         Assert.Contains("qep-integrations", request.UserAgent, StringComparison.Ordinal);
         Assert.DoesNotContain(Token, _logs.AllText, StringComparison.Ordinal);
+        // Control positivo: sin esto, un logger que no está enganchado vuelve vacía la ausencia del token.
+        Assert.Contains("Graph phone-number answered HTTP 200", _logs.AllText, StringComparison.Ordinal);
+    }
+
+    // Una conexión sin token guardado (o uno que no descifra y llega ausente) se rechaza sin llamar a
+    // Graph: antes lanzaba KeyNotFoundException y salía como 500.
+    [Fact]
+    public async Task WithoutAnAccessTokenItIsRejectedWithoutCallingGraph()
+    {
+        var result = await _services.GetRequiredService<IConnectionTester>().TestAsync(
+            IntegrationProviders.WhatsAppCloud,
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.PhoneNumberId] = "111" },
+            new Dictionary<string, string>(),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ConnectionTestOutcome.CredentialsRejected, result.Outcome);
+        Assert.Equal(ConnectionFailureCodes.CredentialsRejected, result.FailureCode);
+        Assert.Empty(_graph.Requests);
+    }
+
+    // El cuerpo de Graph puede repetir el token: el ToString del record no lo imprime nunca.
+    [Fact]
+    public void TheResponseToStringNeverPrintsTheBody()
+    {
+        var response = new MetaGraphResponse(HttpStatusCode.BadRequest, $"{{\"echo\":\"{Token}\"}}", new MetaGraphError(100, null, "trace"), null);
+
+        var text = response.ToString();
+
+        Assert.DoesNotContain(Token, text, StringComparison.Ordinal);
+        Assert.Contains("400", text, StringComparison.Ordinal);
     }
 
     [Theory]

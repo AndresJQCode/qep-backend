@@ -24,10 +24,16 @@ internal sealed class WhatsAppCloudConnectionTester(MetaGraphClient graph) : IPr
         IReadOnlyDictionary<string, string> secrets,
         CancellationToken cancellationToken)
     {
+        // Sin token no hay a quién preguntarle: es una credencial rechazada, no un 500.
+        if (!secrets.TryGetValue(WhatsAppCloudFieldKeys.AccessToken, out var accessToken) || string.IsNullOrWhiteSpace(accessToken))
+        {
+            return ConnectionTestResult.RejectedWith(ConnectionFailureCodes.CredentialsRejected);
+        }
+
         var phoneNumberId = fields.GetValueOrDefault(WhatsAppCloudFieldKeys.PhoneNumberId) ?? string.Empty;
         using var request = new HttpRequestMessage(
             HttpMethod.Get, graph.Path($"{Uri.EscapeDataString(phoneNumberId)}?fields={Fields}"));
-        var response = await graph.SendAsync("phone-number", request, secrets[WhatsAppCloudFieldKeys.AccessToken], cancellationToken);
+        var response = await graph.SendAsync("phone-number", request, accessToken, cancellationToken);
         return Classify(response);
     }
 
