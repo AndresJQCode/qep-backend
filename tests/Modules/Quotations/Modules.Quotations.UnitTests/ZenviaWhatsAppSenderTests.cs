@@ -28,6 +28,7 @@ public sealed class ZenviaWhatsAppSenderTests
         FullName: "Juan Pérez",
         OrderNumber: "COT-000123",
         Total: 2450000m,
+        Currency: "COP",
         ValidUntil: new DateOnly(2026, 9, 30),
         DocumentUrl: "https://r2.example.com/cotizacion.pdf?sig=abc");
 
@@ -41,6 +42,17 @@ public sealed class ZenviaWhatsAppSenderTests
         Assert.Equal(
             "https://r2.example.com/cotizacion.pdf?sig=abc",
             capture.Fields().GetProperty("documentUrl").GetString());
+    }
+
+    [Fact]
+    public async Task SendFormatsTheTotalWithTheQuotationCurrencySymbolAndDecimals()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendQuotationAsync(
+            Message with { Total = 2450.5m, Currency = "EUR" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("€ 2.450,50", capture.Fields().GetProperty("total").GetString());
     }
 
     [Fact]

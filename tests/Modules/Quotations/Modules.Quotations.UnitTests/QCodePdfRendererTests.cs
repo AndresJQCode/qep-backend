@@ -29,6 +29,8 @@ public sealed class QCodePdfRendererTests
         IsStorePickup: false,
         AdvisorLabel: "Ana Pérez",
         Currency: "COP",
+        Symbol: "$",
+        Decimals: 0,
         BillingAccount: null,
         PaymentMethod: "Transferencia",
         Notes: null,

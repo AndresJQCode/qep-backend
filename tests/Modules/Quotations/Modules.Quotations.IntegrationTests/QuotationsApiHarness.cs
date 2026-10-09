@@ -843,11 +843,18 @@ internal static class QuotationsApiHarness
             Task.FromResult($"https://r2.example.com/{storageKey}?X-Amz-Signature=stub");
     }
 
-    private sealed class StubPdfRenderer : IQuotationPdfRenderer
+    /// <summary>Keeps the last document it was asked to render, so a test can assert what the
+    /// mapper sends to the PDF service without rendering anything.</summary>
+    public sealed class StubPdfRenderer : IQuotationPdfRenderer
     {
+        public QuotationPdfDocument? LastDocument { get; private set; }
+
         public Task<byte[]> RenderAsync(
-            QuotationPdfDocument document, CancellationToken cancellationToken) =>
-            Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+            QuotationPdfDocument document, CancellationToken cancellationToken)
+        {
+            LastDocument = document;
+            return Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+        }
     }
 
     private sealed record ProductResponseDto(Guid Id);
@@ -873,6 +880,9 @@ internal static class QuotationsApiHarness
         /// test, así que este harness sustituye la implementación real por una que guarda los
         /// bytes en un diccionario.</summary>
         public InMemoryObjectStorage ObjectStorage { get; } = new();
+
+        /// <summary>The stub that replaces the PDF service; exposes the last document rendered.</summary>
+        public StubPdfRenderer PdfRenderer { get; } = new();
 
         /// <summary>Doble de <c>IPublicObjectStorage</c> (spec 2026-09-15): el publicador real de
         /// comprobantes copia entre buckets de R2, que en una prueba no existen. Anota las copias y
@@ -951,7 +961,7 @@ internal static class QuotationsApiHarness
                 // un servicio ajeno, y consumiendo la cuota de una API key real. Mismo criterio
                 // que `IObjectStorage`, que tampoco habla con R2 aca.
                 services.RemoveAll<IQuotationPdfRenderer>();
-                services.AddSingleton<IQuotationPdfRenderer, StubPdfRenderer>();
+                services.AddSingleton<IQuotationPdfRenderer>(PdfRenderer);
 
                 // El adaptador real copia al bucket publico de R2 y falla si no esta
                 // configurado -- que es el caso aca, y a proposito: un envio que no puede

@@ -118,6 +118,7 @@ public sealed class SendQuotationHandler(
                     FullName: fullName,
                     OrderNumber: quotation.QuotationNumber,
                     Total: quotation.Total,
+                    Currency: quotation.Currency,
                     ValidUntil: quotation.ValidUntil!.Value,
                     DocumentUrl: documentUrl),
                 cancellationToken);

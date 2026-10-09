@@ -26,6 +26,19 @@ public sealed class QuotationPdfDocumentMapperTests
     private static QuotationPdfDocument Map(QuotationResponse quotation, QuotationPdfLogo? logo = null) =>
         QuotationPdfDocumentMapper.From(quotation, Calendar, logo);
 
+    // Spec: the "$ " literal and the sin-decimales list leave the template; the mapper sends what
+    // the catalogue says for the quotation currency.
+    [Theory]
+    [InlineData("COP", "$", 0)]
+    [InlineData("USD", "US$", 2)]
+    [InlineData("EUR", "€", 2)]
+    public void MapsTheCurrencySymbolAndDecimalsFromTheCatalogue(string currency, string symbol, int decimals)
+    {
+        var document = Map(Response() with { Currency = currency });
+
+        Assert.Equal((currency, symbol, decimals), (document.Currency, document.Symbol, document.Decimals));
+    }
+
     // Spec 2026-09-17, punto 7: creada el 31 de diciembre a las 23:00 en Bogotá —1 de enero en UTC—,
     // el documento dice que se emitió el 31 de diciembre de 2026. La fecha viaja sin hora.
     [Fact]
