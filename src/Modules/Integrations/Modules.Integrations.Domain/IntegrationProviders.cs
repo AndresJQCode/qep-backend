@@ -35,7 +35,7 @@ public static class IntegrationProviders
                 FieldKind.Secret,
                 required: true,
                 maxLength: 512,
-                pattern: @"^[\x21-\x7E]+$",
+                pattern: @"^[\x21-\x7E]+\z",
                 invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla de Zenvia."),
             new FieldDefinition(
                 ZenviaFieldKeys.FromNumber,
@@ -43,7 +43,7 @@ public static class IntegrationProviders
                 FieldKind.Phone,
                 required: true,
                 maxLength: 15,
-                pattern: "^[0-9]{10,15}$",
+                pattern: @"^[0-9]{10,15}\z",
                 invalidMessage: "Escribe el número con indicativo de país, sólo dígitos y sin '+' (entre 10 y 15)."),
         ],
         DefaultMaxConnections);

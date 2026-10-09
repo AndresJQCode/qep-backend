@@ -28,7 +28,7 @@ public sealed class FieldDefinition
     public const int KeyMaxLength = 40;
 
     private static readonly Regex KeyShape = new(
-        "^[a-zA-Z][a-zA-Z0-9]{1,39}$",
+        @"^[a-zA-Z][a-zA-Z0-9]{1,39}\z",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public FieldDefinition(
@@ -80,10 +80,29 @@ public sealed class FieldDefinition
 
     /// <summary>
     /// Sin caracteres de control —un <c>\0</c> en <c>text</c> o en <c>jsonb</c> lo rechaza PostgreSQL
-    /// con un 500 (Review Focus 1)— y con el patrón del catálogo, si lo hay.
+    /// con un 500 (Review Focus 1)—, sin surrogates sueltos (tampoco son UTF-8 válido) y con el
+    /// patrón del catálogo, si lo hay.
     /// </summary>
     public bool HasValidShape(string value) =>
-        !value.Any(char.IsControl) && (Pattern is null || Pattern.IsMatch(value));
+        // Esta revisión va antes del patrón y no se mueve: un patrón sin ancla estricta no frena un "\n" final.
+        !value.Any(char.IsControl) && !HasLoneSurrogate(value) && (Pattern is null || Pattern.IsMatch(value));
+
+    private static bool HasLoneSurrogate(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsHighSurrogate(value[i]) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+            {
+                i++;
+            }
+            else if (char.IsSurrogate(value[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 /// <summary>
@@ -96,7 +115,7 @@ public sealed class IntegrationProvider
     public const int KeyMaxLength = 32;
 
     private static readonly Regex KeyShape = new(
-        "^[a-z0-9-]{2,32}$",
+        @"^[a-z0-9-]{2,32}\z",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public IntegrationProvider(

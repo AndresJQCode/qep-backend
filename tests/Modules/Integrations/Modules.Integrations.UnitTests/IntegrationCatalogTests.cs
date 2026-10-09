@@ -87,6 +87,7 @@ public sealed class IntegrationCatalogTests
     [InlineData("Zenvia")]
     [InlineData("zen_via")]
     [InlineData("a23456789012345678901234567890123")]
+    [InlineData("zenvia\n")]
     public void AProviderKeyOutsideItsShapeIsAProgrammingError(string key) =>
         Assert.Throws<ArgumentException>(() => new IntegrationProvider(
             key, "X", IntegrationCategory.Messaging, [TenantModuleKeys.Quotations], WithoutConsumers.Fields, 1));
@@ -96,6 +97,7 @@ public sealed class IntegrationCatalogTests
     [InlineData("1abc")]
     [InlineData("api-token")]
     [InlineData("api_token")]
+    [InlineData("apiToken\n")]
     public void AFieldKeyOutsideItsShapeIsAProgrammingError(string key) =>
         Assert.Throws<ArgumentException>(() =>
             new FieldDefinition(key, "X", FieldKind.Text, required: false, maxLength: 10, pattern: null, invalidMessage: "X"));
@@ -107,6 +109,7 @@ public sealed class IntegrationCatalogTests
     [InlineData("57300 12345", false)]
     [InlineData("573001234", false)]
     [InlineData("57300\u00001234567", false)]
+    [InlineData("573001234567\n", false)]
     public void TheSenderNumberIsE164WithoutPlus(string value, bool valid) =>
         Assert.Equal(valid, IntegrationProviders.Zenvia.FindField(ZenviaFieldKeys.FromNumber)!.HasValidShape(value));
 
@@ -115,6 +118,7 @@ public sealed class IntegrationCatalogTests
     [InlineData("con espacio", false)]
     [InlineData("tab\tdentro", false)]
     [InlineData("ñandú", false)]
+    [InlineData("token\n", false)]
     public void TheApiTokenIsVisibleAsciiWithoutSpaces(string value, bool valid) =>
         Assert.Equal(valid, IntegrationProviders.Zenvia.FindField(ZenviaFieldKeys.ApiToken)!.HasValidShape(value));
 
@@ -128,6 +132,20 @@ public sealed class IntegrationCatalogTests
         Assert.True(free.HasValidShape("texto libre"));
         Assert.False(free.HasValidShape("a\u0000b"));
         Assert.False(free.HasValidShape("a\nb"));
+    }
+
+    // Un surrogate suelto no es UTF-8 válido: Npgsql/jsonb lo rechazan con un 500.
+    // Es un Fact y no un Theory: xUnit serializa los datos y cambia un surrogate suelto por U+FFFD.
+    [Fact]
+    public void ALoneSurrogateIsNeverAValidShape()
+    {
+        var free = new FieldDefinition("note", "Nota", FieldKind.Text, required: false, maxLength: 40, pattern: null, invalidMessage: "X");
+
+        Assert.False(free.HasValidShape("a\uD800b"));
+        Assert.False(free.HasValidShape("ab\uD800"));
+        Assert.False(free.HasValidShape("a\uDC00b"));
+        Assert.False(free.HasValidShape("\uDE00\uD83D"));
+        Assert.True(free.HasValidShape("emoji 😀 válido"));
     }
 
     [Fact]
