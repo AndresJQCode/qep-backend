@@ -27,8 +27,9 @@ public interface IConnectionEventPublisher
 internal static class ConnectionTransitions
 {
     /// <summary>
-    /// <c>Active → NeedsAttention</c> con su auditoría y su evento. Lo comparten <c>test</c> y
-    /// <c>resume</c>. El dominio no guarda el estado de origen: quien llama decide si corresponde.
+    /// Paso a <c>NeedsAttention</c> con su auditoría y su evento. Lo comparten <c>test</c> (desde
+    /// <c>Active</c>) y <c>resume</c> (desde <c>Paused</c>). El dominio no guarda el estado de origen:
+    /// quien llama decide si corresponde.
     /// </summary>
     public static void FlagNeedsAttention(
         IIntegrationsAuditRecorder auditRecorder,
