@@ -53,8 +53,9 @@ public sealed class OpenCashSessionHandler(
 
         var company = await ResolveCompanyAsync(command, cancellationToken);
         var name = await cashiers.FindNameAsync(command.TenantId, cashier.Value, cancellationToken) ?? cashier.Value.ToString();
-        // Se congela al abrir: un cambio de moneda del tenant sólo lo toma la próxima caja.
-        var currency = await defaultCurrency.GetAsync(command.TenantId, cancellationToken);
+        // Frozen when it opens: a later change of the tenant default only reaches the next session
+        // (spec D9). Normalised against the catalogue here because CashSession (Pos.Domain) cannot see it.
+        var currency = Currencies.Normalize(await defaultCurrency.GetAsync(command.TenantId, cancellationToken));
         var now = clock.UtcNow;
         var session = CashSession.Open(
             CashSessionId.New(),

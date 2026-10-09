@@ -279,14 +279,24 @@ internal sealed class FakeProductLookup : IPosProductLookup
 {
     public List<(Guid TenantId, PosProductRef Product)> Products { get; } = [];
 
-    /// <param name="price">La lista COP; <paramref name="priceUsd"/> es la lista USD.</param>
+    /// <param name="price">The COP price; <paramref name="priceUsd"/> the USD one. <paramref name="prices"/>,
+    /// when given, replaces both: the way to put an EUR price on a product.</param>
     public PosProductRef Add(
         string code, string name, decimal? price, int tax, bool active = true, Guid? id = null, Guid? tenantId = null,
-        decimal? priceUsd = null)
+        decimal? priceUsd = null, IReadOnlyDictionary<string, decimal>? prices = null)
     {
-        var product = new PosProductRef(id ?? Guid.CreateVersion7(), code, name, active, price, priceUsd, tax, null);
+        var product = new PosProductRef(
+            id ?? Guid.CreateVersion7(), code, name, active, prices ?? PricesOf(price, priceUsd), tax, null);
         Products.Add((tenantId ?? PosFixtures.TenantId, product));
         return product;
+    }
+
+    private static Dictionary<string, decimal> PricesOf(decimal? cop, decimal? usd)
+    {
+        var prices = new Dictionary<string, decimal>();
+        if (cop is { } copPrice) prices["COP"] = copPrice;
+        if (usd is { } usdPrice) prices["USD"] = usdPrice;
+        return prices;
     }
 
     public void Replace(PosProductRef product)

@@ -124,7 +124,7 @@ public sealed class CreatePosSaleHandlerTests
         var first = await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
         session.Close(100_000m, null, Now);
         var shampoo = bed.Products.Products.Single(entry => entry.Product.Id == Shampoo).Product;
-        bed.Products.Replace(shampoo with { PriceCop = 12_500m, IsActive = false });
+        bed.Products.Replace(shampoo with { Prices = new Dictionary<string, decimal> { ["COP"] = 12_500m }, IsActive = false });
 
         var repeat = await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
 
@@ -188,7 +188,7 @@ public sealed class CreatePosSaleHandlerTests
         var (bed, session) = Arrange();
         var shampoo = bed.Products.Products.Single(entry => entry.Product.Id == Shampoo).Product;
 
-        bed.Products.Replace(shampoo with { PriceCop = 12_500m });
+        bed.Products.Replace(shampoo with { Prices = new Dictionary<string, decimal> { ["COP"] = 12_500m } });
         var price = await Assert.ThrowsAsync<PosDomainException>(() =>
             Handler(bed, Discounter).HandleAsync(Command(session), TestContext.Current.CancellationToken));
         bed.Products.Replace(shampoo with { TaxPercentage = 5 });
@@ -210,7 +210,7 @@ public sealed class CreatePosSaleHandlerTests
         bed.Products.Replace(shampoo with { IsActive = false });
         var inactive = await Assert.ThrowsAsync<PosDomainException>(() =>
             Handler(bed, Discounter).HandleAsync(Command(session), TestContext.Current.CancellationToken));
-        bed.Products.Replace(shampoo with { PriceCop = null });
+        bed.Products.Replace(shampoo with { Prices = new Dictionary<string, decimal>() });
         var unpriced = await Assert.ThrowsAsync<PosDomainException>(() =>
             Handler(bed, Discounter).HandleAsync(Command(session), TestContext.Current.CancellationToken));
         var missing = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, Discounter).HandleAsync(
@@ -460,4 +460,36 @@ public sealed class CreatePosSaleHandlerTests
         { [], [new("Cash", null, 20_000m, null)] },
         { [new(Shampoo, 1m, 0m, 11_900m, 19)], [] },
     };
+
+    // The session froze its currency when it opened (spec D9). The tenant default is COP here and
+    // the sale still prices and records EUR: CreatePosSale never reads the live default.
+    [Fact]
+    public async Task AnOpenSessionKeepsSellingInItsCurrencyWhateverTheTenantDefault()
+    {
+        var bed = new PosTestBed { DefaultCurrency = new FakeTenantDefaultCurrency("COP") };
+        bed.Products.Add("SH-400", "Shampoo 400 ml", null, 19, id: Shampoo,
+            prices: new Dictionary<string, decimal> { ["COP"] = 11_900m, ["EUR"] = 3m });
+        var session = bed.OpenSessionInStore(currency: "EUR");
+
+        var result = await Handler(bed, Seller).HandleAsync(
+            Command(session, lines: [new(Shampoo, 2m, 0m, 3m, 19)], payments: [new("Cash", null, 10m, null)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("EUR", result.Sale.Currency);
+        Assert.Equal(6m, result.Sale.Total);
+    }
+
+    [Fact]
+    public async Task AnEurSessionRefusesAProductWithoutAnEurPrice()
+    {
+        var bed = new PosTestBed();
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 11_900m, 19, id: Shampoo, priceUsd: 3.25m);
+        var session = bed.OpenSessionInStore(currency: "EUR");
+
+        var exception = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, Seller).HandleAsync(
+            Command(session, lines: [new(Shampoo, 1m, 0m, 11_900m, 19)], payments: [new("Cash", null, 20_000m, null)]),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.product_price_unavailable", exception.Code);
+    }
 }

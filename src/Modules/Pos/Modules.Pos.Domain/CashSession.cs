@@ -107,7 +107,7 @@ public sealed class CashSession
             CompanyTaxId = company.TaxId,
             CompanyAddress = company.Address,
             CompanyPhone = company.Phone,
-            // Ya viene normalizada por Tenancy (ITenantDefaultCurrency).
+            // Already a catalogue code: OpenCashSessionHandler runs Currencies.Normalize.
             Currency = currency,
             Status = CashSessionStatus.Open,
             OpeningFloat = openingFloat,

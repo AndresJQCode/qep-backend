@@ -68,7 +68,7 @@ public sealed class PosProductLookupTests
 
         var found = await lookup.FindManyAsync(TenantId, [product.Id.Value], TestContext.Current.CancellationToken);
 
-        Assert.Equal((11_900m, 3.25m), (found[product.Id.Value].PriceCop, found[product.Id.Value].PriceUsd));
+        Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 11_900m, ["USD"] = 3.25m }, found[product.Id.Value].Prices);
     }
 
     private static PosProductLookup LookupFor(Guid fileId, ProductImageRef image, out Guid productId)

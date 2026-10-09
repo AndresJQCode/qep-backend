@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Pos.Application;
 using Modules.Pos.Domain;
+using TenantDomainException = Modules.Tenancy.Domain.TenantDomainException;
 using static Modules.Pos.UnitTests.PosFixtures;
 
 namespace Modules.Pos.UnitTests;
@@ -400,5 +401,21 @@ public sealed class RegisterHandlersTests
             new CloseCashSessionCommand(TenantId, session.Id.Value, 1, 1.001m, null), TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<ValidationException>(() => Close(bed, Operator).HandleAsync(
             new CloseCashSessionCommand(TenantId, session.Id.Value, 1, 0m, new string('x', 501)), TestContext.Current.CancellationToken));
+    }
+
+    // Spec D6: the session snapshots a catalogue code. A tenant default outside the catalogue fails
+    // the opening instead of creating a session nothing can be sold in.
+    [Fact]
+    public async Task OpenRejectsATenantDefaultOutsideTheCatalogue()
+    {
+        var bed = new PosTestBed { DefaultCurrency = new FakeTenantDefaultCurrency("XYZ") };
+        bed.AddCompany();
+
+        var exception = await Assert.ThrowsAsync<TenantDomainException>(() => Open(bed, Operator).HandleAsync(
+            new OpenCashSessionCommand(TenantId, null, 0m), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.currency.unsupported", exception.Code);
+        Assert.Empty(bed.Sessions.Sessions);
+        Assert.Equal(0, bed.UnitOfWork.SaveCalls);
     }
 }

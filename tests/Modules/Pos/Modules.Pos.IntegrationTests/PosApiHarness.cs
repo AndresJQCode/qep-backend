@@ -230,9 +230,13 @@ internal static class PosApiHarness
         return body.Id;
     }
 
-    /// <summary>Producto con precio COP de lista y las escalas por defecto de QuotationsApiHarness.</summary>
+    /// <summary>
+    /// Producto con precio COP de lista y las escalas por defecto de QuotationsApiHarness.
+    /// <paramref name="prices"/>, cuando viene, reemplaza al COP: es la forma de dar un precio EUR.
+    /// </summary>
     public static async Task<Guid> CreateProductAsync(
-        HttpClient client, Guid tenantId, string code, string name, decimal priceCop, Guid? taxRateId)
+        HttpClient client, Guid tenantId, string code, string name, decimal priceCop, Guid? taxRateId,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -243,7 +247,7 @@ internal static class PosApiHarness
                 taxRateId,
                 pricing = new
                 {
-                    prices = new Dictionary<string, decimal> { ["COP"] = priceCop },
+                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = priceCop },
                     scales = new object[]
                     {
                         new { fromUnit = 1, toUnit = 9, discount = 0m, restriction = "multiple", multiple = 1 },
