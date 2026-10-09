@@ -26,6 +26,8 @@ public sealed class ProductPricesMigrationTests
     private const string ChangeCopId = "01900000-0000-7000-8000-00000000c007";
     private const string ChangeScaleId = "01900000-0000-7000-8000-00000000c008";
     private const string AuthorId = "01900000-0000-7000-8000-00000000c009";
+    private const string ZeroId = "01900000-0000-7000-8000-00000000c00a";
+    private const string ChangeEurId = "01900000-0000-7000-8000-00000000c00b";
 
     private const string LegacySql = $"""
         INSERT INTO catalog.products (
@@ -37,7 +39,9 @@ public sealed class ProductPricesMigrationTests
             ('{CopOnlyId}', '{TenantId}', 'Keratina', '7701', true, 1,
              '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z', NULL, 114700.50),
             ('{UsdOnlyId}', '{TenantId}', 'Kit', '7702', true, 1,
-             '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z', 31.86, NULL);
+             '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z', 31.86, NULL),
+            ('{ZeroId}', '{TenantId}', 'Muestra', '7703', true, 1,
+             '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z', NULL, 0);
         INSERT INTO catalog.product_price_scales (
             id, product_id, tenant_id, from_unit, to_unit, discount, restriction, multiple,
             allow_grouping, final_usd, final_cop)
@@ -73,6 +77,8 @@ public sealed class ProductPricesMigrationTests
                 $"{BothId}|USD|9.97",
                 $"{CopOnlyId}|COP|114700.50",
                 $"{UsdOnlyId}|USD|31.86",
+                // A zero price is a price (NOT NULL filter, not > 0): it must survive the copy.
+                $"{ZeroId}|COP|0.00",
             },
             await RowsAsync(
                 connectionString,
@@ -127,6 +133,11 @@ public sealed class ProductPricesMigrationTests
             UPDATE catalog.product_prices SET amount = 36900 WHERE product_id = '{BothId}' AND currency = 'COP';
             INSERT INTO catalog.product_prices (product_id, currency, amount) VALUES ('{BothId}', 'EUR', 8.90);
             UPDATE catalog.product_price_scales SET final_cop = NULL, final_usd = NULL WHERE id = '{ScaleId}';
+            INSERT INTO catalog.product_price_changes (
+                id, tenant_id, product_id, field, scale_from_unit, scale_to_unit,
+                previous_value, new_value, changed_by, changed_at, currency)
+            VALUES ('{ChangeEurId}', '{TenantId}', '{BothId}', 'PriceBase', NULL, NULL, 8.50, 8.90,
+                    '{AuthorId}', '2026-09-03T12:00:00Z', 'EUR');
             """);
 
         await migrator.MigrateAsync(LastMigrationBeforeProductPrices, TestContext.Current.CancellationToken);
@@ -139,6 +150,13 @@ public sealed class ProductPricesMigrationTests
             connectionString, $"SELECT final_usd FROM catalog.product_price_scales WHERE id = '{ScaleId}'"));
         Assert.Equal("PriceBaseUsd", await ScalarAsync<string>(
             connectionString, $"SELECT field FROM catalog.product_price_changes WHERE id = '{ChangeUsdId}'"));
+        // The old model cannot represent EUR history, so Down drops it instead of mislabelling it.
+        Assert.Equal(0L, await ScalarAsync<long>(
+            connectionString, $"SELECT count(*) FROM catalog.product_price_changes WHERE id = '{ChangeEurId}'"));
+        Assert.True(await ScalarAsync<bool>(
+            connectionString, $"SELECT price_base_usd IS NULL FROM catalog.products WHERE id = '{CopOnlyId}'"));
+        Assert.Equal("PriceBaseCop", await ScalarAsync<string>(
+            connectionString, $"SELECT field FROM catalog.product_price_changes WHERE id = '{ChangeCopId}'"));
         Assert.Equal(0L, await ScalarAsync<long>(
             connectionString,
             "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'catalog' AND table_name = 'product_prices'"));
