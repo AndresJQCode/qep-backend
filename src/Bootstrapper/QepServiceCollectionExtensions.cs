@@ -561,6 +561,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
 
+        // Integrations (P23): el nombre de quien creó la conexión sale de Tenancy e Identity.
+        services.AddScoped<IConnectionAuthorNames, IntegrationsConnectionAuthorNames>();
+
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
         // impide a propósito — y el composition root cablea el puerto que declara `customers`

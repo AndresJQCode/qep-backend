@@ -20,6 +20,7 @@ using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
+using Modules.Integrations.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
@@ -187,6 +188,11 @@ await app.Services.InitializeQuotationsDatabaseAsync(
 // Después de Companies: pos.cash_sessions lleva una FK real a companies.companies (spec,
 // decisión 8), así que esa tabla tiene que existir cuando esta migración corre.
 await app.Services.InitializePosDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Integrations (spec 2026-10-08): sin FKs a otros esquemas. Va después de Audit porque escribe en
+// audit.entries, que crea la migración de Audit.
+await app.Services.InitializeIntegrationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
