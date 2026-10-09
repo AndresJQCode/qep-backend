@@ -76,36 +76,44 @@ public sealed class ProductExportApiTests
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
 
-        // Tres columnas de escala, ordenadas por unidad de inicio: 1-9 aparece una sola vez
-        // aunque la compartan dos productos.
-        var scaleHeaders = new[]
-        {
-            sheet.Cell(1, 8).GetString(),
-            sheet.Cell(1, 9).GetString(),
-            sheet.Cell(1, 10).GetString(),
-        };
-        Assert.Equal(["1-9", "10-19", "20-99"], scaleHeaders);
-        Assert.Empty(sheet.Cell(1, 11).GetString());
+        // Header per scale (discount, then the final in each currency in use), ordered by from
+        // unit: 1-9 appears once even though two products share it. The products are COP-only.
+        Assert.Equal("Precio base COP", sheet.Cell(1, 6).GetString());
+        Assert.Equal(
+            [
+                "Descuento 1-9 (%)", "Final 1-9 COP",
+                "Descuento 10-19 (%)", "Final 10-19 COP",
+                "Descuento 20-99 (%)", "Final 20-99 COP",
+            ],
+            Enumerable.Range(7, 6).Select(column => sheet.Cell(1, column).GetString()).ToArray());
+        Assert.Empty(sheet.Cell(1, 13).GetString());
 
-        // Las filas salen ordenadas por codigo: AAA-1, BBB-2, CCC-3.
+        // Rows are ordered by code: AAA-1, BBB-2, CCC-3.
         Assert.Equal("AAA-1", sheet.Cell(2, 1).GetString());
         Assert.Equal("BBB-2", sheet.Cell(3, 1).GetString());
         Assert.Equal("CCC-3", sheet.Cell(4, 1).GetString());
 
-        // A tiene 1-9 y 10-19, y deja 20-99 vacia.
+        // A has 1-9 and 10-19, and leaves 20-99 empty.
+        Assert.Equal(10m, sheet.Cell(2, 7).GetValue<decimal>());
         Assert.Equal(45_000m, sheet.Cell(2, 8).GetValue<decimal>());
-        Assert.Equal(42_500m, sheet.Cell(2, 9).GetValue<decimal>());
-        Assert.True(sheet.Cell(2, 10).IsEmpty());
+        Assert.Equal(15m, sheet.Cell(2, 9).GetValue<decimal>());
+        Assert.Equal(42_500m, sheet.Cell(2, 10).GetValue<decimal>());
+        Assert.True(sheet.Cell(2, 11).IsEmpty());
+        Assert.True(sheet.Cell(2, 12).IsEmpty());
 
-        // B comparte la columna 1-9 con A y deja 10-19 vacia.
+        // B shares 1-9 with A, leaves 10-19 empty and has 20-99.
+        Assert.Equal(40m, sheet.Cell(3, 7).GetValue<decimal>());
         Assert.Equal(30_000m, sheet.Cell(3, 8).GetValue<decimal>());
         Assert.True(sheet.Cell(3, 9).IsEmpty());
-        Assert.Equal(25_000m, sheet.Cell(3, 10).GetValue<decimal>());
+        Assert.True(sheet.Cell(3, 10).IsEmpty());
+        Assert.Equal(50m, sheet.Cell(3, 11).GetValue<decimal>());
+        Assert.Equal(25_000m, sheet.Cell(3, 12).GetValue<decimal>());
 
-        // C no tiene ninguna escala: las tres celdas vacias, no ceros.
-        Assert.True(sheet.Cell(4, 8).IsEmpty());
-        Assert.True(sheet.Cell(4, 9).IsEmpty());
-        Assert.True(sheet.Cell(4, 10).IsEmpty());
+        // C has no scale: every scale cell empty, not zeros.
+        for (var column = 7; column <= 12; column++)
+        {
+            Assert.True(sheet.Cell(4, column).IsEmpty());
+        }
 
         // El correo no se manda en el request: queda encolado como evento de integracion.
         var events = await OutboxEventNamesAsync(database.GetConnectionString());

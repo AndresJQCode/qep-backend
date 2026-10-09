@@ -1,32 +1,31 @@
+using Modules.Tenancy.Application;
+
 namespace Modules.Catalog.Application;
 
 /// <summary>
-/// Arma el Excel del catalogo. Puerto y no una clase concreta por el mismo motivo que
-/// <c>ICustomerImportTemplateBuilder</c>: ClosedXML es una decision de infraestructura y la
-/// capa de aplicacion no deberia compilar contra ella.
+/// Builds the catalogue Excel. A port and not a concrete class for the same reason as
+/// <c>ICustomerImportTemplateBuilder</c>: ClosedXML is an infrastructure decision and the
+/// application layer should not compile against it.
 /// </summary>
 public interface IProductExportWorkbookBuilder
 {
-    byte[] Build(IReadOnlyList<ProductExportRow> products);
+    /// <param name="currencies">The tenant's currencies in use (spec D10), catalogue order. One
+    /// base-price column, and one final column per scale, for each; its decimals pick the format.</param>
+    byte[] Build(IReadOnlyList<ProductExportRow> products, IReadOnlyList<CurrencyInfo> currencies);
 }
 
-/// <summary>Un producto tal como sale al Excel, con sus escalas ya resueltas.</summary>
+/// <summary>A product as it goes into the Excel, with its scales already resolved.</summary>
 public sealed record ProductExportRow(
     string Code,
     string Name,
     string? Description,
     bool IsActive,
-    decimal? PriceBaseUsd,
-    decimal? PriceBaseCop,
+    IReadOnlyDictionary<string, decimal> Prices,
     string? TaxRateName,
     IReadOnlyList<ProductExportScale> Scales);
 
 /// <summary>
-/// Una escala del producto en la forma que necesita el export: el rango que la identifica y el
-/// precio en pesos.
-///
-/// <paramref name="PriceCop"/> es nullable porque el producto puede tener precio solo en
-/// dolares: la celda queda vacia, igual que la de un producto que no tiene esta escala. Las dos
-/// ausencias se leen igual en la planilla y ninguna es un cero, que seria un precio real.
+/// A product scale in the shape the export needs: the range that identifies it and its discount.
+/// The discount only: the builder derives the final per currency with PriceScale.FinalFor (spec D4).
 /// </summary>
-public sealed record ProductExportScale(int FromUnit, int ToUnit, decimal? PriceCop);
+public sealed record ProductExportScale(int FromUnit, int ToUnit, decimal DiscountPercent);

@@ -38,7 +38,8 @@ public sealed class ExportProductsHandler(
     ICatalogAuditPublisher auditPublisher,
     ICatalogUnitOfWork unitOfWork,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ICurrenciesInUse currenciesInUse)
     : ICommandHandler<ExportProductsCommand, ExportProductsResult>
 {
     /// <summary>
@@ -81,7 +82,12 @@ public sealed class ExportProductsHandler(
 
         var rows = products.Select(product => ToRow(product, taxRateNames)).ToList();
         var fileName = FileNameFor(calendar.ToLocal(occurredAt));
-        var content = exportBuilder.Build(rows);
+
+        // Only the currencies in use (spec D10): a column for a currency nobody prices in is noise.
+        var currencies = (await currenciesInUse.GetAsync(command.TenantId, cancellationToken))
+            .Select(Currencies.Get)
+            .ToArray();
+        var content = exportBuilder.Build(rows, currencies);
 
         // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
         // entrada de auditoria. No hay exportacion a medias ni correo con un enlace que no resuelve.
@@ -151,13 +157,10 @@ public sealed class ExportProductsHandler(
             product.Name,
             product.Description,
             product.IsActive,
-            product.PriceIn("USD"),
-            product.PriceIn("COP"),
+            product.Prices.ToDictionary(price => price.Currency, price => price.Amount),
             ResolveTaxRateName(product.TaxRateId, taxRateNames),
             product.PriceScales
-                // Bridge until Task 7.
-                .Select(scale => new ProductExportScale(
-                    scale.FromUnit, scale.ToUnit, PriceScale.FinalFor(product.PriceIn("COP"), scale.Discount)))
+                .Select(scale => new ProductExportScale(scale.FromUnit, scale.ToUnit, scale.Discount))
                 .ToList());
 
     /// <summary>`TaxRateId` es un struct nullable, asi que se desenvuelve antes de buscar: el
