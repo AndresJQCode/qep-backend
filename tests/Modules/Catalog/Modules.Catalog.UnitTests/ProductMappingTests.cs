@@ -18,7 +18,7 @@ public sealed class ProductMappingTests
     private static readonly DateTimeOffset Now = new(2026, 9, 20, 12, 0, 0, TimeSpan.Zero);
 
     private static PriceScaleInput Scale(int fromUnit, int toUnit) =>
-        new(fromUnit, toUnit, 0m, PriceScaleRestriction.Multiple, 1, 100m, null, false);
+        new(fromUnit, toUnit, 0m, PriceScaleRestriction.Multiple, 1, false);
 
     [Fact]
     public void OrdersPriceScalesByFromUnit()
@@ -31,7 +31,7 @@ public sealed class ProductMappingTests
             ProductDetails.Empty,
             new ProductPricing
             {
-                BaseUsd = 100m,
+                Prices = new Dictionary<string, decimal> { ["COP"] = 400_000m, ["USD"] = 100m },
                 Scales = [Scale(20, 29), Scale(1, 9), Scale(10, 19)]
             },
             Now);

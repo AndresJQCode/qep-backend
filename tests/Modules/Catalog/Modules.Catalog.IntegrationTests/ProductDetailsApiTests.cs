@@ -361,7 +361,7 @@ public sealed class ProductDetailsApiTests
             "Vela de soja",
             "VS-001",
             ProductDetails.Empty with { TaxRateId = TaxRateId.New() },
-            new ProductPricing { BaseUsd = 10m },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
             DateTimeOffset.UtcNow));
 
         var error = await Assert.ThrowsAsync<CatalogDomainException>(
@@ -393,7 +393,7 @@ public sealed class ProductDetailsApiTests
             "Shampoo 400 ml",
             "SH-400",
             ProductDetails.Empty,
-            new ProductPricing { BaseCop = 11_900m },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 11_900m } },
             DateTimeOffset.UtcNow);
         repository.Add(product);
         await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);

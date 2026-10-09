@@ -43,7 +43,8 @@ internal sealed class QuotationProductPricingLookup(
 
         return new QuotationProductPricingRef(
             product.Id.Value, product.TenantId, product.Name, product.IsActive,
-            product.PriceBaseCop, product.PriceBaseUsd, scales, taxPercentage);
+            product.PriceIn("COP"), product.PriceIn("USD"), // Bridge until Task 9
+            scales, taxPercentage);
     }
 
     // Una consulta para todos los productos y otra para todas las tasas: revalorizar una
@@ -86,8 +87,7 @@ internal sealed class QuotationProductPricingLookup(
                 product.TenantId,
                 product.Name,
                 product.IsActive,
-                product.PriceBaseCop,
-                product.PriceBaseUsd,
+                product.PriceIn("COP"), product.PriceIn("USD"), // Bridge until Task 9
                 product.PriceScales
                     .Select(scale => scale.ToQuotationRef(product.PackagingUnits))
                     .ToArray(),

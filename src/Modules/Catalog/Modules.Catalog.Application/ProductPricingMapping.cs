@@ -12,20 +12,28 @@ internal static class ProductPricingMapping
 {
     public static ProductPricing ToDomain(this ProductPricingRequest request) => new()
     {
-        BaseUsd = request.BaseUsd,
-        BaseCop = request.BaseCop,
+        // Bridge until Task 4: the HTTP contract still speaks baseUsd/baseCop.
+        Prices = LegacyPrices(request.BaseUsd, request.BaseCop),
         Scales = (request.Scales ?? []).Select(ToDomain).ToArray(),
         PackagingUnits = (request.PackagingUnits ?? []).ToArray()
     };
 
+    // Bridge until Task 4.
+    private static Dictionary<string, decimal> LegacyPrices(decimal? baseUsd, decimal? baseCop)
+    {
+        var prices = new Dictionary<string, decimal>();
+        if (baseCop is { } cop) prices["COP"] = cop;
+        if (baseUsd is { } usd) prices["USD"] = usd;
+        return prices;
+    }
+
+    // finalUsd/finalCop are still accepted on the wire until Task 4 and ignored (spec D4).
     private static PriceScaleInput ToDomain(PriceScaleRequest request) => new(
         request.FromUnit,
         request.ToUnit,
         request.Discount,
         ParseRestriction(request.Restriction),
         request.Multiple,
-        request.FinalUsd,
-        request.FinalCop,
         request.AllowGrouping ?? false);
 
     // Sin mapa por campo a propósito: es el mismo criterio que ya usa el dominio para sus

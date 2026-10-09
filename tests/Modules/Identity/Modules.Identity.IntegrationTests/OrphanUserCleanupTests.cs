@@ -895,12 +895,12 @@ public sealed class OrphanUserCleanupTests
             "Vela de soja",
             $"VS-{Guid.NewGuid():N}"[..12],
             ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 100m },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m } },
             occurredAt);
         dbContext.Products.Add(product);
         dbContext.ProductPriceChanges.AddRange(ProductPriceChangeDetector.Detect(
             product,
-            new ProductPricing { BaseUsd = 120m },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 120m } },
             changedByUserId,
             occurredAt));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);

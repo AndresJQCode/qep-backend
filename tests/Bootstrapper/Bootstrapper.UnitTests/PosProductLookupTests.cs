@@ -83,7 +83,12 @@ public sealed class PosProductLookupTests
         Product.Create(
             ProductId.New(), TenantId, "Shampoo 400 ml", $"SH-{Guid.CreateVersion7():N}"[..12],
             new ProductDetails { ImageFileId = imageFileId },
-            new ProductPricing { BaseCop = 11_900m, BaseUsd = baseUsd },
+            new ProductPricing
+            {
+                Prices = baseUsd is { } usd
+                    ? new Dictionary<string, decimal> { ["COP"] = 11_900m, ["USD"] = usd }
+                    : new Dictionary<string, decimal> { ["COP"] = 11_900m }
+            },
             Now);
 
     private sealed class StubImageLookup(IReadOnlyCollection<ProductImageRef> images) : IProductImageLookup

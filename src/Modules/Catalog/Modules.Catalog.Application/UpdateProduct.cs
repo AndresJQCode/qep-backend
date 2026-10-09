@@ -61,11 +61,10 @@ public sealed class UpdateProductHandler(
 
         var now = clock.UtcNow;
 
-        // Antes del Update, no después: Product.ApplyPricing pisa PriceBaseUsd, PriceBaseCop y
-        // la colección de escalas, así que una vez aplicado el valor viejo no existe en ningún
-        // lado desde donde recuperarlo. Las filas se suman al change tracker y viajan en el
-        // mismo SaveChangesAsync de más abajo — el histórico y el producto se guardan juntos o
-        // no se guarda ninguno.
+        // Before Update, not after: Product.ApplyPricing overwrites Prices and the scales, so once
+        // applied the old value exists nowhere to recover it from. The rows join the change
+        // tracker and travel in the same SaveChangesAsync below — the history and the product are
+        // saved together or not at all.
         repository.AddPriceChanges(ProductPriceChangeDetector.Detect(
             product, pricing, executionContext.SubjectId, now));
 

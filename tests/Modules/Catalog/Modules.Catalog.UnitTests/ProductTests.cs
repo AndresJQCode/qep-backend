@@ -11,7 +11,7 @@ public sealed class ProductTests
     // CAT-09 hizo el precio obligatorio: todo producto necesita al menos una moneda. Este
     // helper es lo que usan las pruebas de arriba de CAT-09, a las que no les importa el
     // precio — sólo necesitan una entrada válida para no chocar con esa regla nueva.
-    private static readonly ProductPricing ValidPricing = new() { BaseUsd = 1000m };
+    private static readonly ProductPricing ValidPricing = new() { Prices = new Dictionary<string, decimal> { ["USD"] = 1000m } };
 
     [Fact]
     public void CreateStartsActive()
@@ -303,86 +303,92 @@ public sealed class ProductTests
         Assert.Equal("VS-002", product.Code);
     }
 
-    // ---- CAT-09: precio base en USD y COP, y escalas por cantidad ----
+    // ---- Prices as a collection (spec 2026-10-08, D3) ----
+
+    private static ProductPricing PricedIn(params (string Currency, decimal Amount)[] prices) =>
+        new() { Prices = prices.ToDictionary(price => price.Currency, price => price.Amount) };
 
     [Fact]
-    public void CreateRejectsAProductWithNoPriceInAnyCurrency()
+    public void CreateRejectsAProductWithNoPrice()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
             Product.Create(
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing(), Now));
 
-        Assert.Equal("catalog.product.price_base_currency_required", error.Code);
+        Assert.Equal("catalog.product.price_required", error.Code);
     }
 
     [Fact]
-    public void CreateAcceptsABaseUsdPriceWithoutCop()
+    public void CreateKeepsOnePricePerCurrency()
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m }, Now);
+            PricedIn(("COP", 45_000m), ("EUR", 11.4m)), Now);
 
-        Assert.Equal(10m, product.PriceBaseUsd);
-        Assert.Null(product.PriceBaseCop);
+        Assert.Equal(45_000m, product.PriceIn("COP"));
+        Assert.Equal(11.4m, product.PriceIn("EUR"));
+        Assert.Null(product.PriceIn("USD"));
+        Assert.Equal(["COP", "EUR"], product.PricedCurrencies);
     }
 
     [Fact]
-    public void CreateAcceptsABaseCopPriceWithoutUsd()
-    {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseCop = 45000m }, Now);
-
-        Assert.Equal(45000m, product.PriceBaseCop);
-        Assert.Null(product.PriceBaseUsd);
-    }
-
-    [Fact]
-    public void CreateRejectsANegativeBaseUsdPrice()
+    public void CreateRejectsANegativePriceInAnyCurrency()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
             Product.Create(
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = -1m }, Now));
+                PricedIn(("COP", 45_000m), ("EUR", -1m)), Now));
 
         Assert.Equal("catalog.product.price_negative", error.Code);
     }
 
+    // The application normalises codes (Currencies.Normalize); a lower-case key reaching the
+    // aggregate is a programming error, not a 422.
     [Fact]
-    public void CreateRejectsANegativeBaseCopPrice()
+    public void CreateRejectsACurrencyCodeThatWasNotNormalised()
     {
-        var error = Assert.Throws<CatalogDomainException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             Product.Create(
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing { BaseCop = -1m }, Now));
-
-        Assert.Equal("catalog.product.price_negative", error.Code);
+                PricedIn(("eur", 10m)), Now));
     }
 
     [Fact]
-    public void UpdateReplacesThePricingEntirely()
+    public void UpdateReplacesThePricesEntirely()
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m }, Now);
+            PricedIn(("USD", 10m)), Now);
 
-        product.Update(
-            "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseCop = 45000m }, Now.AddMinutes(5));
+        product.Update("Vela de soja", "VS-001", ProductDetails.Empty, PricedIn(("COP", 45_000m)), Now.AddMinutes(5));
 
-        Assert.Null(product.PriceBaseUsd);
-        Assert.Equal(45000m, product.PriceBaseCop);
+        Assert.Null(product.PriceIn("USD"));
+        Assert.Equal(45_000m, product.PriceIn("COP"));
+        Assert.Single(product.Prices);
+    }
+
+    // The owned rows are keyed (product_id, currency): changing an amount must keep the same row
+    // instance, or EF tracks a deleted and an added row with the same key in one SaveChanges.
+    [Fact]
+    public void UpdateKeepsThePriceRowWhenOnlyTheAmountChanges()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            PricedIn(("COP", 45_000m)), Now);
+        var before = Assert.Single(product.Prices);
+
+        product.Update("Vela de soja", "VS-001", ProductDetails.Empty, PricedIn(("COP", 47_000m)), Now.AddMinutes(5));
+
+        Assert.Same(before, Assert.Single(product.Prices));
+        Assert.Equal(47_000m, before.Amount);
     }
 
     // ---- Escalas de precio ----
 
     private static PriceScaleInput MultipleScale(
-        int fromUnit = 1, int toUnit = 9, decimal discount = 0m,
-        int multiple = 3, decimal? finalUsd = 10m, decimal? finalCop = null) =>
-        new(
-            fromUnit, toUnit, discount,
-            PriceScaleRestriction.Multiple, multiple, finalUsd, finalCop);
+        int fromUnit = 1, int toUnit = 9, decimal discount = 0m, int multiple = 3) =>
+        new(fromUnit, toUnit, discount, PriceScaleRestriction.Multiple, multiple);
 
     [Fact]
     public void CreateAcceptsAProductWithValidScales()
@@ -391,7 +397,7 @@ public sealed class ProductTests
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
-                BaseUsd = 10m,
+                Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                 Scales = [MultipleScale()]
             },
             Now);
@@ -404,7 +410,7 @@ public sealed class ProductTests
     }
 
     private static PriceScaleInput PackagingScale(bool allowGrouping = false) =>
-        new(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, 10m, null, allowGrouping);
+        new(1, 9, 0m, PriceScaleRestriction.PackagingUnit, null, allowGrouping);
 
     // La escala de empaque no lleva número: usa los empaques del producto.
     [Fact]
@@ -414,7 +420,7 @@ public sealed class ProductTests
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
-                BaseUsd = 10m,
+                Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                 PackagingUnits = [12],
                 Scales = [PackagingScale()]
             },
@@ -434,7 +440,7 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                     Scales = [MultipleScale(fromUnit: 9, toUnit: 9)]
                 },
                 Now));
@@ -452,8 +458,8 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
-                    Scales = [MultipleScale(discount: discount, finalUsd: null)]
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
+                    Scales = [MultipleScale(discount: discount)]
                 },
                 Now));
 
@@ -468,8 +474,8 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, 10m, null)]
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
+                    Scales = [new PriceScaleInput(1, 9, 0m, null, null)]
                 },
                 Now));
 
@@ -483,15 +489,15 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m }, Now);
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }, Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
             product.Update(
                 "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, null, null, 10m, null)]
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
+                    Scales = [new PriceScaleInput(1, 9, 0m, null, null)]
                 },
                 Now.AddMinutes(5)));
 
@@ -506,8 +512,8 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
-                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, null, 10m, null)]
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.Multiple, null)]
                 },
                 Now));
 
@@ -524,7 +530,7 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                     PackagingUnits = [12],
                     Scales = [PackagingScale(allowGrouping: true)]
                 },
@@ -540,11 +546,11 @@ public sealed class ProductTests
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
-                BaseUsd = 10m,
+                Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                 Scales =
                 [
                     new PriceScaleInput(
-                        5, 48, 0m, PriceScaleRestriction.Multiple, 3, 10m, null,
+                        5, 48, 0m, PriceScaleRestriction.Multiple, 3,
                         AllowGrouping: true)
                 ]
             },
@@ -562,8 +568,8 @@ public sealed class ProductTests
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
-                BaseUsd = 10m,
-                Scales = [new PriceScaleInput(5, 48, 0m, PriceScaleRestriction.Multiple, 3, 10m, null)]
+                Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
+                Scales = [new PriceScaleInput(5, 48, 0m, PriceScaleRestriction.Multiple, 3)]
             },
             Now);
 
@@ -578,9 +584,9 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                     PackagingUnits = [12],
-                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, 3, 10m, null)]
+                    Scales = [new PriceScaleInput(1, 9, 0m, PriceScaleRestriction.PackagingUnit, 3)]
                 },
                 Now));
 
@@ -588,81 +594,18 @@ public sealed class ProductTests
     }
 
     [Fact]
-    public void CreateRejectsAScaleWithNoFinalPriceInAnyCurrency()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing
-                {
-                    BaseUsd = 10m,
-                    Scales = [MultipleScale(finalUsd: null)]
-                },
-                Now));
-
-        Assert.Equal("catalog.product.price_scale.final_currency_required", error.Code);
-    }
-
-    [Fact]
-    public void CreateRejectsAScaleFinalCopWhenTheProductHasNoBaseCop()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing
-                {
-                    BaseUsd = 10m,
-                    Scales = [MultipleScale(finalUsd: null, finalCop: 45000m)]
-                },
-                Now));
-
-        Assert.Equal("catalog.product.price_scale.final_without_base_cop", error.Code);
-    }
-
-    [Fact]
-    public void CreateRejectsAScaleFinalPriceThatDoesNotMatchTheProductBaseAndScaleDiscount()
-    {
-        var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-                new ProductPricing
-                {
-                    BaseUsd = 10m,
-                    Scales = [MultipleScale(discount: 10m, finalUsd: 10m)]
-                },
-                Now));
-
-        Assert.Equal("catalog.product.price_scale.final_mismatch_usd", error.Code);
-    }
-
-    [Fact]
-    public void CreateAcceptsAScaleFinalPriceThatMatchesTheProductBaseAndScaleDiscount()
-    {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing
-            {
-                BaseUsd = 10m,
-                Scales = [MultipleScale(discount: 10m, finalUsd: 9m)]
-            },
-            Now);
-
-        Assert.Equal(9m, Assert.Single(product.PriceScales).FinalUsd);
-    }
-
-    [Fact]
     public void UpdateReplacesAllPriceScales()
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, Scales = [MultipleScale()] }, Now);
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, Scales = [MultipleScale()] }, Now);
         var originalScaleId = Assert.Single(product.PriceScales).Id;
 
         product.Update(
             "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
-                BaseUsd = 10m,
+                Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                 Scales = [MultipleScale(fromUnit: 10, toUnit: 20, multiple: 5)]
             },
             Now.AddMinutes(5));
@@ -678,11 +621,11 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, Scales = [MultipleScale()] }, Now);
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, Scales = [MultipleScale()] }, Now);
 
         product.Update(
             "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m }, Now.AddMinutes(5));
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }, Now.AddMinutes(5));
 
         Assert.Empty(product.PriceScales);
     }
@@ -706,7 +649,7 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, PackagingUnits = [150, 100] },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [150, 100] },
             Now);
 
         Assert.Equal([100, 150], product.PackagingUnits);
@@ -718,7 +661,7 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, PackagingUnits = [100, 150], Scales = [MultipleScale()] },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100, 150], Scales = [MultipleScale()] },
             Now);
 
         Assert.Equal([100, 150], product.PackagingUnits);
@@ -732,7 +675,7 @@ public sealed class ProductTests
         var error = Assert.Throws<CatalogDomainException>(() =>
             Product.Create(
                 ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m, PackagingUnits = [100, packagingUnit] },
+                new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100, packagingUnit] },
                 Now));
 
         Assert.Equal("catalog.product.packaging_units.invalid", error.Code);
@@ -749,7 +692,7 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                     PackagingUnits = [100, Product.MaxPackagingUnitValue + 1]
                 },
                 Now));
@@ -762,7 +705,7 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, PackagingUnits = [Product.MaxPackagingUnitValue] },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [Product.MaxPackagingUnitValue] },
             Now);
 
         Assert.Equal([100_000], product.PackagingUnits);
@@ -778,7 +721,7 @@ public sealed class ProductTests
                 ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing
                 {
-                    BaseUsd = 10m,
+                    Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                     PackagingUnits = Enumerable.Range(1, Product.MaxPackagingUnits + 1).ToArray()
                 },
                 Now));
@@ -793,7 +736,7 @@ public sealed class ProductTests
             ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing
             {
-                BaseUsd = 10m,
+                Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
                 PackagingUnits = Enumerable.Range(1, Product.MaxPackagingUnits).ToArray()
             },
             Now);
@@ -809,7 +752,7 @@ public sealed class ProductTests
         var error = Assert.Throws<CatalogDomainException>(() =>
             Product.Create(
                 ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m, PackagingUnits = [100, 150, 100] },
+                new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100, 150, 100] },
                 Now));
 
         Assert.Equal("catalog.product.packaging_units.duplicated", error.Code);
@@ -823,7 +766,7 @@ public sealed class ProductTests
         var error = Assert.Throws<CatalogDomainException>(() =>
             Product.Create(
                 ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m, Scales = [PackagingScale()] },
+                new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, Scales = [PackagingScale()] },
                 Now));
 
         Assert.Equal("catalog.product.packaging_units_required", error.Code);
@@ -835,13 +778,13 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, PackagingUnits = [100], Scales = [PackagingScale()] },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100], Scales = [PackagingScale()] },
             Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
             product.Update(
                 "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-                new ProductPricing { BaseUsd = 10m, PackagingUnits = [], Scales = [PackagingScale()] },
+                new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [], Scales = [PackagingScale()] },
                 Now.AddMinutes(5)));
 
         Assert.Equal("catalog.product.packaging_units_required", error.Code);
@@ -853,12 +796,12 @@ public sealed class ProductTests
     {
         var product = Product.Create(
             ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, PackagingUnits = [100] },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100] },
             Now);
 
         product.Update(
             "Keratina 120 ml", "KR-120", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m, PackagingUnits = [150, 100], Scales = [PackagingScale()] },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [150, 100], Scales = [PackagingScale()] },
             Now.AddMinutes(5));
 
         Assert.Equal([100, 150], product.PackagingUnits);

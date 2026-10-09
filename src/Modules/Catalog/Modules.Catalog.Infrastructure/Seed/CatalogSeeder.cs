@@ -67,8 +67,7 @@ public static class CatalogSeeder
                 new ProductDetails { TaxRateId = taxRate.Id },
                 new ProductPricing
                 {
-                    BaseUsd = product.PriceUsd,
-                    BaseCop = product.PriceCop,
+                    Prices = LegacySeedPrices(product), // Bridge until Task 4
                     Scales = product.Scales
                         .Select(scale => ToPriceScaleInput(product, scale))
                         .ToList(),
@@ -84,9 +83,15 @@ public static class CatalogSeeder
         }
     }
 
-    // El seeder hace de cliente: PriceScale.Create no calcula los finales, espera que quien
-    // manda la escala los traiga y sólo los valida contra base × (1 − descuento%). Se calculan
-    // con el mismo PriceScale.FinalFor que usa esa validación, así que no pueden discrepar.
+    // Bridge until Task 4: the seed file still carries priceUsd/priceCop.
+    private static Dictionary<string, decimal> LegacySeedPrices(CatalogSeedProduct product)
+    {
+        var prices = new Dictionary<string, decimal>();
+        if (product.PriceCop is { } cop) prices["COP"] = cop;
+        if (product.PriceUsd is { } usd) prices["USD"] = usd;
+        return prices;
+    }
+
     private static PriceScaleInput ToPriceScaleInput(
         CatalogSeedProduct product, CatalogSeedScale scale)
     {
@@ -105,8 +110,6 @@ public static class CatalogSeeder
             scale.Discount,
             restriction,
             scale.Multiple,
-            PriceScale.FinalFor(product.PriceUsd, scale.Discount),
-            PriceScale.FinalFor(product.PriceCop, scale.Discount),
             scale.AllowGrouping);
     }
 

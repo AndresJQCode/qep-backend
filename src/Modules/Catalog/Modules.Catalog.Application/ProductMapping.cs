@@ -21,27 +21,23 @@ internal static class ProductMapping
         product.ImageFileId,
         imageUrl,
         product.TaxRateId?.Value,
-        product.PriceBaseUsd,
-        product.PriceBaseCop,
+        product.PriceIn("USD"), product.PriceIn("COP"), // Bridge until Task 4
         product.PackagingUnits.ToArray(),
         // Ordered here, and not left to whatever order the aggregate or the database hands
         // over: the grid paints the tiers from the smallest up, and neither the write order
         // nor the row order the database returns is a contract it can rely on. Same criterion
         // the Excel export already applies (`ClosedXmlProductExportBuilder`), and doing it in
         // the mapping covers every product response instead of one query at a time.
-        product.PriceScales.OrderBy(scale => scale.FromUnit).Select(ToResponse).ToArray(),
+        product.PriceScales.OrderBy(scale => scale.FromUnit).Select(scale => ToResponse(scale, product)).ToArray(),
         product.CreatedAt,
         product.UpdatedAt);
 
-    private static PriceScaleResponse ToResponse(PriceScale scale) => new(
-        scale.Id.Value,
-        scale.FromUnit,
-        scale.ToUnit,
-        scale.Discount,
-        scale.Restriction?.ToWireValue(),
-        scale.Multiple,
-        scale.FinalUsd,
-        scale.FinalCop,
+    // Bridge until Task 4: the finals are derived now (spec D4) but still travel as finalUsd/finalCop.
+    private static PriceScaleResponse ToResponse(PriceScale scale, Product product) => new(
+        scale.Id.Value, scale.FromUnit, scale.ToUnit, scale.Discount,
+        scale.Restriction?.ToWireValue(), scale.Multiple,
+        PriceScale.FinalFor(product.PriceIn("USD"), scale.Discount),
+        PriceScale.FinalFor(product.PriceIn("COP"), scale.Discount),
         scale.AllowGrouping);
 
     /// <summary>

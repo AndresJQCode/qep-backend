@@ -1,36 +1,24 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Las escalas de un producto, tal como quedarían en otro.
+/// The scales of one product, as they would end up on another.
 ///
-/// **Puro y estático, igual que <see cref="ProductPriceChangeDetector"/>**: no muta ninguno de
-/// los dos productos, no lee la base y no depende del reloj. El caso de uso lo llama para armar
-/// el precio del destino *antes* de aplicarlo, que es justo lo que el detector de histórico
-/// necesita para comparar contra lo que había.
+/// **Pure and static, like <see cref="ProductPriceChangeDetector"/>**: it mutates neither product,
+/// reads no database and does not depend on the clock. The use case calls it to build the target's
+/// pricing *before* applying it, which is exactly what the history detector needs to compare
+/// against what was there.
 ///
-/// Lo que se copia es el **tramo** —rango y descuento—, nunca el precio final. Tampoco la
-/// restricción ni lo que cuelga de ella (múltiplo, empaque, agrupación): cómo se vende cada
-/// producto no es algo que se herede de otro, así que la escala llega incompleta y alguien la
-/// tiene que terminar de configurar en el destino antes de poder cotizarlo. Decisión del product
-/// owner, 2026-09-17.
-///
-/// El precio final se recalcula contra el precio base **del destino**,
-/// y es la corrección que motivó este tipo: <see cref="PriceScale.Create"/> valida el final
-/// contra el precio base del producto dueño, así que arrastrar el final del origen hacía fallar
-/// la copia con <c>catalog.product.price_scale.final_mismatch_usd</c> en todo destino cuyo
-/// precio base no fuera idéntico al del origen.
-///
-/// Una moneda sin precio base en el destino queda sin final, porque el dominio prohíbe un final
-/// sin su base. Nunca quedan las dos sin él: todo producto tiene precio base en al menos una
-/// moneda.
+/// What is copied is the **tier** —range and discount—. Neither the restriction nor what hangs
+/// from it (multiple, packaging, grouping): how each product is sold is not inherited from another,
+/// so the scale arrives incomplete and someone has to finish configuring it on the target before
+/// it can be quoted. Product owner decision, 2026-09-17.
 /// </summary>
 public static class PriceScaleCopy
 {
     /// <returns>
-    /// El precio completo que le queda al destino: sus propios precios base —esta operación no
-    /// los toca— y las escalas del origen recalculadas. Devuelve el <see cref="ProductPricing"/>
-    /// entero, y no sólo las escalas, porque es lo que consume
-    /// <see cref="ProductPriceChangeDetector.Detect"/>.
+    /// The full pricing the target ends up with: its own prices —this operation does not touch
+    /// them— and the source's tiers. It returns the whole <see cref="ProductPricing"/>, and not only
+    /// the scales, because that is what <see cref="ProductPriceChangeDetector.Detect"/> consumes.
     /// </returns>
     public static ProductPricing ToPricingFor(Product source, Product target)
     {
@@ -39,29 +27,22 @@ public static class PriceScaleCopy
 
         return new ProductPricing
         {
-            BaseUsd = target.PriceBaseUsd,
-            BaseCop = target.PriceBaseCop,
-            // Los del destino, igual que los precios base: el empaque es de cómo se vende cada
-            // producto, así que tampoco se copia.
+            // The target's own prices: this operation copies tiers, never prices.
+            Prices = target.Prices.ToDictionary(price => price.Currency, price => price.Amount),
+            // The target's own as well: packaging is about how each product is sold.
             PackagingUnits = target.PackagingUnits,
-            // Ordenadas por rango, igual que el histórico: sin esto el orden de las filas nuevas
-            // lo decide el orden en que EF materializó las del origen, y dos copias del mismo
-            // origen podrían quedar distintas sin que nadie toque nada.
+            // Ordered by range, like the history: otherwise the order of the new rows depends on
+            // the order EF materialised the source's, and two copies of the same source could differ.
             Scales = source.PriceScales
                 .OrderBy(scale => scale.FromUnit)
                 .ThenBy(scale => scale.ToUnit)
-                .Select(scale => ToInputFor(scale, target))
+                .Select(ToInput)
                 .ToArray()
         };
     }
 
-    private static PriceScaleInput ToInputFor(PriceScale scale, Product target) => new(
-        scale.FromUnit,
-        scale.ToUnit,
-        scale.Discount,
-        Restriction: null,
-        Multiple: null,
-        PriceScale.FinalFor(target.PriceBaseUsd, scale.Discount),
-        PriceScale.FinalFor(target.PriceBaseCop, scale.Discount),
-        AllowGrouping: false);
+    // Range and discount only. Finals are derived, so there is nothing left to recompute against
+    // the target (the reason this type existed before spec D4).
+    private static PriceScaleInput ToInput(PriceScale scale) => new(
+        scale.FromUnit, scale.ToUnit, scale.Discount, Restriction: null, Multiple: null, AllowGrouping: false);
 }

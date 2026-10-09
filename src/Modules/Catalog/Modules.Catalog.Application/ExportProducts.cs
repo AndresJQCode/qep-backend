@@ -151,11 +151,13 @@ public sealed class ExportProductsHandler(
             product.Name,
             product.Description,
             product.IsActive,
-            product.PriceBaseUsd,
-            product.PriceBaseCop,
+            product.PriceIn("USD"),
+            product.PriceIn("COP"),
             ResolveTaxRateName(product.TaxRateId, taxRateNames),
             product.PriceScales
-                .Select(scale => new ProductExportScale(scale.FromUnit, scale.ToUnit, scale.FinalCop))
+                // Bridge until Task 7.
+                .Select(scale => new ProductExportScale(
+                    scale.FromUnit, scale.ToUnit, PriceScale.FinalFor(product.PriceIn("COP"), scale.Discount)))
                 .ToList());
 
     /// <summary>`TaxRateId` es un struct nullable, asi que se desenvuelve antes de buscar: el

@@ -428,7 +428,7 @@ public sealed class ProductWriteApiTests
         // Recién ahora escribe el primero, sobre una copia que ya no refleja la base.
         stale.Update(
             "Vela de soja premium", "VS-002", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m }, DateTimeOffset.UtcNow);
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }, DateTimeOffset.UtcNow);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
             () => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));

@@ -128,16 +128,18 @@ internal sealed class PriceChangeReportSource(
         CancellationToken cancellationToken)
     {
         var slices = await changes
-            .GroupBy(change => change.Field)
-            .Select(group => new { Field = group.Key, Count = group.Count() })
+            .GroupBy(change => new { change.Field, change.Currency })
+            .Select(group => new { group.Key.Field, group.Key.Currency, Count = group.Count() })
             .ToListAsync(cancellationToken);
 
-        var found = slices.ToDictionary(slice => slice.Field, slice => slice.Count);
+        var found = slices.ToDictionary(slice => (slice.Field, slice.Currency), slice => slice.Count);
 
-        return Enum.GetValues<ProductPriceField>()
-            .Select(field => new PriceChangeFieldSliceDto(
-                MapField(field).ToString(),
-                found.GetValueOrDefault(field)))
+        return Enum.GetValues<PriceChangeField>()
+            .Select(value =>
+            {
+                var (field, currency) = MapField(value);
+                return new PriceChangeFieldSliceDto(value.ToString(), found.GetValueOrDefault((field, currency)));
+            })
             .ToArray();
     }
 
@@ -203,8 +205,8 @@ internal sealed class PriceChangeReportSource(
     }
 
     private static PriceChangeFieldSliceDto[] EmptyFieldSlices() =>
-        Enum.GetValues<ProductPriceField>()
-            .Select(field => new PriceChangeFieldSliceDto(MapField(field).ToString(), 0))
+        Enum.GetValues<PriceChangeField>()
+            .Select(value => new PriceChangeFieldSliceDto(value.ToString(), 0))
             .ToArray();
 
     private IQueryable<ChangeRow> BuildQuery(PriceChangeReportCriteria criteria)
@@ -228,6 +230,7 @@ internal sealed class PriceChangeReportSource(
                 row.product.Code,
                 row.product.Name,
                 row.change.Field,
+                row.change.Currency,
                 row.change.ScaleFromUnit,
                 row.change.ScaleToUnit,
                 row.change.PreviousValue,
@@ -269,8 +272,8 @@ internal sealed class PriceChangeReportSource(
 
         if (criteria.Field is { } field)
         {
-            var mapped = MapField(field);
-            changes = changes.Where(change => change.Field == mapped);
+            var (mapped, currency) = MapField(field);
+            changes = changes.Where(change => change.Field == mapped && change.Currency == currency);
         }
 
         return changes;
@@ -297,7 +300,7 @@ internal sealed class PriceChangeReportSource(
                 row.ProductId.Value,
                 row.ProductCode,
                 row.ProductName,
-                MapField(row.Field),
+                MapField(row.Field, row.Currency),
                 row.ScaleFromUnit,
                 row.ScaleToUnit,
                 row.PreviousValue,
@@ -309,20 +312,22 @@ internal sealed class PriceChangeReportSource(
     }
 
     // Sin default a proposito, en las dos direcciones: ver MapPaymentStatus en OrdersReportSource.
-    private static ProductPriceField MapField(PriceChangeField value) => value switch
+    // Bridge until Task 5: the report contract still speaks PriceBaseUsd/PriceBaseCop.
+    private static (ProductPriceField Field, string? Currency) MapField(PriceChangeField value) => value switch
     {
-        PriceChangeField.PriceBaseUsd => ProductPriceField.PriceBaseUsd,
-        PriceChangeField.PriceBaseCop => ProductPriceField.PriceBaseCop,
-        PriceChangeField.ScaleDiscount => ProductPriceField.ScaleDiscount,
+        PriceChangeField.PriceBaseUsd => (ProductPriceField.PriceBase, "USD"),
+        PriceChangeField.PriceBaseCop => (ProductPriceField.PriceBase, "COP"),
+        PriceChangeField.ScaleDiscount => (ProductPriceField.ScaleDiscount, null),
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown price field.")
     };
 
-    private static PriceChangeField MapField(ProductPriceField value) => value switch
+    // Bridge until Task 5.
+    private static PriceChangeField MapField(ProductPriceField field, string? currency) => (field, currency) switch
     {
-        ProductPriceField.PriceBaseUsd => PriceChangeField.PriceBaseUsd,
-        ProductPriceField.PriceBaseCop => PriceChangeField.PriceBaseCop,
-        ProductPriceField.ScaleDiscount => PriceChangeField.ScaleDiscount,
-        _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown price field.")
+        (ProductPriceField.PriceBase, "USD") => PriceChangeField.PriceBaseUsd,
+        (ProductPriceField.PriceBase, "COP") => PriceChangeField.PriceBaseCop,
+        (ProductPriceField.ScaleDiscount, _) => PriceChangeField.ScaleDiscount,
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, $"No legacy report field for {field} {currency}.")
     };
 
     private sealed record ChangeRow(
@@ -331,6 +336,7 @@ internal sealed class PriceChangeReportSource(
         string ProductCode,
         string ProductName,
         ProductPriceField Field,
+        string? Currency,
         int? ScaleFromUnit,
         int? ScaleToUnit,
         decimal? PreviousValue,
