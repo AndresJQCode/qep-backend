@@ -522,6 +522,34 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(2, currencies[1].GetProperty("decimals").GetInt32());
     }
 
+    [Fact]
+    public async Task CurrentSessionCarriesEachTenantsCurrenciesInUse()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+
+        using var create = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tenants/{tenantId}/catalog/products")
+        {
+            Content = JsonContent.Create(new
+            {
+                name = "Vela de soja",
+                code = "VS-001",
+                pricing = new { prices = new Dictionary<string, decimal> { ["EUR"] = 9m } },
+            }),
+        };
+        create.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        create.Headers.Add("X-Qep-Client", "web");
+        (await owner.SendAsync(create, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var session = await owner.GetFromJsonAsync<JsonElement>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+
+        var tenant = Assert.Single(session.GetProperty("activeTenants").EnumerateArray());
+        Assert.Equal(
+            ["EUR"],
+            tenant.GetProperty("currenciesInUse").EnumerateArray().Select(code => code.GetString()!).ToArray());
+    }
+
     // Final review 2026-10-08: el formato regional viaja en /auth/me para que llegue a todo
     // miembro —GET /settings exige tenancy.settings.read y cashier no lo tiene— y antes de la
     // primera pintura.

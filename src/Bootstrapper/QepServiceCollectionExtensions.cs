@@ -151,6 +151,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ExportProductsCommand, ExportProductsResult>,
             ExportProductsHandler>();
         services.AddScoped<
+            IQueryHandler<GetCurrenciesInUseQuery, IReadOnlyList<string>>,
+            GetCurrenciesInUseHandler>();
+        services.AddScoped<
             ICommandHandler<CreateProductCommand, ProductDto>,
             CreateProductHandler>();
         services.AddScoped<
