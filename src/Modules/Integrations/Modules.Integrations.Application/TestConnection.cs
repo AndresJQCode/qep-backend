@@ -41,6 +41,11 @@ public sealed class TestConnectionHandler(
         if (result.Outcome == ConnectionTestOutcome.Ok)
         {
             connection.MarkVerified(now);
+            if (result.RefreshedFields is { Count: > 0 } refreshed)
+            {
+                connection.ApplyProviderFields(provider, refreshed);
+            }
+
             ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Verified, [], now);
         }
         else

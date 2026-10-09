@@ -2,12 +2,28 @@ using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
 namespace Modules.Integrations.UnitTests;
+
+/// <summary>El ambiente que un host real registra solo. Las pruebas que arman el módulo con
+/// <c>AddIntegrationsInfrastructure</c> lo necesitan: <c>MetaAppOptionsValidator</c> mira el ambiente
+/// apenas alguien pide <c>MetaAppOptions</c> (el cliente de Graph).</summary>
+internal sealed class UnitTestHostEnvironment(string name = "Development") : IHostEnvironment
+{
+    public string EnvironmentName { get; set; } = name;
+
+    public string ApplicationName { get; set; } = "tests";
+
+    public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+    public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+}
 
 internal sealed class FakeExecutionContext(Guid tenantId, Guid subjectId, params string[] permissions)
     : IExecutionContext

@@ -31,4 +31,9 @@ public static class ConnectionFailureCodes
     public const string CredentialsRejected = "credentials_rejected";
     public const string ProviderUnreachable = "provider_unreachable";
     public const string FieldInvalid = "field_invalid";
+
+    // Spec 2026-10-09 §6.1 y §10.2.
+    public const string TokenExpired = "token_expired";
+    public const string NumberUnregistered = "number_unregistered";
+    public const string AccountDisabled = "account_disabled";
 }

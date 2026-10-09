@@ -221,6 +221,51 @@ public sealed class IntegrationConnection
         return changed.ToArray();
     }
 
+    /// <summary>
+    /// Spec 2026-10-09 §6.1: lo que el probador refresca (número, nombre verificado, calidad). Sólo toca
+    /// campos <b>no secretos</b> que el backend es dueño de: los internos, o todos los de un proveedor con
+    /// Embedded Signup. Lo demás se ignora sin lanzar. No sube la versión: quien llama ya la sube con la
+    /// verificación.
+    /// </summary>
+    /// <returns>Las claves que cambiaron, ordenadas.</returns>
+    public IReadOnlyList<string> ApplyProviderFields(IntegrationProvider provider, IReadOnlyDictionary<string, string> values)
+    {
+        if (!string.Equals(provider.Key, ProviderKey, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("The provider does not match the connection.", nameof(provider));
+        }
+
+        var next = new Dictionary<string, string>(Fields, StringComparer.Ordinal);
+        var changed = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var (key, raw) in values)
+        {
+            if (provider.FindField(key) is not { IsSecret: false } definition
+                || !(definition.Internal || provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup))
+            {
+                continue;
+            }
+
+            var value = raw?.Trim() ?? string.Empty;
+            if (value.Length == 0 || definition.IsTooLong(value) || !definition.HasValidShape(value))
+            {
+                continue;
+            }
+
+            if (!next.TryGetValue(key, out var current) || !string.Equals(current, value, StringComparison.Ordinal))
+            {
+                next[key] = value;
+                changed.Add(key);
+            }
+        }
+
+        if (changed.Count > 0)
+        {
+            Fields = next;
+        }
+
+        return changed.ToArray();
+    }
+
     public void Pause(DateTimeOffset now)
     {
         if (Status != ConnectionStatus.Active)

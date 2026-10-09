@@ -10,14 +10,26 @@ public enum ConnectionTestOutcome
     Invalid,
 }
 
-/// <summary>Spec 2026-10-08, «Probar la credencial»: <c>Ok</c>, <c>CredentialsRejected</c>,
-/// <c>Unreachable(reason)</c> o <c>Invalid(fieldKey, reason)</c>. <c>Reason</c> es técnico y nunca
+/// <summary>Spec 2026-10-08, «Probar la credencial» y 2026-10-09 §6.1: <c>Ok</c> (con campos refrescados
+/// opcionales), <c>CredentialsRejected</c> (con un <c>FailureCode</c> opcional; sin él, el mapeo de
+/// hoy), <c>Unreachable(reason)</c> o <c>Invalid(fieldKey, reason)</c>. <c>Reason</c> es técnico y nunca
 /// lleva un valor: no sale por HTTP.</summary>
-public sealed record ConnectionTestResult(ConnectionTestOutcome Outcome, string? FieldKey = null, string? Reason = null)
+public sealed record ConnectionTestResult(
+    ConnectionTestOutcome Outcome,
+    string? FieldKey = null,
+    string? Reason = null,
+    string? FailureCode = null,
+    IReadOnlyDictionary<string, string>? RefreshedFields = null)
 {
     public static ConnectionTestResult Ok { get; } = new(ConnectionTestOutcome.Ok);
 
+    public static ConnectionTestResult OkWith(IReadOnlyDictionary<string, string> refreshedFields) =>
+        new(ConnectionTestOutcome.Ok, RefreshedFields: refreshedFields);
+
     public static ConnectionTestResult CredentialsRejected { get; } = new(ConnectionTestOutcome.CredentialsRejected);
+
+    public static ConnectionTestResult RejectedWith(string failureCode) =>
+        new(ConnectionTestOutcome.CredentialsRejected, FailureCode: failureCode);
 
     public static ConnectionTestResult Unreachable(string reason) => new(ConnectionTestOutcome.Unreachable, Reason: reason);
 

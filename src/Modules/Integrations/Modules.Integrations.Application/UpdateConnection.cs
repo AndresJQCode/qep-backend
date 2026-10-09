@@ -72,9 +72,11 @@ public sealed class UpdateConnectionHandler(
         IReadOnlyDictionary<string, string?> requestedFields = command.Fields is { } sent && !backendOwned
             ? sent
             : connection.Fields.ToDictionary(pair => pair.Key, pair => (string?)pair.Value, StringComparer.Ordinal);
-        // CheckValues recibe lo que llegó, para que un campo mandado a un proveedor de Meta salga 422.
+        // Con Meta, CheckValues recibe lo que llegó, para que un campo mandado salga 422; con formulario,
+        // lo que se va a guardar.
+        var fieldsToCheck = backendOwned ? command.Fields : requestedFields;
         ConnectionInputRules.ThrowIfAny(
-            ConnectionInputRules.CheckValues(provider, backendOwned ? command.Fields : requestedFields, command.Secrets, requireSecrets: false));
+            ConnectionInputRules.CheckValues(provider, fieldsToCheck, command.Secrets, requireSecrets: false));
 
         var fields = ConnectionInputRules.Normalize(provider, requestedFields, secret: false);
         var replacedSecrets = ConnectionInputRules.Normalize(provider, command.Secrets, secret: true);

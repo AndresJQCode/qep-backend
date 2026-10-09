@@ -219,7 +219,7 @@ internal static class ConnectionVerification
     public static string FailureCode(ConnectionTestResult result) =>
         result.Outcome switch
         {
-            ConnectionTestOutcome.CredentialsRejected => ConnectionFailureCodes.CredentialsRejected,
+            ConnectionTestOutcome.CredentialsRejected => result.FailureCode ?? ConnectionFailureCodes.CredentialsRejected,
             ConnectionTestOutcome.Invalid => ConnectionFailureCodes.FieldInvalid,
             ConnectionTestOutcome.Unreachable => ConnectionFailureCodes.ProviderUnreachable,
             _ => throw new InvalidOperationException("A successful test has no failure code."),

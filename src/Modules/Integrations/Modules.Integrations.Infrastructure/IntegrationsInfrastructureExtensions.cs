@@ -60,6 +60,13 @@ public static class IntegrationsInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => ZenviaConnectionTester.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, ZenviaConnectionTester>();
+
+        // Spec 2026-10-09, decisión 3: el cliente de Graph del módulo, mismo patrón que Zenvia.
+        services.AddHttpClient(MetaGraphClient.HttpClientName, MetaGraphClient.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => MetaGraphClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<MetaGraphClient>();
+        services.AddSingleton<IProviderConnectionTester, WhatsAppCloudConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production
