@@ -167,9 +167,8 @@ public sealed class ProductExportApiTests
         Assert.Null(storage.Content);
     }
 
-    /// <summary>Precio base comun a los tres productos, para que el precio final de cada escala
-    /// se derive del descuento y el backend lo acepte: valida que final = base x (1 - desc/100).
-    /// </summary>
+    /// <summary>Precio base comun a los tres productos, para que los finales derivados de cada
+    /// escala (base x (1 - desc/100)) sean predecibles en la hoja.</summary>
     private const decimal BaseCop = 50_000m;
 
     private static object Scale(int fromUnit, int toUnit, decimal discount) => new
@@ -179,7 +178,6 @@ public sealed class ProductExportApiTests
         discount,
         restriction = "multiple",
         multiple = 1,
-        finalCop = BaseCop * (1m - discount / 100m),
     };
 
     // Este archivo usa un tenant que no pasa por el registro. ExportProductsHandler nombra el archivo
@@ -219,7 +217,7 @@ public sealed class ProductExportApiTests
             {
                 name,
                 code,
-                pricing = new { baseCop = BaseCop, scales },
+                pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = BaseCop }, scales },
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();

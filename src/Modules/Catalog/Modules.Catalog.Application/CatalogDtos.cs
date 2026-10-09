@@ -9,8 +9,7 @@ public sealed record ProductDto(
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
-    decimal? PriceBaseUsd,
-    decimal? PriceBaseCop,
+    IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyList<int> PackagingUnits,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     DateTimeOffset CreatedAt,
@@ -28,9 +27,9 @@ public sealed record ProductResponse(
     // lo que el cliente manda de vuelta en el PUT.
     string? ImageUrl,
     Guid? TaxRateId,
-    // CAT-09. El precio en dos monedas fijas — reemplazó por completo al viejo Price, retirado.
-    decimal? PriceBaseUsd,
-    decimal? PriceBaseCop,
+    // Spec D3: one base price per currency, VAT included, in catalogue order. Replaced
+    // priceBaseUsd/priceBaseCop.
+    IReadOnlyDictionary<string, decimal> Prices,
     // Los empaques del producto, ascendentes. Viaja siempre, vacío incluido, y no se omite
     // cuando no hay: el formulario los repinta tal cual, y la pantalla de cotización los
     // necesita para explicar una escala `packaging_unit` sin pedir el producto aparte.
@@ -40,18 +39,18 @@ public sealed record ProductResponse(
     DateTimeOffset UpdatedAt);
 
 /// <summary>
-/// Precio y escalas de un producto (CAT-09), tal como los manda el cliente. Al menos uno de
-/// <c>BaseUsd</c>/<c>BaseCop</c> es obligatorio — el dominio lo exige incondicionalmente, así
-/// que ningún producto se crea sin esto.
+/// Precio y escalas de un producto (CAT-09), tal como los manda el cliente.
 /// </summary>
+/// <param name="Prices">At least one entry (the domain answers <c>catalog.product.price_required</c>).
+/// Keys are catalogue codes; an unknown one is a 422 on <c>errors["Pricing.Prices.&lt;CODE&gt;"]</c>.
+/// baseUsd/baseCop from the previous contract are ignored if present.</param>
 /// <param name="PackagingUnits">Los empaques del producto (p. ej. <c>[100, 150]</c>). Viajan en
 /// el precio y no en los datos maestros porque una escala <c>packaging_unit</c> se valida
 /// contra ellos: el dominio los revisa juntos, y un empaque que llegara por otro request dejaría
 /// una ventana con escalas que exigen empaque y ninguno cargado. Null es lo mismo que vacío,
 /// para que un cuerpo que no los manda siga siendo válido mientras no tenga escalas de empaque.</param>
 public sealed record ProductPricingRequest(
-    decimal? BaseUsd,
-    decimal? BaseCop,
+    IReadOnlyDictionary<string, decimal>? Prices,
     IReadOnlyCollection<PriceScaleRequest>? Scales,
     IReadOnlyCollection<int>? PackagingUnits);
 
@@ -62,6 +61,9 @@ public sealed record ProductPricingRequest(
 ///
 /// No lleva unidad de empaque: una escala <c>packaging_unit</c> usa los empaques del producto
 /// (<see cref="ProductPricingRequest.PackagingUnits"/>).
+///
+/// No finals: they are derived from each product price and the discount (spec D4).
+/// finalUsd/finalCop sent by an old client are ignored, not rejected.
 /// </summary>
 /// <param name="AllowGrouping">Nullable y último: los cuerpos que no lo mandan mantienen el
 /// comportamiento de siempre, que es no agrupar.</param>
@@ -71,13 +73,13 @@ public sealed record PriceScaleRequest(
     decimal Discount,
     string? Restriction,
     int? Multiple,
-    decimal? FinalUsd,
-    decimal? FinalCop,
     bool? AllowGrouping);
 
 /// <param name="Restriction">Null en una escala incompleta, la que deja la copia de escalas
 /// (<c>PriceScaleCopy</c>). No hay un campo aparte que lo diga: el frontend lo deriva de este null,
 /// y un segundo campo sólo abriría la puerta a que los dos se contradigan.</param>
+/// <param name="Finals">Derived with <c>PriceScale.FinalFor</c> for each currency the product has,
+/// in catalogue order. Read-only.</param>
 public sealed record PriceScaleResponse(
     Guid Id,
     int FromUnit,
@@ -85,9 +87,8 @@ public sealed record PriceScaleResponse(
     decimal Discount,
     string? Restriction,
     int? Multiple,
-    decimal? FinalUsd,
-    decimal? FinalCop,
-    bool AllowGrouping);
+    bool AllowGrouping,
+    IReadOnlyDictionary<string, decimal> Finals);
 
 /// <summary>El sobre del listado, con el total que la paginación necesita — mismo criterio que
 /// `CustomersResponse`.</summary>

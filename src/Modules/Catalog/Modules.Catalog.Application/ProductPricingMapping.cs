@@ -1,4 +1,5 @@
 using Modules.Catalog.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
@@ -12,22 +13,14 @@ internal static class ProductPricingMapping
 {
     public static ProductPricing ToDomain(this ProductPricingRequest request) => new()
     {
-        // Bridge until Task 4: the HTTP contract still speaks baseUsd/baseCop.
-        Prices = LegacyPrices(request.BaseUsd, request.BaseCop),
+        // The validator already failed unknown codes with a field key. Normalize is the net for
+        // any caller that skips it, and the reason the aggregate only checks the shape.
+        Prices = (request.Prices ?? new Dictionary<string, decimal>())
+            .ToDictionary(entry => Currencies.Normalize(entry.Key), entry => entry.Value, StringComparer.Ordinal),
         Scales = (request.Scales ?? []).Select(ToDomain).ToArray(),
         PackagingUnits = (request.PackagingUnits ?? []).ToArray()
     };
 
-    // Bridge until Task 4.
-    private static Dictionary<string, decimal> LegacyPrices(decimal? baseUsd, decimal? baseCop)
-    {
-        var prices = new Dictionary<string, decimal>();
-        if (baseCop is { } cop) prices["COP"] = cop;
-        if (baseUsd is { } usd) prices["USD"] = usd;
-        return prices;
-    }
-
-    // finalUsd/finalCop are still accepted on the wire until Task 4 and ignored (spec D4).
     private static PriceScaleInput ToDomain(PriceScaleRequest request) => new(
         request.FromUnit,
         request.ToUnit,

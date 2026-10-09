@@ -3,7 +3,7 @@
     "Semilla de catálogo para desarrollo. La carga CatalogSeeder al arrancar la aplicación,",
     "construyendo los agregados del dominio directamente — no pasa por la API.",
     "",
-    "priceCop y priceUsd van tal cual a Product.PriceBaseCop y PriceBaseUsd. Ambos vienen CON",
+    "prices va tal cual a Product.Prices (COP y USD). Los dos vienen CON",
     "IVA INCLUIDO: QuotationItem lo extrae de adentro con total × tasa / (100 + tasa), no lo",
     "suma encima. Por eso acá no viaja priceWithoutTax de las listas de origen: es derivado.",
     "",
@@ -42,9 +42,8 @@
     "de empaque\") más la respuesta del owner: 6-48 agrupa cantidades entre líneas de la",
     "cotización (allowGrouping) y 50-98 no. Las unidades de empaque por SKU las dio el owner el",
     "2026-09-20 —la hoja sólo traía 7278, 7214, 7077 y 3095— y 7703 quedó confirmado en 150 tras",
-    "aparecer dos veces. Los finales (finalUsd/finalCop) no están en el archivo: los calcula",
-    "CatalogSeeder con PriceScale.FinalFor a partir de priceUsd/priceCop, con el mismo redondeo",
-    "con el que el dominio los valida."
+    "aparecer dos veces. Los finales de escala ya no se siembran: se derivan con",
+    "PriceScale.FinalFor al leer (spec 2026-10-08, D4)."
   ],
   "taxRate": {
     "name": "IVA 19%",
@@ -54,8 +53,7 @@
     {
       "sku": "7416",
       "name": "BRONCEADOR RITUAL DEL SOL",
-      "priceCop": 35900,
-      "priceUsd": 9.97,
+      "prices": { "COP": 35900, "USD": 9.97 },
       "packagingUnits": [108],
       "scales": [
         {
@@ -110,8 +108,7 @@
     {
       "sku": "3095",
       "name": "COMBO JALEA REAL 3",
-      "priceCop": 114700,
-      "priceUsd": 31.86,
+      "prices": { "COP": 114700, "USD": 31.86 },
       "packagingUnits": [13],
       "scales": [
         {
@@ -166,8 +163,7 @@
     {
       "sku": "3001",
       "name": "COMBO ROSADO RITUAL DE SEDUCCIÓN",
-      "priceCop": 46900,
-      "priceUsd": 13.03,
+      "prices": { "COP": 46900, "USD": 13.03 },
       "packagingUnits": [100],
       "scales": [
         {
@@ -222,8 +218,7 @@
     {
       "sku": "3012",
       "name": "DÚO MINI PERFUME CON PROTECCIÓN TÉRMICA",
-      "priceCop": 16900,
-      "priceUsd": 4.69,
+      "prices": { "COP": 16900, "USD": 4.69 },
       "packagingUnits": [150],
       "scales": [
         {
@@ -278,8 +273,7 @@
     {
       "sku": "3005",
       "name": "DÚO ROSADO Y AZUL PERFUME TERMOPROTECTOR",
-      "priceCop": 41900,
-      "priceUsd": 11.64,
+      "prices": { "COP": 41900, "USD": 11.64 },
       "packagingUnits": [50],
       "scales": [
         {
@@ -334,8 +328,7 @@
     {
       "sku": "7701",
       "name": "KIT KERATINA 1000ML + BIOSERUM",
-      "priceCop": 150000,
-      "priceUsd": 39.47,
+      "prices": { "COP": 150000, "USD": 39.47 },
       "packagingUnits": [25],
       "scales": [
         {
@@ -390,8 +383,7 @@
     {
       "sku": "7703",
       "name": "KIT KERATINA 120 ML + BIOSERUM",
-      "priceCop": 35000,
-      "priceUsd": 9.21,
+      "prices": { "COP": 35000, "USD": 9.21 },
       "packagingUnits": [150],
       "scales": [
         {
@@ -446,8 +438,7 @@
     {
       "sku": "7702",
       "name": "KIT KERATINA 250 ML + BIOSERUM",
-      "priceCop": 60000,
-      "priceUsd": 15.79,
+      "prices": { "COP": 60000, "USD": 15.79 },
       "packagingUnits": [100],
       "scales": [
         {
@@ -502,8 +493,7 @@
     {
       "sku": "7101",
       "name": "MANTEQUILLA PERFUMADA RITUAL DE SEDUCCIÓN",
-      "priceCop": 26900,
-      "priceUsd": 7.47,
+      "prices": { "COP": 26900, "USD": 7.47 },
       "packagingUnits": [100],
       "scales": [
         {
@@ -558,8 +548,7 @@
     {
       "sku": "7299",
       "name": "MASCARILLA BOMBA BOTÁNICA SOS",
-      "priceCop": 36900,
-      "priceUsd": 10.25,
+      "prices": { "COP": 36900, "USD": 10.25 },
       "packagingUnits": [70],
       "scales": [
         {
@@ -614,8 +603,7 @@
     {
       "sku": "7278",
       "name": "MASCARILLA JALEA REAL",
-      "priceCop": 39900,
-      "priceUsd": 11.08,
+      "prices": { "COP": 39900, "USD": 11.08 },
       "packagingUnits": [70],
       "scales": [
         {
@@ -670,8 +658,7 @@
     {
       "sku": "7957",
       "name": "PERFUME TERMOPROTECTOR AZUL RITUAL DE TENTACIÓN",
-      "priceCop": 22900,
-      "priceUsd": 6.36,
+      "prices": { "COP": 22900, "USD": 6.36 },
       "packagingUnits": [100],
       "scales": [
         {
@@ -726,8 +713,7 @@
     {
       "sku": "7901",
       "name": "PERFUME TERMOPROTECTOR ROSADO RITUAL DE SEDUCCIÓN",
-      "priceCop": 22900,
-      "priceUsd": 6.36,
+      "prices": { "COP": 22900, "USD": 6.36 },
       "packagingUnits": [100],
       "scales": [
         {
@@ -782,8 +768,7 @@
     {
       "sku": "7009",
       "name": "SHAMPOO DE AJÍ CONTROL CASPA",
-      "priceCop": 34900,
-      "priceUsd": 9.69,
+      "prices": { "COP": 34900, "USD": 9.69 },
       "packagingUnits": [50],
       "scales": [
         {
@@ -838,8 +823,7 @@
     {
       "sku": "7007",
       "name": "SHAMPOO DE CEBOLLA SOS",
-      "priceCop": 34900,
-      "priceUsd": 9.69,
+      "prices": { "COP": 34900, "USD": 9.69 },
       "packagingUnits": [50],
       "scales": [
         {
@@ -894,8 +878,7 @@
     {
       "sku": "7008",
       "name": "SHAMPOO DE ROMERO CONTROL GRASA",
-      "priceCop": 34900,
-      "priceUsd": 9.69,
+      "prices": { "COP": 34900, "USD": 9.69 },
       "packagingUnits": [50],
       "scales": [
         {
@@ -950,8 +933,7 @@
     {
       "sku": "7077",
       "name": "SHAMPOO JALEA REAL",
-      "priceCop": 37900,
-      "priceUsd": 10.53,
+      "prices": { "COP": 37900, "USD": 10.53 },
       "packagingUnits": [50],
       "scales": [
         {
@@ -1006,8 +988,7 @@
     {
       "sku": "7210",
       "name": "TRATAMIENTO INTENSIVO PLEX DE AGUACATE",
-      "priceCop": 34900,
-      "priceUsd": 9.69,
+      "prices": { "COP": 34900, "USD": 9.69 },
       "packagingUnits": [50],
       "scales": [
         {
@@ -1062,8 +1043,7 @@
     {
       "sku": "7214",
       "name": "TRATAMIENTO JALEA REAL",
-      "priceCop": 36900,
-      "priceUsd": 10.25,
+      "prices": { "COP": 36900, "USD": 10.25 },
       "packagingUnits": [50],
       "scales": [
         {

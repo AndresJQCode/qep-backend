@@ -12,8 +12,9 @@ internal sealed record CatalogSeedTaxRate(string Name, int Percentage);
 internal sealed record CatalogSeedProduct(
     string Sku,
     string Name,
-    decimal? PriceCop,
-    decimal? PriceUsd,
+    // Base price per currency code, VAT included. The seeder normalises the keys with
+    // Currencies.Normalize, so a typo fails at startup instead of seeding an unsellable product.
+    IReadOnlyDictionary<string, decimal> Prices,
     // Los empaques son del producto, no de la escala: una escala "packaging_unit" usa estos.
     // Nullable porque un producto sin empaques puede omitir la clave; el seeder lo lee como vacío.
     IReadOnlyList<int>? PackagingUnits,
@@ -21,8 +22,7 @@ internal sealed record CatalogSeedProduct(
 
 // Restriction viaja como texto ("multiple" | "packaging_unit") y lo traduce CatalogSeeder al
 // enum del dominio: un literal desconocido tiene que reventar al arrancar con el SKU y el
-// valor, no deserializarse a cero en silencio. Los finales no están acá porque el seeder los
-// calcula con PriceScale.FinalFor a partir de los precios base del producto.
+// valor, no deserializarse a cero en silencio. Los finales no están acá: se derivan (spec 2026-10-08, D4).
 internal sealed record CatalogSeedScale(
     int FromUnit,
     int ToUnit,

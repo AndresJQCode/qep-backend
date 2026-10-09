@@ -58,15 +58,15 @@ public sealed class CopyPriceScalesApiTests
         // 10% sobre el precio base de cada destino, no el final del origen (90).
         var firstDiscounted = Assert.Single(
             reloadedFirst.PriceScales, scale => scale.FromUnit == 1);
-        Assert.Equal(45m, firstDiscounted.FinalUsd);
+        Assert.Equal(45m, firstDiscounted.Finals["USD"]);
 
         var secondDiscounted = Assert.Single(
             reloadedSecond.PriceScales, scale => scale.FromUnit == 1);
-        Assert.Equal(180m, secondDiscounted.FinalUsd);
+        Assert.Equal(180m, secondDiscounted.Finals["USD"]);
 
         // El precio base del destino no se toca: se copian las escalas, no el precio.
-        Assert.Equal(50m, reloadedFirst.PriceBaseUsd);
-        Assert.Equal(200m, reloadedSecond.PriceBaseUsd);
+        Assert.Equal(50m, reloadedFirst.Prices["USD"]);
+        Assert.Equal(200m, reloadedSecond.Prices["USD"]);
     }
 
     // La restricción no viaja: la escala llega incompleta y así se lee de vuelta desde Postgres,
@@ -247,16 +247,14 @@ public sealed class CopyPriceScalesApiTests
             toUnit = 9,
             discount = 10m,
             restriction = "multiple",
-            multiple = 3,
-            finalUsd = 90m
+            multiple = 3
         },
         new
         {
             fromUnit = 10,
             toUnit = 50,
             discount = 20m,
-            restriction = "packaging_unit",
-            finalUsd = 80m
+            restriction = "packaging_unit"
         }
     ];
 
@@ -268,8 +266,7 @@ public sealed class CopyPriceScalesApiTests
             toUnit,
             discount = 10m,
             restriction = "multiple",
-            multiple = 3,
-            finalUsd = 90m
+            multiple = 3
         }
     ];
 
@@ -287,7 +284,7 @@ public sealed class CopyPriceScalesApiTests
             {
                 name,
                 code,
-                pricing = new { baseUsd, scales = scales ?? [], packagingUnits = packagingUnits ?? [] }
+                pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = baseUsd }, scales = scales ?? [], packagingUnits = packagingUnits ?? [] }
             },
             TestContext.Current.CancellationToken);
 

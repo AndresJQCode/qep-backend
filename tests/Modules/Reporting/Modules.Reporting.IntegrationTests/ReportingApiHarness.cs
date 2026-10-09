@@ -361,7 +361,8 @@ internal static class ReportingApiHarness
     }
 
     public static async Task<Guid> CreateProductAsync(
-        HttpClient client, Guid tenantId, decimal baseCop = 100_000m)
+        HttpClient client, Guid tenantId, decimal baseCop = 100_000m,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -371,13 +372,14 @@ internal static class ReportingApiHarness
                 code = $"VS-{Guid.NewGuid():N}"[..12],
                 pricing = new
                 {
-                    baseCop,
+                    // A given map wins over the COP shorthand, so tests can price in any currency.
+                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
                     scales = new object[]
                     {
                         new
                         {
                             fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1, finalCop = baseCop
+                            restriction = "multiple", multiple = 1
                         }
                     }
                 }
@@ -394,7 +396,8 @@ internal static class ReportingApiHarness
     /// <c>catalog.product_price_changes</c> — el unico origen del reporte de cambios de
     /// precio.</summary>
     public static async Task ChangeProductBaseCopAsync(
-        HttpClient client, Guid tenantId, Guid productId, decimal newBaseCop)
+        HttpClient client, Guid tenantId, Guid productId, decimal newBaseCop,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var current = await client.GetFromJsonAsync<ProductDetailResponseDto>(
             $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
@@ -409,13 +412,13 @@ internal static class ReportingApiHarness
                 code = current.Code,
                 pricing = new
                 {
-                    baseCop = newBaseCop,
+                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = newBaseCop },
                     scales = new object[]
                     {
                         new
                         {
                             fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1, finalCop = newBaseCop
+                            restriction = "multiple", multiple = 1
                         }
                     }
                 }

@@ -17,15 +17,12 @@ public sealed class CatalogSeedFileTests
         Assert.Equal(19, seed.Products.Count);
         Assert.Equal(19, seed.Products.Select(product => product.Sku).Distinct().Count());
         Assert.All(seed.Products, product => Assert.False(string.IsNullOrWhiteSpace(product.Name)));
-        // Todo producto necesita precio en al menos una moneda: Product.ApplyPricing lo exige
-        // incondicionalmente, así que un archivo sin precio revienta recién al sembrar.
-        Assert.All(
-            seed.Products,
-            product => Assert.True(product.PriceCop is not null || product.PriceUsd is not null));
+        // Every product needs a price in at least one currency: Product.ApplyPricing requires it.
+        Assert.All(seed.Products, product => Assert.NotEmpty(product.Prices));
 
         var bronceador = seed.Products.Single(product => product.Sku == "7416");
-        Assert.Equal(35900m, bronceador.PriceCop);
-        Assert.Equal(9.97m, bronceador.PriceUsd);
+        Assert.Equal(35900m, bronceador.Prices["COP"]);
+        Assert.Equal(9.97m, bronceador.Prices["USD"]);
     }
 
     // Las cinco escalas son las mismas para los 19 productos salvo el descuento —los tres

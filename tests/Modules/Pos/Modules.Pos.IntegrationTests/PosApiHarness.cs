@@ -243,12 +243,12 @@ internal static class PosApiHarness
                 taxRateId,
                 pricing = new
                 {
-                    baseCop = priceCop,
+                    prices = new Dictionary<string, decimal> { ["COP"] = priceCop },
                     scales = new object[]
                     {
-                        new { fromUnit = 1, toUnit = 9, discount = 0m, restriction = "multiple", multiple = 1, finalCop = priceCop },
-                        new { fromUnit = 10, toUnit = 19, discount = 5m, restriction = "multiple", multiple = 1, finalCop = priceCop * 0.95m },
-                        new { fromUnit = 20, toUnit = 999_999, discount = 10m, restriction = "multiple", multiple = 1, finalCop = priceCop * 0.90m },
+                        new { fromUnit = 1, toUnit = 9, discount = 0m, restriction = "multiple", multiple = 1 },
+                        new { fromUnit = 10, toUnit = 19, discount = 5m, restriction = "multiple", multiple = 1 },
+                        new { fromUnit = 20, toUnit = 999_999, discount = 10m, restriction = "multiple", multiple = 1 },
                     },
                     packagingUnits = Array.Empty<int>(),
                 },

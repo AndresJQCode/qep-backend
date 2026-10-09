@@ -420,7 +420,8 @@ internal static class QuotationsApiHarness
         decimal baseCop = 100_000m,
         object[]? scales = null,
         Guid? taxRateId = null,
-        int[]? packagingUnits = null)
+        int[]? packagingUnits = null,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -431,7 +432,8 @@ internal static class QuotationsApiHarness
                 taxRateId,
                 pricing = new
                 {
-                    baseCop,
+                    // A given map wins over the COP shorthand, so tests can price in any currency.
+                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
                     scales = scales ?? DefaultScales(baseCop),
                     packagingUnits = packagingUnits ?? []
                 }
@@ -475,7 +477,7 @@ internal static class QuotationsApiHarness
             {
                 name,
                 code,
-                pricing = new { baseCop, scales = DefaultScales(baseCop) }
+                pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = baseCop }, scales = DefaultScales(baseCop) }
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
@@ -486,17 +488,17 @@ internal static class QuotationsApiHarness
         new
         {
             fromUnit = 1, toUnit = 9, discount = 0m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop
+            restriction = "multiple", multiple = 1
         },
         new
         {
             fromUnit = 10, toUnit = 19, discount = 5m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop * 0.95m
+            restriction = "multiple", multiple = 1
         },
         new
         {
             fromUnit = 20, toUnit = 999_999, discount = 10m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop * 0.90m
+            restriction = "multiple", multiple = 1
         }
     ];
 
@@ -512,7 +514,7 @@ internal static class QuotationsApiHarness
                 new
                 {
                     fromUnit = 10, toUnit = 19, discount = 5m,
-                    restriction = "multiple", multiple = 1, finalCop = baseCop * 0.95m
+                    restriction = "multiple", multiple = 1
                 }
             ]);
 

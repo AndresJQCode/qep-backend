@@ -547,7 +547,7 @@ public sealed class QuotationItemApiTests
         new
         {
             fromUnit = 5, toUnit = 48, discount = 5m,
-            restriction = "multiple", multiple = 3, finalCop = baseCop * 0.95m
+            restriction = "multiple", multiple = 3
         }
     ];
 
@@ -569,7 +569,7 @@ public sealed class QuotationItemApiTests
                 new
                 {
                     fromUnit = 1, toUnit = 999, discount = 15m,
-                    restriction = "packaging_unit", finalCop = 85_000m
+                    restriction = "packaging_unit"
                 }
             ],
             packagingUnits: BoxesOfHundredAndHundredFifty);
@@ -600,8 +600,7 @@ public sealed class QuotationItemApiTests
         new
         {
             fromUnit = 1, toUnit = 999, discount,
-            restriction = "packaging_unit",
-            finalCop = baseCop * (1m - discount / 100m)
+            restriction = "packaging_unit"
         }
     ];
 

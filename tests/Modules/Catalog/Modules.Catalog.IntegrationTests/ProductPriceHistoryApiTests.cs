@@ -36,8 +36,7 @@ public sealed class ProductPriceHistoryApiTests
 
         var created = await ReadProductAsync(await CreateProductAsync(client, "VS-001", new
         {
-            baseUsd = 100m,
-            baseCop = 400000m,
+            prices = new Dictionary<string, decimal> { ["USD"] = 100m, ["COP"] = 400000m },
             scales = new object[]
             {
                 new
@@ -46,9 +45,7 @@ public sealed class ProductPriceHistoryApiTests
                     toUnit = 9,
                     discount = 10m,
                     restriction = "multiple",
-                    multiple = 3,
-                    finalUsd = 90m,
-                    finalCop = 360000m
+                    multiple = 3
                 }
             }
         }));
@@ -65,8 +62,7 @@ public sealed class ProductPriceHistoryApiTests
                 code = "VS-001",
                 pricing = new
                 {
-                    baseUsd = 120m,
-                    baseCop = 400000m,
+                    prices = new Dictionary<string, decimal> { ["USD"] = 120m, ["COP"] = 400000m },
                     scales = new object[]
                     {
                         new
@@ -75,9 +71,7 @@ public sealed class ProductPriceHistoryApiTests
                             toUnit = 9,
                             discount = 25m,
                             restriction = "multiple",
-                            multiple = 3,
-                            finalUsd = 90m,
-                            finalCop = 300000m
+                            multiple = 3
                         }
                     }
                 }
@@ -91,9 +85,9 @@ public sealed class ProductPriceHistoryApiTests
 
         // El precio en COP no se tocó, así que no tiene fila: el histórico registra cambios, no
         // guardados.
-        Assert.DoesNotContain(history, row => row.Field == "PriceBaseCop");
+        Assert.DoesNotContain(history, row => row.Field == "PriceBase" && row.Currency == "COP");
 
-        var baseUsd = Assert.Single(history, row => row.Field == "PriceBaseUsd");
+        var baseUsd = Assert.Single(history, row => row.Field == "PriceBase" && row.Currency == "USD");
         Assert.Equal(100m, baseUsd.PreviousValue);
         Assert.Equal(120m, baseUsd.NewValue);
         Assert.Null(baseUsd.ScaleFromUnit);
@@ -127,9 +121,9 @@ public sealed class ProductPriceHistoryApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        await ReadProductAsync(await CreateProductAsync(client, "VS-001", new { baseUsd = 100m }));
+        await ReadProductAsync(await CreateProductAsync(client, "VS-001", new { prices = new Dictionary<string, decimal> { ["USD"] = 100m } }));
         var target = await ReadProductAsync(
-            await CreateProductAsync(client, "VS-002", new { baseUsd = 100m }));
+            await CreateProductAsync(client, "VS-002", new { prices = new Dictionary<string, decimal> { ["USD"] = 100m } }));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{target.Id}",
@@ -137,7 +131,7 @@ public sealed class ProductPriceHistoryApiTests
             {
                 name = "Vela de soja",
                 code = "VS-001",
-                pricing = new { baseUsd = 555m }
+                pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 555m } }
             },
             TestContext.Current.CancellationToken);
 
@@ -178,7 +172,7 @@ public sealed class ProductPriceHistoryApiTests
         await using var command = new NpgsqlCommand(
             """
             SELECT tenant_id, field, scale_from_unit, scale_to_unit,
-                   previous_value, new_value, changed_by, changed_at
+                   previous_value, new_value, changed_by, changed_at, currency
             FROM catalog.product_price_changes
             WHERE product_id = @id
             ORDER BY changed_at, field
@@ -199,7 +193,8 @@ public sealed class ProductPriceHistoryApiTests
                 reader.IsDBNull(4) ? null : reader.GetDecimal(4),
                 reader.IsDBNull(5) ? null : reader.GetDecimal(5),
                 reader.GetGuid(6),
-                reader.GetFieldValue<DateTimeOffset>(7)));
+                reader.GetFieldValue<DateTimeOffset>(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8)));
         }
 
         return rows;
@@ -213,7 +208,8 @@ public sealed class ProductPriceHistoryApiTests
         decimal? PreviousValue,
         decimal? NewValue,
         Guid ChangedBy,
-        DateTimeOffset ChangedAt);
+        DateTimeOffset ChangedAt,
+        string? Currency);
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {

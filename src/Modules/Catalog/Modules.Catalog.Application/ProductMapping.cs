@@ -1,4 +1,5 @@
 using Modules.Catalog.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
@@ -21,7 +22,7 @@ internal static class ProductMapping
         product.ImageFileId,
         imageUrl,
         product.TaxRateId?.Value,
-        product.PriceIn("USD"), product.PriceIn("COP"), // Bridge until Task 4
+        PricesOf(product),
         product.PackagingUnits.ToArray(),
         // Ordered here, and not left to whatever order the aggregate or the database hands
         // over: the grid paints the tiers from the smallest up, and neither the write order
@@ -32,13 +33,21 @@ internal static class ProductMapping
         product.CreatedAt,
         product.UpdatedAt);
 
-    // Bridge until Task 4: the finals are derived now (spec D4) but still travel as finalUsd/finalCop.
+    // Catalogue order (spec D10), not insertion order: the form and the product table paint one
+    // column per currency in that order.
+    private static Dictionary<string, decimal> PricesOf(Product product) =>
+        product.Prices
+            .OrderBy(price => Currencies.OrderOf(price.Currency))
+            .ToDictionary(price => price.Currency, price => price.Amount);
+
     private static PriceScaleResponse ToResponse(PriceScale scale, Product product) => new(
         scale.Id.Value, scale.FromUnit, scale.ToUnit, scale.Discount,
         scale.Restriction?.ToWireValue(), scale.Multiple,
-        PriceScale.FinalFor(product.PriceIn("USD"), scale.Discount),
-        PriceScale.FinalFor(product.PriceIn("COP"), scale.Discount),
-        scale.AllowGrouping);
+        scale.AllowGrouping,
+        // Derived, never stored (spec D4): one final per currency the product has.
+        product.Prices
+            .OrderBy(price => Currencies.OrderOf(price.Currency))
+            .ToDictionary(price => price.Currency, price => PriceScale.FinalFor(price.Amount, scale.Discount)!.Value));
 
     /// <summary>
     /// Mapea una colección resolviendo las URLs en **una sola** consulta al puerto.

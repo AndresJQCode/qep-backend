@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Infrastructure.Seed;
 
@@ -67,7 +68,8 @@ public static class CatalogSeeder
                 new ProductDetails { TaxRateId = taxRate.Id },
                 new ProductPricing
                 {
-                    Prices = LegacySeedPrices(product), // Bridge until Task 4
+                    Prices = product.Prices.ToDictionary(
+                        entry => Currencies.Normalize(entry.Key), entry => entry.Value, StringComparer.Ordinal),
                     Scales = product.Scales
                         .Select(scale => ToPriceScaleInput(product, scale))
                         .ToList(),
@@ -81,15 +83,6 @@ public static class CatalogSeeder
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
-    }
-
-    // Bridge until Task 4: the seed file still carries priceUsd/priceCop.
-    private static Dictionary<string, decimal> LegacySeedPrices(CatalogSeedProduct product)
-    {
-        var prices = new Dictionary<string, decimal>();
-        if (product.PriceCop is { } cop) prices["COP"] = cop;
-        if (product.PriceUsd is { } usd) prices["USD"] = usd;
-        return prices;
     }
 
     private static PriceScaleInput ToPriceScaleInput(
