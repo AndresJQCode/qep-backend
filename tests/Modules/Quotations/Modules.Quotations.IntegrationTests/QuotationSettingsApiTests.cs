@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
+using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -61,7 +62,7 @@ public sealed class QuotationSettingsApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
-        using var _ = client;
+        using var ownedClient = client;
 
         var response = await client.PutAsJsonAsync(
             SettingsUrl(tenantId),
@@ -70,7 +71,7 @@ public sealed class QuotationSettingsApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty(field, out var fieldErrors));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty(field, out _));
     }
 
     // Without the map the PUT would otherwise read as "delete every total": it is a 422 instead.
@@ -80,14 +81,14 @@ public sealed class QuotationSettingsApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
-        using var _ = client;
+        using var ownedClient = client;
 
         var response = await client.PutAsJsonAsync(
             SettingsUrl(tenantId), new { minimumUnits = 6 }, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("MinimumTotals", out var fieldErrors));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("MinimumTotals", out _));
     }
 
     [Fact]
@@ -147,6 +148,128 @@ public sealed class QuotationSettingsApiTests
         Assert.Equal("EUR", updated.MinimumPurchase.Currency);
         Assert.Equal(1_500_000m, updated.MinimumPurchase.MinimumTotal);
         Assert.Equal(0m, updated.MinimumPurchase.MissingTotal);
+    }
+
+    // Review round 1, deterministic: another save for a tenant without a row is mid-transaction
+    // (parent and children written, not committed) when this PUT arrives. The PUT must wait for it
+    // and then replace its whole document — never a 500 on the primary key, and never a merge of
+    // the two bodies (the other save's COP/USD must not survive next to this PUT's EUR).
+    [Fact]
+    public async Task APutRacingAnotherFirstSaveWaitsAndReplacesItsWholeDocument()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        await using var other = new NpgsqlConnection(database.GetConnectionString());
+        await other.OpenAsync(cancellationToken);
+        await using var otherSave = await other.BeginTransactionAsync(cancellationToken);
+        await using (var insert = new NpgsqlCommand(
+            "INSERT INTO quotations.tenant_quotation_settings (tenant_id, minimum_units) VALUES (@tenantId, 9); " +
+            "INSERT INTO quotations.tenant_minimum_totals (tenant_id, currency, amount) VALUES " +
+            "(@tenantId, 'COP', 1), (@tenantId, 'USD', 2);",
+            other,
+            otherSave))
+        {
+            insert.Parameters.AddWithValue("tenantId", tenantId);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var put = client.PutAsJsonAsync(
+            SettingsUrl(tenantId),
+            new { minimumUnits = 7, minimumTotals = new Dictionary<string, decimal> { ["EUR"] = 3m } },
+            cancellationToken);
+        await WaitUntilABackendWaitsOnALockAsync(database.GetConnectionString(), put, cancellationToken);
+        await otherSave.CommitAsync(cancellationToken);
+
+        var response = await put;
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var settings = await client.GetFromJsonAsync<SettingsPayload>(SettingsUrl(tenantId), cancellationToken);
+        Assert.Equal(7, settings!.MinimumUnits);
+        Assert.Equal(new Dictionary<string, decimal> { ["EUR"] = 3m }, settings.MinimumTotals);
+    }
+
+    // Review round 1, free-running: two first saves at once. Serialized (both 200) or one 412,
+    // never a 500; and what is stored is exactly one of the two bodies, never a merge.
+    [Fact]
+    public async Task TwoConcurrentFirstPutsNeverFailWithA500NorMergeTheirBodies()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var first = new Dictionary<string, decimal> { ["COP"] = 1m, ["USD"] = 2m };
+        var second = new Dictionary<string, decimal> { ["EUR"] = 3m };
+
+        var responses = await Task.WhenAll(
+            client.PutAsJsonAsync(SettingsUrl(tenantId), new { minimumUnits = 9, minimumTotals = first }, cancellationToken),
+            client.PutAsJsonAsync(SettingsUrl(tenantId), new { minimumUnits = 7, minimumTotals = second }, cancellationToken));
+
+        Assert.All(responses, response => Assert.Contains(
+            response.StatusCode, new[] { HttpStatusCode.OK, HttpStatusCode.PreconditionFailed }));
+        var settings = await client.GetFromJsonAsync<SettingsPayload>(SettingsUrl(tenantId), cancellationToken);
+        Assert.True(
+            (settings!.MinimumUnits == 9 && DictionaryEquals(first, settings.MinimumTotals))
+            || (settings.MinimumUnits == 7 && DictionaryEquals(second, settings.MinimumTotals)),
+            $"Stored {settings.MinimumUnits} / {string.Join(",", settings.MinimumTotals)} is neither body.");
+    }
+
+    // Same answer as every other module-gated endpoint (TenantModulesQuotationsApiTests): 403
+    // tenancy.module_not_enabled, for the read and for the write.
+    [Fact]
+    public async Task WithTheQuotationsModuleOffGetAndPutAreModuleNotEnabled()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await DisableModuleAsync(factory, tenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations);
+
+        var get = await client.GetAsync(SettingsUrl(tenantId), cancellationToken);
+        var put = await client.PutAsJsonAsync(
+            SettingsUrl(tenantId),
+            new { minimumUnits = 6, minimumTotals = new Dictionary<string, decimal>() },
+            cancellationToken);
+
+        foreach (var response in new[] { get, put })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            Assert.Equal("tenancy.module_not_enabled", problem.RootElement.GetProperty("code").GetString());
+        }
+    }
+
+    private static bool DictionaryEquals(
+        Dictionary<string, decimal> expected, Dictionary<string, decimal> actual) =>
+        expected.Count == actual.Count
+        && expected.All(entry => actual.TryGetValue(entry.Key, out var amount) && amount == entry.Value);
+
+    // The PUT is in flight once some backend waits on a lock; if it finishes first instead, the
+    // race did not happen and the test says so rather than passing for the wrong reason.
+    private static async Task WaitUntilABackendWaitsOnALockAsync(
+        string connectionString, Task pending, CancellationToken cancellationToken)
+    {
+        await using var probe = new NpgsqlConnection(connectionString);
+        await probe.OpenAsync(cancellationToken);
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            Assert.False(pending.IsCompleted, "The PUT finished without waiting for the other save.");
+            await using var command = new NpgsqlCommand(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'", probe);
+            if ((long)(await command.ExecuteScalarAsync(cancellationToken))! > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50, cancellationToken);
+        }
+
+        Assert.Fail("The PUT never blocked on the other save.");
     }
 
     private static async Task PutSettingsAsync(

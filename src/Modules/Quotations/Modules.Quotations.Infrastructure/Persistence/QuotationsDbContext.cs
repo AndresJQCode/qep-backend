@@ -589,14 +589,6 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasFilter(ActiveExportJobFilter);
     }
 
-    /// <summary>
-    /// El layout de columnas del Excel de pedidos por tenant (spec 2026-09-24, D6 y D7). La PK es
-    /// el tenant: uno por tenant, y dos primeros PUT simultáneos chocan acá, que
-    /// QuotationsUnitOfWork traduce a 412 por nombre de constraint (D9). Las columnas van en una
-    /// sola jsonb y no en una tabla normalizada: nunca se consulta una sola, siempre la lista
-    /// entera y en orden. Es el primer OwnsMany().ToJson() del repo; `kind` viaja como texto y los
-    /// nombres del JSON van en minúsculas para que la fila se lea a mano.
-    /// </summary>
     private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)
     {
         var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
@@ -624,6 +616,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .OnDelete(DeleteBehavior.Cascade);
     }
 
+    /// <summary>
+    /// El layout de columnas del Excel de pedidos por tenant (spec 2026-09-24, D6 y D7). La PK es
+    /// el tenant: uno por tenant, y dos primeros PUT simultáneos chocan acá, que
+    /// QuotationsUnitOfWork traduce a 412 por nombre de constraint (D9). Las columnas van en una
+    /// sola jsonb y no en una tabla normalizada: nunca se consulta una sola, siempre la lista
+    /// entera y en orden. Es el primer OwnsMany().ToJson() del repo; `kind` viaja como texto y los
+    /// nombres del JSON van en minúsculas para que la fila se lea a mano.
+    /// </summary>
     private static void ConfigureOrdersExportLayout(ModelBuilder modelBuilder)
     {
         var layout = modelBuilder.Entity<OrdersExportLayout>();

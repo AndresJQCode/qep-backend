@@ -37,6 +37,14 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // prueba es OrdersExportLayoutPersistenceTests.TwoFirstSavesForTheSameTenantEndInAConcurrencyConflict.
     private const string OrdersExportLayoutKey = "PK_orders_export_layouts";
 
+    // The quotation settings keys (spec 2026-10-08, D7). QuotationSettingsStore.SaveAsync upserts and
+    // locks the parent row inside the handler's transaction, so concurrent PUTs serialize and these
+    // are not reached in the normal path. Safety net, like OrdersExportLayoutKey: a 412 and never a
+    // 500 with the constraint name inside, should a future writer skip the store's lock.
+    private const string QuotationSettingsKey = "PK_tenant_quotation_settings";
+
+    private const string MinimumTotalsKey = "PK_tenant_minimum_totals";
+
     // IOrderNumberGenerator recibe el mismo QuotationsDbContext scoped que esta clase, así que su
     // SQL crudo corre en esta conexión y queda dentro de la transacción. Si alguna vez se
     // registrara con un DbContext propio, el incremento volvería a autocommitearse aparte.
@@ -118,6 +126,17 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "The orders export layout was created by another request while this one was being committed.",
+                exception);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  (string.Equals(postgres.ConstraintName, QuotationSettingsKey, StringComparison.Ordinal) ||
+                   string.Equals(postgres.ConstraintName, MinimumTotalsKey, StringComparison.Ordinal)))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The quotation settings were saved by another request while this one was being committed.",
                 exception);
         }
     }

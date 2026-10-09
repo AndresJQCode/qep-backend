@@ -28,21 +28,41 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
             totals.ToDictionary(total => total.Currency.Trim(), total => total.Amount, StringComparer.Ordinal));
     }
 
+    // Serialized per tenant: the parent row is created if missing (ON CONFLICT waits for, then
+    // yields to, a concurrent first save) and locked FOR UPDATE until the caller's transaction
+    // ends. Only then are the children read, so the diff runs against the last committed document
+    // and the result is exactly this body, never a merge with another save's.
+    //
     // Diffed and not delete-all-then-insert: a removed and an added row with the same
     // (tenant_id, currency) key cannot be tracked in one SaveChanges.
     public async Task SaveAsync(Guid tenantId, QuotationSettings settings, CancellationToken cancellationToken)
     {
-        var row = await dbContext.TenantQuotationSettings
-            .SingleOrDefaultAsync(existing => existing.TenantId == tenantId, cancellationToken);
-        if (row is null)
+        // Without a transaction the lock would be released as soon as the SELECT ends.
+        if (dbContext.Database.CurrentTransaction is null)
         {
-            dbContext.TenantQuotationSettings.Add(
-                new TenantQuotationSettingsRow { TenantId = tenantId, MinimumUnits = settings.MinimumUnits });
+            throw new InvalidOperationException(
+                "QuotationSettingsStore.SaveAsync must run inside IQuotationsUnitOfWork.BeginTransactionAsync.");
         }
-        else
-        {
-            row.MinimumUnits = settings.MinimumUnits;
-        }
+
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO quotations.tenant_quotation_settings (tenant_id, minimum_units)
+            VALUES ({tenantId}, {settings.MinimumUnits})
+            ON CONFLICT (tenant_id) DO NOTHING
+            """,
+            cancellationToken);
+
+        // Not composed (no Single/First on top): EF would wrap FOR UPDATE in a subquery.
+        var row = (await dbContext.TenantQuotationSettings
+            .FromSql(
+                $"""
+                SELECT tenant_id, minimum_units FROM quotations.tenant_quotation_settings
+                WHERE tenant_id = {tenantId}
+                FOR UPDATE
+                """)
+            .ToListAsync(cancellationToken))
+            .Single();
+        row.MinimumUnits = settings.MinimumUnits;
 
         var stored = await dbContext.TenantMinimumTotals
             .Where(total => total.TenantId == tenantId)

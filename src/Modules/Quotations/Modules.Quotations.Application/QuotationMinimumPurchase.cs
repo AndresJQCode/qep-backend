@@ -17,10 +17,11 @@ namespace Modules.Quotations.Application;
 /// entonces sí alcanzaría el mínimo, que devuelve el descuento, que vuelve a bajarlo— y no
 /// converge.
 ///
-/// <b>El precio de ese corte, aceptado explícitamente por el owner:</b> una cotización de menos de
-/// 6 unidades cuyo bruto de lista caiga entre el mínimo y <c>mínimo / (1 − descuento)</c> termina
-/// sin descuento y con un total **por encima** del mínimo que la pantalla dice no haber
-/// alcanzado. Con 5% de descuento eso es el rango $500.000–$526.316. Si algún día hay que cerrar
+/// <b>El precio de ese corte, aceptado explícitamente por el owner:</b> una cotización por debajo
+/// de las unidades mínimas (6 con los valores por defecto) cuyo bruto de lista caiga entre el
+/// mínimo y <c>mínimo / (1 − descuento)</c> termina sin descuento y con un total **por encima** del
+/// mínimo que la pantalla dice no haber alcanzado. Con 5% de descuento y los valores por defecto
+/// en COP eso es el rango $500.000–$526.316. Si algún día hay que cerrar
 /// ese hueco, la salida es medir la plata sobre el bruto de lista, no iterar hasta un punto fijo.
 ///
 /// Per-currency threshold, configurable per tenant (spec 2026-10-08, D7); a currency without a

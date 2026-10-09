@@ -32,8 +32,8 @@ public sealed class UpdateQuotationSettingsValidator : AbstractValidator<UpdateQ
 }
 
 /// <summary>Whole-document replace: a code absent from the body deletes its total. Last write
-/// wins, no <c>If-Match</c>: the spec gives this endpoint no version, and the form sends the
-/// whole document.</summary>
+/// wins, serialized per tenant, no <c>If-Match</c>: the spec gives this endpoint no version, and
+/// the form sends the whole document.</summary>
 public sealed class UpdateQuotationSettingsHandler(
     IQuotationSettingsStore store,
     ITenantModules tenantModules,
@@ -56,6 +56,11 @@ public sealed class UpdateQuotationSettingsHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var settings = QuotationSettings.Create(command.MinimumUnits, command.MinimumTotals!);
+
+        // The store locks the tenant's settings row inside this transaction and holds it until the
+        // commit, so two PUTs for the same tenant run one after the other: each replaces the whole
+        // document it read under the lock, and the last one wins without merging the two bodies.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await store.SaveAsync(command.TenantId, settings, cancellationToken);
 
         var now = clock.UtcNow;
@@ -67,6 +72,7 @@ public sealed class UpdateQuotationSettingsHandler(
             "success",
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return QuotationSettingsMapping.ToDto(settings);
     }
