@@ -99,7 +99,7 @@ public static class TenancySeeder
     }
 
     /// <summary>
-    /// Siembra QCode con los siete módulos y su dueño admin, por el mismo camino que Origen
+    /// Siembra QCode con todos los módulos y su dueño admin, por el mismo camino que Origen
     /// botánico. Idempotente por id, como el resto.
     /// </summary>
     public static Task<Guid> SeedOperatorTenantWithOwnerAsync(

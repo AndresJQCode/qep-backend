@@ -11,7 +11,7 @@ public sealed record OperatorTenantPageDto(
 /// <param name="Status">El nombre del enum (<c>Active</c>, <c>Suspended</c>): el diccionario lo tiene la SPA.</param>
 /// <param name="ActiveModules">Filas activas (contratados), no efectivos (decisión P7 del plan).</param>
 /// <param name="TotalModules"><c>TenantModuleKeys.All.Count</c>: la pantalla no conoce la lista del backend
-/// para dibujar «n de 7».</param>
+/// para dibujar «n de N».</param>
 /// <param name="IsOperator">Marca al operador sin que la SPA conozca la configuración.</param>
 public sealed record OperatorTenantListItemDto(
     Guid TenantId, string Slug, string DisplayName, string Status, DateTimeOffset CreatedAt,
