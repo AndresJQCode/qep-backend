@@ -31,6 +31,7 @@ public sealed class ConsumerPortsApiTests
             var connections = scope.ServiceProvider.GetRequiredService<IIntegrationConnections>();
             Assert.Equal([connection.Id], (await connections.ListActiveAsync(owner.TenantId, "zenvia", Ct)).Select(summary => summary.Id));
             Assert.Empty(await connections.ListActiveAsync(other.TenantId, "zenvia", Ct));
+            Assert.Null(await connections.ResolveAsync(other.TenantId, connection.Id, Ct));
 
             await scope.ServiceProvider.GetRequiredService<IConnectionHealthReporter>()
                 .ReportCredentialsRejectedAsync(other.TenantId, connection.Id, "credentials_rejected", Ct);
