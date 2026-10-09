@@ -36,7 +36,10 @@ internal sealed class ApiExceptionHandler(
         CancellationToken cancellationToken)
     {
         var (status, title, code) = MapException(exception);
-        if (status >= StatusCodes.Status500InternalServerError)
+        // El 503 de Integrations (sin llave de cifrado fuera de producción) es una condición de
+        // configuración que el mensaje ya explica, no una excepción sin manejar: va como las 4xx.
+        if (status >= StatusCodes.Status500InternalServerError
+            && status != StatusCodes.Status503ServiceUnavailable)
         {
             LogUnhandledException(logger, exception);
         }
