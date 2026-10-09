@@ -487,6 +487,17 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>,
             GetCustomerReportSummaryHandler>();
+        // Integrations (spec 2026-10-08). A mano, como el resto: un handler que falte compila, mapea
+        // su endpoint y falla recién en runtime con 500.
+        services.AddScoped<
+            IQueryHandler<GetIntegrationsCatalogQuery, IntegrationsCatalogResponse>,
+            GetIntegrationsCatalogHandler>();
+        services.AddScoped<
+            IQueryHandler<ListConnectionsQuery, ConnectionsResponse>,
+            ListConnectionsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetConnectionQuery, ConnectionResponse>,
+            GetConnectionHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
