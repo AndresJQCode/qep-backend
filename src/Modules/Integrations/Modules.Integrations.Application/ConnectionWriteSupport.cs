@@ -138,7 +138,7 @@ internal static class ConnectionSecrets
     /// <summary>
     /// Los secretos con que se prueba: los guardados en claro, pisados por los que llegaron. Un guardado
     /// que ya no descifra y no viene reemplazado es 422 en su campo (P14): sin él no hay con qué probar.
-    /// Lo comparten crear/editar, <c>test</c> y <c>resume</c>.
+    /// Lo comparten editar, <c>test</c> y <c>resume</c> (crear no lo usa).
     /// </summary>
     public static Dictionary<string, string> ReadForTest(
         ISecretProtector protector,

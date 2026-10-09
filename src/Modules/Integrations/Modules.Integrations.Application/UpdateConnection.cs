@@ -1,10 +1,10 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
 
 namespace Modules.Integrations.Application;
 
-/// <param name="ExpectedVersion">La versiÃ³n que la pantalla cargÃ³; llega por If-Match.</param>
+/// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por If-Match.</param>
 public sealed record UpdateConnectionCommand(
     Guid TenantId,
     Guid ConnectionId,
@@ -21,7 +21,7 @@ public sealed record UpdateConnectionCommand(
 
 /// <summary>
 /// Lo que no depende del proveedor. Campos y secretos se validan en el handler, con el proveedor de la
-/// conexiÃ³n ya cargada, por las mismas <see cref="ConnectionInputRules"/>.
+/// conexión ya cargada, por las mismas <see cref="ConnectionInputRules"/>.
 /// </summary>
 public sealed class UpdateConnectionValidator : AbstractValidator<UpdateConnectionCommand>
 {
@@ -35,9 +35,9 @@ public sealed class UpdateConnectionValidator : AbstractValidator<UpdateConnecti
 }
 
 /// <summary>
-/// Spec 2026-10-08, <c>PUT /connections/{id}</c>: secreto ausente conserva (D5); prueba sÃ³lo si cambiÃ³
-/// un campo pÃºblico o llegÃ³ un secreto (P9), con los secretos guardados descifrados para lo que no
-/// llegÃ³; una prueba fallida no guarda nada; sin cambios, no-op. Un diccionario <c>fields</c> o
+/// Spec 2026-10-08, <c>PUT /connections/{id}</c>: secreto ausente conserva (D5); prueba sólo si cambió
+/// un campo público o llegó un secreto (P9), con los secretos guardados descifrados para lo que no
+/// llegó; una prueba fallida no guarda nada; sin cambios, no-op. Un diccionario <c>fields</c> o
 /// <c>secrets</c> null (no un valor null) significa "sin cambios" para ese grupo.
 /// </summary>
 public sealed class UpdateConnectionHandler(

@@ -77,6 +77,8 @@ public sealed class CreateConnectionHandlerTests
         Assert.Equal("integrations.connection.provider_unreachable", error.Code);
         Assert.Empty(error.FieldErrors);
         Assert.Empty(bed.Repository.Connections);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+        Assert.Empty(bed.Audit.Entries);
     }
 
     // P12: si el proveedor dice que un campo no sirve, el 422 marca ese campo.

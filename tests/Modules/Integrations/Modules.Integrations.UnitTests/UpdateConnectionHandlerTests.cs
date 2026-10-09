@@ -106,6 +106,26 @@ public sealed class UpdateConnectionHandlerTests
         Assert.Equal(0, bed.UnitOfWork.Saves);
     }
 
+    // D3: «no pude verificar» también bloquea el guardado de una edición.
+    [Fact]
+    public async Task AnUnreachableProviderLeavesTheConnectionUntouched()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        bed.Tester.Result = ConnectionTestResult.Unreachable("timeout");
+
+        var error = await Assert.ThrowsAsync<IntegrationsDomainException>(() => bed.UpdateHandler().HandleAsync(
+            Update(bed, connection, fromNumber: "573009999999"), Ct));
+
+        Assert.Equal("integrations.connection.provider_unreachable", error.Code);
+        Assert.Empty(error.FieldErrors);
+        Assert.Equal(1, connection.Version);
+        Assert.Equal(IntegrationsTestBed.Token, StoredToken(connection));
+        Assert.Equal(IntegrationsTestBed.FromNumber, connection.Fields[ZenviaFieldKeys.FromNumber]);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+        Assert.Empty(bed.Audit.Entries);
+    }
+
     [Fact]
     public async Task APassingTestBringsNeedsAttentionBackToActive()
     {
