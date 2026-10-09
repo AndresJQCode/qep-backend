@@ -504,6 +504,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateConnectionCommand, ConnectionResponse>,
             UpdateConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<TestConnectionCommand, ConnectionResponse>,
+            TestConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<PauseConnectionCommand, ConnectionResponse>,
+            PauseConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<ResumeConnectionCommand, ConnectionResponse>,
+            ResumeConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteConnectionCommand, bool>,
+            DeleteConnectionHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
