@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- TenantModuleKeys para nombrar el módulo propio (spec 2026-10-09 §6.4): la única referencia
+         a otro módulo que el dominio tiene permitida (MessagingLayerTests). -->
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Domain\Modules.Tenancy.Domain.csproj" />
+  </ItemGroup>
+</Project>

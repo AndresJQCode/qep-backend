@@ -55,6 +55,12 @@
     <Project Path="src/Modules/Integrations/Modules.Integrations.Domain/Modules.Integrations.Domain.csproj" />
     <Project Path="src/Modules/Integrations/Modules.Integrations.Infrastructure/Modules.Integrations.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Messaging/">
+    <Project Path="src/Modules/Messaging/Modules.Messaging.Api/Modules.Messaging.Api.csproj" />
+    <Project Path="src/Modules/Messaging/Modules.Messaging.Application/Modules.Messaging.Application.csproj" />
+    <Project Path="src/Modules/Messaging/Modules.Messaging.Domain/Modules.Messaging.Domain.csproj" />
+    <Project Path="src/Modules/Messaging/Modules.Messaging.Infrastructure/Modules.Messaging.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Notifications/">
     <Project Path="src/Modules/Notifications/Modules.Notifications.Application/Modules.Notifications.Application.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
@@ -138,6 +144,10 @@
   <Folder Name="/tests/Modules/Integrations/">
     <Project Path="tests/Modules/Integrations/Modules.Integrations.IntegrationTests/Modules.Integrations.IntegrationTests.csproj" />
     <Project Path="tests/Modules/Integrations/Modules.Integrations.UnitTests/Modules.Integrations.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Messaging/">
+    <Project Path="tests/Modules/Messaging/Modules.Messaging.IntegrationTests/Modules.Messaging.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Messaging/Modules.Messaging.UnitTests/Modules.Messaging.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Notifications/">
     <Project Path="tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj" />

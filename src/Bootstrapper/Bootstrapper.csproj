@@ -19,6 +19,8 @@
     <ProjectReference Include="..\Modules\Pos\Modules.Pos.Infrastructure\Modules.Pos.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Integrations\Modules.Integrations.Application\Modules.Integrations.Application.csproj" />
     <ProjectReference Include="..\Modules\Integrations\Modules.Integrations.Infrastructure\Modules.Integrations.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Messaging\Modules.Messaging.Application\Modules.Messaging.Application.csproj" />
+    <ProjectReference Include="..\Modules\Messaging\Modules.Messaging.Infrastructure\Modules.Messaging.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Application\Modules.Customers.Application.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Application\Modules.Geography.Application.csproj" />

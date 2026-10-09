@@ -433,6 +433,8 @@
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Application": "[1.0.0, )",
           "Modules.Integrations.Infrastructure": "[1.0.0, )",
+          "Modules.Messaging.Application": "[1.0.0, )",
+          "Modules.Messaging.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
           "Modules.Platform.Application": "[1.0.0, )",
           "Modules.Platform.Infrastructure": "[1.0.0, )",
@@ -678,6 +680,36 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Application": "[1.0.0, )",
           "Modules.Integrations.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.messaging.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Messaging.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.messaging.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.messaging.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.11, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Messaging.Application": "[1.0.0, )",
+          "Modules.Messaging.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
