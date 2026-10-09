@@ -22,6 +22,7 @@ public sealed class UpdateQuotationItemHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -133,7 +134,7 @@ public sealed class UpdateQuotationItemHandler(
         // que agrupan con ella, y con eso el total. El descuento que trajo UpdateQuantity es
         // provisional.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
 
         // El total de la cotización cambió: lo que ya está cargado en comprobantes no cambia,
         // pero el estado del pago sí puede -- mismo motivo que AddOrderItemsHandler.

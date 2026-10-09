@@ -142,6 +142,7 @@ app.MapGeographyEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
+app.MapQuotationSettingsEndpoints();
 app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
 app.MapPosEndpoints();

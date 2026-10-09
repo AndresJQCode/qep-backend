@@ -34,6 +34,7 @@ public sealed class AddOrderItemsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IQuotationProductLookup productLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -102,7 +103,7 @@ public sealed class AddOrderItemsHandler(
         // Antes de mirar el total: las líneas nuevas agrupan con las que ya estaban en la
         // cotización del pedido, y eso mueve el descuento de todas.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
 
         order.RecalculatePaymentStatus(quotation.NetTotal, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

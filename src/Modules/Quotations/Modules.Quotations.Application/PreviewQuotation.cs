@@ -41,6 +41,7 @@ public sealed class PreviewQuotationHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -69,7 +70,7 @@ public sealed class PreviewQuotationHandler(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
 
         await QuotationEditsApplication.ApplyAsync(
-            quotation, query, query.TenantId, customerLookup, companyLookup, pricingLookup,
+            quotation, query, query.TenantId, customerLookup, companyLookup, pricingLookup, settingsStore,
             updatedBy, clock.UtcNow, cancellationToken);
 
         return quotation.ToDto() with { Version = storedVersion };

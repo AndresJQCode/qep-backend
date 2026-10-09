@@ -94,6 +94,7 @@ public sealed class QuotationPricingRecalculationTests
             new StubPricingLookup(
                 Product(productA, 10_000m, null, Tiers()),
                 Product(productB, 10_000m, null, Tiers())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -117,6 +118,7 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 10_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -136,6 +138,7 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 1_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -156,6 +159,7 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 300_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -178,6 +182,7 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 260_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -198,6 +203,7 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, null, 150m, FlatTier())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -217,6 +223,7 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, null, 50m, FlatTier())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -243,6 +250,7 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 10_000m, null, Tiers())),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -270,7 +278,7 @@ public sealed class QuotationPricingRecalculationTests
         var lookup = new StubPricingLookup(Product(product, 10_000m, null, Tiers()));
 
         await QuotationPricingRecalculation.ApplyAsync(
-            lookup, TenantId, quotation, Now, CancellationToken.None);
+            lookup, new FixedQuotationSettingsStore(), TenantId, quotation, Now, CancellationToken.None);
 
         Assert.Equal(0, lookup.ManyCalls);
     }
@@ -283,9 +291,33 @@ public sealed class QuotationPricingRecalculationTests
         var lookup = new StubPricingLookup();
 
         await QuotationPricingRecalculation.ApplyAsync(
-            lookup, TenantId, quotation, Now, CancellationToken.None);
+            lookup, new FixedQuotationSettingsStore(), TenantId, quotation, Now, CancellationToken.None);
 
         Assert.Equal(0, lookup.ManyCalls);
+    }
+
+    // The gate reads the tenant settings, not constants: with no EUR minimum, an EUR quotation of
+    // 2 units keeps no scale discount however large its total (spec D7, Review Focus 3).
+    [Fact]
+    public async Task AnEurQuotationBelowTheUnitsLosesTheDiscountWhenEurHasNoMinimum()
+    {
+        var product = Guid.CreateVersion7();
+        var quotation = NewQuotation(currency: "EUR");   // the billing account decides: EUR
+        var item = AddItem(quotation, product, 2m, 1_000_000m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(new QuotationProductPricingRef(
+                product, TenantId, "Producto", true,
+                new Dictionary<string, decimal> { ["EUR"] = 1_000_000m }, FlatTier(), 19)),
+            new FixedQuotationSettingsStore(QuotationSettings.Create(
+                6, new Dictionary<string, decimal> { ["COP"] = 500_000m })),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(0m, DiscountOf(quotation, item));
+        Assert.Equal(2_000_000m, quotation.Total);
     }
 
     private sealed class StubPricingLookup(params QuotationProductPricingRef[] products)
@@ -334,6 +366,7 @@ public sealed class QuotationPricingRecalculationTests
                 new(5, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false),
                 new(20, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,
@@ -363,6 +396,7 @@ public sealed class QuotationPricingRecalculationTests
                 // 30 % 1 == 0 -> esta si aplica, y es el mismo piso que eligio el asesor.
                 new(1000, 5000, 12m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
+            new FixedQuotationSettingsStore(),
             TenantId,
             quotation,
             Now,

@@ -29,6 +29,7 @@ internal static class QuotationEditsApplication
         IQuotationCustomerLookup customerLookup,
         IQuotationCompanyLookup companyLookup,
         IQuotationProductPricingLookup pricingLookup,
+        IQuotationSettingsStore settingsStore,
         MemberId updatedBy,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -87,7 +88,7 @@ internal static class QuotationEditsApplication
         // que resolverlo en medio del diff lo calcularía contra un estado a medio aplicar. Y el
         // mínimo de compra se mide sobre el total resultante.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, tenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, tenantId, quotation, now, cancellationToken);
 
         return new QuotationEditsOutcome(headerSummary, itemEdits);
     }

@@ -46,6 +46,7 @@ public sealed class SaveQuotationHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IQuotationProductLookup productLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -82,7 +83,7 @@ public sealed class SaveQuotationHandler(
         var now = clock.UtcNow;
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
-            quotation, command, command.TenantId, customerLookup, companyLookup, pricingLookup,
+            quotation, command, command.TenantId, customerLookup, companyLookup, pricingLookup, settingsStore,
             updatedBy, now, cancellationToken);
         // UpdateDetails no lo exige para que el cálculo previo, que comparte ApplyAsync, no falle
         // mientras la persona escribe. El guardado sí: nada se persiste si esto lanza. El

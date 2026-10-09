@@ -15,6 +15,7 @@ public sealed class RemoveQuotationItemHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationProductLookup productLookup,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -102,7 +103,7 @@ public sealed class RemoveQuotationItemHandler(
         // total del grupo, y puede caerse el mínimo de compra de la cotización entera. Va antes de
         // mirar el total.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
 
         order?.RecalculatePaymentStatus(quotation.NetTotal, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

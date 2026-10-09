@@ -3,9 +3,9 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// La compra mínima que habilita cualquier descuento de escala: **$500.000 COP o 200 USD o 6
-/// unidades**, en la cotización entera (decisión del owner, 2026-09-21). Es un OR: con 6 unidades
-/// la plata ni se mira, y con plata suficiente la cantidad ni se mira.
+/// La compra mínima que habilita cualquier descuento de escala: **N unidades o un total mínimo en
+/// la moneda de la cotización**, en la cotización entera (decisión del owner, 2026-09-21). Es un
+/// OR: con las unidades la plata ni se mira, y con plata suficiente la cantidad ni se mira.
 ///
 /// <b>Se mide sobre la cotización completa</b>, no por grupo de escala: dos líneas de productos
 /// distintos suman para alcanzarla igual que suman para alcanzar un tramo.
@@ -23,58 +23,41 @@ namespace Modules.Quotations.Application;
 /// alcanzado. Con 5% de descuento eso es el rango $500.000–$526.316. Si algún día hay que cerrar
 /// ese hueco, la salida es medir la plata sobre el bruto de lista, no iterar hasta un punto fijo.
 ///
-/// <b>Umbral por moneda, sin conversión.</b> Este módulo no tiene tabla de cambio y lo rechaza por
-/// decisión explícita (spec 2026-10-08, no exchange rates), así que el mínimo en dólares es un número
-/// propio y no una conversión del de pesos. Un literal en pesos dejaría la rama de plata muerta
-/// para toda cotización en USD, que nunca llegaría a 500.000.
+/// Per-currency threshold, configurable per tenant (spec 2026-10-08, D7); a currency without a
+/// threshold only passes by units. See <see cref="QuotationSettings"/>.
 /// </summary>
 internal static class QuotationMinimumPurchase
 {
-    public const decimal MinimumUnits = 6m;
-
-    public const decimal MinimumTotalCop = 500_000m;
-
-    public const decimal MinimumTotalUsd = 200m;
-
-    /// <summary>El mínimo en plata que le corresponde a una moneda. Ver la nota sobre por qué no
-    /// es una conversión.</summary>
-    // Bridge until Task 10: a currency without a constant has no money branch (fail-closed, spec D7).
-    public static decimal MinimumTotalFor(string currency) => currency switch
-    {
-        "COP" => MinimumTotalCop,
-        "USD" => MinimumTotalUsd,
-        _ => decimal.MaxValue
-    };
+    /// <summary>
+    /// Whether the quotation, **as it stands with the discounts already applied**, enables the
+    /// discount. Called after applying them, never before: the total that decides is the one after.
+    /// </summary>
+    public static bool IsSatisfiedBy(Quotation quotation, QuotationSettings settings) =>
+        IsMet(quotation.Items.Sum(item => item.Quantity), quotation.Total, quotation.Currency, settings);
 
     /// <summary>
-    /// Si la cotización, **tal como quedó con los descuentos ya aplicados**, habilita el descuento.
-    /// Se llama después de aplicarlos, nunca antes: el total que decide es el de después.
+    /// The state the frontend paints. Built from units, total and currency only, so it reads the
+    /// same in a recalculation and on a stored quotation. <c>MinimumTotal</c>/<c>MissingTotal</c> are
+    /// null when the currency has no configured total: the screen says "only by units".
     /// </summary>
-    public static bool IsSatisfiedBy(Quotation quotation) =>
-        quotation.Items.Sum(item => item.Quantity) >= MinimumUnits
-        || quotation.Total >= MinimumTotalFor(quotation.Currency);
-
-    /// <summary>
-    /// El estado de la compra mínima tal como viaja al frontend. Se arma desde la cotización y
-    /// nada más —unidades, total y moneda—, así que sale igual de bien en un recálculo que al leer
-    /// una cotización guardada, sin tocar el catálogo. Ver
-    /// <see cref="QuotationMinimumPurchaseDto"/> para por qué el mensaje es prospectivo.
-    /// </summary>
-    public static QuotationMinimumPurchaseDto DescribeFor(Quotation quotation)
+    public static QuotationMinimumPurchaseDto DescribeFor(
+        decimal units, decimal total, string currency, QuotationSettings settings)
     {
-        var units = quotation.Items.Sum(item => item.Quantity);
-        var minimumTotal = MinimumTotalFor(quotation.Currency);
-        var met = units >= MinimumUnits || quotation.Total >= minimumTotal;
+        var minimumTotal = settings.MinimumTotalFor(currency);
+        var met = IsMet(units, total, currency, settings);
 
         return new QuotationMinimumPurchaseDto(
             met,
             units,
-            MinimumUnits,
+            settings.MinimumUnits,
+            currency,
             minimumTotal,
-            // Con el mínimo alcanzado los dos faltantes son 0, aunque una de las ramas siga corta:
-            // es un OR, y decir "te faltan 4 unidades" en una cotización que ya tiene el descuento
-            // sería pedirle al cliente algo que no necesita.
-            met ? 0m : MinimumUnits - units,
-            met ? 0m : minimumTotal - quotation.Total);
+            // It is an OR: once met, nothing is missing on either branch.
+            met ? 0m : settings.MinimumUnits - units,
+            minimumTotal is null ? null : met ? 0m : minimumTotal.Value - total);
     }
+
+    private static bool IsMet(decimal units, decimal total, string currency, QuotationSettings settings) =>
+        units >= settings.MinimumUnits
+        || (settings.MinimumTotalFor(currency) is { } minimum && total >= minimum);
 }

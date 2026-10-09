@@ -62,7 +62,8 @@ public sealed class QuotationItemPriceScalesTests
             {
                 [ProductId] = new(ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, scales)
             }),
-            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()));
+            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
+            new FixedQuotationSettingsStore());
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);

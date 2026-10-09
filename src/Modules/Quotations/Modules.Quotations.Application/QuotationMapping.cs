@@ -39,7 +39,6 @@ internal static class QuotationMapping
         quotation.CanBeSent,
         quotation.HasChangesSinceSent,
         quotation.CanBeConvertedToOrder,
-        QuotationMinimumPurchase.DescribeFor(quotation),
         quotation.Items.Select(ToDto).ToArray(),
         quotation.Version,
         quotation.GlobalScaleFloor,

@@ -95,9 +95,6 @@ public sealed record QuotationDto(
     /// <summary>Si convertir en pedido es posible: enviada, sin cambios desde ese envío, con
     /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
     bool CanBeConvertedToOrder,
-    /// <summary>En qué anda la cotización contra la compra mínima que habilita los descuentos por
-    /// volumen. Viaja **siempre**, alcanzada o no.</summary>
-    QuotationMinimumPurchaseDto MinimumPurchase,
     IReadOnlyCollection<QuotationItemDto> Items,
     /// <summary>La versión del agregado con la que se leyó, para mandarla en <c>If-Match</c> al
     /// guardar de una vez (<c>PUT /quotations/{quotationId}</c>). Ya existía en el dominio
@@ -135,20 +132,27 @@ public sealed record QuotationDto(
 /// cumplida es true, y los dos faltantes son 0.</param>
 /// <param name="Units">Suma de las cantidades de todas las líneas.</param>
 /// <param name="MinimumUnits">Las unidades que habilitan el descuento por sí solas.</param>
+/// <param name="Currency">The quotation currency, so the screen formats both totals without asking.</param>
 /// <param name="MinimumTotal">El total que habilita el descuento por sí solo, **en la moneda de
-/// la cotización** (<c>Currency</c>). No es una conversión: este módulo no tiene tabla de cambio,
-/// así que el mínimo en dólares es un número propio.</param>
+/// la cotización** (<paramref name="Currency"/>). No es una conversión: este módulo no tiene tabla
+/// de cambio, así que el mínimo de cada moneda es un número propio del tenant. Null when the
+/// tenant has no minimum total for this currency: the gate only opens by units (spec D7).</param>
 /// <param name="MissingUnits">Cuántas unidades faltan para <paramref name="MinimumUnits"/>. 0
 /// cuando <paramref name="Met"/>.</param>
 /// <param name="MissingTotal">Cuánta plata falta para <paramref name="MinimumTotal"/>, contra el
-/// total ya descontado y con IVA. 0 cuando <paramref name="Met"/>.</param>
+/// total ya descontado y con IVA. 0 cuando <paramref name="Met"/>. Null when the tenant has no
+/// minimum total for this currency: the gate only opens by units (spec D7).</param>
 public sealed record QuotationMinimumPurchaseDto(
     bool Met,
     decimal Units,
     decimal MinimumUnits,
-    decimal MinimumTotal,
+    string Currency,
+    decimal? MinimumTotal,
     decimal MissingUnits,
-    decimal MissingTotal);
+    decimal? MissingTotal);
+
+/// <summary>The tenant's minimum purchase (spec 2026-10-08, D7), totals in catalogue order.</summary>
+public sealed record QuotationSettingsDto(int MinimumUnits, IReadOnlyDictionary<string, decimal> MinimumTotals);
 
 /// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto
 /// y no el enum del dominio, mismo criterio que Status.</summary>
@@ -422,9 +426,9 @@ public sealed record QuotationResponse(
     bool CanBeSent,
     bool HasChangesSinceSent,
     bool CanBeConvertedToOrder,
-    /// <summary>En qué anda la cotización contra la compra mínima. Misma posición que en
-    /// <see cref="QuotationDto.MinimumPurchase"/> para que las dos formas se lean en
-    /// paralelo.</summary>
+    /// <summary>Where the quotation stands against the minimum purchase. Computed by
+    /// <c>QuotationResponseComposer</c> from the tenant settings, not carried by
+    /// <c>QuotationDto</c> (plan decision A13).</summary>
     QuotationMinimumPurchaseResponse MinimumPurchase,
     IReadOnlyCollection<QuotationItemResponse> Items,
     /// <summary>Lo que la pantalla tiene que devolver en <c>If-Match</c> al guardar de una vez
@@ -464,9 +468,13 @@ public sealed record QuotationMinimumPurchaseResponse(
     bool Met,
     decimal Units,
     decimal MinimumUnits,
-    decimal MinimumTotal,
+    /// <summary>The quotation currency, so the screen formats both totals without asking.</summary>
+    string Currency,
+    /// <summary>Null when the tenant has no minimum total for this currency: the gate only opens by units (spec D7).</summary>
+    decimal? MinimumTotal,
     decimal MissingUnits,
-    decimal MissingTotal);
+    /// <summary>Null when the tenant has no minimum total for this currency: the gate only opens by units (spec D7).</summary>
+    decimal? MissingTotal);
 
 /// <summary>
 /// La cuenta con la que se factura, ya resuelta para la pantalla: la copia guardada más la razón

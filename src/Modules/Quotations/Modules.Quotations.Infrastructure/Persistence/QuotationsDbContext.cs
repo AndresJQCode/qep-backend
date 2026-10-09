@@ -32,6 +32,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<OrdersExportLayout> OrdersExportLayouts => Set<OrdersExportLayout>();
 
+    internal DbSet<TenantQuotationSettingsRow> TenantQuotationSettings => Set<TenantQuotationSettingsRow>();
+
+    internal DbSet<TenantMinimumTotalRow> TenantMinimumTotals => Set<TenantMinimumTotalRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -46,6 +50,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureOrderNumberCounter(modelBuilder);
         ConfigureExportJob(modelBuilder);
         ConfigureOrdersExportLayout(modelBuilder);
+        ConfigureQuotationSettings(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -592,6 +597,33 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     /// entera y en orden. Es el primer OwnsMany().ToJson() del repo; `kind` viaja como texto y los
     /// nombres del JSON van en minúsculas para que la fila se lea a mano.
     /// </summary>
+    private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)
+    {
+        var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
+        settings.ToTable("tenant_quotation_settings", "quotations", table =>
+            table.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1"));
+        settings.HasKey(value => value.TenantId);
+        settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        settings.Property(value => value.MinimumUnits).HasColumnName("minimum_units");
+
+        var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
+        totals.ToTable("tenant_minimum_totals", "quotations", table =>
+            table.HasCheckConstraint("CK_tenant_minimum_totals_amount_not_negative", "amount >= 0"));
+        totals.HasKey(value => new { value.TenantId, value.Currency });
+        totals.Property(value => value.TenantId).HasColumnName("tenant_id");
+        totals.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasColumnType("character(3)")
+            .HasMaxLength(3);
+        totals.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+        // Same schema, same module: a real FK. CASCADE because a total means nothing without its
+        // tenant's settings row.
+        totals.HasOne<TenantQuotationSettingsRow>()
+            .WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
     private static void ConfigureOrdersExportLayout(ModelBuilder modelBuilder)
     {
         var layout = modelBuilder.Entity<OrdersExportLayout>();

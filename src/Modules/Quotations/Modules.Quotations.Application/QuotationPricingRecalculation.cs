@@ -23,6 +23,7 @@ internal static class QuotationPricingRecalculation
 {
     public static async Task ApplyAsync(
         IQuotationProductPricingLookup lookup,
+        IQuotationSettingsStore settingsStore,
         Guid tenantId,
         Quotation quotation,
         DateTimeOffset occurredAt,
@@ -83,10 +84,14 @@ internal static class QuotationPricingRecalculation
         var discounts = Apply(
             quotation, lines, scalesByProduct, quotation.GlobalScaleFloor, occurredAt);
 
+        // Read once per recalculation, and only when there is a gate to evaluate (not for an empty
+        // or retail quotation, which return above).
+        var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
+
         // La compuerta se evalúa sobre el total que dejaron esos descuentos, y una sola vez: si no
         // alcanza, se quitan todos y se termina. Ver QuotationMinimumPurchase para por qué no se
         // vuelve a mirar.
-        if (QuotationMinimumPurchase.IsSatisfiedBy(quotation))
+        if (QuotationMinimumPurchase.IsSatisfiedBy(quotation, settings))
         {
             return;
         }
@@ -104,7 +109,7 @@ internal static class QuotationPricingRecalculation
         {
             discounts = Apply(quotation, lines, scalesByProduct, globalFloor: null, occurredAt);
 
-            if (QuotationMinimumPurchase.IsSatisfiedBy(quotation))
+            if (QuotationMinimumPurchase.IsSatisfiedBy(quotation, settings))
             {
                 return;
             }

@@ -98,7 +98,8 @@ public sealed class QuotationItemProductLabelTests
             {
                 [ProductId] = new(ProductId, liveName, liveCode, ImageUrl: null, Scales: []),
             }),
-            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()));
+            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
+            new FixedQuotationSettingsStore());
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);

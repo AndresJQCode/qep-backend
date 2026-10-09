@@ -26,7 +26,8 @@ public sealed class QuotationResponseComposer(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
-    IQuotationCompanyLookup companyLookup)
+    IQuotationCompanyLookup companyLookup,
+    IQuotationSettingsStore settingsStore)
     : IQuotationResponseComposer
 {
     public async Task<QuotationResponse> ComposeAsync(
@@ -49,6 +50,10 @@ public sealed class QuotationResponseComposer(
             tenantId,
             quotation.Items.Select(item => item.ProductId).Distinct().ToArray(),
             cancellationToken);
+
+        // Here and not in QuotationDto: every quotation response passes through this composer, and it
+        // is async with DI — the static mapper called by ~25 handlers is neither (plan decision A13).
+        var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
 
         return new QuotationResponse(
             quotation.Id,
@@ -87,7 +92,8 @@ public sealed class QuotationResponseComposer(
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
-            ToMinimumPurchaseResponse(quotation.MinimumPurchase),
+            ToMinimumPurchaseResponse(QuotationMinimumPurchase.DescribeFor(
+                quotation.Items.Sum(item => item.Quantity), quotation.Total, quotation.Currency, settings)),
             quotation.Items
                 .Select(item => ToItemResponse(item, products, quotation.GlobalScaleFloor))
                 .ToArray(),
@@ -225,14 +231,14 @@ public sealed class QuotationResponseComposer(
                 account.AccountNumber,
                 account.Currency);
 
-    // Copia campo a campo y sin consultar nada: el DTO que llega ya trae la compra mínima resuelta
-    // (QuotationMinimumPurchase.DescribeFor se arma con las líneas y la moneda de la propia
-    // cotización). Recalcularla acá sería una segunda fuente de verdad del mismo número.
+    // Field-by-field copy: the computation is QuotationMinimumPurchase.DescribeFor, the single
+    // source of truth.
     private static QuotationMinimumPurchaseResponse ToMinimumPurchaseResponse(
         QuotationMinimumPurchaseDto minimum) => new(
             minimum.Met,
             minimum.Units,
             minimum.MinimumUnits,
+            minimum.Currency,
             minimum.MinimumTotal,
             minimum.MissingUnits,
             minimum.MissingTotal);
