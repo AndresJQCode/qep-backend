@@ -31,6 +31,13 @@ internal sealed partial class ZenviaConnectionTester(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Zenvia credential test could not reach the provider: {Reason}")]
     private static partial void LogUnreachable(ILogger logger, string reason);
 
+    /// <summary>
+    /// Handler primario de la conexión con Zenvia. Sin redirecciones automáticas: ante un 3xx,
+    /// <c>SocketsHttpHandler</c> quita <c>Authorization</c> pero conserva los headers propios, así que
+    /// <c>X-API-TOKEN</c> viajaría al host que nombre <c>Location</c>.
+    /// </summary>
+    internal static SocketsHttpHandler CreatePrimaryHandler() => new() { AllowAutoRedirect = false };
+
     /// <summary>Spec: 10 s por prueba y <c>User-Agent: qep-integrations</c>.</summary>
     internal static void ConfigureClient(HttpClient client)
     {

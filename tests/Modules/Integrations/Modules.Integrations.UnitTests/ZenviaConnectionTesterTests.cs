@@ -121,6 +121,16 @@ public sealed class ZenviaConnectionTesterTests : IDisposable
             TimeSpan.FromSeconds(10),
             _services.GetRequiredService<IHttpClientFactory>().CreateClient(ZenviaConnectionTester.HttpClientName).Timeout);
 
+    // Control de seguridad del token: con redirección automática, un 3xx de Zenvia mandaría
+    // X-API-TOKEN (que SocketsHttpHandler no quita, a diferencia de Authorization) al host de Location.
+    [Fact]
+    public void ThePrimaryHandlerNeverFollowsRedirects()
+    {
+        using var handler = ZenviaConnectionTester.CreatePrimaryHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
+    }
+
     // Spec, «Nunca en un log»: código y status, nunca headers ni cuerpo.
     [Fact]
     public async Task NothingLoggedCarriesTheTokenOrTheBody()

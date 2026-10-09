@@ -54,7 +54,7 @@ public static class IntegrationsInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<ZenviaOptions>, ZenviaOptionsValidator>();
         services.AddHttpClient(ZenviaConnectionTester.HttpClientName, ZenviaConnectionTester.ConfigureClient)
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .ConfigurePrimaryHttpMessageHandler(() => ZenviaConnectionTester.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, ZenviaConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
