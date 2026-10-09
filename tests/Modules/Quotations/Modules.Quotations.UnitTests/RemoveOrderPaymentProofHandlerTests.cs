@@ -79,7 +79,7 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
-            defaultCurrency: QuotationCurrency.Cop,
+            defaultCurrency: "COP",
             customerWithRetention,
             customerVatSurplus: false,
             AdvisorId,

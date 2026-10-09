@@ -23,7 +23,7 @@ public sealed class QuotationChangeSummaryTests
         Billing: billing,
         Shipping: shipping,
         BillingAccount: null,
-        Currency: QuotationCurrency.Cop,
+        Currency: "COP",
         IsStorePickup: isStorePickup,
         BillsToFinalConsumer: billsToFinalConsumer,
         BillingWithRetention: billingWithRetention,

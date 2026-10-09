@@ -76,14 +76,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("global_scale_floor");
         quotation.Property(value => value.CreatedAt).HasColumnName("created_at");
         quotation.Property(value => value.ValidUntil).HasColumnName("valid_until");
-        // El codigo ISO y no el nombre del miembro del enum: la columna dice COP/USD, que es lo
-        // que dice la cuenta bancaria de la empresa de la que sale y lo que espera cualquiera que
-        // lea la tabla a mano. Texto y no entero, mismo criterio que Status.
+        // The ISO code as text (COP/USD/EUR): what the company bank account says and what anyone
+        // reading the table expects. A plain string since spec 2026-10-08 D6 — no enum to convert.
         quotation.Property(value => value.Currency)
             .HasColumnName("currency")
-            .HasConversion(
-                currency => currency.ToCode(),
-                code => QuotationCurrencies.FromCode(code))
             .HasMaxLength(3);
         quotation.Property(value => value.PaymentMethod)
             .HasColumnName("payment_method")

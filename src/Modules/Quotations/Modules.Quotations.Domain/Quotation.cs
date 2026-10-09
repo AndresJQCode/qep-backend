@@ -47,7 +47,7 @@ public sealed class Quotation
         string? notes,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
-        QuotationCurrency defaultCurrency,
+        string defaultCurrency,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -73,11 +73,9 @@ public sealed class Quotation
         PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
-        // The billing account rules when there is one; otherwise the tenant's default, read by the
-        // handler. Quotations never pick a currency on their own any more.
-        Currency = BillingAccount is null
-            ? defaultCurrency
-            : QuotationCurrencies.FromCode(BillingAccount.Currency);
+        // The billing account rules when there is one; otherwise the tenant default, read and
+        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it).
+        Currency = BillingAccount?.Currency ?? defaultCurrency;
         CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
         CreatedBy = createdBy;
@@ -222,7 +220,8 @@ public sealed class Quotation
     public QuotationBillingAccount? BillingAccount { get; private set; }
 
     /// <summary>
-    /// La moneda de **toda** la cotización: precios unitarios, descuentos, impuestos y totales.
+    /// ISO 4217 code from the catalogue (Modules.Tenancy.Application.Currencies) of the **whole**
+    /// quotation: unit prices, discounts, taxes and totals.
     ///
     /// La fija la cuenta de cobro (<see cref="BillingAccount"/>): si se factura a una cuenta en
     /// dólares, la cotización entera se expresa en dólares, con el precio en dólares de cada
@@ -233,7 +232,7 @@ public sealed class Quotation
     /// quedan como están, y revalorizarlos por un borrado sería un cambio de totales que nadie
     /// pidió. Vuelve a cambiar recién cuando se elige otra cuenta.
     /// </summary>
-    public QuotationCurrency Currency { get; private set; }
+    public string Currency { get; private set; } = string.Empty;
 
     /// <summary>
     /// Cuando la facturación sigue los datos del cliente, si el nombre que va en el documento es
@@ -336,7 +335,7 @@ public sealed class Quotation
         string? notes,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
-        QuotationCurrency defaultCurrency,
+        string defaultCurrency,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -662,10 +661,8 @@ public sealed class Quotation
     /// moneda; el agregado la vuelve a calcular al aplicar, así que no depende de que el llamador
     /// haya preguntado.
     /// </summary>
-    public QuotationCurrency CurrencyFor(QuotationBillingAccount? billingAccount) =>
-        billingAccount is null
-            ? Currency
-            : QuotationCurrencies.FromCode(billingAccount.Currency);
+    public string CurrencyFor(QuotationBillingAccount? billingAccount) =>
+        billingAccount?.Currency ?? Currency;
 
     // Cambiar de cuenta puede cambiar la moneda, y con ella el precio de cada línea: los importes
     // guardados son el precio del producto en la moneda vieja, no una cifra convertible. Por eso

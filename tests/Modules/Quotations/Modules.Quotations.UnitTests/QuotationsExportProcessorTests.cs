@@ -225,7 +225,7 @@ public sealed class QuotationsExportProcessorTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
-            defaultCurrency: QuotationCurrency.Cop,
+            defaultCurrency: "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

@@ -54,7 +54,7 @@ public sealed class QuotationStorePickupContractTests
             QuotationId.New(), Guid.CreateVersion7(), "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), null, null, null,
             QuotationParties.Empty with { IsStorePickup = true },
-            null, QuotationCurrency.Cop, false, false, new MemberId(Guid.CreateVersion7()),
+            null, "COP", false, false, new MemberId(Guid.CreateVersion7()),
             DateTimeOffset.UtcNow);
 
         var dto = quotation.ToDto();
@@ -72,7 +72,7 @@ public sealed class QuotationStorePickupContractTests
             QuotationId.New(), Guid.CreateVersion7(), "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), null, null, null,
             QuotationParties.Empty with { IsStorePickup = true },
-            null, QuotationCurrency.Cop, false, false, new MemberId(Guid.CreateVersion7()),
+            null, "COP", false, false, new MemberId(Guid.CreateVersion7()),
             DateTimeOffset.UtcNow).ToDto();
 
         var response = await new StubQuotationResponseComposer()

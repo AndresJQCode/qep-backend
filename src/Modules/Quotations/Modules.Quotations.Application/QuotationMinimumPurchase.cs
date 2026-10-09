@@ -24,7 +24,7 @@ namespace Modules.Quotations.Application;
 /// ese hueco, la salida es medir la plata sobre el bruto de lista, no iterar hasta un punto fijo.
 ///
 /// <b>Umbral por moneda, sin conversión.</b> Este módulo no tiene tabla de cambio y lo rechaza por
-/// decisión explícita (<see cref="QuotationCurrency"/>), así que el mínimo en dólares es un número
+/// decisión explícita (spec 2026-10-08, no exchange rates), así que el mínimo en dólares es un número
 /// propio y no una conversión del de pesos. Un literal en pesos dejaría la rama de plata muerta
 /// para toda cotización en USD, que nunca llegaría a 500.000.
 /// </summary>
@@ -38,8 +38,13 @@ internal static class QuotationMinimumPurchase
 
     /// <summary>El mínimo en plata que le corresponde a una moneda. Ver la nota sobre por qué no
     /// es una conversión.</summary>
-    public static decimal MinimumTotalFor(QuotationCurrency currency) =>
-        currency == QuotationCurrency.Usd ? MinimumTotalUsd : MinimumTotalCop;
+    // Bridge until Task 10: a currency without a constant has no money branch (fail-closed, spec D7).
+    public static decimal MinimumTotalFor(string currency) => currency switch
+    {
+        "COP" => MinimumTotalCop,
+        "USD" => MinimumTotalUsd,
+        _ => decimal.MaxValue
+    };
 
     /// <summary>
     /// Si la cotización, **tal como quedó con los descuentos ya aplicados**, habilita el descuento.

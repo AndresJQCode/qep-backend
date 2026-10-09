@@ -29,7 +29,16 @@ public sealed class QuotationPricingRecalculationTests
 
     private static QuotationProductPricingRef Product(
         Guid id, decimal? cop, decimal? usd, QuotationPriceScaleRef[] scales) =>
-        new(id, TenantId, "Producto", true, cop, usd, scales, 19);
+        new(id, TenantId, "Producto", true, PricesOf(cop, usd), scales, 19);
+
+    // A missing price is a missing key, not a null amount: the catalogue only lists what it has.
+    private static Dictionary<string, decimal> PricesOf(decimal? cop, decimal? usd)
+    {
+        var prices = new Dictionary<string, decimal>();
+        if (cop is { } copPrice) prices["COP"] = copPrice;
+        if (usd is { } usdPrice) prices["USD"] = usdPrice;
+        return prices;
+    }
 
     private static Quotation NewQuotation(string currency = "COP") =>
         Quotation.Create(
@@ -49,7 +58,7 @@ public sealed class QuotationPricingRecalculationTests
                 AccountNumber = "12345678",
                 Currency = currency
             },
-            QuotationCurrency.Cop,
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

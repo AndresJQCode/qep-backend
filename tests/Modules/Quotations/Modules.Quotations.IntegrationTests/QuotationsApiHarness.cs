@@ -594,12 +594,11 @@ internal static class QuotationsApiHarness
     /// antes de copiarla, así que no alcanza con inventar un nombre de banco.
     /// </summary>
     public static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
-        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId)
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency = "COP")
     {
         var cityId = await EnsureCityIdAsync(client);
         const string bankName = "Bancolombia";
         var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
-        const string currency = "COP";
 
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/companies",

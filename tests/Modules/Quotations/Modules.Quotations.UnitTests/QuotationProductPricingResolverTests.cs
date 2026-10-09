@@ -23,8 +23,7 @@ public sealed class QuotationProductPricingResolverTests
             TenantId,
             "Vela de soja",
             IsActive: true,
-            UnitPriceCop: 100_000m,
-            UnitPriceUsd: 25m,
+            Prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m },
             Scales:
             [
                 new QuotationPriceScaleRef(
@@ -41,7 +40,7 @@ public sealed class QuotationProductPricingResolverTests
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             QuotationProductPricingResolver.ResolveAsync(
-                lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: false,
+                lookup, TenantId, productId, 3m, "COP", isRetail: false,
                 TestContext.Current.CancellationToken));
 
         Assert.Equal(IncompleteCode, error.Code);
@@ -56,7 +55,7 @@ public sealed class QuotationProductPricingResolverTests
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             QuotationProductPricingResolver.ResolveManyAsync(
-                lookup, TenantId, [(productId, 3m)], QuotationCurrency.Usd, isRetail: false,
+                lookup, TenantId, [(productId, 3m)], "USD", isRetail: false,
                 TestContext.Current.CancellationToken));
 
         Assert.Equal(IncompleteCode, error.Code);
@@ -67,16 +66,48 @@ public sealed class QuotationProductPricingResolverTests
     {
         var productId = Guid.NewGuid();
         var lookup = new StubPricingLookup(new QuotationProductPricingRef(
-            productId, TenantId, "Vela de soja", true, 100_000m, null,
+            productId, TenantId, "Vela de soja", true, new Dictionary<string, decimal> { ["COP"] = 100_000m },
             [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
             null));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: false,
+            lookup, TenantId, productId, 3m, "COP", isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(5m, priced.Pricing.DiscountPercentage);
     }
+
+    // No conversion, ever: an EUR quotation needs the product's EUR price, and a product without one
+    // is refused — never priced from COP or USD.
+    [Fact]
+    public async Task AnEurQuotationRejectsAProductWithoutAnEurPrice()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(PricedProduct(productId, new() { ["COP"] = 100_000m, ["USD"] = 25m }));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            QuotationProductPricingResolver.ResolveAsync(
+                lookup, TenantId, productId, 3m, "EUR", isRetail: false, TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.item.product_price_unavailable", error.Code);
+    }
+
+    [Fact]
+    public async Task AnEurQuotationPricesWithTheEurPrice()
+    {
+        var productId = Guid.NewGuid();
+        var lookup = new StubPricingLookup(PricedProduct(productId, new() { ["COP"] = 100_000m, ["EUR"] = 23m }));
+
+        var priced = await QuotationProductPricingResolver.ResolveAsync(
+            lookup, TenantId, productId, 3m, "EUR", isRetail: false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(23m, priced.Pricing.UnitPrice);
+    }
+
+    private static QuotationProductPricingRef PricedProduct(Guid productId, Dictionary<string, decimal> prices) =>
+        new(productId, TenantId, "Vela de soja", IsActive: true, prices,
+            [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
+            TaxPercentage: null);
 
     private sealed class StubPricingLookup(QuotationProductPricingRef product)
         : IQuotationProductPricingLookup
@@ -107,8 +138,7 @@ public sealed class QuotationProductPricingResolverTests
             TenantId,
             "Vela de soja",
             IsActive: true,
-            UnitPriceCop: 100_000m,
-            UnitPriceUsd: 25m,
+            Prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m },
             Scales:
             [
                 new QuotationPriceScaleRef(
@@ -123,7 +153,7 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 13m, QuotationCurrency.Cop, isRetail: false,
+            lookup, TenantId, productId, 13m, "COP", isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(0m, priced.Pricing.DiscountPercentage);
@@ -139,7 +169,7 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 24m, QuotationCurrency.Cop, isRetail: false,
+            lookup, TenantId, productId, 24m, "COP", isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(15m, priced.Pricing.DiscountPercentage);
@@ -153,7 +183,7 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductSoldInPackagesOfTwelve(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveManyAsync(
-            lookup, TenantId, [(productId, 13m)], QuotationCurrency.Usd, isRetail: false,
+            lookup, TenantId, [(productId, 13m)], "USD", isRetail: false,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(0m, priced[productId].DiscountPercentage);
@@ -168,7 +198,7 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductWithAnIncompleteScale(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: true,
+            lookup, TenantId, productId, 3m, "COP", isRetail: true,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(100_000m, priced.Pricing.UnitPrice);
@@ -182,12 +212,12 @@ public sealed class QuotationProductPricingResolverTests
     {
         var productId = Guid.NewGuid();
         var lookup = new StubPricingLookup(new QuotationProductPricingRef(
-            productId, TenantId, "Vela de soja", true, 100_000m, null,
+            productId, TenantId, "Vela de soja", true, new Dictionary<string, decimal> { ["COP"] = 100_000m },
             [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
             null));
 
         var priced = await QuotationProductPricingResolver.ResolveAsync(
-            lookup, TenantId, productId, 3m, QuotationCurrency.Cop, isRetail: true,
+            lookup, TenantId, productId, 3m, "COP", isRetail: true,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(0m, priced.Pricing.DiscountPercentage);
@@ -201,7 +231,7 @@ public sealed class QuotationProductPricingResolverTests
         var lookup = new StubPricingLookup(ProductWithAnIncompleteScale(productId));
 
         var priced = await QuotationProductPricingResolver.ResolveManyAsync(
-            lookup, TenantId, [(productId, 3m)], QuotationCurrency.Usd, isRetail: true,
+            lookup, TenantId, [(productId, 3m)], "USD", isRetail: true,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(25m, priced[productId].UnitPrice);

@@ -56,6 +56,35 @@ public sealed class QuotationItemApiTests
         Assert.Equal(950_000m, updated.Total);
     }
 
+    // Spec 2026-10-08: no conversion. A product without an EUR price cannot enter an EUR
+    // quotation; it is never priced from its COP or USD amount.
+    [Fact]
+    public async Task AddingAProductWithoutAnEurPriceToAnEurQuotationIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m });
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, currency: "EUR");
+        var quotation = await CreateQuotationAsync(
+            client, tenantId, clientId,
+            billingAccount: new QuotationBillingAccountRequest(
+                billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency));
+        Assert.Equal("EUR", quotation.Currency);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 1m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("quotation.item.product_price_unavailable", body.RootElement.GetProperty("code").GetString());
+    }
+
     // RN-013: el impuesto de la cotizacion es la suma del de cada linea, resuelto contra la
     // tasa de impuesto propia de cada producto -- no un unico porcentaje sobre el subtotal.
     [Fact]

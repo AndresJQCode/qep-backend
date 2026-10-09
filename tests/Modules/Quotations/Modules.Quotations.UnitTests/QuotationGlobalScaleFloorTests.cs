@@ -34,7 +34,7 @@ public sealed class QuotationGlobalScaleFloorTests
             notes: null,
             QuotationParties.Empty,
             billingAccount,
-            QuotationCurrency.Cop,
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

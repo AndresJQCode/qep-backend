@@ -299,11 +299,15 @@ public static class ExportLoadSeeder
             CROSS JOIN generate_series(1, @itemsPerQuotation) AS slot
             JOIN (
                 SELECT candidate.id,
-                       coalesce(candidate.price_base_cop, 100000.00) AS unit_price,
+                       -- The COP row of catalog.product_prices: the legacy price_base_cop column is
+                       -- no longer written by the app (spec 2026-10-08) and the load quotations are COP.
+                       coalesce(cop_price.amount, 100000.00) AS unit_price,
                        coalesce(rate.percentage, 0) AS tax,
                        row_number() OVER (ORDER BY candidate.code) - 1 AS position,
                        count(*) OVER () AS total
                 FROM catalog.products AS candidate
+                LEFT JOIN catalog.product_prices AS cop_price
+                    ON cop_price.product_id = candidate.id AND cop_price.currency = 'COP'
                 LEFT JOIN catalog.tax_rates AS rate ON rate.id = candidate.tax_rate_id
                 WHERE candidate.tenant_id = @tenant AND candidate.is_active
             ) AS product ON product.position = (quotation.n * @itemsPerQuotation + slot) % product.total

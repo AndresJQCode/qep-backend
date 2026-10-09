@@ -24,7 +24,7 @@ public sealed class OrderItemEditsTests
 
     private static QuotationProductPricingRef Product(
         Guid productId, string name, decimal unitPriceCop, bool isActive = true) =>
-        new(productId, TenantId, name, isActive, unitPriceCop, null, [], null);
+        new(productId, TenantId, name, isActive, new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
 
     // Convertida por el camino real, con líneas sin impuesto ni descuento: el total es la suma de
     // precio por cantidad y las aserciones no dependen de redondeos.
@@ -33,7 +33,7 @@ public sealed class OrderItemEditsTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), UpdatedBy,
             new DateOnly(2026, 9, 30), null, null, QuotationParties.Empty, BillingAccount,
-            QuotationCurrency.Cop,
+            "COP",
             false, false, UpdatedBy, Now);
         foreach (var (productId, quantity, unitPrice) in lines)
         {

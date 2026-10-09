@@ -26,7 +26,7 @@ public sealed class QuotationTests
         bool customerWithRetention = false,
         bool customerVatSurplus = false,
         DateOnly? validUntil = null,
-        QuotationCurrency defaultCurrency = QuotationCurrency.Cop) =>
+        string defaultCurrency = "COP") =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -50,29 +50,80 @@ public sealed class QuotationTests
     [Fact]
     public void WithoutBillingAccountTheQuotationTakesTheTenantDefault()
     {
-        var quotation = NewQuotation(billingAccount: null, defaultCurrency: QuotationCurrency.Usd);
+        var quotation = NewQuotation(billingAccount: null, defaultCurrency: "USD");
 
-        Assert.Equal(QuotationCurrency.Usd, quotation.Currency);
+        Assert.Equal("USD", quotation.Currency);
     }
 
     [Fact]
     public void TheBillingAccountCurrencyWinsOverTheTenantDefault()
     {
-        var quotation = NewQuotation(billingAccount: BillingAccountIn("COP"), defaultCurrency: QuotationCurrency.Usd);
+        var quotation = NewQuotation(billingAccount: BillingAccountIn("COP"), defaultCurrency: "USD");
 
-        Assert.Equal(QuotationCurrency.Cop, quotation.Currency);
+        Assert.Equal("COP", quotation.Currency);
     }
 
     [Fact]
     public void RemovingTheBillingAccountKeepsTheCurrency()
     {
-        var quotation = NewQuotation(billingAccount: BillingAccountIn("USD"), defaultCurrency: QuotationCurrency.Cop);
+        var quotation = NewQuotation(billingAccount: BillingAccountIn("USD"), defaultCurrency: "COP");
 
         quotation.UpdateDetails(
             null, null, null, QuotationParties.Empty, billingAccount: null, repricing: null,
             isRetail: false, globalScaleFloor: null, AdvisorId, Now);
 
-        Assert.Equal(QuotationCurrency.Usd, quotation.Currency);
+        Assert.Equal("USD", quotation.Currency);
+    }
+
+    [Fact]
+    public void ABillingAccountInEurosMakesTheQuotationEuro()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccountIn("EUR"), defaultCurrency: "COP");
+
+        Assert.Equal("EUR", quotation.Currency);
+    }
+
+    // Spec 2026-10-08 (Testing): moving a quotation to an EUR account reprices every line with
+    // the EUR price the application resolved; the COP amounts are never carried over.
+    [Fact]
+    public void ChangingTheBillingAccountToEurRepricesEveryLine()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccountIn("COP"));
+        var productId = Guid.CreateVersion7();
+        quotation.AddItem(
+            QuotationItemId.New(), productId, quantity: 2, unitPrice: 100_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        quotation.UpdateDetails(
+            null, null, null, QuotationParties.Empty, billingAccount: BillingAccountIn("EUR"),
+            repricing: new Dictionary<Guid, QuotationItemPricing>
+            {
+                [productId] = new QuotationItemPricing(UnitPrice: 23m, DiscountPercentage: 0m, TaxPercentage: 19)
+            },
+            isRetail: false, globalScaleFloor: null, AdvisorId, Now);
+
+        Assert.Equal("EUR", quotation.Currency);
+        var item = Assert.Single(quotation.Items);
+        Assert.Equal(23m, item.UnitPrice);
+    }
+
+    // The pair of the test above: a line without an EUR price blocks the change instead of
+    // keeping its COP amount under an EUR header.
+    [Fact]
+    public void ChangingTheBillingAccountToEurWithoutEveryLinePricedIsRefused()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccountIn("COP"));
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 2, unitPrice: 100_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.UpdateDetails(
+            null, null, null, QuotationParties.Empty, billingAccount: BillingAccountIn("EUR"),
+            repricing: new Dictionary<Guid, QuotationItemPricing>(),
+            isRetail: false, globalScaleFloor: null, AdvisorId, Now));
+
+        Assert.Equal("quotation.quotation.repricing_incomplete", error.Code);
+        Assert.Equal("COP", quotation.Currency);
     }
 
     [Fact]
@@ -102,7 +153,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "  QUO-2026-0001  ", ClientId, AdvisorId,
-            null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now);
+            null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now);
 
         Assert.Equal("QUO-2026-0001", quotation.QuotationNumber);
     }
@@ -115,7 +166,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, number, ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_required", error.Code);
     }
@@ -126,7 +177,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, new string('a', 21), ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_too_long", error.Code);
     }
@@ -137,7 +188,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, "QUO-2026-0001", Guid.Empty, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.client_required", error.Code);
     }
@@ -766,7 +817,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
-            validUntil: null, null, null, QuotationParties.Empty, null, QuotationCurrency.Cop, false, false, AdvisorId, Now);
+            validUntil: null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None));
