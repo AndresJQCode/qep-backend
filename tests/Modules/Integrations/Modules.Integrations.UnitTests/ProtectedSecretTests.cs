@@ -1,10 +1,11 @@
-using Modules.Quotations.Domain;
+using Modules.Integrations.Domain;
 
-namespace Modules.Quotations.UnitTests;
+namespace Modules.Integrations.UnitTests;
 
 /// <summary>
-/// Un <see cref="ProtectedSecret"/> con una mitad nula no puede existir (spec 2026-10-07): sin esto,
-/// <c>TryUnprotect</c> rompería su contrato de no lanzar ante una fila a medias.
+/// Un <see cref="ProtectedSecret"/> con una mitad nula no puede existir (spec 2026-10-08, «Secreto en
+/// reposo»; viene de 6612298): sin esto, <c>TryUnprotect</c> rompería su contrato de no lanzar ante
+/// una fila a medias.
 /// </summary>
 public sealed class ProtectedSecretTests
 {
@@ -15,4 +16,8 @@ public sealed class ProtectedSecretTests
     [Fact]
     public void ANullCiphertextIsRejected() =>
         Assert.Throws<ArgumentNullException>(() => new ProtectedSecret("k1", null!));
+
+    [Fact]
+    public void ToStringShowsTheKeyButNeverTheBytes() =>
+        Assert.Equal("ProtectedSecret { KeyId = k1 }", new ProtectedSecret("k1", [1, 2, 3]).ToString());
 }
