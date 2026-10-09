@@ -498,6 +498,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetConnectionQuery, ConnectionResponse>,
             GetConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateConnectionCommand, ConnectionResponse>,
+            CreateConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateConnectionCommand, ConnectionResponse>,
+            UpdateConnectionHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -505,6 +511,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateConnectionValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);

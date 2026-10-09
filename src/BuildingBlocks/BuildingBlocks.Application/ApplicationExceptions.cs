@@ -31,3 +31,11 @@ public sealed class PreconditionRequiredException(string code, string message) :
 {
     public string Code { get; } = code;
 }
+
+// 503: lo pedido es válido pero el servidor no puede cumplirlo por su configuración (spec 2026-10-08:
+// sin llave activa, Integrations no puede cifrar). Distinta de un 500: no es un error del código, y
+// el cliente puede mostrar "todavía no disponible" en vez de "algo falló".
+public sealed class ServiceUnavailableException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
