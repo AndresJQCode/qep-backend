@@ -6,8 +6,9 @@ Integrations (proveedor `whatsapp-cloud`, `onboarding`, Embedded Signup, tabla d
 Tenancy (módulo `messaging`), Authorization (dos permisos en `admin` y `advisor`), Customers
 (`phone_e164`), Storage (lectura y escritura por stream), Api/Bootstrapper (webhook, limitador,
 excepción de CSRF, adaptadores de los puertos, políticas).
-**Estado:** decisiones 1–11 aprobadas por el owner en conversación el 2026-10-09; pendiente su
-lectura final y las DECISIÓN-PENDIENTE del final.
+**Estado:** decisiones 1–12 aprobadas por el owner en conversación el 2026-10-09 (la 12, búsqueda
+en el historial, en una segunda vuelta el mismo día); las DECISIÓN-PENDIENTE de la primera versión
+quedaron cerradas con decisiones a ratificar (§13). Pendiente su lectura final.
 **Depende de:** `2026-10-08-integraciones-design.md` (módulo Integrations, `IIntegrationConnections`,
 `IConnectionHealthReporter`, `ConnectionResponse`, permisos `integrations.connection.*`) y del
 spec de módulos por tenant (`TenantModuleKeys`, `TenantModuleGuard`, `tenancy.module_not_enabled`).
@@ -39,6 +40,8 @@ módulo nuevo.
   ventana de 24 horas, resolver/reabrir, polling, módulo `messaging` y sus permisos.
 - Medios **entrantes**: copiarlos a R2 y servirlos con la sesión de QEP.
 - Emparejar la conversación con el cliente de QEP por teléfono.
+- Historia 17 (owner, 2026-10-09): búsqueda por palabra en todo el historial de mensajes del
+  tenant, rápida aunque el historial sea enorme (§7.3, §8.8).
 
 ### Fuera de alcance (tal cual el prompt)
 
@@ -61,11 +64,12 @@ real. Si algo de esto hace falta para cumplir una historia, se pregunta antes.
 | 9 | Medios entrantes | Se copian a R2 (bucket privado) al llegar, con un job aparte; la bandeja los sirve desde R2 | La URL de Meta dura 5 minutos y exige el token; el medio vive 7 días en Meta (§3) |
 | 10 | Cliente de QEP | Por **`phone_e164`** calculado en Customers con `libphonenumber-csharp` y el país del cliente; **sin** suponer «10 dígitos = Colombia». Se resuelve **al leer**, no se guarda en la conversación | Un cliente editado o borrado no deja un id viejo en la conversación |
 | 11 | Envío | Idempotente por `(conversación, clientId)`; un `Failed` se reenvía | Historia 12: reintentar no duplica |
+| 12 | Búsqueda en el historial | Full-text en PostgreSQL: columna generada `search_vector` (`tsvector`, español sin acentos) en `messages`, índice GIN por tenant, endpoint `GET /messaging/messages/search` | Prioridad del owner: un tenant que busca en su historial tiene que obtener respuesta rápida. Agregar la columna generada **después**, con la tabla llena, reescribe toda la tabla bajo `ACCESS EXCLUSIVE` (horas a 100 M de filas); hoy es gratis |
 
 ## 3. Lo que se verificó en la documentación de Meta (2026-10-09)
 
-Nada de esto se supone: cada fila tiene su fuente. Lo que no se pudo verificar está marcado
-`DECISIÓN-PENDIENTE` en §13.
+Nada de esto se supone: cada fila tiene su fuente. Lo que no se pudo verificar quedó cerrado con
+una decisión a ratificar en §13.
 
 | Tema | Lo verificado | Fuente |
 | --- | --- | --- |
@@ -74,7 +78,7 @@ Nada de esto se supone: cada fila tiene su fuente. Lo que no se pudo verificar e
 | Canje del `code` | `GET https://graph.facebook.com/<versión>/oauth/access_token?client_id=<APP_ID>&client_secret=<APP_SECRET>&code=<CODE>` → token de *business integration system user* | https://developers.facebook.com/docs/whatsapp/embedded-signup/onboarding-customers-as-a-tech-provider |
 | Suscribir la app a la WABA | `POST /<WABA_ID>/subscribed_apps` con el token del negocio | misma |
 | Registrar el número | `POST /<PHONE_NUMBER_ID>/register` con `{ "messaging_product": "whatsapp", "pin": "<6 dígitos>" }`. El PIN crea la verificación en dos pasos si no existe; **si ya existe, tiene que ser el actual**. Límite: 10 registros por número en 72 h; al pasarlo, error `133016` | https://developers.facebook.com/docs/whatsapp/cloud-api/reference/registration |
-| Coexistencia | Con `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` sólo llega `waba_id`; el partner **se salta el registro** («the number is already registered»); 20 mensajes/s fijos. Meta pide además suscribir `history`, `smb_app_state_sync` y `smb_message_echoes` y sincronizar en 24 h (ver §13, DP-1) | https://developers.facebook.com/docs/whatsapp/embedded-signup/custom-flows/onboarding-business-app-users |
+| Coexistencia | Con `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` sólo llega `waba_id`; el partner **se salta el registro** («the number is already registered»); 20 mensajes/s fijos. Meta pide además suscribir `history`, `smb_app_state_sync` y `smb_message_echoes` y sincronizar en 24 h (ver D-M13) | https://developers.facebook.com/docs/whatsapp/embedded-signup/custom-flows/onboarding-business-app-users |
 | Números de la WABA | `GET /<WABA_ID>/phone_numbers` → `id`, `display_phone_number`, `verified_name`, `quality_rating`, `code_verification_status`. `GET /<PHONE_NUMBER_ID>` agrega `status`, `throughput`, `name_status`. `quality_rating` ∈ `GREEN`, `YELLOW`, `RED`, `UNKNOWN`, `NA`. «Business phone numbers must have a status of 'connected' in order to send and receive messages via the API» | https://developers.facebook.com/docs/whatsapp/business-management-api/manage-phone-numbers |
 | Enviar texto | `POST /<PHONE_NUMBER_ID>/messages` con `messaging_product: "whatsapp"`, `recipient_type: "individual"`, `to`, `type: "text"`, `text.body` (hasta 4096 caracteres), `text.preview_url` opcional. Respuesta `contacts[].{input, wa_id}` y `messages[].id` | https://developers.facebook.com/docs/whatsapp/cloud-api/messages/text-messages |
 | Dato de correlación | `biz_opaque_callback_data` en la petición de envío vuelve en los webhooks de `statuses` de ese mensaje (máximo 512 caracteres) | https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/status |
@@ -115,6 +119,7 @@ Nada de esto se supone: cada fila tiene su fuente. Lo que no se pudo verificar e
 | 14 | `ResolveConversationHandler`, `ReopenConversationHandler` con `If-Match`; reapertura automática en la ingesta |
 | 15 | Polling del frontend (lista 15 s, hilo 5 s, `CONVERSATIONS_POLL_INTERVAL_MS` y `MESSAGES_POLL_INTERVAL_MS` en `src/features/messaging/types/messaging.ts:201-202`); consultas de §7.6 |
 | 16 | Módulo `messaging` + `TenantModuleGuard` en cada handler + permiso `read` |
+| 17 (owner, 2026-10-09): «Como asesor, busco en el historial de mensajes de mi organización por palabra y obtengo rápido los mensajes que coinciden con su conversación» | `GET /messaging/messages/search` → `SearchMessagesHandler`; `messages.search_vector` generada, configuración `messaging.es_unaccent`, índice GIN `IX_messages_tenant_search` (§7.3, §8.8) |
 
 ## 5. Contratos HTTP (copiados del prompt del frontend)
 
@@ -262,6 +267,32 @@ Message
 permiso `read`, responde el archivo con su `Content-Type`): la URL de Meta es efímera y exige el
 token. `failureReason` en español cuando el motivo de Meta sea conocido.
 
+**`GET /messaging/messages/search?q=&conversationId=&from=&to=&limit=50&before={messageId}`** —
+permiso `read` (agregado por el owner el 2026-10-09, historia 17; no está en el prompt del
+frontend). Busca por palabra en el texto y las leyendas de todos los mensajes del tenant, sin
+acentos ni flexiones («drogueria» encuentra «Droguería»; «pedido» encuentra «pedidos»), con
+prefijo en cada palabra de 3 o más caracteres. `q` obligatorio, 2–100 caracteres. `conversationId`,
+`from` y `to` (fechas ISO, por `at`) son filtros opcionales. `limit` 1–100, default 50. `before`
+pagina hacia atrás desde ese mensaje, que tiene que ser del tenant (404
+`messaging.message.not_found`). `items` del más nuevo al más viejo.
+
+```json
+{ "items": [ MessageHit ], "hasMore": true }
+```
+
+```json
+MessageHit = Message + { "conversationId": "…",
+                         "contact": { "waId": "573001234567", "profileName": "Laura Pérez" | null },
+                         "customer": { "id": "…", "name": "Droguería Central" } | null,
+                         "connectionName": "Ventas" }
+```
+
+Lleva quién y por dónde porque la lista de resultados tiene que dibujarlos sin pedir cada
+conversación aparte (BFF, CLAUDE.md); se resuelven por página como en la lista (§8.7). 422
+`validation.failed` con `errors` (`q`, `conversationId`, `from`, `to`, `limit`, `before`). Un
+término que no deja ninguna palabra buscable (sólo símbolos u operadores) responde 200 con `items`
+vacío, nunca 500.
+
 **`POST /messaging/conversations/{id}/messages`** — permiso `manage`.
 
 ```json
@@ -302,7 +333,7 @@ obligatorio con `version` entre comillas (428 sin él, 412 desactualizado). Resp
 | `pageSize` y `limit` por defecto | 30 conversaciones, 50 mensajes | `src/features/messaging/types/messaging.ts:197-198` |
 | ¿Qué `status` lleva un mensaje **entrante**? | `Delivered` fijo. La burbuja sólo dibuja el ícono de estado en salientes (`message-bubble.tsx:64`), pero **sí** pinta como fallido cualquier `Failed` (`message-bubble.tsx:38`, `:69`): un entrante nunca puede ser `Failed` | código |
 | `status` desconocido | El SPA lo degrada a `Sent`; `direction` y el `status` de la conversación desconocidos son error de contrato | spec del frontend, «Reglas del SPA ante la forma» |
-| `lastFailureCode` que el SPA sabe dibujar | `credentials_rejected`, `provider_unreachable`, `token_expired`, `number_unregistered` | `src/features/integrations/types/integrations.ts:121-126` |
+| `lastFailureCode` que el SPA sabe dibujar | `credentials_rejected`, `provider_unreachable`, `token_expired`, `number_unregistered`. Un código que no conoce **lo muestra crudo**, no con un texto genérico: `labelFor` devuelve `labels[value] ?? value` | `src/features/integrations/types/integrations.ts:121-126` y `:193-198`; lo usa `connection-list.tsx:124-125` |
 
 ## 6. Diseño por módulo
 
@@ -411,18 +442,22 @@ con `Authorization: Bearer <accessToken>`.
 
 | Respuesta | Resultado | `last_failure_code` |
 | --- | --- | --- |
-| 200 con `status` = `CONNECTED` | `Ok`; además refresca `displayPhoneNumber`, `verifiedName`, `qualityRating` | — |
-| 200 con otro `status` | `CredentialsRejected` con código `number_unregistered` | `number_unregistered` |
+| 200 (cualquier `status`) | `Ok`; además refresca `displayPhoneNumber`, `verifiedName`, `qualityRating`. `status` se registra en el log, no decide | — |
 | error Graph `code = 190` | `CredentialsRejected` con código `token_expired` | `token_expired` |
+| error Graph `code = 133010` | `CredentialsRejected` con código `number_unregistered` | `number_unregistered` |
 | otro 400/401/403 | `CredentialsRejected` | `credentials_rejected` |
 | timeout, 5xx, red | `Unreachable` | `provider_unreachable` |
 
+Un 200 vale aunque `status` no sea `CONNECTED` (D-M14): no se pudo verificar qué `status` reporta
+un número de coexistencia, y marcarlo `number_unregistered` en falso dejaría la conexión en
+`NeedsAttention` sin motivo. `number_unregistered` sale sólo del `133010` de Meta, acá o al enviar
+(§8.3).
+
 `ConnectionTestResult` gana un `FailureCode` opcional; sin él, el mapeo de hoy
-(`ConnectionFailureCodes`). `ConnectionFailureCodes` gana `TokenExpired = "token_expired"` y
-`NumberUnregistered = "number_unregistered"`. El refresco de campos al probar es nuevo: el
-probador devuelve `RefreshedFields` y el handler los aplica con un método del agregado que sólo
-toca campos internos o de sólo lectura del proveedor. Que `status` `CONNECTED` sea también el de
-un número de coexistencia está en DP-2.
+(`ConnectionFailureCodes`). `ConnectionFailureCodes` gana `TokenExpired = "token_expired"`,
+`NumberUnregistered = "number_unregistered"` y `AccountDisabled = "account_disabled"` (§8.2). El
+refresco de campos al probar es nuevo: el probador devuelve `RefreshedFields` y el handler los
+aplica con un método del agregado que sólo toca campos internos o de sólo lectura del proveedor.
 
 **`CompleteWhatsAppSignupHandler`** (detalle en §8.1). Auditoría
 `integrations.connection.created` con `changedFields` por clave y además `path` y `event` en los
@@ -498,6 +533,7 @@ esta versión.
 | `POST /messaging/conversations/{id}/read` | manage | `MarkConversationReadHandler` |
 | `POST /messaging/conversations/{id}/resolve` | manage | `ResolveConversationHandler` |
 | `POST /messaging/conversations/{id}/reopen` | manage | `ReopenConversationHandler` |
+| `GET /messaging/messages/search` | read | `SearchMessagesHandler` |
 | `GET /messaging/media/{messageId}` | read | `GetMediaHandler` |
 | `GET /api/webhooks/whatsapp` | anónimo | `VerifyWebhookHandler` |
 | `POST /api/webhooks/whatsapp` | anónimo, firma | `ReceiveWebhookHandler` |
@@ -515,6 +551,7 @@ nada.
 | `SendMessage` | `text` no vacío tras `Trim`, ≤ 4096, sin `\0`; `clientId` GUID no vacío | `text`, `clientId` |
 | `ListConversations` | `status` ∈ `Open`, `Resolved` (default `Open`); `search` ≤ 100; `page` ≥ 1; `pageSize` 1–50 (default 30) | `status`, `search`, `page`, `pageSize` |
 | `ListMessages` | `limit` 1–100 (default 50); `before` GUID de un mensaje **de esa conversación** | `limit`, `before` |
+| `SearchMessages` | `q` 2–100 caracteres tras `Trim`, sin `\0`; `conversationId` GUID o ausente; `from` ≤ `to`; `limit` 1–100 (default 50); `before` GUID | `q`, `conversationId`, `from`, `to`, `limit`, `before` |
 
 ### 6.5 Customers (delta)
 
@@ -664,14 +701,19 @@ CREATE TABLE messaging.messages (
     direction          smallint     NOT NULL,
     kind               smallint     NOT NULL,
     status             smallint     NOT NULL,
-    text               text         NULL,
-    details            jsonb        NULL,       -- location / contacts / reaction / interactive
-    wamid              text         NULL,
-    client_id          uuid         NULL,
-    sent_by_member_id  uuid         NULL,
-    failure_code       integer      NULL,       -- código de Meta; -1 = envío sin confirmar (§8.3)
-    failure_title      text         NULL,       -- título de Meta en inglés, para soporte; nunca sale por HTTP
-    created_at         timestamptz  NOT NULL,
+    text               text          NULL,
+    caption            varchar(1024) NULL,      -- leyenda de un medio (Meta: caption); aquí y no en message_media para que la busque search_vector
+    details            jsonb         NULL,      -- location / contacts / reaction / interactive
+    wamid              text          NULL,
+    client_id          uuid          NULL,
+    sent_by_member_id  uuid          NULL,
+    failure_code       integer       NULL,      -- código de Meta; -1 = envío sin confirmar (§8.3)
+    failure_title      text          NULL,      -- título de Meta en inglés, para soporte; nunca sale por HTTP
+    created_at         timestamptz   NOT NULL,
+    search_vector      tsvector GENERATED ALWAYS AS (
+                           to_tsvector('messaging.es_unaccent',
+                                       coalesce(text, '') || ' ' || coalesce(caption, ''))
+                       ) STORED,
     CONSTRAINT "PK_messages" PRIMARY KEY (id),
     CONSTRAINT "FK_messages_conversation" FOREIGN KEY (conversation_id)
         REFERENCES messaging.conversations (id) ON DELETE CASCADE,
@@ -688,11 +730,90 @@ CREATE TABLE messaging.messages (
 | `IX_messages_thread` | `(conversation_id, occurred_at DESC, id DESC)` | El hilo y su paginación hacia atrás por *keyset*: `WHERE conversation_id = @c AND (occurred_at, id) < (@t, @id) ORDER BY occurred_at DESC, id DESC LIMIT @n + 1`. La fila `n + 1` sólo dice `hasMore`. Ordena por la **hora de Meta**, no la de llegada: un reenvío tardío de Meta cae en su lugar y no desordena el hilo. `id` desempata los segundos repetidos (Meta manda segundos) |
 | `IX_messages_connection_wamid` | `UNIQUE (connection_id, wamid) WHERE wamid IS NOT NULL` | Dos trabajos con un índice: deduplicar mensajes entrantes (`ON CONFLICT DO NOTHING`) y encontrar el saliente que un `status` actualiza. Por conexión y no global: el `wamid` es de Meta, y acotarlo a la conexión evita que un tenant choque con otro |
 | `IX_messages_conversation_client` | `UNIQUE (conversation_id, client_id) WHERE client_id IS NOT NULL` | Idempotencia del envío (§8.3). Parcial: los entrantes no lo pagan |
+| `IX_messages_tenant_search` | `USING GIN (tenant_id, search_vector)` | La búsqueda en el historial (historia 17). `tenant_id` entra en el GIN gracias a `btree_gin`; el *fast scan* del GIN intersecta la lista de un término raro con la del tenant sin leer el heap de los demás |
 
-**Lo que no se indexa, a propósito:** no hay índice sólo por `tenant_id` (ninguna consulta caliente
-recorre los mensajes de un tenant; el aislamiento lo da la conversación, que ya se validó contra el
-tenant). No se guarda el payload crudo por mensaje: el cuerpo vive en `webhook_deliveries` y se
-purga a los 7 días.
+**Lo que no se indexa, a propósito:** no hay índice B-tree sólo por `tenant_id` (ninguna consulta
+caliente recorre los mensajes de un tenant por fecha; el aislamiento lo da la conversación, que ya
+se validó contra el tenant; el GIN de búsqueda lo lleva como primera clave para otra cosa). No se
+guarda el payload crudo por mensaje: el cuerpo vive en `webhook_deliveries` y se purga a los 7
+días.
+
+**Búsqueda en el historial (`search_vector`, decisión 12).**
+
+- **Columna generada hoy, no mañana.** Una `GENERATED … STORED` que se agrega a una tabla con datos
+  reescribe **toda** la tabla bajo `ACCESS EXCLUSIVE`: a 100 M de filas son horas sin lecturas ni
+  escrituras en `messages`. Creada con la tabla vacía no cuesta nada, y cada `INSERT` la calcula por
+  su cuenta (unos microsegundos por mensaje).
+- `to_tsvector(regconfig, text)` con la configuración como **literal** es `IMMUTABLE`, que es lo que
+  PostgreSQL exige en una columna generada; la variante de un argumento depende de
+  `default_text_search_config` y no se admite. La configuración va **calificada con esquema**
+  (`'messaging.es_unaccent'`) en la expresión: así no depende del `search_path` de quien inserte.
+- **Configuración `messaging.es_unaccent`.** En la migración `InitialMessaging`, antes de la tabla:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS unaccent;    -- en public, mismo precedente que pg_trgm (§7.2)
+CREATE EXTENSION IF NOT EXISTS btree_gin;   -- idem: tenant_id dentro de un GIN
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_ts_config c JOIN pg_namespace n ON n.oid = c.cfgnamespace
+        WHERE n.nspname = 'messaging' AND c.cfgname = 'es_unaccent')
+    THEN
+        CREATE TEXT SEARCH CONFIGURATION messaging.es_unaccent (COPY = pg_catalog.spanish);
+        ALTER TEXT SEARCH CONFIGURATION messaging.es_unaccent
+            ALTER MAPPING FOR hword, hword_part, word, asciiword, asciihword, hword_asciipart
+            WITH unaccent, spanish_stem;
+    END IF;
+END $$;
+```
+
+  Sólo las palabras pasan por `unaccent` y el *stemmer* español («Droguería» → `drogueri`,
+  «pedidos» → `pedid`). Números, correos, URLs y partes con dígitos **conservan el mapeo por
+  defecto** de `spanish`: un número de pedido o un documento siguen siendo un token exacto. El
+  `DO … IF NOT EXISTS` la hace idempotente: `CREATE TEXT SEARCH CONFIGURATION` no tiene `IF NOT
+  EXISTS`, y la migración corre en bases locales que pueden tenerla a medias.
+- **El índice.** `CREATE INDEX "IX_messages_tenant_search" ON messaging.messages USING GIN
+  (tenant_id, search_vector)`. Con `fastupdate` en su valor por defecto (prendido): los inserts
+  dejan las entradas en la lista pendiente y el GIN se consolida al llegar a
+  `gin_pending_list_limit` (4 MB por defecto) o en el `autovacuum`. Con mucho tráfico conviene
+  fijar `gin_pending_list_limit` en el índice (`WITH (gin_pending_list_limit = 2048)`, en KB) y
+  dejar el `autovacuum` de la tabla más agresivo (`autovacuum_vacuum_scale_factor = 0.02`), para
+  que la lista pendiente —que se recorre entera en cada búsqueda— no crezca.
+- **La consulta** (`SearchMessagesHandler`, §8.8):
+
+```sql
+SET LOCAL statement_timeout = '2s';
+SELECT … FROM messaging.messages
+WHERE tenant_id = @t
+  AND search_vector @@ to_tsquery('messaging.es_unaccent', @q)
+  [AND conversation_id = @c]
+  [AND occurred_at BETWEEN @from AND @to]
+  [AND (occurred_at, id) < (@beforeAt, @beforeId)]
+ORDER BY occurred_at DESC, id DESC
+LIMIT @limit + 1;
+```
+
+- **Cómo se arma `@q`.** `websearch_to_tsquery` no admite prefijos, así que el servidor construye
+  la `tsquery` él mismo: `Trim`, tope de 100 caracteres, separa por espacios, **quita** los
+  operadores de `tsquery` (`& | ! : * ( ) ' \ <`) y los caracteres de control de cada token,
+  descarta los tokens vacíos, se queda con los **primeros 8**, y cada uno pasa por
+  `to_tsvector('messaging.es_unaccent', token)` para obtener su lexema normalizado; los de 3 o más
+  caracteres van como `lexema:*` (prefijo) y los más cortos exactos; todo unido con `&`. Un token
+  que no deja lexema (una *stop word* como «de», o sólo símbolos) se omite; si no queda ninguno, la
+  respuesta es `items: []` sin consultar. Así ningún texto de la persona llega a `to_tsquery`
+  como sintaxis.
+- **El límite honesto.** El GIN devuelve rápido *qué filas* contienen el término, pero el `ORDER BY`
+  por fecha obliga a ordenar **todas** las coincidencias del tenant antes de cortar en `LIMIT`. Con
+  un término raro son decenas de filas; con uno muy común («hola») en un tenant con millones de
+  mensajes son millones, y la consulta tarda. Mitigación: el `statement_timeout` de 2 s con `SET
+  LOCAL` (la respuesta es 422 `validation.failed` en `q` con «Busca con una palabra más específica
+  o acota las fechas»), y el rango `from`/`to`, que recorta por la columna del `ORDER BY`. Si un
+  tenant lo necesita de verdad, el camino es un motor externo (OpenSearch/Meilisearch) alimentado
+  desde la ingesta; el índice de hoy no se tira, se deja para los filtros.
+- **Descartado y por qué:** `pg_trgm` sobre `text` (índice 2–3 veces más grande, sin `tenant_id`
+  adentro, y «contiene» no entiende de flexiones); RUM (no viene en `postgres:18-alpine`, la imagen
+  del `compose.yaml`, ni en la base administrada); ordenar por `ts_rank` (obliga a puntuar todas las
+  coincidencias; el orden por fecha es lo que una bandeja espera).
 
 `fillfactor = 90`: el cambio de `status` (columna **no** indexada) es la única actualización de la
 fila; con espacio libre en la página es HOT y no toca ningún índice.
@@ -711,7 +832,6 @@ CREATE TABLE messaging.message_media (
     message_id       uuid         NOT NULL,   -- 1:1, sólo mensajes con medio
     mime_type        varchar(128) NOT NULL,
     file_name        varchar(256) NULL,
-    caption          text         NULL,
     meta_media_id    varchar(64)  NOT NULL,
     size_bytes       bigint       NULL,
     sha256           varchar(64)  NULL,       -- el que manda Meta; se verifica al copiar
@@ -743,8 +863,9 @@ CREATE INDEX "IX_webhook_deliveries_pending" ON messaging.webhook_deliveries (id
     WHERE processed_at IS NULL;
 ```
 
-- `message_media` aparte: sólo una fracción de los mensajes trae medio, y sus 12 columnas no
-  engordan la fila de cada texto. El índice parcial de pendientes queda casi vacío en régimen.
+- `message_media` aparte: sólo una fracción de los mensajes trae medio, y sus 11 columnas no
+  engordan la fila de cada texto. El índice parcial de pendientes queda casi vacío en régimen. La
+  leyenda **no** vive aquí: está en `messages.caption` para que `search_vector` la indexe (§7.3).
 - `webhook_deliveries.id` es `bigint` identity y no UUID: la tabla es una cola, su orden es el de
   llegada y nunca sale por HTTP. El único por `body_sha256` hace que un reenvío **idéntico** de
   Meta no cree otra fila; un reenvío con bytes distintos sí la crea y lo absorbe la deduplicación
@@ -771,9 +892,9 @@ RETURNING id;
 
 -- 2. El mensaje. Si Meta lo reenvía, no inserta nada.
 INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at,
-       direction, kind, status, text, details, wamid, created_at)
+       direction, kind, status, text, caption, details, wamid, created_at)
 VALUES (@messageId, @conversationId, @tenantId, @connectionId, @occurredAt,
-        1, @kind, 2, @text, @details, @wamid, @now)
+        1, @kind, 2, @text, @caption, @details, @wamid, @now)   -- search_vector se calcula solo
 ON CONFLICT (connection_id, wamid) WHERE wamid IS NOT NULL DO NOTHING
 RETURNING id;
 
@@ -848,6 +969,7 @@ RETURNING id, conversation_id;
 | Hilo hacia atrás | al subir | igual + `AND (occurred_at, id) < (@t, @id)` | El mismo índice, por comparación de fila |
 | Estado por `wamid` | por cada acuse de Meta | `UPDATE … WHERE connection_id = @c AND wamid = @w` | Una búsqueda en `IX_messages_connection_wamid`, actualización HOT |
 | Medios pendientes | cada pocos segundos | `WHERE stored_at IS NULL AND next_attempt_at <= now() ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED` | Index scan del parcial, casi vacío |
+| Búsqueda en el historial | al pedirla una persona (sin poll) | `WHERE tenant_id = @t AND search_vector @@ to_tsquery(…) ORDER BY occurred_at DESC, id DESC LIMIT 51` | Bitmap index scan de `IX_messages_tenant_search` (intersección tenant ∧ términos dentro del GIN), bitmap heap scan de las coincidencias y un `Sort` con `LIMIT` (top-N heapsort). Costo proporcional a las **coincidencias del tenant**, no a la tabla; acotado por `statement_timeout` de 2 s (§7.3) |
 
 ### 7.7 Tamaños aproximados (orden de magnitud, para planear)
 
@@ -855,12 +977,13 @@ Estimación por fila, con texto promedio de ~60 bytes y `wamid` de ~60:
 
 | Objeto | Bytes por fila | 10 M mensajes | 100 M mensajes |
 | --- | --- | --- | --- |
-| heap de `messages` (con `fillfactor` 90) | ~280 | ~2,8 GB | ~28 GB |
+| heap de `messages` (con `fillfactor` 90, `search_vector` incluido: ~60 B por fila con ~8 lexemas) | ~340 | ~3,4 GB | ~34 GB |
 | `PK_messages` | ~32 | ~0,3 GB | ~3 GB |
 | `IX_messages_thread` | ~56 | ~0,6 GB | ~5,6 GB |
 | `IX_messages_connection_wamid` | ~90 | ~0,9 GB | ~9 GB |
 | `IX_messages_conversation_client` (≈ 40 % salientes) | ~20 efectivos | ~0,2 GB | ~2 GB |
-| **Total `messages`** | **~480** | **~4,8 GB** | **~48 GB** |
+| `IX_messages_tenant_search` (GIN; listas comprimidas, ~30–50 B por fila) | ~40 | ~0,4 GB | ~3–5 GB |
+| **Total `messages`** | **~580** | **~5,8 GB** | **~58 GB** |
 
 `conversations` (~350 bytes con sus índices por fila) queda en decenas o cientos de MB aun con
 millones de contactos. `webhook_deliveries` se purga a 7 días y su tamaño depende del tráfico de
@@ -892,8 +1015,10 @@ una semana. Si el índice de `wamid` pesa demasiado, la salida es guardar un has
    `integrations.whatsapp.registration_failed` (incluido el `133016` de 10 registros en 72 h, y el
    caso de un número que ya tenía verificación en dos pasos con otro PIN: ver §13).
 6. Si es coexistencia: `GET /{wabaId}/phone_numbers` para resolver el número. Con uno solo, ése.
-   Con varios, el que no tenga ruta en QEP; si queda más de uno → `registration_failed` y se
-   registra en el log (DP-3). **No** se llama `/register` (§3).
+   Con varios, el que no tenga ruta en QEP; si queda más de uno **no se elige ninguno** →
+   `registration_failed` con `detail` «La cuenta tiene varios números sin conectar; deja uno solo
+   o conéctalo desde el número nuevo», y se registra en el log (D-M15). **No** se llama
+   `/register` (§3).
 7. `POST /{wabaId}/subscribed_apps` con el token. Error → `registration_failed`.
 8. `GET /{phoneNumberId}?fields=display_phone_number,verified_name,quality_rating,status`.
 9. Crea la conexión `Active` con `displayPhoneNumber`, `verifiedName`, `phoneNumberId`, `wabaId`,
@@ -951,17 +1076,21 @@ idempotente, así que reprocesar una entrega a medias no duplica nada:
   `IMessagingConnectionDirectory.FindRouteAsync` (caché 60 s).
   - Sin ruta (conexión borrada o número desconocido) → se descarta y se registra (phone number id
     y cantidad, sin contenido).
-  - `Paused` → **mensajes entrantes descartados**; `statuses` sí se aplican.
+  - `Paused`, **o módulo `messaging` apagado para ese tenant** (la ruta trae el tenant; se
+    consulta `ITenantModules` con la misma caché de 60 s; D-M18) → **mensajes entrantes
+    descartados**; `statuses` sí se aplican.
   - `Active` o `NeedsAttention` → `messages[]` por §7.5 y `statuses[]` por §7.5.
   - Por cada mensaje: `wa_id` = `contacts[]` del mismo `wa_id` que `from`; `profile_name` =
     `contacts[].profile.name` (truncado a 256); `occurred_at` = `timestamp` (segundos Unix).
 - `field = "account_update"`: rutas por `entry.id` (WABA) en `FindByAccountAsync`. Con
   `DISABLED_UPDATE` + `ban_info.waba_ban_state = "DISABLE"`, `ACCOUNT_DELETED`, `PARTNER_REMOVED`,
-  `PARTNER_APP_UNINSTALLED` o `ACCOUNT_OFFBOARDED` → `ReportRejectedAsync` para cada conexión
-  (pasa de `Active` a `NeedsAttention` por el `IConnectionHealthReporter` que ya existe; si no está
-  `Active`, lo ignora). Con qué `lastFailureCode`: DP-4. Los demás eventos se registran y nada
-  más; `REINSTATE` y `ACCOUNT_RECONNECTED` **no** reactivan solos: la persona prueba la conexión.
-- Otro `field` → se registra y se ignora.
+  `PARTNER_APP_UNINSTALLED` o `ACCOUNT_OFFBOARDED` → `ReportRejectedAsync(…, "account_disabled")`
+  para cada conexión (pasa de `Active` a `NeedsAttention` por el `IConnectionHealthReporter` que ya
+  existe; si no está `Active`, lo ignora). `account_disabled` es un `lastFailureCode` nuevo
+  (D-M16, §10.2). Los demás eventos se registran y nada más; `REINSTATE` y `ACCOUNT_RECONNECTED`
+  **no** reactivan solos: la persona prueba la conexión.
+- Otro `field` (incluidos `history`, `smb_app_state_sync` y `smb_message_echoes`, que no se
+  suscriben en este slice, D-M13) → se registra y se ignora.
 
 **La carrera del `sent` antes que el `wamid`.** Meta puede mandar el `sent` antes de que el envío
 haya commiteado el `wamid` (§8.3 mantiene la fila sin commitear mientras espera la respuesta de
@@ -1072,21 +1201,22 @@ pedir.
 
 - `customerWindowExpiresAt = last_inbound_at + 24 h`, o `null`.
 - `customer`: `IMessagingCustomerDirectory.MatchAsync` con los `waId` de la página (§6.5).
-- `connectionName`: `ListNamesAsync`; si la conexión se borró, `"Conexión eliminada"` (DP-5).
-- `lastMessage`: la foto; `null` si no hay.
+- `connectionName`: `ListNamesAsync`; si la conexión se borró, `"Conexión eliminada"` (D-M17).
+- `lastMessage`: la foto; `null` si no hay. `preview` = `text`, o `caption` en un medio.
 - Búsqueda: `search` se normaliza (trim). Busca `profile_name ILIKE '%term%'`, `wa_id LIKE '%dígitos%'`
   (sólo si el término tiene dígitos) y `wa_id = ANY(phones)` con los dígitos de
   `FindPhonesByNameAsync`.
-- Hilo: `kind` → `text` (texto, o leyenda en medios), `media` (si hay `message_media`; la `url` es
-  la ruta de §8.6 aunque todavía no esté copiado), `location` desde `details`, `failureReason` por
-  §10.3, `sentBy` con el nombre del miembro (lookup por página, como Quotations con el asesor).
+- Hilo: `kind` → `text` (columna `text`; en un medio es `null`), `media` (si hay `message_media`;
+  `media.caption` sale de `messages.caption` y la `url` es la ruta de §8.6 aunque todavía no esté
+  copiado), `location` desde `details`, `failureReason` por §10.3, `sentBy` con el nombre del
+  miembro (lookup por página, como Quotations con el asesor).
 
 **Mapa de tipos de Meta a `kind`:**
 
 | `type` de Meta | `kind` | `text` | `details` |
 | --- | --- | --- | --- |
 | `text` | `Text` | `text.body` | — |
-| `image`, `video`, `audio`, `document`, `sticker` | el homónimo | leyenda (`caption`) | — (va a `message_media`, con `filename` del documento) |
+| `image`, `video`, `audio`, `document`, `sticker` | el homónimo | `null`; la leyenda (`caption`) va a `messages.caption` | — (`id`, `mime_type`, `sha256` y `filename` del documento van a `message_media`) |
 | `location` | `Location` | — | `latitude`, `longitude`, `name`, `address` |
 | `contacts` | `Contacts` | nombres formateados, separados por coma | el arreglo |
 | `reaction` | `Reaction` | el emoji | `message_id`, `emoji` |
@@ -1096,6 +1226,27 @@ pedir.
 
 `Template` queda reservado para salientes; esta versión no envía plantillas. Que `button` caiga en
 `Interactive` y no en `Unsupported` es D-M6.
+
+### 8.8 Buscar en el historial
+
+`GET /messaging/messages/search` (read, historia 17), `SearchMessagesHandler`:
+
+1. Validador (`validation.failed`) → tenant y permiso (403) → `TenantModuleGuard` (403 con código).
+2. Si viene `conversationId`, la conversación es del tenant o 404 `messaging.conversation.not_found`.
+   Si viene `before`, el mensaje es del tenant (`SELECT occurred_at, id … WHERE id = @before AND
+   tenant_id = @t`) o 404 `messaging.message.not_found`; de ahí salen `@beforeAt` y `@beforeId`.
+3. Se arma la `tsquery` como dice §7.3. Sin lexemas → `{ "items": [], "hasMore": false }` sin
+   consultar.
+4. La consulta de §7.3 con `SET LOCAL statement_timeout = '2s'` en la misma transacción, `LIMIT
+   limit + 1`; la fila extra sólo decide `hasMore`. Un timeout (`57014`) se traduce en
+   `MessagingUnitOfWork` a `ValidationException` con `errors["q"]` («Busca con una palabra más
+   específica o acota las fechas»), nunca 500.
+5. Por página: las conversaciones de los resultados (una consulta por `id = ANY(…)`), `customer`
+   por `MatchAsync` con sus `waId`, `connectionName` por `ListNamesAsync`, `sentBy` por el lookup
+   de miembros. Cada `MessageHit` se arma como un `Message` (§8.7) más esos cuatro campos.
+
+No hay resaltado de coincidencias ni `ts_rank`: el orden es por fecha, y la pantalla marca el
+término por su cuenta si lo quiere.
 
 ## 9. Configuración
 
@@ -1126,7 +1277,7 @@ base. En local van por user-secrets y se verifican **contando**, nunca listando
 
 | Código | HTTP | Cuándo |
 | --- | --- | --- |
-| `validation.failed` con `errors` | 422 | FluentValidation (§6.4, §8.1); campos internos o de sólo lectura en `POST`/`PUT` de conexiones |
+| `validation.failed` con `errors` | 422 | FluentValidation (§6.4, §8.1); campos internos o de sólo lectura en `POST`/`PUT` de conexiones; `q` de la búsqueda fuera de 2–100 o búsqueda que excede los 2 s (`errors["q"]`) |
 | `integrations.whatsapp.code_exchange_failed` | 422 | Meta no canjeó el `code` (vencido, usado, app mal configurada) o falta `Meta:App` |
 | `integrations.whatsapp.registration_failed` | 422 | `/register`, `phone_numbers` o `subscribed_apps` fallaron; número ambiguo en coexistencia |
 | `integrations.whatsapp.number_already_connected` | 422 | ruta existente, o `IX_connection_routes_provider_external` al guardar |
@@ -1137,7 +1288,8 @@ base. En local van por user-secrets y se verifican **contando**, nunca listando
 | `messaging.conversation.not_open` | 422 | enviar a una `Resolved` |
 | `messaging.message.rejected` | 422 | Meta rechazó el mensaje o no se pudo confirmar |
 | `messaging.conversation.already_resolved` / `already_open` | 422 | resolve/reopen sin cambio |
-| `messaging.conversation.not_found` | 404 | id inexistente **dentro del tenant**. Un `before` de otra conversación es `validation.failed` |
+| `messaging.conversation.not_found` | 404 | id inexistente **dentro del tenant** (también el `conversationId` de la búsqueda). Un `before` de otra conversación en el hilo es `validation.failed` |
+| `messaging.message.not_found` | 404 | `before` de la búsqueda que no es un mensaje del tenant |
 | 404 sin código | 404 | medio no copiado, mensaje sin medio o inexistente |
 | `tenancy.module_not_enabled` | 403 | `messaging` apagado (`/messaging/*`, `embedded-signup`, conexiones de `whatsapp-cloud`) |
 | `authorization.denied` | 403 | otro tenant o sin permiso. **Nunca 404** para otro tenant |
@@ -1149,9 +1301,13 @@ base. En local van por user-secrets y se verifican **contando**, nunca listando
 
 ### 10.2 `lastFailureCode` de una conexión `whatsapp-cloud`
 
-`token_expired` (Graph `190`), `number_unregistered` (`133010` o `status` distinto de `CONNECTED`),
-`credentials_rejected`, `provider_unreachable` — los cuatro que el frontend ya traduce
-(`src/features/integrations/types/integrations.ts:121-126`).
+| Código | Cuándo | Lo dibuja el frontend |
+| --- | --- | --- |
+| `token_expired` | Graph `190` al probar o al enviar | Sí (`integrations.ts:125`) |
+| `number_unregistered` | Graph `133010` al probar o al enviar | Sí (`integrations.ts:126`) |
+| `credentials_rejected` | otro 400/401/403 al probar | Sí |
+| `provider_unreachable` | timeout, 5xx, red al probar | Sí |
+| `account_disabled` | `account_update` de cuenta deshabilitada, borrada, app desinstalada o partner quitado (§8.2; D-M16) | **No todavía**: `labelFor` muestra el código crudo (`integrations.ts:193-198`). El frontend agrega la etiqueta «Meta deshabilitó la cuenta de WhatsApp Business o quitó el acceso de QEP» en su slice |
 
 ### 10.3 `failureReason` en español
 
@@ -1206,8 +1362,10 @@ otro código → texto genérico.
   `kind`/`status` de ida y vuelta, `failureReason`, mapa de tipos de Meta.
 - Integrations: `FieldDefinition.Internal` (catálogo sin internos, `PUT`/`POST` los rechazan),
   `onboarding` (`Form` sin claves extra), `CompleteWhatsAppSignupHandler` con dobles de Graph
-  (FINISH, coexistencia, cada error), `WhatsAppCloudConnectionTester` (`CONNECTED`, otro estado,
-  `190`, 5xx, timeout).
+  (FINISH, coexistencia con uno y con varios números, cada error), `WhatsAppCloudConnectionTester`
+  (200 con `CONNECTED` y 200 con otro `status` → los dos `Ok`; `190`; `133010`; 5xx; timeout).
+- Messaging: armado de la `tsquery` (operadores quitados, tope de 8 tokens, prefijo sólo con 3 o
+  más caracteres, *stop words* omitidas, sin lexemas → vacío).
 - Customers: `phone_e164` (con `+`, nacional por país, prefijo troncal, inválido → `null` sin
   romper la escritura), regla de duplicados.
 - Tenancy: orden de `All`, `DefaultForNewTenants` sin `messaging`.
@@ -1220,8 +1378,9 @@ otro código → texto genérico.
 - **Carga:** N POSTs firmados concurrentes con `wamid` repetidos → **cero 429**, un mensaje por
   `wamid`, `unreadCount` exacto, una conversación por `waId`.
 - Ingesta: reapertura de una resuelta, reenvío viejo que no reabre ni sube contadores, foto del
-  último mensaje con mensajes fuera de orden, `Paused` descarta entrantes y aplica estados, ruta
-  desconocida descarta.
+  último mensaje con mensajes fuera de orden, `Paused` y módulo apagado descartan entrantes y
+  aplican estados, ruta desconocida descarta, `account_update` de cuenta deshabilitada deja la
+  conexión en `NeedsAttention` con `account_disabled`, un `field` desconocido se ignora.
 - Estados: monotonía (`read` antes que `delivered`), `failed` sólo sobre `Sent`, `played` →
   `Read`, callback que llega antes del `wamid` (reintento y éxito), status ajeno sin callback
   descartado sin reintentos.
@@ -1229,6 +1388,12 @@ otro código → texto genérico.
   `190` → `NeedsAttention` + `connection_unavailable`, `131047` → `window_closed`, timeout → `-1`.
 - Lista: orden, `counts` (suma de `unreadCount`), búsqueda por perfil, número y cliente.
 - Hilo: paginación con `before` y `hasMore`, orden cronológico.
+- Búsqueda en el historial: tres mensajes repartidos en dos tenants → sólo los del tenant;
+  «drogueria» encuentra «Droguería» y «pedido» encuentra «pedidos» (acentos y flexiones); prefijo
+  («drog»); una leyenda de imagen se encuentra; paginación por `before` con `hasMore`; filtro
+  `conversationId`; entrada con operadores (`&|!:*()'`) → 200 vacío; `q` de un carácter → 422
+  `validation.failed` en `q`; `before` de otro tenant → 404 `messaging.message.not_found`; la
+  migración es idempotente (correrla dos veces sobre la misma base no falla).
 - Módulo apagado → 403 con código en cada endpoint; sin permiso → 403; otro tenant → 403; 412/428.
 - Medios: copia con almacén falso, `sha256` que no coincide, 404 sin código antes de copiar, headers
   de seguridad al servir.
@@ -1262,6 +1427,19 @@ vez al final**, comparada por nombre contra `develop` con un script, y `dotnet b
 | D-M11 | Las conversaciones de una conexión eliminada se conservan, de sólo lectura (enviar → `connection_unavailable`). Reconectar el mismo número crea una conexión nueva y, con ella, conversaciones nuevas | Una migración que reasigne `connection_id` |
 | D-M12 | `REINSTATE`/`ACCOUNT_RECONNECTED` no reactivan solos | La persona prueba la conexión |
 
+Las siete que siguen cierran las DECISIÓN-PENDIENTE de la primera versión. Se tomaron sin el owner
+el 2026-10-09 y quedan **a ratificar** en su lectura:
+
+| # | Decisión (a ratificar) | Cierra | Si está mal, cuesta |
+| --- | --- | --- | --- |
+| D-M13 | Los campos de coexistencia (`history`, `smb_app_state_sync`, `smb_message_echoes`) **no se suscriben** en este slice; el worker ignora cualquier `field` desconocido. El HANDOFF lo dice: lo que la persona responda desde la app del teléfono **no aparece en QEP** hasta un slice posterior que suscriba `smb_message_echoes` | DP-1 | Ese slice: un `field` más en el worker y un saliente sin `sentBy` |
+| D-M14 | El probador acepta el número si `GET /{phoneNumberId}` responde 200, **sin mirar `status`**; sólo un error de Graph marca falla | DP-2 | Si un número de verdad desconectado responde 200, se descubre al enviar (`133010`) |
+| D-M15 | Coexistencia con varios números sin conectar en la WABA: no se elige ninguno → 422 `integrations.whatsapp.registration_failed` con `detail` que lo explica; el HANDOFF lo anota | DP-3 | Que el frontend mande el número elegido |
+| D-M16 | Cuenta deshabilitada, borrada, app desinstalada o partner quitado → `lastFailureCode` nuevo `account_disabled` | DP-4 | Una etiqueta en el frontend (hoy muestra el código crudo, §10.2) |
+| D-M17 | `connectionName` de una conexión eliminada = `"Conexión eliminada"` | DP-5 | Guardar el último nombre en la conversación |
+| D-M18 | Módulo `messaging` apagado con mensajes llegando: se descartan como con `Paused`; los `statuses` sí se aplican | DP-6 | Guardarlos para que aparezcan al reactivar |
+| D-M19 | `business_management` **no se pide** en App Review: Meta lo exige sólo a un Solution Partner que comparte línea de crédito (§3) | DP-7 | Pedirlo después, con otra revisión de Meta |
+
 ### Riesgos
 
 - **PIN aleatorio y verificación en dos pasos previa.** Si el número ya tenía verificación en dos
@@ -1277,40 +1455,24 @@ vez al final**, comparada por nombre contra `develop` con un script, y `dotnet b
   son colombianos. Si aparece, se agrega una normalización por país en el match.
 - **Medios después de 7 días:** si una conexión queda `NeedsAttention` más de una semana, sus
   medios entrantes ya no se pueden copiar.
+- **Búsqueda con un término muy común** en un tenant enorme: ordena todas las coincidencias y
+  puede chocar con los 2 s (§7.3). Es el límite conocido del enfoque; el siguiente paso es un motor
+  externo.
+- **Lista pendiente del GIN:** con `fastupdate`, una lista pendiente grande se recorre entera en
+  cada búsqueda. Se vigila con `pgstatginindex` y se ajusta `gin_pending_list_limit` si crece.
 
 ### DECISIÓN-PENDIENTE
 
-1. **DP-1 — Coexistencia y los campos que Meta pide.** La doc de coexistencia dice que el partner
-   **debe** suscribir `history`, `smb_app_state_sync` y `smb_message_echoes` e iniciar la
-   sincronización en 24 h (§3). El contrato suscribe sólo `messages` y `account_update` y deja la
-   sincronización fuera de alcance. Sin `smb_message_echoes`, **lo que la persona responda desde la
-   app del teléfono no aparece en la bandeja de QEP** (el hilo queda con huecos). ¿Se acepta para
-   esta versión, o entra `smb_message_echoes` como saliente sin `sentBy`?
-2. **DP-2 — `status` de un número de coexistencia.** El probador exige `status = CONNECTED`. No se
-   pudo verificar que un número de coexistencia reporte `CONNECTED`; si reporta otra cosa, el
-   probador lo marcaría `number_unregistered` en falso. Se verifica con un número real antes de
-   cerrar el slice.
-3. **DP-3 — Coexistencia con varios números en la WABA.** El evento no trae `phone_number_id`; si
-   `phone_numbers` devuelve más de uno sin ruta, hoy se responde `registration_failed`. ¿Se acepta,
-   o el frontend debería mandar el número elegido?
-4. **DP-4 — `lastFailureCode` de una cuenta deshabilitada por Meta.** El frontend traduce
-   `credentials_rejected`, `provider_unreachable`, `token_expired` y `number_unregistered`. Un
-   `account_update` de bloqueo o de app desinstalada no es ninguno con precisión. Propuesta:
-   `account_disabled` (con texto nuevo en el frontend); mientras se decide, se usa
-   `credentials_rejected`.
-5. **DP-5 — `connectionName` de una conexión eliminada.** El contrato lo pide como texto. Se
-   propone `"Conexión eliminada"`; ¿o guardar el último nombre en la conversación?
-6. **DP-6 — Módulo `messaging` apagado con mensajes llegando.** La conexión queda oculta, no
-   pausada. Propuesta: tratarlo como `Paused` (descartar entrantes, aplicar estados). La
-   alternativa es guardarlos para que aparezcan al reactivar el módulo.
-7. **DP-7 — `business_management`.** El prompt lo lista para el HANDOFF; la doc de Meta lo pide sólo
-   a un Solution Partner que comparte línea de crédito. Propuesta: no pedirlo.
+Ninguna abierta. Las siete de la primera versión (DP-1 a DP-7) se cerraron con D-M13 a D-M19, a
+ratificar por el owner.
 
 ## 14. Entregables
 
 - Código y pruebas de §6–§12, en `feature/mensajeria-whatsapp`, con las migraciones:
   `AddWhatsAppCloudProvider` y `AddConnectionRoutes` (Integrations), `AddMessagingModuleKey`
-  (Tenancy), `AddCustomerPhoneE164` (Customers) e `InitialMessaging` (Messaging).
+  (Tenancy), `AddCustomerPhoneE164` (Customers) e `InitialMessaging` (Messaging; incluye las
+  extensiones `pg_trgm`, `unaccent` y `btree_gin`, la configuración `messaging.es_unaccent` y el
+  índice GIN de búsqueda).
 - `Directory.Packages.props` con `libphonenumber-csharp` y todos los `packages.lock.json` regenerados
   con `dotnet restore --force-evaluate`, en el mismo commit.
 - README: secciones «Integraciones» (Embedded Signup, `Meta:App`, rutas) y «Mensajería»
@@ -1323,17 +1485,26 @@ vez al final**, comparada por nombre contra `develop` con un script, y `dotnet b
 - `HANDOFF` para el owner en Meta:
   1. App en **Live**, con verificación del negocio y App Review.
   2. Permisos con **Advanced Access**: `whatsapp_business_management` y
-     `whatsapp_business_messaging` (`business_management`, ver DP-7).
+     `whatsapp_business_messaging`. `business_management` **no** se pide (D-M19).
   3. `qep.qcode.co` en «Allowed Domains for the JavaScript SDK» y en «Valid OAuth Redirect URIs».
   4. Configuración de Facebook Login for Business para **WhatsApp Embedded Signup v4**; su id va a
      `Meta__App__ConfigId`.
   5. Webhook: URL `https://<host de la API>/api/webhooks/whatsapp`, el token de verificación
-     (el mismo valor que `META_WEBHOOK_VERIFY_TOKEN`) y los campos `messages` y `account_update`
-     (más los de DP-1 si se decide).
+     (el mismo valor que `META_WEBHOOK_VERIFY_TOKEN`) y **sólo** los campos `messages` y
+     `account_update`.
   6. Desplegar el backend **antes** de verificar el webhook: Meta hace el GET al guardarlo.
+  7. **Lo que hay que saber de la coexistencia (D-M13, D-M15):** lo que alguien responda desde la
+     app de WhatsApp Business en el teléfono **no aparece en QEP** en esta versión; entra con un
+     slice posterior que suscriba `smb_message_echoes`. Y si la cuenta de WhatsApp Business tiene
+     varios números sin conectar, el flujo de coexistencia no puede saber cuál se eligió y responde
+     `registration_failed`: se conecta un número por vez, o se usa el camino de número nuevo.
 
 ## Historial de revisión
 
 - 2026-10-09: spec escrito sobre las decisiones 1–11 del owner, el contrato del frontend y la
   documentación de Meta verificada (§3). Correcciones por la documentación: tope de 4 MiB, estado
   `played`, `account_update` por WABA. Pendiente la lectura del owner y DP-1 a DP-7.
+- 2026-10-09 (segunda vuelta): decisión 12 del owner, búsqueda por palabra en el historial
+  (`messages.caption` y `search_vector`, configuración `messaging.es_unaccent`, índice GIN por
+  tenant, `GET /messaging/messages/search`, historia 17). DP-1 a DP-7 cerradas con D-M13 a D-M19,
+  a ratificar. El probador ya no mira `status`; `account_disabled` nuevo.
