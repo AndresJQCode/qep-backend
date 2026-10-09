@@ -304,6 +304,73 @@ public sealed class IntegrationConnectionTests
     }
 
     [Fact]
+    public void ASealerThatThrowsOnUpdateLeavesTheAggregateUntouched()
+    {
+        var connection = Create(new RecordingSealer());
+        var before = Snapshot(connection);
+
+        Assert.Throws<InvalidOperationException>(() => connection.Update(
+            IntegrationProviders.Zenvia, "Sede sur", Fields("573009999999"), Secrets("nuevo"),
+            (_, _, _) => throw new InvalidOperationException("sealer down"), Later, verified: true));
+
+        Assert.Equal(before, Snapshot(connection));
+    }
+
+    [Fact]
+    public void UpdateRejectsWhatCreateRejectsAndLeavesTheAggregateUntouched()
+    {
+        var sealer = new RecordingSealer();
+        var connection = Create(sealer);
+        var before = Snapshot(connection);
+        var secretInFields = Fields();
+        secretInFields[ZenviaFieldKeys.ApiToken] = Token;
+
+        Assert.Equal(IntegrationsErrorCodes.NameInvalid, Rejects(() => connection.Update(
+            IntegrationProviders.Zenvia, "a\nb", Fields(), Secrets("nuevo"), sealer.Seal, Later, verified: true)).Code);
+        Assert.Equal(IntegrationsErrorCodes.FieldInvalid, Rejects(() => connection.Update(
+            IntegrationProviders.Zenvia, "Sede sur", Fields("57300\u00001234567"), None(), sealer.Seal, Later, verified: true)).Code);
+        Assert.Equal(IntegrationsErrorCodes.FieldUnknown, Rejects(() => connection.Update(
+            IntegrationProviders.Zenvia, "Sede sur", secretInFields, None(), sealer.Seal, Later, verified: true)).Code);
+
+        Assert.Equal(before, Snapshot(connection));
+        Assert.Single(sealer.Calls);
+    }
+
+    // Review Focus 3: un null del JSON no es un 500.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateWithANullOrBlankSecretKeepsTheStoredOne(string? token)
+    {
+        var sealer = new RecordingSealer();
+        var connection = Create(sealer);
+        var before = Snapshot(connection);
+
+        var changed = connection.Update(
+            IntegrationProviders.Zenvia, "WhatsApp sede norte", Fields(), Secrets(token!), sealer.Seal, Later, verified: false);
+
+        Assert.Empty(changed);
+        Assert.Equal(before, Snapshot(connection));
+        Assert.Equal(1, connection.Version);
+    }
+
+    [Fact]
+    public void CreateTreatsANullSecretOrPublicFieldAsMissing()
+    {
+        Assert.Equal(IntegrationsErrorCodes.FieldRequired, Rejects(() => CreateWith(Fields(), Secrets(null!))).Code);
+        Assert.Equal(IntegrationsErrorCodes.FieldRequired, Rejects(() => CreateWith(Fields(null!), Secrets())).Code);
+    }
+
+    private static (string Name, string Fields, long Version, DateTimeOffset UpdatedAt, string Secret) Snapshot(
+        IntegrationConnection connection) =>
+        (connection.Name,
+            string.Join(",", connection.Fields.Select(pair => $"{pair.Key}={pair.Value}")),
+            connection.Version,
+            connection.UpdatedAt,
+            Convert.ToBase64String(connection.Secrets[0].Protected.Ciphertext));
+
+    [Fact]
     public void ASecretPrintsItsKeyButNeverItsBytes() =>
         Assert.Equal(
             "ConnectionSecret { FieldKey = apiToken, KeyId = k1 }",

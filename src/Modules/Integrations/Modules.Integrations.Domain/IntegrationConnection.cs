@@ -192,11 +192,15 @@ public sealed class IntegrationConnection
             return [];
         }
 
+        // Se sella todo antes de asignar nada: si el sellador falla, la conexión queda como estaba.
+        var sealedSecrets = replacedSecrets
+            .Select(pair => (Key: pair.Key, Secret: seal(Id, pair.Key, pair.Value)))
+            .ToArray();
+
         Name = normalizedName;
         Fields = normalizedFields;
-        foreach (var (key, plaintext) in replacedSecrets)
+        foreach (var (key, protectedSecret) in sealedSecrets)
         {
-            var protectedSecret = seal(Id, key, plaintext);
             var existing = FindSecret(key);
             if (existing is null)
             {
@@ -340,7 +344,7 @@ public sealed class IntegrationConnection
         var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var definition in secret ? provider.SecretFields : provider.PublicFields)
         {
-            var value = values.TryGetValue(definition.Key, out var raw) ? raw.Trim() : string.Empty;
+            var value = values.TryGetValue(definition.Key, out var raw) ? raw?.Trim() ?? string.Empty : string.Empty;
             if (value.Length == 0)
             {
                 if (requireAll && definition.Required)
