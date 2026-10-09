@@ -51,9 +51,9 @@ public sealed class GetOrdersReportSummaryHandler(
 
         return new OrdersReportSummaryDto(
             current.OrderCount,
-            current.Subtotal,
-            current.TaxAmount,
-            current.Total,
+            current.Subtotals,
+            current.TaxAmounts,
+            current.Totals,
             current.Monthly,
             current.ByAdvisor,
             current.ByClient,
@@ -87,6 +87,6 @@ public sealed class GetOrdersReportSummaryHandler(
             ReportSummaryRules.RankSize,
             cancellationToken);
 
-        return new ReportComparisonDto(preceding.OrderCount, preceding.Total);
+        return new ReportComparisonDto(preceding.OrderCount, preceding.Totals);
     }
 }

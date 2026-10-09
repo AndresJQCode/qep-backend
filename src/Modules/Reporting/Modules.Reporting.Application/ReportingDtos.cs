@@ -25,6 +25,8 @@ public sealed record OrdersReportItemDto(
     string? ClientCuc,
     string Status,
     string PaymentStatus,
+    /// <summary>The quotation's currency: every amount of this row is in it.</summary>
+    string Currency,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total);
@@ -47,6 +49,8 @@ public sealed record QuotationsReportItemDto(
     string? ClientName,
     string? ClientCuc,
     string Status,
+    /// <summary>The quotation's currency: every amount of this row is in it.</summary>
+    string Currency,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total);

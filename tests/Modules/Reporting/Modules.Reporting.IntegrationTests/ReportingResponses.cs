@@ -22,6 +22,7 @@ internal sealed record OrdersReportItem(
     string? ClientCuc,
     string Status,
     string PaymentStatus,
+    string Currency,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total);
@@ -37,6 +38,7 @@ internal sealed record QuotationsReportItem(
     string? ClientName,
     string? ClientCuc,
     string Status,
+    string Currency,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total);
@@ -80,15 +82,19 @@ internal sealed record ProblemDto(string? Code, string? Title, int? Status);
 /// el resto — ver la nota del encabezado de este archivo.</summary>
 internal sealed record OrdersReportSummary(
     int OrderCount,
-    decimal Subtotal,
-    decimal TaxAmount,
-    decimal Total,
+    IReadOnlyList<MoneyAmount> Subtotals,
+    IReadOnlyList<MoneyAmount> TaxAmounts,
+    IReadOnlyList<MoneyAmount> Totals,
     IReadOnlyList<ReportMonthlyPoint> Monthly,
     IReadOnlyList<ReportRankEntry> ByAdvisor,
     IReadOnlyList<ReportRankEntry> ByClient,
     ReportComparison? Previous);
 
-internal sealed record ReportMonthlyPoint(int Year, int Month, int Count, decimal Total);
+/// <summary>One amount in one currency: every money figure of the orders and quotations reports is
+/// a list of these. Not named <c>ReportMoney</c>: that is the Application helper class.</summary>
+internal sealed record MoneyAmount(string Currency, decimal Amount);
+
+internal sealed record ReportMonthlyPoint(int Year, int Month, int Count, IReadOnlyList<MoneyAmount> Totals);
 
 internal sealed record ReportRankEntry(
     Guid? Id,
@@ -96,17 +102,17 @@ internal sealed record ReportRankEntry(
     string? Secondary,
     int EntityCount,
     int Count,
-    decimal Total);
+    IReadOnlyList<MoneyAmount> Totals);
 
-internal sealed record ReportComparison(int Count, decimal Total);
+internal sealed record ReportComparison(int Count, IReadOnlyList<MoneyAmount> Totals);
 
 /// <summary>El resumen agregado de cotizaciones, tal como el contrato lo fija. Redeclarado igual
 /// que el resto — ver la nota del encabezado.</summary>
 internal sealed record QuotationsReportSummary(
     int QuotationCount,
-    decimal Subtotal,
-    decimal TaxAmount,
-    decimal Total,
+    IReadOnlyList<MoneyAmount> Subtotals,
+    IReadOnlyList<MoneyAmount> TaxAmounts,
+    IReadOnlyList<MoneyAmount> Totals,
     IReadOnlyList<ReportMonthlyPoint> Monthly,
     IReadOnlyList<ReportStatusSlice> ByStatus,
     IReadOnlyList<ReportRankEntry> ByAdvisor,
@@ -114,7 +120,7 @@ internal sealed record QuotationsReportSummary(
     IReadOnlyList<QuotationExpiring> Expiring,
     ReportComparison? Previous);
 
-internal sealed record ReportStatusSlice(string Status, int Count, decimal Total);
+internal sealed record ReportStatusSlice(string Status, int Count, IReadOnlyList<MoneyAmount> Totals);
 
 internal sealed record QuotationValidity(
     ReportBucket Expired,
@@ -123,7 +129,7 @@ internal sealed record QuotationValidity(
     ReportBucket Beyond,
     int WithoutExpiry);
 
-internal sealed record ReportBucket(int Count, decimal Total);
+internal sealed record ReportBucket(int Count, IReadOnlyList<MoneyAmount> Totals);
 
 internal sealed record QuotationExpiring(
     Guid QuotationId,
@@ -133,6 +139,7 @@ internal sealed record QuotationExpiring(
     string? ClientName,
     string? ClientCuc,
     string? AdvisorName,
+    string Currency,
     decimal Total);
 
 /// <summary>

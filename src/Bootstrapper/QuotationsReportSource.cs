@@ -3,6 +3,7 @@ using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Reporting.Application;
 using Modules.Reporting.Domain;
+using Modules.Tenancy.Application;
 
 namespace Bootstrapper;
 
@@ -16,7 +17,8 @@ namespace Bootstrapper;
 internal sealed class QuotationsReportSource(
     QuotationsDbContext quotations,
     ReportingClientLookup clientLookup,
-    ReportingPeopleLookup peopleLookup) : IQuotationsReportSource
+    ReportingPeopleLookup peopleLookup,
+    ITenantDefaultCurrency tenantDefaultCurrency) : IQuotationsReportSource
 {
     public async Task<(IReadOnlyList<QuotationsReportItemDto> Items, int Total)> ListAsync(
         QuotationsReportCriteria criteria,
@@ -51,34 +53,47 @@ internal sealed class QuotationsReportSource(
     {
         var rows = FilterQuotations(criteria);
 
-        var totals = await rows
-            .GroupBy(_ => 1)
+        // One row per currency: COP and USD are never added together (spec 2026-10-08, Reports).
+        var byCurrency = await rows
+            .GroupBy(quotation => quotation.Currency)
             .Select(group => new
             {
-                QuotationCount = group.Count(),
+                Currency = group.Key,
+                Count = group.Count(),
                 Subtotal = group.Sum(quotation => quotation.Subtotal),
                 TaxAmount = group.Sum(quotation => quotation.TaxAmount),
                 Total = group.Sum(quotation => quotation.Total),
             })
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
 
-        if (totals is null || totals.QuotationCount == 0)
+        var quotationCount = byCurrency.Sum(row => row.Count);
+        if (quotationCount == 0)
         {
             return new QuotationsReportAggregate(
-                0, 0m, 0m, 0m, [], EmptyStatusSlices(), [], EmptyValidity(), []);
+                0, [], [], [], [], EmptyStatusSlices(), [], EmptyValidity(), []);
         }
+
+        var totals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Total)));
+        var defaultCurrency = await tenantDefaultCurrency.GetAsync(criteria.TenantId, cancellationToken);
 
         var monthly = await SummarizeByMonthAsync(rows, criteria.Period.TimeZone, cancellationToken);
         var byStatus = await SummarizeByStatusAsync(rows, cancellationToken);
         var byAdvisor = await RankAdvisorsAsync(
-            rows, options.RankSize, totals.QuotationCount, totals.Total, cancellationToken);
+            rows, options.RankSize, quotationCount, totals, defaultCurrency, cancellationToken);
         var validity = await SummarizeValidityAsync(rows, options.Today, cancellationToken);
         var expiring = await ListExpiringAsync(
-            criteria.TenantId, rows, options, cancellationToken);
+            criteria.TenantId, rows, options, defaultCurrency, cancellationToken);
 
         return new QuotationsReportAggregate(
-            totals.QuotationCount, totals.Subtotal, totals.TaxAmount, totals.Total,
-            monthly, byStatus, byAdvisor, validity, expiring);
+            quotationCount,
+            ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Subtotal))),
+            ReportMoney.From(byCurrency.Select(row => (row.Currency, row.TaxAmount))),
+            totals,
+            monthly,
+            byStatus,
+            byAdvisor,
+            validity,
+            expiring);
     }
 
     /// <summary>La serie mensual por fecha de creación en el mes del tenant (spec 2026-09-17, punto
@@ -90,26 +105,33 @@ internal sealed class QuotationsReportSource(
         CancellationToken cancellationToken)
     {
         var timeZoneId = timeZone.Id;
-        var months = await rows
+        var points = await rows
             .GroupBy(quotation => new
             {
                 TimeZoneInfo.ConvertTimeBySystemTimeZoneId(quotation.CreatedAt.UtcDateTime, timeZoneId).Year,
                 TimeZoneInfo.ConvertTimeBySystemTimeZoneId(quotation.CreatedAt.UtcDateTime, timeZoneId).Month,
+                quotation.Currency,
             })
             .Select(group => new
             {
                 group.Key.Year,
                 group.Key.Month,
+                group.Key.Currency,
                 Count = group.Count(),
                 Total = group.Sum(quotation => quotation.Total),
             })
-            .OrderBy(point => point.Year)
-            .ThenBy(point => point.Month)
             .ToListAsync(cancellationToken);
 
-        return months
-            .Select(point => new ReportMonthlyPointDto(
-                point.Year, point.Month, point.Count, point.Total))
+        // Folded in memory: one point per month, its totals per currency.
+        return points
+            .GroupBy(point => (point.Year, point.Month))
+            .OrderBy(month => month.Key.Year)
+            .ThenBy(month => month.Key.Month)
+            .Select(month => new ReportMonthlyPointDto(
+                month.Key.Year,
+                month.Key.Month,
+                month.Sum(point => point.Count),
+                ReportMoney.From(month.Select(point => (point.Currency, point.Total)))))
             .ToArray();
     }
 
@@ -119,40 +141,46 @@ internal sealed class QuotationsReportSource(
     ///
     /// Un estado que desaparece de la respuesta obligaria a la pantalla a saber cuales existen
     /// para poder dibujar el que falta, y eso es duplicar el enum del backend en el frontend.
+    /// A status at zero has no money: count 0 and an empty totals list.
     /// </summary>
     private static async Task<IReadOnlyList<ReportStatusSliceDto>> SummarizeByStatusAsync(
         IQueryable<Quotation> rows,
         CancellationToken cancellationToken)
     {
         var slices = await rows
-            .GroupBy(quotation => quotation.Status)
+            .GroupBy(quotation => new { quotation.Status, quotation.Currency })
             .Select(group => new
             {
-                Status = group.Key,
+                group.Key.Status,
+                group.Key.Currency,
                 Count = group.Count(),
                 Total = group.Sum(quotation => quotation.Total),
             })
             .ToListAsync(cancellationToken);
 
-        var found = slices.ToDictionary(slice => slice.Status);
-
         return Enum.GetValues<QuotationStatus>()
-            .Select(status => found.TryGetValue(status, out var slice)
-                ? new ReportStatusSliceDto(status.ToString(), slice.Count, slice.Total)
-                : new ReportStatusSliceDto(status.ToString(), 0, 0m))
+            .Select(status =>
+            {
+                var ofStatus = slices.Where(slice => slice.Status == status).ToArray();
+                return new ReportStatusSliceDto(
+                    status.ToString(),
+                    ofStatus.Sum(slice => slice.Count),
+                    ReportMoney.From(ofStatus.Select(slice => (slice.Currency, slice.Total))));
+            })
             .ToArray();
     }
 
     private static ReportStatusSliceDto[] EmptyStatusSlices() =>
         Enum.GetValues<QuotationStatus>()
-            .Select(status => new ReportStatusSliceDto(status.ToString(), 0, 0m))
+            .Select(status => new ReportStatusSliceDto(status.ToString(), 0, []))
             .ToArray();
 
     private async Task<IReadOnlyList<ReportRankEntryDto>> RankAdvisorsAsync(
         IQueryable<Quotation> rows,
         int rankSize,
         int totalCount,
-        decimal totalAmount,
+        IReadOnlyList<ReportMoneyDto> totals,
+        string defaultCurrency,
         CancellationToken cancellationToken)
     {
         // Cero significa "no lo traigas": la ventana anterior solo aporta conteo y monto.
@@ -161,23 +189,36 @@ internal sealed class QuotationsReportSource(
             return [];
         }
 
+        // Plan decision A10: ranked by the total in the tenant default currency, then by count,
+        // then by id so two identical calls never swap entries ("blinking" ranking).
         var top = await rows
             .GroupBy(quotation => quotation.AdvisorId)
             .Select(group => new
             {
                 AdvisorId = group.Key,
                 Count = group.Count(),
-                Total = group.Sum(quotation => quotation.Total),
+                Ranking = group.Sum(quotation => quotation.Currency == defaultCurrency ? quotation.Total : 0m),
             })
-            // Desempate por id: sin orden total, dos asesores con el mismo monto se intercambian
-            // entre dos llamadas identicas y el ranking "parpadea".
-            .OrderByDescending(entry => entry.Total)
+            .OrderByDescending(entry => entry.Ranking)
+            .ThenByDescending(entry => entry.Count)
             .ThenBy(entry => entry.AdvisorId)
             .Take(rankSize)
             .ToListAsync(cancellationToken);
 
+        var advisorIds = top.Select(entry => entry.AdvisorId).ToArray();
+        var perCurrency = await rows
+            .Where(quotation => advisorIds.Contains(quotation.AdvisorId))
+            .GroupBy(quotation => new { quotation.AdvisorId, quotation.Currency })
+            .Select(group => new
+            {
+                group.Key.AdvisorId,
+                group.Key.Currency,
+                Total = group.Sum(quotation => quotation.Total),
+            })
+            .ToListAsync(cancellationToken);
+
         var emails = await peopleLookup.EmailsByMembershipIdAsync(
-            top.Select(entry => entry.AdvisorId.Value).ToArray(), cancellationToken);
+            advisorIds.Select(id => id.Value).ToArray(), cancellationToken);
 
         var named = top
             .Select(entry => new ReportRankEntryDto(
@@ -186,11 +227,13 @@ internal sealed class QuotationsReportSource(
                 Secondary: null,
                 EntityCount: 1,
                 entry.Count,
-                entry.Total))
+                ReportMoney.From(perCurrency
+                    .Where(total => total.AdvisorId == entry.AdvisorId)
+                    .Select(total => (total.Currency, total.Total)))))
             .ToList();
 
         var others = await ReportRankFolding.FoldOthersAsync(
-            named, rankSize, totalCount, totalAmount,
+            named, rankSize, totalCount, totals,
             () => rows.Select(quotation => quotation.AdvisorId)
                 .Distinct()
                 .CountAsync(cancellationToken));
@@ -207,7 +250,8 @@ internal sealed class QuotationsReportSource(
     /// y una anulada ya no interesa.
     ///
     /// Se resuelve en una sola consulta que clasifica cada fila en un tramo y agrupa por ese
-    /// tramo, en vez de cinco consultas con cinco <c>WHERE</c> distintos.
+    /// tramo (and by currency, so each bucket carries its totals per currency), en vez de cinco
+    /// consultas con cinco <c>WHERE</c> distintos.
     /// </summary>
     private static async Task<QuotationValidityDto> SummarizeValidityAsync(
         IQueryable<Quotation> rows,
@@ -219,26 +263,31 @@ internal sealed class QuotationsReportSource(
 
         var buckets = await rows
             .Where(quotation => quotation.Status == QuotationStatus.Sent)
-            .GroupBy(quotation =>
-                quotation.ValidUntil == null ? ValidityBucket.WithoutExpiry
-                : quotation.ValidUntil < today ? ValidityBucket.Expired
-                : quotation.ValidUntil <= weekEnd ? ValidityBucket.WithinSevenDays
-                : quotation.ValidUntil <= monthEnd ? ValidityBucket.WithinThirtyDays
-                : ValidityBucket.Beyond)
+            .GroupBy(quotation => new
+            {
+                Bucket = quotation.ValidUntil == null ? ValidityBucket.WithoutExpiry
+                    : quotation.ValidUntil < today ? ValidityBucket.Expired
+                    : quotation.ValidUntil <= weekEnd ? ValidityBucket.WithinSevenDays
+                    : quotation.ValidUntil <= monthEnd ? ValidityBucket.WithinThirtyDays
+                    : ValidityBucket.Beyond,
+                quotation.Currency,
+            })
             .Select(group => new
             {
-                Bucket = group.Key,
+                group.Key.Bucket,
+                group.Key.Currency,
                 Count = group.Count(),
                 Total = group.Sum(quotation => quotation.Total),
             })
             .ToListAsync(cancellationToken);
 
-        var found = buckets.ToDictionary(bucket => bucket.Bucket);
-
-        ReportBucketDto Read(ValidityBucket key) =>
-            found.TryGetValue(key, out var bucket)
-                ? new ReportBucketDto(bucket.Count, bucket.Total)
-                : new ReportBucketDto(0, 0m);
+        ReportBucketDto Read(ValidityBucket key)
+        {
+            var ofBucket = buckets.Where(bucket => bucket.Bucket == key).ToArray();
+            return new ReportBucketDto(
+                ofBucket.Sum(bucket => bucket.Count),
+                ReportMoney.From(ofBucket.Select(bucket => (bucket.Currency, bucket.Total))));
+        }
 
         return new QuotationValidityDto(
             Read(ValidityBucket.Expired),
@@ -250,15 +299,17 @@ internal sealed class QuotationsReportSource(
 
     private static QuotationValidityDto EmptyValidity() =>
         new(
-            new ReportBucketDto(0, 0m),
-            new ReportBucketDto(0, 0m),
-            new ReportBucketDto(0, 0m),
-            new ReportBucketDto(0, 0m),
+            new ReportBucketDto(0, []),
+            new ReportBucketDto(0, []),
+            new ReportBucketDto(0, []),
+            new ReportBucketDto(0, []),
             0);
 
     /// <summary>
     /// La cola de vencimientos: las enviadas que vencen dentro de la ventana, **ordenadas por
     /// monto** — lo que decide a cual llamar primero es la plata en juego, no la fecha.
+    /// Default-currency quotations first (plan decision A10): amounts only compare within one
+    /// currency.
     ///
     /// Respeta los filtros del reporte: si alguien esta mirando las cotizaciones de un asesor,
     /// la cola es la de ese asesor y no la de todos.
@@ -267,6 +318,7 @@ internal sealed class QuotationsReportSource(
         Guid tenantId,
         IQueryable<Quotation> rows,
         QuotationsSummaryOptions options,
+        string defaultCurrency,
         CancellationToken cancellationToken)
     {
         if (options.ExpiringSize <= 0)
@@ -283,7 +335,8 @@ internal sealed class QuotationsReportSource(
                 && quotation.ValidUntil != null
                 && quotation.ValidUntil >= today
                 && quotation.ValidUntil <= limit)
-            .OrderByDescending(quotation => quotation.Total)
+            .OrderBy(quotation => quotation.Currency == defaultCurrency ? 0 : 1)
+            .ThenByDescending(quotation => quotation.Total)
             .ThenBy(quotation => quotation.QuotationNumber)
             .Take(options.ExpiringSize)
             .Select(quotation => new ExpiringRow(
@@ -292,6 +345,7 @@ internal sealed class QuotationsReportSource(
                 quotation.ValidUntil,
                 quotation.AdvisorId,
                 quotation.ClientId,
+                quotation.Currency,
                 quotation.Total))
             .ToListAsync(cancellationToken);
 
@@ -320,6 +374,7 @@ internal sealed class QuotationsReportSource(
                     client?.Name,
                     client?.Cuc,
                     advisors.GetValueOrDefault(row.AdvisorId.Value),
+                    row.Currency,
                     row.Total);
             })
             .ToArray();
@@ -342,6 +397,7 @@ internal sealed class QuotationsReportSource(
         DateOnly? ValidUntil,
         MemberId AdvisorId,
         Guid ClientId,
+        string Currency,
         decimal Total);
 
     /// <summary>
@@ -404,6 +460,7 @@ internal sealed class QuotationsReportSource(
                 quotation.AdvisorId,
                 quotation.ClientId,
                 quotation.Status,
+                quotation.Currency,
                 quotation.Subtotal,
                 quotation.TaxAmount,
                 quotation.Total));
@@ -438,6 +495,7 @@ internal sealed class QuotationsReportSource(
                     client?.Name,
                     client?.Cuc,
                     row.Status.ToString(),
+                    row.Currency,
                     row.Subtotal,
                     row.TaxAmount,
                     row.Total);
@@ -464,6 +522,7 @@ internal sealed class QuotationsReportSource(
         MemberId AdvisorId,
         Guid ClientId,
         QuotationStatus Status,
+        string Currency,
         decimal Subtotal,
         decimal TaxAmount,
         decimal Total);

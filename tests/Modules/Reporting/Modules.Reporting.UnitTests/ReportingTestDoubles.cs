@@ -88,7 +88,7 @@ internal sealed class FakeOrdersReportSource : IOrdersReportSource
     public int? LastPageSize { get; private set; }
 
     /// <summary>Lo que devuelve el primer <c>SummarizeAsync</c>: el periodo pedido.</summary>
-    public OrdersReportAggregate Aggregate { get; set; } = new(0, 0m, 0m, 0m, [], [], []);
+    public OrdersReportAggregate Aggregate { get; set; } = new(0, [], [], [], [], [], []);
 
     /// <summary>
     /// Lo que devuelve el segundo: la ventana anterior. Nulo significa que la prueba no espera
@@ -168,22 +168,25 @@ internal sealed class FakeQuotationsReportSource : IQuotationsReportSource
 
     public static QuotationsReportAggregate EmptyAggregate(
         int quotationCount = 0,
-        decimal total = 0m) =>
-        new(
+        decimal total = 0m)
+    {
+        IReadOnlyList<ReportMoneyDto> totals = total == 0m ? [] : [new ReportMoneyDto("COP", total)];
+        return new(
             quotationCount,
-            total,
-            0m,
-            total,
+            totals,
+            [],
+            totals,
             [],
             [],
             [],
             new QuotationValidityDto(
-                new ReportBucketDto(0, 0m),
-                new ReportBucketDto(0, 0m),
-                new ReportBucketDto(0, 0m),
-                new ReportBucketDto(0, 0m),
+                new ReportBucketDto(0, []),
+                new ReportBucketDto(0, []),
+                new ReportBucketDto(0, []),
+                new ReportBucketDto(0, []),
                 0),
             []);
+    }
 }
 
 /// <summary>
