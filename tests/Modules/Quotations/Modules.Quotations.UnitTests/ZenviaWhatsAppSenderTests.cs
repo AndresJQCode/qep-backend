@@ -63,11 +63,9 @@ public sealed class ZenviaWhatsAppSenderTests
         await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
 
         var total = capture.Fields().GetProperty("total").GetString();
-        Assert.NotNull(total);
-        Assert.Contains("2.450.000", total);
         // Sin centavos: en es-CO el separador decimal es la coma, y un precio de cotización
         // redondo con ",00" al final sólo agrega ruido en un mensaje de WhatsApp.
-        Assert.DoesNotContain(",", total);
+        Assert.Equal("$ 2.450.000", total);
     }
 
     [Fact]
