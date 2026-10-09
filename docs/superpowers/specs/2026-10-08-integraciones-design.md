@@ -53,7 +53,7 @@ OpenAI— **no** es de este spec: cada consumidor tendrá el suyo y pedirá la c
 2. Un administrador con `integrations.connection.manage` crea una conexión de Zenvia desde Ajustes; una clave mala no se guarda y el error llega al campo.
 3. Ninguna respuesta HTTP, log ni auditoría contiene el valor de un secreto. Hay una prueba que lo verifica con un valor sentinela, como `WhatsAppSecretLeakTests`.
 4. Rotar la llave es cambiar `ActiveKeyId` y dejar la vieja: el worker re-cifra todos los secretos sin pedirle nada al tenant.
-5. Un proveedor nuevo es una clase en el catálogo, su probador y sus pruebas. Sin migración. La suite lo demuestra con un proveedor falso registrado sólo en pruebas.
+5. Un proveedor nuevo es su clase en el catálogo, su probador, sus pruebas y la migración del `CHECK` (D10); sin cambiar handlers ni tablas. La suite lo demuestra con un proveedor falso registrado sólo en pruebas.
 6. Apagarle a un tenant el único módulo que consume un proveedor lo saca de su catálogo y oculta sus conexiones; reactivarlo las devuelve intactas.
 
 ## Modelo
@@ -114,7 +114,7 @@ integrations.connections
   last_failure_at    timestamptz null
   last_failure_code  varchar(64) null   p. ej. credentials_rejected
   created_at         timestamptz
-  created_by         uuid        MemberId de quien la creó
+  created_by         uuid        MemberId de quien la creó. No retiene al usuario: si la persona se purga, `createdBy.displayName` viaja `null`
   updated_at         timestamptz
   version            bigint      concurrencia optimista, If-Match
 
@@ -139,6 +139,7 @@ recorra por `key_id` con un índice y para que un `SELECT fields` nunca pueda tr
 | `Paused` → `Active` | admin | `POST .../resume`. **Vuelve a probar**: si la credencial ya no sirve, queda en `NeedsAttention` y el resume responde 422 `integrations.connection.credentials_rejected` |
 | `Active` → `NeedsAttention` | un consumidor | `IConnectionHealthReporter.ReportCredentialsRejectedAsync` tras un 401/403 **definitivo** del proveedor. Sin umbral: un rechazo de credenciales no es intermitente |
 | `NeedsAttention` → `Active` | admin | `PUT` que cambie al menos un campo y pase la prueba, o `POST .../test` que pase |
+| `Active` → `NeedsAttention` (por prueba) | admin | `POST .../test` con `credentials_rejected` sobre una conexión `Active`: queda en `NeedsAttention` y se emiten el evento y la auditoría. Con `Unreachable`, o si la conexión no está `Active`, sólo se registran `last_failure_*` |
 | cualquiera → eliminada | admin | `DELETE` con If-Match; borra fila y secretos |
 
 `Paused` y `NeedsAttention` son invisibles para los consumidores: `IIntegrationConnections.ResolveAsync`
@@ -210,6 +211,10 @@ Un adaptador por proveedor en Infrastructure, elegido por `provider.Key` en un
   que nadie probó (decisión 5).
 - `POST /connections/{id}/test` ejecuta la misma prueba con lo guardado y actualiza
   `last_verified_at` o `last_failure_*`; si pasa y estaba en `NeedsAttention`, vuelve a `Active`.
+  Si el proveedor responde `credentials_rejected` y la conexión está `Active`, pasa a
+  `NeedsAttention` (con evento de outbox y auditoría `needs_attention`); con `Unreachable`, o con la
+  conexión `Paused` o ya en `NeedsAttention`, sólo se registran `last_failure_at` y
+  `last_failure_code`, sin cambiar el estado.
 
 ### Puertos para los consumidores (se definen y prueban acá; nadie los usa todavía)
 
@@ -221,6 +226,7 @@ public interface IIntegrationConnections
     // Sólo Active y visible para el tenant. Null si no existe, es de otro tenant, está Paused o
     // NeedsAttention: el consumidor decide qué hacer con "no hay conexión". Los secretos vienen en
     // claro, en memoria, para ese request; el consumidor no los persiste ni los registra.
+    // También devuelve null si algún secreto ya no descifra (llave retirada o bytes corruptos).
     Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken ct);
 
     // Las Active de un proveedor, para que la pantalla del consumidor deje elegir una.
@@ -241,12 +247,16 @@ negocio nunca referencia `Modules.Integrations.Application`; `ArchitectureTests`
 
 `integrations.connection-paused.v1`, `integrations.connection-deleted.v1`,
 `integrations.connection-needs-attention.v1`. Payload: `{ tenantId, connectionId, providerKey,
-occurredAt }`. Se escriben con `IOutboxWriter` en la misma transacción. Sin consumidores en este
-spec.
+occurredAt }`. Se escriben con la proyección propia del módulo de `platform.outbox_messages`
+(`IntegrationsEventPublisher`, en el `IntegrationsDbContext`), no con `IOutboxWriter`, en la misma
+transacción: el `IOutboxWriter` registrado está atado al `DbContext` de Tenancy y escribiría fuera
+de la unidad de trabajo de Integrations. Sin consumidores en este spec.
 
 ### Auditoría
 
-Camino atómico (`IAuditRecorder`, proyección `audit.entries` en `IntegrationsDbContext`, ADR 0019):
+Camino atómico con `IIntegrationsAuditRecorder` (proyección `audit.entries` en
+`IntegrationsDbContext`, ADR 0019). No se usa `IAuditRecorder`: está ligado al `DbContext` de
+Tenancy y su escritura no entraría en la transacción de Integrations:
 `integrations.connection.created|updated|paused|resumed|deleted|verified|needs_attention`, recurso
 `integration_connection`, con `changedFields` por clave. **Nunca un valor de campo**, ni público:
 un `fromNumber` tampoco va a auditoría; va la clave `fromNumber`.
@@ -262,14 +272,16 @@ un `fromNumber` tampoco va a auditoría; va la clave `fromNumber`.
 `DbUpdateConcurrencyException` → `concurrency.conflict`), y `tests/ArchitectureTests/IntegrationsLayerTests.cs`.
 
 Referencias permitidas: `Modules.Integrations.Application` → `Modules.Tenancy.Application` (por
-`ITenantModules`, `IExecutionContext`) y `Modules.Audit.Application`. Ningún otro `Modules.*`.
+`ITenantModules`, `IExecutionContext`) y `Modules.Audit.Domain` (por `AuditActorType`; la
+auditoría va por el puerto propio, no por `Modules.Audit.Application`). `Modules.Integrations.Domain`
+referencia `Modules.Tenancy.Domain` (por `TenantModuleKeys`). Ningún otro `Modules.*`.
 
 ### Permisos
 
 `IntegrationsPermissions.ConnectionRead = "integrations.connection.read"` y
 `ConnectionManage = "integrations.connection.manage"`. Las dos mitades: constantes **y** políticas
-en `AddAuthorization` (`QepServiceCollectionExtensions`), más la semilla del rol de sistema `admin`
-en Authorization. Los handlers revalidan tenant y permiso antes del repositorio (403, nunca 404). El
+en `AddAuthorization` (`QepServiceCollectionExtensions`), más los dos permisos en el
+`RoleDefinition` de `admin`, que es código en `src/Bootstrapper` (no una semilla de base de datos). Los handlers revalidan tenant y permiso antes del repositorio (403, nunca 404). El
 stub de desarrollo no los concede: las pruebas los piden por `X-Permissions`.
 
 ### Endpoints (`/api/v1/tenants/{tenantId:guid}/integrations`)
@@ -447,20 +459,20 @@ código, confirmación de borrado por nombre.
 | D9 | `connection_secrets` como tabla hija y no `jsonb` | Una tabla más; a cambio rotación con índice y sin riesgo de `SELECT` que traiga secretos |
 | D10 | Un `CHECK` en `provider_key` contra el catálogo; proveedor nuevo = migración | Igual que `tenant_modules`, a propósito |
 
-## DECISIÓN-PENDIENTE
+## DECISIÓN-PENDIENTE (resueltas por el owner el 2026-10-09)
 
-1. **Prueba de Zenvia:** confirmar contra la documentación de Zenvia que `GET /v2/templates` acepta
-   `X-API-TOKEN` y responde 401 con token inválido. Si no, elegir otro endpoint barato. No validar el
-   número emisor hasta que Zenvia exponga una forma estable.
-2. **A qué tenant pertenece la cuenta global de hoy** (`Quotations__WhatsApp__*` en prod). Cuando
-   llegue el spec del consumidor, ese tenant conecta su cuenta en Integraciones y las claves
-   globales se retiran. Hasta entonces nada cambia para él.
-3. **Consola de operador:** ¿el operador ve las conexiones de los tenants (sin secretos) para
-   soporte? Hoy no.
-4. **Límite de pruebas por minuto** (`POST .../test` dispara HTTP saliente): hoy sólo el rate limit
-   general de la API.
+1. **Prueba de Zenvia:** resuelta. El owner confirmó `GET /v2/templates` con `X-API-TOKEN` como
+   endpoint de prueba. No se valida el número emisor hasta que Zenvia exponga una forma estable.
+2. **A qué tenant pertenece la cuenta global de hoy** (`Quotations__WhatsApp__*` en prod): resuelta.
+   Es del tenant Origen Botánico; lo concreta el spec del consumidor, donde ese tenant conecta su
+   cuenta en Integraciones y las claves globales se retiran. Hasta entonces nada cambia para él.
+3. **Consola de operador:** el owner respondió que el operador ve las conexiones de los tenants para
+   soporte. **Queda fuera de este spec** y necesita su propia enmienda; hoy no existe.
+4. **Límite de pruebas por minuto** (`POST .../test` dispara HTTP saliente): resuelta. Sin límite
+   propio por ahora; aplica sólo el rate limit general de la API.
 5. **Aviso al administrador** cuando una conexión pasa a `NeedsAttention` (correo por
-   Notifications). Hoy sólo el badge.
+   Notifications): el owner respondió que sí. **Queda fuera de este spec** y necesita su propia
+   enmienda; hoy sólo hay badge.
 
 ## Fuera de alcance
 
@@ -478,3 +490,9 @@ código, confirmación de borrado por nombre.
 
 - 2026-10-08: decisiones 1–8 tomadas en conversación con el owner; spec escrito. Pendiente la
   lectura del owner y la revisión del plan en la sesión de implementación.
+- 2026-10-09: tras la revisión final del backend, el spec se alinea con el código (gana el código):
+  `POST .../test` rechazado sobre una `Active` pasa a `NeedsAttention`; criterio 5 incluye la
+  migración del `CHECK`; auditoría y outbox van por las proyecciones propias del módulo;
+  `Modules.Audit.Domain` en vez de `Application`; `admin` es un `RoleDefinition` en código;
+  `ResolveAsync` devuelve `null` si un secreto no descifra; `created_by` no retiene al usuario. Se
+  registran las resoluciones del owner a las DECISIÓN-PENDIENTE 1 a 5.
