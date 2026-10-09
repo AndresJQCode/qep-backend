@@ -365,6 +365,39 @@ internal static class IntegrationsApiHarness
         return connection.Id;
     }
 
+    public const string SentinelMetaAccessToken = "meta-access-token-SENTINEL-2c3d4e";
+
+    /// <summary>Una conexión whatsapp-cloud con su ruta, escrita directo por el repositorio (sin Meta).</summary>
+    public static async Task<Guid> SeedWhatsAppConnectionAsync(
+        WebApplicationFactory<Program> host, Guid tenantId, string name, string phoneNumberId, string wabaId,
+        string accessToken = SentinelMetaAccessToken)
+    {
+        using var scope = host.Services.CreateScope();
+        var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.WhatsAppCloud,
+            tenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [WhatsAppCloudFieldKeys.DisplayPhoneNumber] = "+57 300 123 4567",
+                [WhatsAppCloudFieldKeys.VerifiedName] = "Prueba",
+                [WhatsAppCloudFieldKeys.PhoneNumberId] = phoneNumberId,
+                [WhatsAppCloudFieldKeys.WabaId] = wabaId,
+                [WhatsAppCloudFieldKeys.QualityRating] = "GREEN",
+            },
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.AccessToken] = accessToken },
+            protector.Protect,
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
+            IntegrationConnectionRoute.Create(IntegrationProviders.WhatsAppCloud.Key, phoneNumberId, wabaId, tenantId, connection.Id));
+        await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+        return connection.Id;
+    }
+
     /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider registrados,
     /// así que esto ve lo mismo que la consola.</summary>
     public static WebApplicationFactory<Program> WithCapturedLogs(

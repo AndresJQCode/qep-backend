@@ -49,3 +49,25 @@ public interface IConnectionAuthorNames
     Task<IReadOnlyDictionary<Guid, string>> FindAsync(
         Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken);
 }
+
+/// <summary>Spec 2026-10-09 §6.1: la ruta se crea en la misma transacción que la conexión.</summary>
+public interface IConnectionRouteRepository
+{
+    void Add(IntegrationConnectionRoute route);
+
+    /// <summary>Lectura indexada previa al canje (§8.1, paso 3); la garantía final la da el índice único.</summary>
+    Task<bool> ExistsAsync(string providerKey, string externalId, CancellationToken cancellationToken);
+}
+
+public sealed record ConnectionRoute(Guid TenantId, Guid ConnectionId, ConnectionStatus Status);
+
+/// <summary>
+/// Cross-tenant a propósito: el webhook no sabe de qué tenant es el número hasta resolver la ruta. Lo
+/// usa sólo el adaptador de Messaging en Bootstrapper. <c>null</c> = número desconocido o conexión borrada.
+/// </summary>
+public interface IConnectionRoutes
+{
+    Task<ConnectionRoute?> FindAsync(string providerKey, string externalId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ConnectionRoute>> FindByAccountAsync(string providerKey, string accountId, CancellationToken cancellationToken);
+}

@@ -8,7 +8,8 @@ namespace Modules.Integrations.Infrastructure.Persistence;
 
 /// <summary>
 /// Traduce los errores de base por nombre de índice, no sólo por SqlState (CLAUDE.md): el único del
-/// nombre es <c>name_taken</c>; la versión vieja es <c>concurrency.conflict</c>.
+/// nombre es <c>name_taken</c>; el de la ruta, <c>number_already_connected</c>; la versión vieja es
+/// <c>concurrency.conflict</c>.
 /// </summary>
 internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : IIntegrationsUnitOfWork
 {
@@ -24,6 +25,13 @@ internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : 
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "The connection changed while the operation was being committed.",
+                exception);
+        }
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception, IntegrationsDbContext.RouteExternalIndex))
+        {
+            throw new IntegrationsDomainException(
+                IntegrationsErrorCodes.WhatsAppNumberAlreadyConnected,
+                "That WhatsApp number is already connected to another connection.",
                 exception);
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception, IntegrationsDbContext.ConnectionNameIndex))

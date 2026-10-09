@@ -29,6 +29,8 @@ public static class IntegrationsInfrastructureExtensions
                 npgsql => npgsql.MigrationsHistoryTable("__ef_migrations_history", IntegrationsDbContext.Schema)));
 
         services.AddScoped<IIntegrationConnectionRepository, IntegrationConnectionRepository>();
+        services.AddScoped<IConnectionRouteRepository, ConnectionRouteRepository>();
+        services.AddScoped<IConnectionRoutes, ConnectionRoutes>();
         services.AddScoped<IIntegrationsUnitOfWork, IntegrationsUnitOfWork>();
         services.AddScoped<IIntegrationsAuditRecorder, IntegrationsAuditRecorder>();
         services.AddScoped<IConnectionEventPublisher, IntegrationsEventPublisher>();
