@@ -15,7 +15,7 @@ namespace Modules.Reporting.Application;
 /// tabla hablen de conjuntos distintos.
 ///
 /// <para>Subtotals, TaxAmounts and Totals carry one amount per currency with orders in the
-/// window (spec, Reports). The counts stay single numbers: a order is one order in any
+/// window (spec, Reports). The counts stay single numbers: an order is one order in any
 /// currency.</para>
 /// </summary>
 public sealed record OrdersReportSummaryDto(

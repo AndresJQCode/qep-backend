@@ -16,7 +16,7 @@ public interface ITenantDirectory
 
     Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken);
 
-    /// <summary>La moneda por defecto del tenant ("COP" o "USD"), o null si no tiene fila.</summary>
+    /// <summary>La moneda por defecto del tenant (un código del catálogo de monedas), o null si no tiene fila.</summary>
     Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken);
 
     /// <summary>El logo vigente del tenant, o null sin logo. Es la única lectura que Quotations

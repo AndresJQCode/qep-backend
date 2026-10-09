@@ -38,7 +38,7 @@ public sealed record QuotationDto(
     DateTimeOffset CreatedAt,
     DateOnly? ValidUntil,
     string? PaymentMethod,
-    /// <summary>La moneda de todos los importes de abajo: "COP" o "USD". La fija la cuenta de
+    /// <summary>La moneda de todos los importes de abajo: un código del catálogo de monedas. La fija la cuenta de
     /// cobro de la cotizacion.</summary>
     string Currency,
     decimal Subtotal,

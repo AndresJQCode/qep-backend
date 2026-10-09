@@ -15,7 +15,7 @@ namespace Modules.Reporting.Application;
 /// precio" en cambio significa lo mismo sin importar en qué moneda estaba cada fila. Por eso todo
 /// lo que se cuenta acá son **filas**, nunca importes, y por eso este resumen no reusa
 /// <see cref="ReportMonthlyPointDto"/> ni <see cref="ReportRankEntryDto"/>, que llevan un
-/// <c>Total</c> que aquí sería siempre mentira o siempre cero.
+/// <c>Totals</c> por moneda que aquí serían siempre mentira o siempre vacíos.
 ///
 /// <see cref="ProductCount"/> son los productos distintos tocados en el periodo — el denominador
 /// que le falta a <see cref="ChangeCount"/> para saber si fueron muchos cambios sobre pocos
@@ -52,7 +52,7 @@ public sealed record PriceChangeFieldSliceDto(string Field, string? Currency, in
 /// Un producto del ranking de los más retocados, o la fila "Otros".
 ///
 /// Mismas reglas que <see cref="ReportRankEntryDto"/> —<c>ProductId</c> nulo es el resto plegado,
-/// <c>EntityCount</c> dice cuántos productos agrupa— pero sin <c>Total</c>: ver el encabezado de
+/// <c>EntityCount</c> dice cuántos productos agrupa— pero sin <c>Totals</c>: ver el encabezado de
 /// <see cref="PriceChangeReportSummaryDto"/>. El código viaja además del nombre porque es como se
 /// identifica un producto en el resto del reporte.
 /// </summary>
