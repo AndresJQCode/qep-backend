@@ -47,6 +47,7 @@ internal sealed record PriceChangeReportItem(
     string ProductCode,
     string ProductName,
     string Field,
+    string? Currency,
     int? ScaleFromUnit,
     int? ScaleToUnit,
     decimal? PreviousValue,
@@ -153,7 +154,7 @@ internal sealed record PriceChangeReportSummary(
 
 internal sealed record ReportCountPoint(int Year, int Month, int Count);
 
-internal sealed record PriceChangeFieldSlice(string Field, int Count);
+internal sealed record PriceChangeFieldSlice(string Field, string? Currency, int Count);
 
 internal sealed record PriceChangeProductEntry(
     Guid? ProductId,

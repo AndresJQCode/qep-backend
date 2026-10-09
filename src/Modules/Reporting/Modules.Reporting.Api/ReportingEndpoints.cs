@@ -164,12 +164,13 @@ public static class ReportingEndpoints
         Guid? productId = null,
         Guid? changedBy = null,
         string? field = null,
+        string? currency = null,
         int page = 1,
         int pageSize = ReportPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
             new ListPriceChangeReportQuery(
-                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field),
+                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field, currency),
                 page,
                 pageSize),
             cancellationToken);
@@ -187,11 +188,12 @@ public static class ReportingEndpoints
         DateOnly? to = null,
         Guid? productId = null,
         Guid? changedBy = null,
-        string? field = null)
+        string? field = null,
+        string? currency = null)
     {
         var summary = await dispatcher.QueryAsync(
             new GetPriceChangeReportSummaryQuery(
-                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field)),
+                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field, currency)),
             cancellationToken);
 
         return Results.Ok(summary);

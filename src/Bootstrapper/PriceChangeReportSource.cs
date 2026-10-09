@@ -3,6 +3,7 @@ using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Modules.Reporting.Application;
 using Modules.Reporting.Domain;
+using Modules.Tenancy.Application;
 
 namespace Bootstrapper;
 
@@ -11,7 +12,7 @@ namespace Bootstrapper;
 /// nombre y el codigo del producto resueltos por join. Ver <see cref="OrdersReportSource"/> sobre
 /// por que los adaptadores de <c>reporting</c> viven en el composition root.
 ///
-/// **Es el historico del catalogo, no el de las cotizaciones.** Sigue los dos precios base del
+/// **Es el historico del catalogo, no el de las cotizaciones.** Sigue el precio base en cada moneda del
 /// producto y el descuento de una escala; los precios de una linea de cotizacion no pasan por
 /// aca.
 ///
@@ -121,8 +122,8 @@ internal sealed class PriceChangeReportSource(
             .ToArray();
     }
 
-    /// <summary>Los tres campos, siempre, incluso en cero: ver
-    /// <c>PriceChangeFieldSliceDto</c>.</summary>
+    /// <summary>One PriceBase slice per catalogue currency plus ScaleDiscount, always, even at
+    /// zero: see <c>PriceChangeFieldSliceDto</c>.</summary>
     private static async Task<IReadOnlyList<PriceChangeFieldSliceDto>> SummarizeByFieldAsync(
         IQueryable<ProductPriceChange> changes,
         CancellationToken cancellationToken)
@@ -132,15 +133,10 @@ internal sealed class PriceChangeReportSource(
             .Select(group => new { group.Key.Field, group.Key.Currency, Count = group.Count() })
             .ToListAsync(cancellationToken);
 
-        var found = slices.ToDictionary(slice => (slice.Field, slice.Currency), slice => slice.Count);
-
-        return Enum.GetValues<PriceChangeField>()
-            .Select(value =>
-            {
-                var (field, currency) = MapField(value);
-                return new PriceChangeFieldSliceDto(value.ToString(), found.GetValueOrDefault((field, currency)));
-            })
-            .ToArray();
+        // Trim: a character(3) column pads shorter values; catalogue codes are always three
+        // letters, so this only makes the lookup independent of the column type.
+        var found = slices.ToDictionary(slice => (slice.Field, slice.Currency?.Trim()), slice => slice.Count);
+        return FieldSlices(key => found.GetValueOrDefault(key));
     }
 
     /// <summary>
@@ -204,10 +200,15 @@ internal sealed class PriceChangeReportSource(
         return ranked;
     }
 
-    private static PriceChangeFieldSliceDto[] EmptyFieldSlices() =>
-        Enum.GetValues<PriceChangeField>()
-            .Select(value => new PriceChangeFieldSliceDto(value.ToString(), 0))
-            .ToArray();
+    private static PriceChangeFieldSliceDto[] EmptyFieldSlices() => FieldSlices(_ => 0);
+
+    private static PriceChangeFieldSliceDto[] FieldSlices(Func<(ProductPriceField, string?), int> countOf) =>
+    [
+        .. Currencies.All.Select(currency => new PriceChangeFieldSliceDto(
+            nameof(PriceChangeField.PriceBase), currency.Code, countOf((ProductPriceField.PriceBase, currency.Code)))),
+        new PriceChangeFieldSliceDto(
+            nameof(PriceChangeField.ScaleDiscount), null, countOf((ProductPriceField.ScaleDiscount, null))),
+    ];
 
     private IQueryable<ChangeRow> BuildQuery(PriceChangeReportCriteria criteria)
     {
@@ -272,8 +273,13 @@ internal sealed class PriceChangeReportSource(
 
         if (criteria.Field is { } field)
         {
-            var (mapped, currency) = MapField(field);
-            changes = changes.Where(change => change.Field == mapped && change.Currency == currency);
+            var mapped = MapField(field);
+            changes = changes.Where(change => change.Field == mapped);
+        }
+
+        if (criteria.Currency is { } currency)
+        {
+            changes = changes.Where(change => change.Currency == currency);
         }
 
         return changes;
@@ -300,7 +306,8 @@ internal sealed class PriceChangeReportSource(
                 row.ProductId.Value,
                 row.ProductCode,
                 row.ProductName,
-                MapField(row.Field, row.Currency),
+                MapField(row.Field),
+                row.Currency?.Trim(),
                 row.ScaleFromUnit,
                 row.ScaleToUnit,
                 row.PreviousValue,
@@ -312,22 +319,18 @@ internal sealed class PriceChangeReportSource(
     }
 
     // Sin default a proposito, en las dos direcciones: ver MapPaymentStatus en OrdersReportSource.
-    // Bridge until Task 5: the report contract still speaks PriceBaseUsd/PriceBaseCop.
-    private static (ProductPriceField Field, string? Currency) MapField(PriceChangeField value) => value switch
+    private static ProductPriceField MapField(PriceChangeField value) => value switch
     {
-        PriceChangeField.PriceBaseUsd => (ProductPriceField.PriceBase, "USD"),
-        PriceChangeField.PriceBaseCop => (ProductPriceField.PriceBase, "COP"),
-        PriceChangeField.ScaleDiscount => (ProductPriceField.ScaleDiscount, null),
+        PriceChangeField.PriceBase => ProductPriceField.PriceBase,
+        PriceChangeField.ScaleDiscount => ProductPriceField.ScaleDiscount,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown price field.")
     };
 
-    // Bridge until Task 5.
-    private static PriceChangeField MapField(ProductPriceField field, string? currency) => (field, currency) switch
+    private static PriceChangeField MapField(ProductPriceField value) => value switch
     {
-        (ProductPriceField.PriceBase, "USD") => PriceChangeField.PriceBaseUsd,
-        (ProductPriceField.PriceBase, "COP") => PriceChangeField.PriceBaseCop,
-        (ProductPriceField.ScaleDiscount, _) => PriceChangeField.ScaleDiscount,
-        _ => throw new ArgumentOutOfRangeException(nameof(field), field, $"No legacy report field for {field} {currency}.")
+        ProductPriceField.PriceBase => PriceChangeField.PriceBase,
+        ProductPriceField.ScaleDiscount => PriceChangeField.ScaleDiscount,
+        _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown price field.")
     };
 
     private sealed record ChangeRow(

@@ -41,15 +41,12 @@ public sealed record PriceChangeReportSummaryDto(
 public sealed record ReportCountPointDto(int Year, int Month, int Count);
 
 /// <summary>
-/// Un campo del histórico con cuántas veces se tocó.
-///
-/// <c>Field</c> viaja como el nombre del enum (<c>PriceBaseUsd</c>), igual que en
-/// <see cref="PriceChangeReportItemDto"/>: la traducción es del frontend, que ya tiene el
-/// diccionario. **Vienen los tres siempre**, incluso en cero — mismo criterio que
-/// <see cref="ReportStatusSliceDto"/>: un campo que desaparece de la respuesta obligaría a la
-/// pantalla a saber cuáles existen para dibujar el que falta.
+/// A field — and for PriceBase a currency — with how many times it changed. One PriceBase slice
+/// per catalogue currency plus the ScaleDiscount slice, all present even at zero: the catalogue
+/// is fixed per deploy, so the screen never has to know which slices exist (same criterion as
+/// <see cref="ReportStatusSliceDto"/>).
 /// </summary>
-public sealed record PriceChangeFieldSliceDto(string Field, int Count);
+public sealed record PriceChangeFieldSliceDto(string Field, string? Currency, int Count);
 
 /// <summary>
 /// Un producto del ranking de los más retocados, o la fila "Otros".

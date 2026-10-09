@@ -110,6 +110,7 @@ public sealed record PriceChangeReportRow(
     string ProductCode,
     string ProductName,
     PriceChangeField Field,
+    string? Currency,
     int? ScaleFromUnit,
     int? ScaleToUnit,
     decimal? PreviousValue,

@@ -61,9 +61,14 @@ public sealed class ReportFilterParserTests
         Assert.Equal(expected, ReportFilterParser.ParsePaymentStatus(value));
 
     [Theory]
-    [InlineData("PriceBaseUsd", PriceChangeField.PriceBaseUsd)]
-    [InlineData("PriceBaseCop", PriceChangeField.PriceBaseCop)]
+    [InlineData("PriceBase", PriceChangeField.PriceBase)]
     [InlineData("ScaleDiscount", PriceChangeField.ScaleDiscount)]
-    public void ParsesTheThreePriceChangeFields(string value, PriceChangeField expected) =>
+    public void ParsesTheTwoPriceChangeFields(string value, PriceChangeField expected) =>
         Assert.Equal(expected, ReportFilterParser.ParsePriceChangeField(value));
+
+    [Theory]
+    [InlineData("PriceBaseUsd")]
+    [InlineData("PriceBaseCop")]
+    public void TheRetiredPerCurrencyFieldsAreNoLongerValid(string value) =>
+        Assert.False(ReportFilterParser.TryParsePriceChangeField(value, out _));
 }

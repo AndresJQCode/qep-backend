@@ -601,7 +601,7 @@ internal static class ReportingApiHarness
 
     private sealed record CompanyResponseDto(Guid Id, string Name);
 
-    private sealed record ProductDetailResponseDto(Guid Id, string Name, string Code);
+    internal sealed record ProductDetailResponseDto(Guid Id, string Name, string Code);
 
     private sealed record UploadSessionResponseDto(
         Guid FileResourceId, string UploadUrl, string StorageKey);
