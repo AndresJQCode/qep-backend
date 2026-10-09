@@ -25,7 +25,7 @@ public sealed class ChangeTenantModulesValidator : AbstractValidator<ChangeTenan
             .Cascade(CascadeMode.Stop)
             .NotEmpty()
             .Must(changes => changes!.Count <= TenantModuleKeys.All.Count)
-            .WithMessage("A batch has at most seven changes.");
+            .WithMessage("A batch has at most eight changes.");
         // NotNull: un [null] del JSON llega como elemento null aunque el tipo diga que no; ChildRules lo
         // saltaría y el Parse del handler daría 500 (Review Focus 1).
         RuleForEach(command => command.Changes)

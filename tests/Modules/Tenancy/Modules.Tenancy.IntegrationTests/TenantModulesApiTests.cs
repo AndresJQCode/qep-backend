@@ -90,7 +90,7 @@ public sealed class TenantModulesApiTests
     }
 
     [Fact]
-    public async Task ModulesListsTheSevenInOrder()
+    public async Task ModulesListsTheEightInOrder()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -100,18 +100,21 @@ public sealed class TenantModulesApiTests
         var modules = await ModulesAsync(client, tenantId);
 
         Assert.Equal(tenantId, modules.TenantId);
+        // Spec 2026-10-09 §6.2: messaging va último y, como pos, no viene con el signup.
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging"],
             modules.Modules.Select(module => module.Key));
-        Assert.All(modules.Modules.Where(module => module.Key != "pos"), module =>
+        Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging")), module =>
         {
             Assert.True(module.Enabled);
             Assert.True(module.Contracted);
             Assert.Empty(module.MissingDependencies);
         });
-        var pos = modules.Modules.Single(module => module.Key == "pos");
-        Assert.False(pos.Enabled);
-        Assert.False(pos.Contracted);
+        Assert.All(modules.Modules.Where(module => module.Key is "pos" or "messaging"), module =>
+        {
+            Assert.False(module.Enabled);
+            Assert.False(module.Contracted);
+        });
     }
 
     [Fact]
@@ -145,7 +148,7 @@ public sealed class TenantModulesApiTests
 
         var modules = await ModulesAsync(client, tenantId);
 
-        Assert.Equal(7, modules.Modules.Count);
+        Assert.Equal(8, modules.Modules.Count);
         Assert.All(modules.Modules, module =>
         {
             Assert.True(module.Enabled);
@@ -178,7 +181,7 @@ public sealed class TenantModulesApiTests
 
         var response = TenantModulesResponse.From(tenantId, modules: null, isDevelopmentStub);
 
-        Assert.Equal(7, response.Modules.Count);
+        Assert.Equal(8, response.Modules.Count);
         Assert.All(response.Modules, module =>
         {
             Assert.Equal(isDevelopmentStub, module.Enabled);

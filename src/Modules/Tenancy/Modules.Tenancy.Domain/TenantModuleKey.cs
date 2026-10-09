@@ -42,10 +42,14 @@ public static class TenantModuleKeys
     public static readonly TenantModuleKey Reporting = TenantModuleKey.Define("reporting");
     public static readonly TenantModuleKey Pos = TenantModuleKey.Define("pos");
 
-    public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos];
+    /// <summary>Spec 2026-10-09, decisión 4: la bandeja de WhatsApp. Último de la lista, sin
+    /// dependencias y fuera de <see cref="DefaultForNewTenants"/>.</summary>
+    public static readonly TenantModuleKey Messaging = TenantModuleKey.Define("messaging");
 
-    /// <summary>Los seis de hoy, sin <c>pos</c>: el backfill y el signup con el interruptor prendido.</summary>
+    public static readonly IReadOnlyList<TenantModuleKey> All =
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging];
+
+    /// <summary>Los seis de hoy, sin <c>pos</c> ni <c>messaging</c>: el backfill y el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
         [Catalog, Customers, Companies, Quotations, Orders, Reporting];
 

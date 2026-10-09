@@ -203,7 +203,7 @@ public sealed class OperatorConsoleApiTests
         var all = await GetOkAsync<TenantPagePayload>(client, Url("tenants"));
         Assert.Equal(2, all.Total);
         Assert.Equal(new SummaryPayload(2, 0, 0), all.Summary);
-        Assert.All(all.Items, item => Assert.Equal((6, 7, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
+        Assert.All(all.Items, item => Assert.Equal((6, 8, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
 
         var slug = (await GetOkAsync<DetailPayload>(client, Url($"tenants/{first}"))).Slug;
         var searched = await GetOkAsync<TenantPagePayload>(client, Url($"tenants?search={slug}"));
@@ -341,7 +341,7 @@ public sealed class OperatorConsoleApiTests
                 TestContext.Current.CancellationToken),
             HttpStatusCode.UnprocessableEntity, "tenancy.modules.inconsistent_dependencies");
         var detail = await GetOkAsync<DetailPayload>(client, Url($"tenants/{tenantId}"));
-        Assert.All(detail.Modules.Where(module => module.Key != "pos"), module => Assert.Equal("active", module.Status));
+        Assert.All(detail.Modules.Where(module => module.Key is not ("pos" or "messaging")), module => Assert.Equal("active", module.Status));
     }
 
     [Fact]

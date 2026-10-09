@@ -21,7 +21,7 @@ public sealed record OperatorTenantSummaryDto(int Total, int WithoutModules, int
 
 /// <param name="StatusChangedAt">Del último cambio de estado del tenant en el historial; null si nunca cambió.</param>
 /// <param name="Version">La del agregado: es el <c>If-Match</c> de <c>POST …/status</c>.</param>
-/// <param name="Modules">Siempre las siete, en el orden de <c>TenantModuleKeys.All</c>, aunque no tengan fila:
+/// <param name="Modules">Siempre todas, en el orden de <c>TenantModuleKeys.All</c>, aunque no tengan fila:
 /// si faltara una, la SPA tendría que conocer la lista del backend para dibujarla.</param>
 public sealed record OperatorTenantDetailDto(
     Guid TenantId, string Slug, string DisplayName, DateTimeOffset CreatedAt, string Status,
