@@ -3,6 +3,7 @@ using BuildingBlocks.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Integrations.UnitTests;
 
@@ -25,8 +26,7 @@ public sealed class ReadHandlersTests
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
-        var zenvia = Assert.Single(catalog.Providers);
-        Assert.Equal("zenvia", zenvia.Key);
+        var zenvia = Assert.Single(catalog.Providers, provider => provider.Key == "zenvia");
         Assert.Equal("Zenvia (WhatsApp)", zenvia.DisplayName);
         Assert.Equal("Messaging", zenvia.Category);
         Assert.Equal(20, zenvia.MaxConnections);
@@ -40,7 +40,9 @@ public sealed class ReadHandlersTests
     public async Task TheCatalogIsEmptyButPresentWhenNoConsumingModuleIsOn()
     {
         var bed = new IntegrationsTestBed();
-        bed.HideQuotations();
+        // Ni quotations (Zenvia) ni messaging (whatsapp-cloud).
+        bed.Modules.Sets[bed.TenantId] = TenantModuleSet.FromStored(
+            TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Messaging]));
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
@@ -54,7 +56,51 @@ public sealed class ReadHandlersTests
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
-        Assert.Single(catalog.Providers);
+        Assert.Equal(["zenvia", "whatsapp-cloud"], catalog.Providers.Select(provider => provider.Key));
+    }
+
+    // Spec §5.2: cada proveedor trae onboarding; los campos internos no salen del catálogo.
+    [Fact]
+    public async Task TheCatalogCarriesOnboardingAndHidesInternalFields()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.MetaApp.Configured = true;
+
+        var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
+
+        var zenvia = Assert.Single(catalog.Providers, provider => provider.Key == "zenvia");
+        Assert.Equal("Form", zenvia.Onboarding.Kind);
+        Assert.Null(zenvia.Onboarding.AppId);
+        var whatsapp = Assert.Single(catalog.Providers, provider => provider.Key == "whatsapp-cloud");
+        Assert.Equal("MetaEmbeddedSignup", whatsapp.Onboarding.Kind);
+        Assert.Equal("100200300", whatsapp.Onboarding.AppId);
+        Assert.Equal("400500600", whatsapp.Onboarding.ConfigId);
+        Assert.Equal("v24.0", whatsapp.Onboarding.GraphApiVersion);
+        Assert.Equal(["displayPhoneNumber", "verifiedName"], whatsapp.Fields.Select(field => field.Key));
+    }
+
+    // Spec §5.2: con Form, appId, configId y graphApiVersion no viajan; la forma es { "kind": "Form" }.
+    [Fact]
+    public async Task AFormOnboardingSerializesAsKindOnly()
+    {
+        var bed = new IntegrationsTestBed();
+
+        var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
+
+        var zenvia = Assert.Single(catalog.Providers, provider => provider.Key == "zenvia");
+        Assert.Equal("{\"kind\":\"Form\"}", JsonSerializer.Serialize(zenvia.Onboarding, JsonSerializerOptions.Web));
+    }
+
+    // D-M3: sin Meta:App (sólo fuera de producción) whatsapp-cloud no sale.
+    [Fact]
+    public async Task WithoutMetaAppWhatsAppCloudIsNotInTheCatalog()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.MetaApp.Configured = false;
+
+        var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
+
+        Assert.DoesNotContain(catalog.Providers, provider => provider.Key == "whatsapp-cloud");
     }
 
     [Fact]

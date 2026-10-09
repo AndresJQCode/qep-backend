@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Modules.Integrations.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Integrations.Application;
@@ -65,10 +66,15 @@ public sealed class UpdateConnectionHandler(
         ConcurrencyGuard.EnsureVersion(connection, command.ExpectedVersion);
 
         // Un fields null conserva los campos guardados; un secrets null no trae secretos nuevos.
-        IReadOnlyDictionary<string, string?> requestedFields = command.Fields
-            ?? connection.Fields.ToDictionary(pair => pair.Key, pair => (string?)pair.Value, StringComparer.Ordinal);
+        // Con Embedded Signup (spec 2026-10-09 §6.1) los campos los llena el backend: el request sólo puede
+        // cambiar el nombre, y lo guardado se conserva tal cual (P6 del plan).
+        var backendOwned = provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup;
+        IReadOnlyDictionary<string, string?> requestedFields = command.Fields is { } sent && !backendOwned
+            ? sent
+            : connection.Fields.ToDictionary(pair => pair.Key, pair => (string?)pair.Value, StringComparer.Ordinal);
+        // CheckValues recibe lo que llegó, para que un campo mandado a un proveedor de Meta salga 422.
         ConnectionInputRules.ThrowIfAny(
-            ConnectionInputRules.CheckValues(provider, requestedFields, command.Secrets, requireSecrets: false));
+            ConnectionInputRules.CheckValues(provider, backendOwned ? command.Fields : requestedFields, command.Secrets, requireSecrets: false));
 
         var fields = ConnectionInputRules.Normalize(provider, requestedFields, secret: false);
         var replacedSecrets = ConnectionInputRules.Normalize(provider, command.Secrets, secret: true);

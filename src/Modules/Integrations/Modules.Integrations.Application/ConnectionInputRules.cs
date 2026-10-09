@@ -22,6 +22,8 @@ internal static class ConnectionInputRules
     public const string CredentialsRejectedMessage = "El proveedor rechazó esta clave: revísala y vuelve a pegarla.";
     public const string ProviderRejectedFieldMessage = "El proveedor no aceptó este valor: revísalo.";
     public const string UnreadableSecretMessage = "La clave guardada ya no se puede leer: pégala de nuevo.";
+    public const string ProviderUsesMetaSignupMessage = "Este proveedor se conecta desde el flujo de Meta.";
+    public const string ReadOnlyFieldMessage = "Este campo lo llena el backend; no se puede editar.";
 
     private const string FieldsPrefix = "fields";
     private const string SecretsPrefix = "secrets";
@@ -108,6 +110,14 @@ internal static class ConnectionInputRules
         {
             if (provider.FindField(key) is { } known && known.IsSecret == secret)
             {
+                // Spec 2026-10-09 §6.1: un campo interno, o cualquier campo de un proveedor con Embedded
+                // Signup, lo escribe sólo el backend. Un valor vacío cuenta como "no vino".
+                if ((known.Internal || provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup)
+                    && !string.IsNullOrWhiteSpace(values[key]))
+                {
+                    yield return new ValidationFailure($"{prefix}.{key}", ReadOnlyFieldMessage);
+                }
+
                 continue;
             }
 

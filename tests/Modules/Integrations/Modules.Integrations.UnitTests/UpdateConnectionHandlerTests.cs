@@ -263,4 +263,72 @@ public sealed class UpdateConnectionHandlerTests
         Assert.Equal("fields.apiToken", Assert.Single(error.Errors).PropertyName);
         Assert.DoesNotContain("en-claro", connection.Fields.Values);
     }
+
+    // P6 del plan (spec 2026-10-09 §6.1): una conexión de Meta sólo cambia el nombre; lo que llenó el
+    // backend se conserva tal cual, internos incluidos, y no se llama al proveedor.
+    [Fact]
+    public async Task AMetaSignupConnectionOnlyChangesItsNameAndKeepsItsFields()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedWhatsAppCloud();
+        var before = connection.Fields.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+
+        var response = await bed.UpdateHandler().HandleAsync(
+            new UpdateConnectionCommand(bed.TenantId, connection.Id, connection.Version, "Ventas sur", null, null), Ct);
+
+        Assert.Equal("Ventas sur", response.Name);
+        Assert.Equal(before, connection.Fields);
+        Assert.Equal("1234567890", response.Fields[WhatsAppCloudFieldKeys.PhoneNumberId]);
+        Assert.Empty(bed.Tester.Calls);
+        Assert.Equal(["name"], Assert.Single(bed.Audit.Entries).ChangedFields);
+    }
+
+    // Spec 2026-10-09 §6.1: ni los campos visibles ni los internos ni el token se escriben por PUT.
+    [Fact]
+    public async Task AMetaSignupConnectionRejectsFieldsAndSecretsSentByThePut()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedWhatsAppCloud();
+        var command = new UpdateConnectionCommand(
+            bed.TenantId,
+            connection.Id,
+            connection.Version,
+            "Ventas",
+            new Dictionary<string, string?>
+            {
+                [WhatsAppCloudFieldKeys.DisplayPhoneNumber] = "+57 311 000 0000",
+                [WhatsAppCloudFieldKeys.PhoneNumberId] = "111",
+            },
+            new Dictionary<string, string?> { [WhatsAppCloudFieldKeys.AccessToken] = "otro-token-SENTINEL" });
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => bed.UpdateHandler().HandleAsync(command, Ct));
+
+        Assert.Equal(
+            ["fields.displayPhoneNumber", "fields.phoneNumberId", "secrets.accessToken"],
+            error.Errors.Select(failure => failure.PropertyName).Order(StringComparer.Ordinal));
+        Assert.All(error.Errors, failure => Assert.Equal(ConnectionInputRules.ReadOnlyFieldMessage, failure.ErrorMessage));
+        Assert.Equal("1234567890", connection.Fields[WhatsAppCloudFieldKeys.PhoneNumberId]);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+    }
+
+    // Un valor vacío cuenta como "no vino": la pantalla puede reenviar el formulario sin tocarlos.
+    [Fact]
+    public async Task AMetaSignupConnectionToleratesBlankFields()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedWhatsAppCloud();
+
+        var response = await bed.UpdateHandler().HandleAsync(
+            new UpdateConnectionCommand(
+                bed.TenantId,
+                connection.Id,
+                connection.Version,
+                "Ventas",
+                new Dictionary<string, string?> { [WhatsAppCloudFieldKeys.DisplayPhoneNumber] = "  " },
+                new Dictionary<string, string?> { [WhatsAppCloudFieldKeys.AccessToken] = null }),
+            Ct);
+
+        Assert.Equal("+57 300 123 4567", response.Fields[WhatsAppCloudFieldKeys.DisplayPhoneNumber]);
+        Assert.Equal(1, response.Version);
+    }
 }

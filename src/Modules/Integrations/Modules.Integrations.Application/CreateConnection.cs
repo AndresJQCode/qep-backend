@@ -41,6 +41,14 @@ public sealed class CreateConnectionValidator : AbstractValidator<CreateConnecti
                 return;
             }
 
+            // Spec 2026-10-09 §6.1: el formulario genérico no crea una conexión de Meta (quedaría sin token).
+            if (provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup)
+            {
+                context.AddFailure(new FluentValidation.Results.ValidationFailure(
+                    "providerKey", ConnectionInputRules.ProviderUsesMetaSignupMessage));
+                return;
+            }
+
             var command = context.InstanceToValidate;
             ConnectionInputRules.AddTo(
                 context, ConnectionInputRules.CheckValues(provider, command.Fields, command.Secrets, requireSecrets: true));

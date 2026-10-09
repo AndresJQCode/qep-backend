@@ -235,4 +235,46 @@ public sealed class ConnectionsApiTests
         Assert.Equal("Active", back.Status);
         Assert.True(back.Secrets["apiToken"].Readable);
     }
+
+    // Spec §5.2 y D-M3: el catálogo con messaging activo trae whatsapp-cloud con su onboarding; sin
+    // Meta:App no lo trae. Y §6.1: el POST genérico no crea una conexión de Meta.
+    [Fact]
+    public async Task TheCatalogShowsWhatsAppCloudWithItsOnboardingOnlyWithMetaApp()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+
+        var json = await client.GetStringAsync(CatalogUrl(tenant.TenantId), Ct);
+        using var document = JsonDocument.Parse(json);
+        var whatsapp = document.RootElement.GetProperty("providers").EnumerateArray()
+            .Single(provider => provider.GetProperty("key").GetString() == "whatsapp-cloud");
+        Assert.Equal("MetaEmbeddedSignup", whatsapp.GetProperty("onboarding").GetProperty("kind").GetString());
+        Assert.Equal(MetaAppId, whatsapp.GetProperty("onboarding").GetProperty("appId").GetString());
+        Assert.Equal(["displayPhoneNumber", "verifiedName"], whatsapp.GetProperty("fields").EnumerateArray().Select(field => field.GetProperty("key").GetString()));
+        var zenvia = document.RootElement.GetProperty("providers").EnumerateArray()
+            .Single(provider => provider.GetProperty("key").GetString() == "zenvia");
+        Assert.False(zenvia.GetProperty("onboarding").TryGetProperty("appId", out _));
+
+        using var manager = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var post = await SendAsync(manager, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), new
+        {
+            providerKey = "whatsapp-cloud",
+            name = "Ventas",
+            fields = new Dictionary<string, string?>(),
+            secrets = new Dictionary<string, string?>(),
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, post.StatusCode);
+        var (code, errorKeys) = await ProblemAsync(post);
+        Assert.Equal("validation.failed", code);
+        Assert.Equal(["providerKey"], errorKeys);
+
+        using var withoutMeta = factory.WithoutMetaApp();
+        using var client2 = CreateClient(withoutMeta, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+        var json2 = await client2.GetStringAsync(CatalogUrl(tenant.TenantId), Ct);
+        Assert.DoesNotContain("whatsapp-cloud", json2, StringComparison.Ordinal);
+    }
 }

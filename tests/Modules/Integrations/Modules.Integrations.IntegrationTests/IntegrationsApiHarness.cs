@@ -297,6 +297,18 @@ internal static class IntegrationsApiHarness
             ("tenantId", tenantId),
             ("moduleKey", moduleKey));
 
+    /// <summary>Prende un módulo que no viene con el signup (messaging, pos), como PosApiHarness.EnablePosAsync.</summary>
+    public static Task<int> EnableModuleAsync(string connectionString, Guid tenantId, string moduleKey) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+            VALUES (@tenantId, @moduleKey, now(), 'manual')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+            """,
+            ("tenantId", tenantId),
+            ("moduleKey", moduleKey));
+
     public static async Task<T> ScalarAsync<T>(
         string connectionString, string sql, params (string Name, object Value)[] parameters)
     {

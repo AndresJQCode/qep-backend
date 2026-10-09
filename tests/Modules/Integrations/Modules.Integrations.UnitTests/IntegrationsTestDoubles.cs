@@ -39,6 +39,20 @@ internal sealed class FakeClock(DateTimeOffset utcNow) : IClock
     public DateTimeOffset UtcNow { get; set; } = utcNow;
 }
 
+/// <summary>La app de Meta (D-M3): configurada por defecto, con los valores públicos de las pruebas.</summary>
+internal sealed class FakeMetaAppSettings : IMetaAppSettings
+{
+    public bool Configured { get; set; } = true;
+
+    public bool IsConfigured => Configured;
+
+    public string? AppId => Configured ? "100200300" : null;
+
+    public string? ConfigId => Configured ? "400500600" : null;
+
+    public string GraphApiVersion => "v24.0";
+}
+
 /// <summary>Sin entrada = tenant que no está en <c>tenancy.tenants</c> (el stub): <c>null</c>, todo visible.</summary>
 internal sealed class FakeTenantModules : ITenantModules
 {
@@ -199,11 +213,36 @@ internal sealed partial class IntegrationsTestBed
     public void HideQuotations() =>
         Modules.Sets[TenantId] = TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations]));
 
+    public FakeMetaAppSettings MetaApp { get; } = new();
+
     public GetIntegrationsCatalogHandler CatalogHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, context ?? Context());
+        new(Catalog, Repository, Modules, MetaApp, context ?? Context());
 
     public ListConnectionsHandler ListHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, Protector, AuthorNames, context ?? Context());
+        new(Catalog, Repository, Modules, MetaApp, Protector, AuthorNames, context ?? Context());
+
+    /// <summary>Una conexión de Meta ya creada por Embedded Signup: los campos los escribió el backend.</summary>
+    public IntegrationConnection SeedWhatsAppCloud(string name = "Ventas")
+    {
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.WhatsAppCloud,
+            TenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [WhatsAppCloudFieldKeys.DisplayPhoneNumber] = "+57 300 123 4567",
+                [WhatsAppCloudFieldKeys.VerifiedName] = "Ventas QEP",
+                [WhatsAppCloudFieldKeys.PhoneNumberId] = "1234567890",
+                [WhatsAppCloudFieldKeys.WabaId] = "9876543210",
+                [WhatsAppCloudFieldKeys.QualityRating] = "GREEN",
+            },
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.AccessToken] = "meta-token-SENTINEL-1" },
+            Protector.Protect,
+            MemberId,
+            Now);
+        Repository.Connections.Add(connection);
+        return connection;
+    }
 
     public GetConnectionHandler GetHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, Modules, Protector, AuthorNames, context ?? Context());
