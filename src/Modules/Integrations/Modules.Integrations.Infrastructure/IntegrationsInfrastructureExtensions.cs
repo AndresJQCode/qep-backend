@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
 using Modules.Integrations.Infrastructure.SecretProtection;
+using Modules.Integrations.Infrastructure.Verification;
+using Modules.Integrations.Infrastructure.Zenvia;
 
 namespace Modules.Integrations.Infrastructure;
 
@@ -26,6 +28,19 @@ public static class IntegrationsInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<SecretProtectionOptions>, SecretProtectionOptionsValidator>();
         services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
+
+        // Spec 2026-10-08, «Probar la credencial». IHttpClientFactory con un cliente propio del
+        // módulo; sin redirecciones automáticas (el token no viaja a otro host: un 3xx es «no pude
+        // verificar», P13) y sin los loggers por defecto, que pueden registrar headers.
+        services.AddOptions<ZenviaOptions>()
+            .Bind(configuration.GetSection(ZenviaOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<ZenviaOptions>, ZenviaOptionsValidator>();
+        services.AddHttpClient(ZenviaConnectionTester.HttpClientName, ZenviaConnectionTester.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .RemoveAllLoggers();
+        services.AddSingleton<IProviderConnectionTester, ZenviaConnectionTester>();
+        services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         return services;
     }
