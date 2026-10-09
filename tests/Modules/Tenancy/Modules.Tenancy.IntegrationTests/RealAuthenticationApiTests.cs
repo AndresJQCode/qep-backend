@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -499,6 +500,26 @@ public sealed class RealAuthenticationApiTests
         // El owner de registro entra con admin (TenantRegistrationService.cs:16).
         Assert.NotNull(tenant.Roles);
         Assert.Equal(new[] { new SessionRolePayload("admin", "Administrador") }, tenant.Roles);
+    }
+
+    // Spec D2: the frontend keeps no currency list; it reads it here, before the first paint.
+    [Fact]
+    public async Task CurrentSessionCarriesTheCurrencyCatalogue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, _) = await RegisterOwnerAndTenantAsync(factory);
+
+        var session = await owner.GetFromJsonAsync<JsonElement>(
+            "/api/v1/auth/me", TestContext.Current.CancellationToken);
+
+        var currencies = session.GetProperty("currencies");
+        List<string?> codes = ["COP", "USD", "EUR"];
+        Assert.Equal(
+            codes,
+            currencies.EnumerateArray().Select(currency => currency.GetProperty("code").GetString()).ToList());
+        Assert.Equal("US$", currencies[1].GetProperty("symbol").GetString());
+        Assert.Equal(2, currencies[1].GetProperty("decimals").GetInt32());
     }
 
     // Final review 2026-10-08: el formato regional viaja en /auth/me para que llegue a todo

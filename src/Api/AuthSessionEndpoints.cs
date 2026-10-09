@@ -124,7 +124,7 @@ public static class AuthSessionEndpoints
             cancellationToken);
         SessionCookieWriter.Append(httpContext, sessionOptions.Value, environment, issued);
 
-        return Results.Ok(new SessionResponse(userId, email, activeTenantIds, tenants));
+        return Results.Ok(new SessionResponse(userId, email, activeTenantIds, tenants, Currencies.All));
     }
 
     private static async Task<IResult> GetCurrentSessionAsync(
@@ -151,7 +151,7 @@ public static class AuthSessionEndpoints
             roleCatalog,
             tenantDirectory,
             cancellationToken);
-        return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, tenants));
+        return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, tenants, Currencies.All));
     }
 
     /// <summary>
@@ -239,11 +239,15 @@ public static class AuthSessionEndpoints
 /// persona en él, con su nombre, para que el menú de usuario muestre «Administrador» y no la
 /// clave.
 /// </summary>
+/// <remarks><c>Currencies</c> is the global catalogue (spec D2): the SPA keeps no currency list
+/// and needs symbols and decimals before the first paint, for every member — including roles
+/// without <c>tenancy.settings.read</c>.</remarks>
 public sealed record SessionResponse(
     Guid UserId,
     string? Email,
     IReadOnlyCollection<Guid> ActiveTenantIds,
-    IReadOnlyCollection<ActiveTenantResponse> ActiveTenants);
+    IReadOnlyCollection<ActiveTenantResponse> ActiveTenants,
+    IReadOnlyList<CurrencyInfo> Currencies);
 
 /// <summary>
 /// Un tenant activo con los roles de la persona en él. Record propio de la API y no el

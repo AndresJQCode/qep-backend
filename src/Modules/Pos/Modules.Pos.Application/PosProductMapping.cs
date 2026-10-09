@@ -10,10 +10,6 @@ internal static class PosProductMapping
     /// The list that matches the session, never a fallback to the other one: selling a USD session
     /// at the peso price would be a silent 4000x error.
     /// </summary>
-    /// <remarks>
-    /// The literal, not TenantCurrencies.Usd: Pos.Application references Modules.Tenancy.Application
-    /// only, and PosLayerTests forbids Modules.Tenancy.Domain.
-    /// </remarks>
     internal static decimal? PriceIn(this PosProductRef product, string currency) =>
         currency == "USD" ? product.PriceUsd : product.PriceCop;
 

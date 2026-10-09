@@ -128,6 +128,7 @@ app.MapAuthorizationCatalogEndpoints();
 app.MapTenantModulesEndpoints();
 app.MapRoleEndpoints();
 app.MapTenantSettingsEndpoints();
+app.MapCurrencyEndpoints();
 app.MapOperatorEndpoints();
 app.MapMembershipEndpoints();
 app.MapInvitationEndpoints();
