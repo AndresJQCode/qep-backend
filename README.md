@@ -95,7 +95,8 @@ corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
 `AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator`,
 `PaymentProofsOptionsValidator`, `ForwardedHeadersSettingsValidator`,
-`CorsSettingsValidator` y `OperatorTenantOptionsValidator`): si algo
+`CorsSettingsValidator`, `OperatorTenantOptionsValidator` y los dos de Integrations,
+`SecretProtectionOptionsValidator` y `ZenviaOptionsValidator`): si algo
 falta o está mal escrito, la API **no arranca**.
 
 `ConnectionStrings:QepDatabase` **no está en `appsettings.json`**, a propósito:
@@ -133,6 +134,10 @@ local y por variable de entorno en k8s
 | `Storage:ClamAv:Enabled`                               | `false`                                                                                       | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                         |
 | `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                      | Destino del escaneo. `Port` entre 1 y 65535                                                                         |
 | `Quotations:PaymentProofs:PublicLinks`                 | `false` en `appsettings.json`                                                                 | Con `true`, cada comprobante de pago nuevo se copia al bucket público al adjuntarse y el Excel de pedidos lo enlaza. **Exige `Storage:R2:PublicBucket` y `Storage:R2:PublicBaseUrl` en cualquier ambiente**: sin ellos la API no arranca. Apagarla no despublica lo ya copiado |
+| `Integrations:SecretProtection:ActiveKeyId`            | ausente (user-secrets en local)                                                               | Id de la llave con la que se cifran las credenciales de las conexiones (`^[a-z0-9]{1,32}$`). **En `Production` es obligatoria**, y su llave tiene que existir y ser de 32 bytes en base64: sin ella la API no arranca. Fuera de producción, sin ella la API arranca y crear o editar una conexión responde `503 integrations.secret_protection.unavailable`. Ver [Integraciones](#integraciones-conexiones-del-tenant) |
+| `Integrations:SecretProtection:Keys:<id>`              | user-secrets                                                                                  | Llave AES-256 (32 bytes en base64). Es un secreto: en k8s va en el Secret, nunca en el ConfigMap |
+| `Integrations:SecretProtection:RekeyIntervalMinutes`   | `60`                                                                                          | Cada cuánto el worker re-cifra con la llave activa, además de al arrancar. Entre 1 y 1440 |
+| `Integrations:Zenvia:BaseUrl`                          | `https://api.zenvia.com`                                                                      | URL de la prueba de credenciales de Zenvia (`GET /v2/templates`). HTTPS absoluta. El sender global de cotizaciones sigue usando `Quotations:WhatsApp:BaseUrl` |
 
 Ejemplo con variables de entorno:
 
@@ -628,7 +633,8 @@ conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_cha
 `catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting` y `pos`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations` y `pos` exige `catalog` y
 `companies`. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
-Storage, Platform, Geography, Audit y Notifications son núcleo y no se apagan.
+Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
+Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
 Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
 desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
@@ -776,6 +782,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
+| `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 **403, nunca 404**, cuando el recurso pertenece a otro tenant.
@@ -1760,6 +1767,89 @@ clave es opcional.
 
 `BaseUrl` debe ser HTTPS absoluta **en todo ambiente**, incluido local: la cotización completa
 —precios, cliente, totales— viaja en el cuerpo del POST.
+
+### Integraciones (conexiones del tenant)
+
+Cada tenant conecta sus propias cuentas de plataformas externas en **Ajustes → Integraciones**
+(spec 2026-10-08). Hoy el catálogo tiene un proveedor, **Zenvia (WhatsApp)**, visible para los
+tenants con `quotations` activo; un proveedor nuevo es otra entrada de `IntegrationProviders`, su
+probador y una migración que cambia el `CHECK` de `provider_key`. Varias conexiones por proveedor
+(tope de 20), cada una con nombre. Ningún módulo **usa** todavía las conexiones: cada consumidor lo
+hará en su spec, por los puertos `IIntegrationConnections` e `IConnectionHealthReporter`.
+
+Al guardar, la credencial se prueba contra el proveedor (Zenvia: `GET /v2/templates` con
+`X-API-TOKEN`); si la rechaza o no responde, no se guarda nada. Las credenciales son de sólo
+escritura: ninguna respuesta, log, auditoría ni evento las lleva, y se guardan cifradas con
+AES-256-GCM en `integrations.connection_secrets` (`nonce || ciphertext || tag`, AAD
+`integrations.connection:{connectionId}:{fieldKey}`). La llave vive **fuera** de la base:
+
+| Clave | Dónde vive en prod | Contenido |
+| --- | --- | --- |
+| `Integrations:SecretProtection:ActiveKeyId` | ConfigMap | id de llave (`^[a-z0-9]{1,32}$`); no es secreto |
+| `Integrations:SecretProtection:Keys:<id>` | Secret, desde la variable secreta del grupo `Backend-prod` | 32 bytes en base64 |
+
+#### Generar una llave en local
+
+`dotnet user-secrets set` imprime la clave **y su valor**, y `list` imprime todos los valores: el
+`set` va con `| Out-Null` y la verificación cuenta.
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$rng.Dispose()
+$key = [Convert]::ToBase64String($bytes)
+dotnet user-secrets set "Integrations:SecretProtection:Keys:k1" $key --project src/Api | Out-Null
+Remove-Variable key, bytes, rng
+dotnet user-secrets set "Integrations:SecretProtection:ActiveKeyId" "k1" --project src/Api | Out-Null
+dotnet user-secrets list --project src/Api | Select-String -Pattern "SecretProtection:Keys:k1" | Measure-Object
+```
+
+El último comando tiene que dar `Count 1`.
+
+#### Custodia de la llave de producción
+
+- Para generarla sin imprimirla: el mismo bloque, pero `Set-Clipboard $key` reemplaza la primera línea
+  `user-secrets set` y corre **antes** de `Remove-Variable`; se pega en la variable secreta y en la
+  bóveda, y después se vacía el portapapeles (`Set-Clipboard -Value $null`).
+- Fuente de verdad: la variable **secreta** `INTEGRATIONS_SECRET_PROTECTION_KEY_K1` del grupo
+  `Backend-prod` (Azure DevOps). Respaldo: una copia en la bóveda del owner. Perder las dos es perder
+  todas las credenciales guardadas: cada tenant tendría que volver a pegar las suyas.
+- No se edita con `kubectl`: el pipeline vuelve a aplicar `k8s/prod-secret.yaml` en cada deploy.
+- Para ver que existe, sin su valor: `kubectl --context contabo-prod -n <ns> describe secret <nombre>`.
+  Nunca `get -o yaml`, `-o json` ni `custom-columns` sobre `.data`.
+
+#### Rotación (dos despliegues)
+
+Nunca se retira una llave a la que todavía apunta algún secreto.
+
+1. **Declarar**: variable `INTEGRATIONS_SECRET_PROTECTION_KEY_K2` en el grupo y línea
+   `Integrations__SecretProtection__Keys__k2` en `prod-secret.yaml`, con `ActiveKeyId` todavía en `k1`.
+   Desplegar.
+2. **Activar**: `ActiveKeyId = k2` en el ConfigMap. Desplegar. `ConnectionSecretRekeyWorker` re-cifra al
+   arrancar y cada `RekeyIntervalMinutes`, en lotes de 100; un `PUT` con un secreto nuevo también lo
+   deja en `k2`.
+3. **Contar** (sólo ids y conteos):
+
+   ```sql
+   SELECT key_id, count(*) FROM integrations.connection_secrets GROUP BY 1;
+   ```
+
+   Si quedan en `k1`, el log del worker dice cuántos se saltó (`n connection secrets could not be
+   re-encrypted …`) y su línea final da `rekey finished: n re-encrypted, m skipped`. Con `m = 0` y
+   filas en `k1`, es la ventana del rolling update: la corrida siguiente lo resuelve.
+4. **Retirar** `k1` (variable y línea del Secret) sólo cuando el conteo da 0 en `k1`. Si la llave se
+   filtró: las mismas fases y, además, pedirles a los tenants que roten sus tokens en el proveedor.
+
+#### Orden de despliegue
+
+1. Variable secreta `INTEGRATIONS_SECRET_PROTECTION_KEY_K1` en `Backend-prod` (y su copia en la
+   bóveda). Sin ella, el pod nuevo entra en crash-loop por `SecretProtectionOptionsValidator`: es a
+   propósito.
+2. Backend: código, migración `InitialIntegrations`, la línea del Secret y la del ConfigMap, en el mismo
+   merge. `Quotations__WhatsApp__*` se quedan: el sender global sigue hasta el spec del consumidor.
+3. Frontend, después. **Rollback del backend:** el frontend muestra la tarjeta y la API responde 404;
+   nada se corrompe porque ningún consumidor depende del módulo.
 
 ## Verificación
 

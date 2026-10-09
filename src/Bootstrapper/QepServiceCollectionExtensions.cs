@@ -26,6 +26,8 @@ using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
+using Modules.Integrations.Application;
+using Modules.Integrations.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
@@ -485,6 +487,35 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>,
             GetCustomerReportSummaryHandler>();
+        // Integrations (spec 2026-10-08). A mano, como el resto: un handler que falte compila, mapea
+        // su endpoint y falla recién en runtime con 500.
+        services.AddScoped<
+            IQueryHandler<GetIntegrationsCatalogQuery, IntegrationsCatalogResponse>,
+            GetIntegrationsCatalogHandler>();
+        services.AddScoped<
+            IQueryHandler<ListConnectionsQuery, ConnectionsResponse>,
+            ListConnectionsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetConnectionQuery, ConnectionResponse>,
+            GetConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateConnectionCommand, ConnectionResponse>,
+            CreateConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateConnectionCommand, ConnectionResponse>,
+            UpdateConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<TestConnectionCommand, ConnectionResponse>,
+            TestConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<PauseConnectionCommand, ConnectionResponse>,
+            PauseConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<ResumeConnectionCommand, ConnectionResponse>,
+            ResumeConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteConnectionCommand, bool>,
+            DeleteConnectionHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -492,6 +523,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateConnectionValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -511,6 +543,11 @@ public static class QepServiceCollectionExtensions
         // cajeros entran por adaptadores que se registran más abajo, con los demás.
         services.AddPosInfrastructure(configuration);
 
+        // Integrations (spec 2026-10-08): núcleo, dueño de las conexiones del tenant con plataformas
+        // externas. Sólo ve Tenancy; el nombre del autor de una conexión entra por un adaptador que se
+        // registra más abajo, con los demás.
+        services.AddIntegrationsInfrastructure(configuration);
+
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
@@ -523,6 +560,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IPosProductLookup, PosProductLookup>();
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
+
+        // Integrations (P23): el nombre de quien creó la conexión sale de Tenancy e Identity.
+        services.AddScoped<IConnectionAuthorNames, IntegrationsConnectionAuthorNames>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
@@ -718,7 +758,11 @@ public static class QepServiceCollectionExtensions
                 // asigna roles en QCode puede volver a alguien operador: aceptado (radio de explosión).
                 OperatorPermissions.TenantsRead,
                 OperatorPermissions.ModulesManage,
-                OperatorPermissions.TenantsManage
+                OperatorPermissions.TenantsManage,
+                // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
+                // código, así que no hay migración de datos.
+                IntegrationsPermissions.ConnectionRead,
+                IntegrationsPermissions.ConnectionManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1135,6 +1179,24 @@ public static class QepServiceCollectionExtensions
             "Operator",
             "high",
             RequiredModules: []));
+
+        // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
+        // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
+        // clientes.
+        services.AddSingleton(new PermissionDefinition(
+            IntegrationsPermissions.ConnectionRead,
+            "Ver integraciones",
+            "Permite ver las conexiones del tenant con plataformas externas, sin sus credenciales.",
+            "Integrations",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            IntegrationsPermissions.ConnectionManage,
+            "Gestionar integraciones",
+            "Permite conectar, probar, pausar, reanudar y eliminar conexiones con plataformas externas y cambiar sus credenciales.",
+            "Integrations",
+            "high",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1396,7 +1458,13 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, OperatorPermissions.ModulesManage))
             .AddPolicy(
                 OperatorPermissions.TenantsManage,
-                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsManage));
+                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsManage))
+            .AddPolicy(
+                IntegrationsPermissions.ConnectionRead,
+                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))
+            .AddPolicy(
+                IntegrationsPermissions.ConnectionManage,
+                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionManage));
     }
 
     private static void AddPermissionRequirement(

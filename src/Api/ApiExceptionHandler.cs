@@ -36,7 +36,10 @@ internal sealed class ApiExceptionHandler(
         CancellationToken cancellationToken)
     {
         var (status, title, code) = MapException(exception);
-        if (status >= StatusCodes.Status500InternalServerError)
+        // El 503 de Integrations (sin llave de cifrado fuera de producción) es una condición de
+        // configuración que el mensaje ya explica, no una excepción sin manejar: va como las 4xx.
+        if (status >= StatusCodes.Status500InternalServerError
+            && status != StatusCodes.Status503ServiceUnavailable)
         {
             LogUnhandledException(logger, exception);
         }
@@ -62,6 +65,13 @@ internal sealed class ApiExceptionHandler(
                 .ToDictionary(
                     group => group.Key,
                     group => group.Select(error => error.ErrorMessage).ToArray());
+        }
+        else if (exception is IHasFieldErrors { FieldErrors.Count: > 0 } withFieldErrors)
+        {
+            // Spec 2026-10-08 (Integraciones): un error de dominio que marca un campo
+            // (credentials_rejected → secrets.apiToken) viaja con el mismo mapa que el 422 de
+            // FluentValidation, el único que el formulario sabe leer.
+            problem.Extensions["errors"] = withFieldErrors.FieldErrors;
         }
 
         await RecordAsync(httpContext, exception, status, code);
@@ -140,6 +150,8 @@ internal sealed class ApiExceptionHandler(
                 (StatusCodes.Status412PreconditionFailed, "Concurrency conflict", value.Code),
             PreconditionRequiredException value =>
                 (StatusCodes.Status428PreconditionRequired, "Precondition required", value.Code),
+            ServiceUnavailableException value =>
+                (StatusCodes.Status503ServiceUnavailable, "Service unavailable", value.Code),
             ValidationException =>
                 (StatusCodes.Status422UnprocessableEntity, "Validation failed", "validation.failed"),
             DomainException value =>

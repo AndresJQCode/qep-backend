@@ -252,10 +252,16 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
-- **`Conversations` no existe**, aunque los requisitos la supongan. Los trece módulos
+- **`Conversations` no existe**, aunque los requisitos la supongan. Los catorce módulos
   construidos son Audit, Authorization, Catalog, Companies, Customers, Geography, Identity,
-  Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada uno con su
+  Integrations, Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada uno con su
   `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`.
+- **Integrations no usa el `IAuditRecorder` ni el `IOutboxWriter` compartidos:** los dos están
+  ligados a `TenancyDbContext`, y una segunda ligadura le robaría en silencio la auditoría o el outbox a
+  Tenancy. Un módulo nuevo con auditoría atómica declara su propio puerto (`IIntegrationsAuditRecorder`,
+  como `IIdentityAuditRecorder`). Y un consumidor de una conexión nunca referencia
+  `Modules.Integrations.Application`: declara su puerto y el adaptador va en Bootstrapper
+  (`IntegrationsLayerTests`).
 
 ## Verificación
 

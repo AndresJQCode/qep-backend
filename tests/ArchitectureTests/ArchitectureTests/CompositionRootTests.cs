@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
+using Modules.Integrations.Application;
 using Modules.Pos.Application;
 using Modules.Tenancy.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -164,12 +165,40 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec de
-    /// entitlements, las 6 de POS y las tres <c>operator.*</c> del spec de 2026-10-08.</summary>
+    /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
+    /// specs de 2026-10-08.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFortyFourConstants()
+    public void PermissionDiscoveryFindsTheFortySixConstants()
     {
-        // +6 de PosPermissions (spec 2026-10-07), +3 de OperatorPermissions (spec 2026-10-08).
-        Assert.Equal(44, PermissionConstants().Length);
+        // +6 de PosPermissions (spec 2026-10-07), +3 de OperatorPermissions y +2 de
+        // IntegrationsPermissions (specs 2026-10-08).
+        Assert.Equal(46, PermissionConstants().Length);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-08 (Integraciones), «Permisos»: los dos de fábrica en admin y núcleo
+    /// (<c>RequiredModules</c> vacío): Integrations no se apaga; lo que se filtra por módulo es el
+    /// catálogo de proveedores.
+    /// </summary>
+    [Fact]
+    public void TheAdminRoleCarriesTheIntegrationsPermissionsAsCore()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] integrationsPermissions =
+            [IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage];
+
+        Assert.All(integrationsPermissions, permission =>
+            Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        var definitions = catalog.ListPermissions()
+            .Where(definition => integrationsPermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(2, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Integrations", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
     }
 
     /// <summary>Spec 2026-10-08 §2: el admin de fábrica los lleva; el filtro decide dónde valen.</summary>
