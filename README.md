@@ -1795,10 +1795,12 @@ AES-256-GCM en `integrations.connection_secrets` (`nonce || ciphertext || tag`, 
 
 ```powershell
 $bytes = New-Object byte[] 32
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$rng.Dispose()
 $key = [Convert]::ToBase64String($bytes)
 dotnet user-secrets set "Integrations:SecretProtection:Keys:k1" $key --project src/Api | Out-Null
-Remove-Variable key, bytes
+Remove-Variable key, bytes, rng
 dotnet user-secrets set "Integrations:SecretProtection:ActiveKeyId" "k1" --project src/Api | Out-Null
 dotnet user-secrets list --project src/Api | Select-String -Pattern "SecretProtection:Keys:k1" | Measure-Object
 ```
@@ -1807,9 +1809,9 @@ El último comando tiene que dar `Count 1`.
 
 #### Custodia de la llave de producción
 
-- Para generarla sin imprimirla: el mismo bloque, pero terminando en `Set-Clipboard $key` en vez de
-  `user-secrets set`; se pega en la variable secreta y en la bóveda, y después se vacía el
-  portapapeles (`Set-Clipboard -Value $null`).
+- Para generarla sin imprimirla: el mismo bloque, pero `Set-Clipboard $key` reemplaza la primera línea
+  `user-secrets set` y corre **antes** de `Remove-Variable`; se pega en la variable secreta y en la
+  bóveda, y después se vacía el portapapeles (`Set-Clipboard -Value $null`).
 - Fuente de verdad: la variable **secreta** `INTEGRATIONS_SECRET_PROTECTION_KEY_K1` del grupo
   `Backend-prod` (Azure DevOps). Respaldo: una copia en la bóveda del owner. Perder las dos es perder
   todas las credenciales guardadas: cada tenant tendría que volver a pegar las suyas.
