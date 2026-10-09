@@ -109,10 +109,8 @@ public sealed record CompanyBankAccount
             : trimmed;
     }
 
-    // Tres letras y a mayusculas, igual que ProductDetails en catalogo. No se valida contra una
-    // tabla de monedas a proposito: mantener esa tabla al dia es un problema propio, y ningun
-    // requisito dice cuales acepta el producto. Lo que si se rechaza es lo que evidentemente no es
-    // un codigo ISO 4217.
+    // Shape, not catalogue: the domain cannot see Currencies (Tenancy.Application); the catalogue
+    // is enforced by CompanyWriteRules.
     private static string NormalizeCurrency(string currency)
     {
         if (string.IsNullOrWhiteSpace(currency))

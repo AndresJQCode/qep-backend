@@ -60,11 +60,15 @@ public sealed class CatalogLayerTests
     /// puerto `IProductImageLookup` se declara acá y el adaptador vive en `Bootstrapper`, que es
     /// el composition root y cuyo trabajo es exactamente cablear dos módulos.
     ///
+    /// Since spec 2026-10-08 Catalog's Application may see Tenancy (it needs Currencies), so the rule is
+    /// the same as Pos, Quotations, Companies and Reporting: Tenancy is the only business module allowed,
+    /// and Storage stays forbidden by that.
+    ///
     /// **Sin esta aserción esa decisión es un comentario, no una regla**: el primero que necesite
     /// un dato de `Storage` agrega el `ProjectReference` y nada se pone rojo.
     /// </summary>
     [Fact]
-    public void ApplicationDoesNotReferenceAnotherBusinessModule()
+    public void ApplicationOnlyReferencesTenancyAmongTheBusinessModules()
     {
         var references = typeof(ListProductsQuery).Assembly
             .GetReferencedAssemblies()
@@ -72,7 +76,10 @@ public sealed class CatalogLayerTests
             .ToArray();
 
         Assert.DoesNotContain(references, name =>
-            name is not null && name.StartsWith("Modules.Storage", StringComparison.Ordinal));
+            name is not null &&
+            name.StartsWith("Modules.", StringComparison.Ordinal) &&
+            !name.StartsWith("Modules.Catalog", StringComparison.Ordinal) &&
+            !name.StartsWith("Modules.Tenancy", StringComparison.Ordinal));
     }
 
     private static void AssertDoesNotReference(
