@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- El catálogo nombra sus módulos consumidores con TenantModuleKeys (spec 2026-10-08,
+         «Catálogo»): es la única referencia a otro módulo que el dominio tiene permitida
+         (IntegrationsLayerTests). -->
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Domain\Modules.Tenancy.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -26,6 +26,7 @@ using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
+using Modules.Integrations.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
@@ -510,6 +511,11 @@ public static class QepServiceCollectionExtensions
         // Pos (spec 2026-10-07): su único vecino directo es Tenancy; productos, empresas y
         // cajeros entran por adaptadores que se registran más abajo, con los demás.
         services.AddPosInfrastructure(configuration);
+
+        // Integrations (spec 2026-10-08): núcleo, dueño de las conexiones del tenant con plataformas
+        // externas. Sólo ve Tenancy; el nombre del autor de una conexión entra por un adaptador que se
+        // registra más abajo, con los demás.
+        services.AddIntegrationsInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

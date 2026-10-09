@@ -49,6 +49,12 @@
     <Project Path="src/Modules/Identity/Modules.Identity.Domain/Modules.Identity.Domain.csproj" />
     <Project Path="src/Modules/Identity/Modules.Identity.Infrastructure/Modules.Identity.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Integrations/">
+    <Project Path="src/Modules/Integrations/Modules.Integrations.Api/Modules.Integrations.Api.csproj" />
+    <Project Path="src/Modules/Integrations/Modules.Integrations.Application/Modules.Integrations.Application.csproj" />
+    <Project Path="src/Modules/Integrations/Modules.Integrations.Domain/Modules.Integrations.Domain.csproj" />
+    <Project Path="src/Modules/Integrations/Modules.Integrations.Infrastructure/Modules.Integrations.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Notifications/">
     <Project Path="src/Modules/Notifications/Modules.Notifications.Application/Modules.Notifications.Application.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
@@ -128,6 +134,10 @@
   <Folder Name="/tests/Modules/Identity/">
     <Project Path="tests/Modules/Identity/Modules.Identity.IntegrationTests/Modules.Identity.IntegrationTests.csproj" />
     <Project Path="tests/Modules/Identity/Modules.Identity.UnitTests/Modules.Identity.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Integrations/">
+    <Project Path="tests/Modules/Integrations/Modules.Integrations.IntegrationTests/Modules.Integrations.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Integrations/Modules.Integrations.UnitTests/Modules.Integrations.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Notifications/">
     <Project Path="tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj" />
