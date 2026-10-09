@@ -61,6 +61,12 @@ internal sealed partial class SecretProtectionOptionsValidator(IHostEnvironment 
             failures.Add(InvalidKey(active));
         }
 
+        // P16, en todo ambiente: el PeriodicTimer no acepta cero.
+        if (options.RekeyIntervalMinutes is < 1 or > 1440)
+        {
+            failures.Add($"{SecretProtectionOptions.SectionName}:RekeyIntervalMinutes must be between 1 and 1440.");
+        }
+
         return failures.Count > 0
             ? ValidateOptionsResult.Fail(failures)
             : ValidateOptionsResult.Success;

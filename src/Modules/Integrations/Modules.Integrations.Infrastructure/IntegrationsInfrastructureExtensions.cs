@@ -44,6 +44,7 @@ public static class IntegrationsInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<SecretProtectionOptions>, SecretProtectionOptionsValidator>();
         services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
+        services.AddHostedService<ConnectionSecretRekeyWorker>();
 
         // Spec 2026-10-08, «Probar la credencial». IHttpClientFactory con un cliente propio del
         // módulo; sin redirecciones automáticas (el token no viaja a otro host: un 3xx es «no pude

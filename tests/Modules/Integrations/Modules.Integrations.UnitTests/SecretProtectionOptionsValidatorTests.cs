@@ -143,6 +143,36 @@ public sealed class SecretProtectionOptionsValidatorTests
         Assert.DoesNotContain(GoodKey, result.FailureMessage, StringComparison.Ordinal);
     }
 
+    // P16: el PeriodicTimer del worker no acepta cero, y más de un día deja una llave filtrada en
+    // circulación demasiado tiempo.
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-5, false)]
+    [InlineData(1441, false)]
+    [InlineData(1, true)]
+    [InlineData(60, true)]
+    [InlineData(1440, true)]
+    public void TheRekeyIntervalIsBetweenOneMinuteAndOneDay(int minutes, bool valid)
+    {
+        foreach (var environment in new[] { Environments.Production, Environments.Development })
+        {
+            var options = new SecretProtectionOptions
+            {
+                ActiveKeyId = "k1",
+                Keys = new(StringComparer.Ordinal) { ["k1"] = GoodKey },
+                RekeyIntervalMinutes = minutes,
+            };
+
+            var result = ValidatorFor(environment).Validate(null, options);
+
+            Assert.Equal(valid, result.Succeeded);
+            if (!valid)
+            {
+                Assert.Contains("Integrations:SecretProtection:RekeyIntervalMinutes", result.FailureMessage, StringComparison.Ordinal);
+            }
+        }
+    }
+
     internal sealed class StubHostEnvironment(string environmentName) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = environmentName;

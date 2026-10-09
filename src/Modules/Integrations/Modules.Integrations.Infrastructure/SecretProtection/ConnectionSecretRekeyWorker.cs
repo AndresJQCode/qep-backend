@@ -3,44 +3,49 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Modules.Quotations.Application;
-using Modules.Quotations.Infrastructure.Persistence;
+using Microsoft.Extensions.Options;
+using Modules.Integrations.Application;
+using Modules.Integrations.Infrastructure.Persistence;
 
-namespace Modules.Quotations.Infrastructure.Whatsapp;
+namespace Modules.Integrations.Infrastructure.SecretProtection;
+
+internal sealed record RekeyRunResult(int Reencrypted, int Skipped);
 
 /// <summary>
-/// Re-cifra con la llave activa, una vez por arranque, toda API key de WhatsApp guardada con otra
-/// llave (spec 2026-10-07, «Rotación», punto 3; decisión 26). Sin él, una llave filtrada no salía
-/// de circulación hasta que cada tenant guardara su configuración.
+/// Re-cifra con la llave activa todo secreto guardado con otra llave que siga configurada (spec
+/// 2026-10-08, «Secreto en reposo»; era <c>WhatsAppTokenRekeyWorker</c> en 6612298). Al arrancar y cada
+/// <see cref="SecretProtectionOptions.RekeyIntervalMinutes"/>. Rotar es cambiar <c>ActiveKeyId</c> y dejar
+/// la vieja declarada: nadie le pide nada al tenant (criterio 4).
 /// <list type="bullet">
-/// <item>Idempotente: en el siguiente arranque esas filas ya no califican.</item>
-/// <item>Una fila que no descifra, o que otro guardado cambió en el medio, se salta y se loguea con
-/// tenant id y key id: nunca un valor ni un texto cifrado.</item>
-/// <item>Cualquier otra falla se loguea y el worker termina: no tumba el host ni reintenta en
-/// bucle.</item>
-/// <item>No audita: no hay una persona detrás y no cambia ningún valor de la configuración.</item>
+/// <item>Por corrida lista sólo ids y <c>key_id</c> de lo pendiente; lo procesa en lotes de
+/// <see cref="BatchSize"/> conexiones, un guardado por lote (P16).</item>
+/// <item>Lo de una llave retirada, lo que no descifra y lo de un lote que chocó con un <c>PUT</c> se
+/// salta y se cuenta en <b>una</b> advertencia por corrida, sin valores ni texto cifrado.</item>
+/// <item>Idempotente: en la corrida siguiente lo re-cifrado ya no califica.</item>
+/// <item>Cualquier otra falla se registra y espera a la próxima corrida: no tumba el host.</item>
+/// <item>No audita: no hay una persona detrás y no cambia ningún valor.</item>
 /// </list>
-/// <see cref="Completion"/> se completa siempre, haya re-cifrado, saltado o fallado: las pruebas lo
-/// esperan antes de afirmar que algo no cambió.
+/// <see cref="FirstRunCompletion"/> se completa siempre tras la primera corrida: las pruebas la esperan
+/// antes de afirmar que algo no cambió.
 /// </summary>
-internal sealed partial class WhatsAppTokenRekeyWorker(
+internal sealed partial class ConnectionSecretRekeyWorker(
     IServiceScopeFactory scopeFactory,
-    IWhatsAppSecretProtector protector,
-    ILogger<WhatsAppTokenRekeyWorker> logger) : BackgroundService
+    ISecretProtector protector,
+    IOptions<SecretProtectionOptions> options,
+    ILogger<ConnectionSecretRekeyWorker> logger) : BackgroundService
 {
-    private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal const int BatchSize = 100;
 
-    public Task Completion => _completion.Task;
+    private readonly TaskCompletionSource _firstRun = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task FirstRunCompletion => _firstRun.Task;
+
+    internal TimeSpan Interval { get; } = TimeSpan.FromMinutes(options.Value.RekeyIntervalMinutes);
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "WhatsApp API key of tenant {TenantId} stored with key {KeyId} could not be decrypted; rekey skipped.")]
-    private static partial void LogUnreadable(ILogger logger, Guid tenantId, string keyId);
-
-    [LoggerMessage(
-        Level = LogLevel.Information,
-        Message = "WhatsApp API key of tenant {TenantId} changed while it was being re-encrypted from key {KeyId}; rekey skipped.")]
-    private static partial void LogConflict(ILogger logger, Guid tenantId, string keyId);
+        Message = "{Skipped} connection secrets could not be re-encrypted to key {ActiveKeyId} (key retired, ciphertext unreadable or row changed meanwhile); they keep their current key.")]
+    private static partial void LogSkipped(ILogger logger, int skipped, string activeKeyId);
 
     [LoggerMessage(
         Level = LogLevel.Information,
@@ -49,103 +54,141 @@ internal sealed partial class WhatsAppTokenRekeyWorker(
 
     [LoggerMessage(
         Level = LogLevel.Error,
-        Message = "WhatsApp API key rekey failed; it will run again on the next start.")]
+        Message = "Connection secret rekey failed; it runs again on the next interval.")]
     private static partial void LogFailed(ILogger logger, Exception exception);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            // StartAsync corre ExecuteAsync hasta el primer await: sin esto, una base lenta
-            // frenaría el arranque del host.
+            // StartAsync corre ExecuteAsync hasta el primer await: sin esto, una base lenta frenaría el
+            // arranque del host.
             await Task.Yield();
-            await RekeyAsync(stoppingToken);
+            try
+            {
+                await RunSafelyAsync(stoppingToken);
+            }
+            finally
+            {
+                _firstRun.TrySetResult();
+            }
+
+            using var timer = new PeriodicTimer(Interval);
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                await RunSafelyAsync(stoppingToken);
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             // El host se apaga: no es una falla.
         }
-        catch (Exception exception)
-        {
-            LogFailed(logger, exception);
-        }
-        finally
-        {
-            _completion.TrySetResult();
-        }
     }
 
-    private async Task RekeyAsync(CancellationToken cancellationToken)
+    internal async Task<RekeyRunResult> RunOnceAsync(CancellationToken cancellationToken)
     {
         var active = protector.ActiveKeyId;
         if (active is null)
         {
-            return;
+            return new RekeyRunResult(0, 0);
         }
 
-        // Son pocas (una por tenant como mucho): se leen los ids de una vez y cada fila se procesa
-        // en su propio scope, para que un conflicto no ensucie el DbContext de las demás.
-        List<Guid> pending;
+        List<Guid> connectionIds;
+        var skipped = 0;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
-            var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
-            pending = await dbContext.WhatsAppSettings
+            var dbContext = scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>();
+            var pending = await dbContext.Connections
                 .AsNoTracking()
-                .Where(settings => settings.ApiToken != null && settings.ApiToken.KeyId != active)
-                .Select(settings => settings.TenantId)
+                .SelectMany(
+                    connection => connection.Secrets,
+                    (connection, secret) => new { connection.Id, secret.KeyId })
+                .Where(row => row.KeyId != active)
                 .ToListAsync(cancellationToken);
+
+            // Llave retirada: no hay con qué descifrar; se cuenta y se deja.
+            skipped += pending.Count(row => !protector.HasKey(row.KeyId));
+            connectionIds = pending
+                .Where(row => protector.HasKey(row.KeyId))
+                .Select(row => row.Id)
+                .Distinct()
+                .ToList();
         }
 
         var reencrypted = 0;
-        var skipped = 0;
-        foreach (var tenantId in pending)
+        foreach (var batch in connectionIds.Chunk(BatchSize))
         {
-            if (await RekeyOneAsync(tenantId, active, cancellationToken))
-            {
-                reencrypted++;
-            }
-            else
-            {
-                skipped++;
-            }
+            var (done, notDone) = await RekeyBatchAsync(batch, active, cancellationToken);
+            reencrypted += done;
+            skipped += notDone;
+        }
+
+        if (skipped > 0)
+        {
+            LogSkipped(logger, skipped, active);
         }
 
         LogFinished(logger, reencrypted, skipped);
+        return new RekeyRunResult(reencrypted, skipped);
     }
 
-    private async Task<bool> RekeyOneAsync(Guid tenantId, string active, CancellationToken cancellationToken)
+    private async Task RunSafelyAsync(CancellationToken cancellationToken)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var repository = scope.ServiceProvider.GetRequiredService<ITenantWhatsAppSettingsRepository>();
-        var settings = await repository.FindAsync(tenantId, cancellationToken);
-        var current = settings?.ApiToken;
-        if (settings is null || current is null ||
-            string.Equals(current.KeyId, active, StringComparison.Ordinal))
-        {
-            // Otro guardado o el worker de otra réplica ya la dejó bien entre la lista y esta lectura.
-            LogConflict(logger, tenantId, current?.KeyId ?? "(none)");
-            return false;
-        }
-
-        if (!protector.TryUnprotect(tenantId, current, out var plaintext))
-        {
-            LogUnreadable(logger, tenantId, current.KeyId);
-            return false;
-        }
-
-        var clock = scope.ServiceProvider.GetRequiredService<IClock>();
-        settings.Reprotect(protector.Protect(tenantId, plaintext!), clock.UtcNow);
         try
         {
-            await scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>()
-                .SaveChangesAsync(cancellationToken);
-            return true;
+            await RunOnceAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            LogFailed(logger, exception);
+        }
+    }
+
+    private async Task<(int Reencrypted, int Skipped)> RekeyBatchAsync(
+        Guid[] connectionIds, string active, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>();
+        var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
+        var connections = await dbContext.Connections
+            .Where(connection => connectionIds.Contains(connection.Id))
+            .ToListAsync(cancellationToken);
+
+        var reencrypted = 0;
+        var skipped = 0;
+        foreach (var connection in connections)
+        {
+            var stale = connection.Secrets
+                .Where(secret => !string.Equals(secret.KeyId, active, StringComparison.Ordinal) && protector.HasKey(secret.KeyId))
+                .ToArray();
+            foreach (var secret in stale)
+            {
+                if (protector.TryUnprotect(connection.Id, secret.FieldKey, secret.Protected, out var plaintext))
+                {
+                    connection.Reprotect(secret.FieldKey, protector.Protect(connection.Id, secret.FieldKey, plaintext), now);
+                    reencrypted++;
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+        }
+
+        if (reencrypted == 0)
+        {
+            return (0, skipped);
+        }
+
+        try
+        {
+            await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(cancellationToken);
+            return (reencrypted, skipped);
         }
         catch (RequestConcurrencyException)
         {
-            // Alguien guardó la fila en el medio: el PUT ya la dejó bien o la deja el próximo arranque.
-            LogConflict(logger, tenantId, current.KeyId);
-            return false;
+            // Un PUT guardó una de estas conexiones en el medio: el lote vuelve en la próxima corrida.
+            return (0, skipped + reencrypted);
         }
     }
 }

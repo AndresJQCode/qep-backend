@@ -15,6 +15,10 @@ public sealed class SecretProtectionOptions
 
     public Dictionary<string, string?> Keys { get; init; } = new(StringComparer.Ordinal);
 
+    /// <summary>Cada cuánto corre el re-cifrado, además de al arrancar (spec 2026-10-08). Entre 1 y
+    /// 1440.</summary>
+    public int RekeyIntervalMinutes { get; init; } = 60;
+
     internal string? EffectiveActiveKeyId =>
         string.IsNullOrWhiteSpace(ActiveKeyId) ? null : ActiveKeyId.Trim();
 
