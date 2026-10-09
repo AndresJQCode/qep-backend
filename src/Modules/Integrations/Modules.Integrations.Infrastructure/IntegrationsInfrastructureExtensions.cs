@@ -67,6 +67,8 @@ public static class IntegrationsInfrastructureExtensions
             .RemoveAllLoggers();
         services.AddSingleton<MetaGraphClient>();
         services.AddSingleton<IProviderConnectionTester, WhatsAppCloudConnectionTester>();
+        // Spec 2026-10-09 §8.1: canje, registro, suscripción y lectura del número, sobre el mismo cliente.
+        services.AddScoped<IWhatsAppSignupGateway, MetaGraphSignupGateway>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production

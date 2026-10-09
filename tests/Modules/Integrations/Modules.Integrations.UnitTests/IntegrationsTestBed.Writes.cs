@@ -18,6 +18,78 @@ internal sealed partial class IntegrationsTestBed
     public UpdateConnectionHandler UpdateHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, Modules, AuthorNames,
             context ?? Context(), Clock, new UpdateConnectionValidator());
+
+    public FakeWhatsAppSignupGateway Gateway { get; } = new();
+
+    public InMemoryRouteRepository Routes { get; } = new();
+
+    public CompleteWhatsAppSignupHandler SignupHandler(IExecutionContext? context = null) =>
+        new(Catalog, Repository, Routes, UnitOfWork, Audit, Protector, Gateway, MetaApp, Modules, Memberships, AuthorNames,
+            context ?? Context(), Clock, new CompleteWhatsAppSignupValidator());
+}
+
+/// <summary>Graph de mentira para el signup: responde por paso y anota el orden. <see cref="FailAt"/> hace
+/// fallar un paso con un error 400 código 100.</summary>
+internal sealed class FakeWhatsAppSignupGateway : IWhatsAppSignupGateway
+{
+    public List<string> Calls { get; } = [];
+
+    public string? FailAt { get; set; }
+
+    public string? LastPin { get; private set; }
+
+    public Dictionary<string, WabaPhoneNumber> PhoneNumbers { get; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, IReadOnlyList<WabaPhoneNumber>> WabaNumbers { get; } = new(StringComparer.Ordinal);
+
+    private static GraphFailure Failure => new(400, 100, null, "http_400");
+
+    public Task<GraphResult<string>> ExchangeCodeAsync(string code, CancellationToken cancellationToken)
+    {
+        Calls.Add("exchange");
+        return Task.FromResult(FailAt == "exchange" ? new GraphResult<string>(null, Failure) : new GraphResult<string>("meta-access-token-SENTINEL-unit", null));
+    }
+
+    public Task<GraphResult<bool>> RegisterNumberAsync(string phoneNumberId, string accessToken, string pin, CancellationToken cancellationToken)
+    {
+        Calls.Add($"register:{phoneNumberId}");
+        LastPin = pin;
+        return Task.FromResult(FailAt == "register" ? new GraphResult<bool>(false, Failure) : new GraphResult<bool>(true, null));
+    }
+
+    public Task<GraphResult<IReadOnlyList<WabaPhoneNumber>>> ListPhoneNumbersAsync(string wabaId, string accessToken, CancellationToken cancellationToken)
+    {
+        Calls.Add($"numbers:{wabaId}");
+        return Task.FromResult(FailAt == "numbers"
+            ? new GraphResult<IReadOnlyList<WabaPhoneNumber>>(null, Failure)
+            : new GraphResult<IReadOnlyList<WabaPhoneNumber>>(WabaNumbers.GetValueOrDefault(wabaId) ?? [], null));
+    }
+
+    public Task<GraphResult<bool>> SubscribeAppAsync(string wabaId, string accessToken, CancellationToken cancellationToken)
+    {
+        Calls.Add($"subscribe:{wabaId}");
+        return Task.FromResult(FailAt == "subscribe" ? new GraphResult<bool>(false, Failure) : new GraphResult<bool>(true, null));
+    }
+
+    public Task<GraphResult<WabaPhoneNumber>> GetPhoneNumberAsync(string phoneNumberId, string accessToken, CancellationToken cancellationToken)
+    {
+        Calls.Add($"read:{phoneNumberId}");
+        return Task.FromResult(FailAt == "read" || !PhoneNumbers.TryGetValue(phoneNumberId, out var number)
+            ? new GraphResult<WabaPhoneNumber>(null, Failure)
+            : new GraphResult<WabaPhoneNumber>(number, null));
+    }
+}
+
+internal sealed class InMemoryRouteRepository : IConnectionRouteRepository
+{
+    public List<IntegrationConnectionRoute> Added { get; } = [];
+
+    public HashSet<(string ProviderKey, string ExternalId)> Existing { get; } = [];
+
+    public void Add(IntegrationConnectionRoute route) => Added.Add(route);
+
+    public Task<bool> ExistsAsync(string providerKey, string externalId, CancellationToken cancellationToken) =>
+        Task.FromResult(Existing.Contains((providerKey, externalId)) || Added.Any(route => route.ProviderKey == providerKey && route.ExternalId == externalId));
 }
 
 internal sealed record TesterCall(

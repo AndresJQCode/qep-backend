@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
+using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Zenvia;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -146,6 +147,10 @@ internal static class IntegrationsApiHarness
         /// <summary>Lo que sale hacia Zenvia lo ve este handler; las pruebas cambian su respuesta.</summary>
         public FakeZenviaHandler ZenviaHandler { get; } = new();
 
+        /// <summary>Lo que sale hacia Graph (signup y probador de whatsapp-cloud) lo ve este handler: ninguna
+        /// prueba llega a graph.facebook.com.</summary>
+        public FakeMetaGraphHandler MetaHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
@@ -180,9 +185,13 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
             builder.UseSetting("Meta:App:AppSecret", SentinelMetaAppSecret);
             builder.UseSetting("Meta:App:WebhookVerifyToken", SentinelMetaVerifyToken);
-            builder.ConfigureTestServices(services => services
-                .AddHttpClient(ZenviaConnectionTester.HttpClientName)
-                .ConfigurePrimaryHttpMessageHandler(() => ZenviaHandler));
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddHttpClient(ZenviaConnectionTester.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => ZenviaHandler);
+                services.AddHttpClient(MetaGraphClient.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+            });
         }
     }
 
@@ -366,6 +375,22 @@ internal static class IntegrationsApiHarness
     }
 
     public const string SentinelMetaAccessToken = "meta-access-token-SENTINEL-2c3d4e";
+
+    public const string SentinelMetaCode = "meta-code-SENTINEL-4d5e6f";
+
+    public static string EmbeddedSignupUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup";
+
+    public static object SignupBody(string name = "Ventas", string @event = "FINISH", string? phoneNumberId = "111", string wabaId = "222") =>
+        new { name, path = @event == "FINISH" ? "new_number" : "existing_business_app", @event, code = SentinelMetaCode, wabaId, phoneNumberId, businessId = "333" };
+
+    /// <summary>Graph feliz para FINISH: canje, register, subscribed_apps y lectura del número.</summary>
+    public static void ScriptHappySignup(FakeMetaGraphHandler meta, string phoneNumberId = "111", string wabaId = "222")
+    {
+        meta.Respond("/oauth/access_token", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelMetaAccessToken}}","token_type":"bearer"}""");
+        meta.Respond($"/{phoneNumberId}/register", HttpStatusCode.OK, """{"success":true}""");
+        meta.Respond($"/{wabaId}/subscribed_apps", HttpStatusCode.OK, """{"success":true}""");
+        meta.Respond($"/{phoneNumberId}\\?fields=", HttpStatusCode.OK, """{"display_phone_number":"+57 300 123 4567","verified_name":"Origen Botánico","quality_rating":"GREEN","status":"CONNECTED","id":"111"}""");
+    }
 
     /// <summary>Una conexión whatsapp-cloud con su ruta, escrita directo por el repositorio (sin Meta).</summary>
     public static async Task<Guid> SeedWhatsAppConnectionAsync(

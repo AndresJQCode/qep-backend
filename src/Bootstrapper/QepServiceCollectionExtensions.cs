@@ -518,6 +518,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteConnectionCommand, bool>,
             DeleteConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<CompleteWhatsAppSignupCommand, ConnectionResponse>,
+            CompleteWhatsAppSignupHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();

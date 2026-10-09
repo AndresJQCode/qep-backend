@@ -205,6 +205,37 @@ public sealed class ConnectionSecretLeakTests
         await AssertNothingLeaksAsync(connectionString, logs, [readBody, testBody], SentinelApiToken);
     }
 
+    // Spec 2026-10-09 §11: el code, el token de acceso y el AppSecret no salen por ningún camino,
+    // ni cuando Graph falla repitiéndolos en el cuerpo.
+    [Fact]
+    public async Task EmbeddedSignupNeverLeaksTheCodeTheTokenNorTheAppSecret()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var logs = new CapturedLogs();
+        using var host = factory.WithCapturedLogs(logs);
+        ScriptHappySignup(factory.MetaHandler);
+        factory.MetaHandler.Reset();
+        factory.MetaHandler.Respond("/oauth/access_token", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelMetaAccessToken}}"}""");
+        factory.MetaHandler.Respond("/111/register", HttpStatusCode.BadRequest, $$$"""{"error":{"message":"{{{SentinelMetaCode}}} {{{SentinelMetaAccessToken}}} {{{SentinelMetaAppSecret}}}","code":100}}""");
+        var tenant = await RegisterTenantAsync(host);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var failed = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody());
+        var failedBody = await failed.Content.ReadAsStringAsync(Ct);
+        factory.MetaHandler.Reset();
+        ScriptHappySignup(factory.MetaHandler);
+        var created = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody());
+        var createdBody = await created.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, failed.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        AssertLogged(logs, "Graph register answered HTTP 400");
+        await AssertNothingLeaksAsync(connectionString, logs, [failedBody, createdBody], SentinelMetaCode, SentinelMetaAccessToken, SentinelMetaAppSecret);
+    }
+
     // Spec, «Auditoría»: nunca un valor de campo, ni público. Y el token nunca en fields.
     [Fact]
     public async Task AWholeLifecycleNeverWritesASecretOrAFieldValueOutsideTheConnection()
