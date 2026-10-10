@@ -65,6 +65,32 @@ public sealed class ContactNumberChangeTests
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
     }
 
+    // Decisión del controlador (ronda 1): en un mismo change el cambio de número va antes que los entrantes, así que el
+    // primer mensaje con el BSUID nuevo cae en la conversación movida y el evento queda antes que él en el hilo.
+    [Fact]
+    public async Task ASignalAndTheFirstMessageWithTheNewBsuidInTheSameChangeLandInTheMovedConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SendAsync(f, MetaPayloads.Inbound("111", "CO.OLD", null, "wamid.1", 1760000000, "antes"));
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+
+        await SendAsync(f, MetaPayloads.SameChange(
+            MetaPayloads.UserChangedUserId("111", "CO.OLD", "CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "wamid.sys", 1760000050),
+            MetaPayloads.Inbound("111", "CO.NEW", null, "wamid.2", 1760000100, "con el número nuevo")));
+
+        Assert.Equal($"1|{conversationId}|CO.NEW", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT count(*) OVER ()::text || '|' || id::text || '|' || user_id FROM messaging.conversations"));
+        Assert.Equal(conversationId, await ScalarAsync<Guid>(f.ConnectionString, "SELECT conversation_id FROM messaging.messages WHERE wamid = 'wamid.2'"));
+        Assert.Equal(1L, await ChangeEventsAsync(f));
+        Assert.True(await ScalarAsync<bool>(f.ConnectionString,
+            """
+            SELECT (SELECT occurred_at FROM messaging.messages WHERE details->>'type' = 'ContactChangedNumber')
+                 < (SELECT occurred_at FROM messaging.messages WHERE wamid = 'wamid.2')
+            """));
+    }
+
     [Fact]
     public async Task WithoutPhoneNumberIdTheUpdateRoutesByTheWaba()
     {

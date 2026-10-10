@@ -232,6 +232,28 @@ internal static class MetaPayloads
         return Change("messages", value.ToJsonString());
     }
 
+    private static readonly string[] MergedKeys = ["contacts", "messages"];
+
+    /// <summary>Un solo change <c>messages</c> con los mensajes y contactos de <paramref name="first"/> y luego los de
+    /// <paramref name="second"/>, en ese orden: como cuando Meta junta varios en la misma entrega.</summary>
+    public static string SameChange(string first, string second)
+    {
+        var root = JsonNode.Parse(first)!;
+        var value = root["entry"]![0]!["changes"]![0]!["value"]!.AsObject();
+        var other = JsonNode.Parse(second)!["entry"]![0]!["changes"]![0]!["value"]!;
+        foreach (var key in MergedKeys)
+        {
+            var target = value[key]?.AsArray() ?? [];
+            value[key] = target;
+            foreach (var item in other[key]?.AsArray() ?? [])
+            {
+                target.Add(item!.DeepClone());
+            }
+        }
+
+        return root.ToJsonString();
+    }
+
     public static string AccountUpdate(string wabaId, string @event, string? banState = null)
     {
         var value = new JsonObject { ["event"] = @event };

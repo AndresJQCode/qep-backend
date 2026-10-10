@@ -13,21 +13,21 @@ internal static class ContactNumberChange
     private const string ConnectionUserIndex = "IX_conversations_connection_user";
 
     public static async Task<IReadOnlyList<Guid>> ApplyAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, UserIdChange change, DateTimeOffset now, CancellationToken cancellationToken)
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, UserIdChange change, DateTimeOffset occurredAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
         try
         {
-            return await ApplyOnceAsync(dbContext, tenantId, connectionId, change, now, cancellationToken);
+            return await ApplyOnceAsync(dbContext, tenantId, connectionId, change, occurredAt, now, cancellationToken);
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation && exception.ConstraintName == ConnectionUserIndex)
         {
             // Un mensaje con el BSUID nuevo creó su conversación entre el SELECT y el UPDATE: la segunda vuelta ve el choque.
-            return await ApplyOnceAsync(dbContext, tenantId, connectionId, change, now, cancellationToken);
+            return await ApplyOnceAsync(dbContext, tenantId, connectionId, change, occurredAt, now, cancellationToken);
         }
     }
 
     private static async Task<IReadOnlyList<Guid>> ApplyOnceAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, UserIdChange change, DateTimeOffset now, CancellationToken cancellationToken)
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, UserIdChange change, DateTimeOffset occurredAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         var source = await IdByUserAsync(dbContext, connectionId, change.Previous, cancellationToken);
@@ -47,7 +47,7 @@ internal static class ContactNumberChange
                  WHERE id = {source.Value}
                 """, cancellationToken);
             await ConversationEventRows.InsertAsync(dbContext, tenantId, connectionId, source.Value,
-                new ConversationEvent(ConversationEventType.ContactChangedNumber), now, now, cancellationToken);
+                new ConversationEvent(ConversationEventType.ContactChangedNumber), occurredAt, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return [source.Value];
         }
@@ -61,9 +61,9 @@ internal static class ContactNumberChange
         if (already.Count == 0)
         {
             await ConversationEventRows.InsertAsync(dbContext, tenantId, connectionId, source.Value,
-                new ConversationEvent(ConversationEventType.ContactChangedNumber, LinkedConversationId: target.Value), now, now, cancellationToken);
+                new ConversationEvent(ConversationEventType.ContactChangedNumber, LinkedConversationId: target.Value), occurredAt, now, cancellationToken);
             await ConversationEventRows.InsertAsync(dbContext, tenantId, connectionId, target.Value,
-                new ConversationEvent(ConversationEventType.ContactChangedNumber, LinkedConversationId: source.Value), now, now, cancellationToken);
+                new ConversationEvent(ConversationEventType.ContactChangedNumber, LinkedConversationId: source.Value), occurredAt, now, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);

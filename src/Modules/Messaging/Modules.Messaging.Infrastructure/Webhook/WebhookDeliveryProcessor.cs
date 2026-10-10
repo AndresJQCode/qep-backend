@@ -94,6 +94,18 @@ internal sealed partial class WebhookDeliveryProcessor(
             LogDiscarded(logger, deliveryId, change.Messages.Count, change.PhoneNumberId, route.IsPaused ? "paused" : "module-off");
         }
 
+        // Spec 2026-10-10 §8.3, P7: el cambio de número se aplica siempre, también con Paused o el módulo apagado, y
+        // **antes** que los entrantes del mismo change: así el primer mensaje con el BSUID nuevo cae en la conversación
+        // movida en vez de abrir otra (D-A7 queda para cuando el mensaje llegó en una entrega anterior).
+        if (change.NumberChanges.Count > 0)
+        {
+            var occurredAt = NumberChangeOccurredAt(change.Messages);
+            foreach (var numberChange in change.NumberChanges)
+            {
+                await ApplyNumberChangeAsync([route], numberChange, occurredAt, cancellationToken);
+            }
+        }
+
         if (accepting)
         {
             var now = clock.UtcNow;
@@ -102,12 +114,6 @@ internal sealed partial class WebhookDeliveryProcessor(
                 var context = await PrepareAsync(route.TenantId, route.ConnectionId, message, cancellationToken);
                 await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, cancellationToken);
             }
-        }
-
-        // Spec 2026-10-10 §8.3, P7: el cambio de número se aplica siempre, también con Paused o el módulo apagado.
-        foreach (var numberChange in change.NumberChanges)
-        {
-            await ApplyNumberChangeAsync([route], numberChange, cancellationToken);
         }
 
         // Los statuses se aplican siempre, también con Paused o módulo apagado (decisión 7, D-M18). Task 13b.
@@ -127,15 +133,30 @@ internal sealed partial class WebhookDeliveryProcessor(
             return;
         }
 
-        await ApplyNumberChangeAsync(routes, update.Change, cancellationToken);
+        await ApplyNumberChangeAsync(routes, update.Change, clock.UtcNow, cancellationToken);
     }
 
-    private async Task ApplyNumberChangeAsync(IReadOnlyList<MessagingRoute> routes, UserIdChange change, CancellationToken cancellationToken)
+    /// <summary>El evento tiene que quedar antes, en el hilo, que los entrantes del mismo change: la hora de proceso los
+    /// dejaría después (Meta los fecha antes de entregarlos). Va 4 ms antes del más temprano, por debajo de los eventos
+    /// de la ingesta (−1 a −3 ms, <see cref="InboundIngestion"/>), para que nunca compartan milisegundo.</summary>
+    private DateTimeOffset NumberChangeOccurredAt(IReadOnlyList<InboundMessage> messages)
+    {
+        var now = clock.UtcNow;
+        if (messages.Count == 0)
+        {
+            return now;
+        }
+
+        var beforeFirst = messages.Min(message => message.OccurredAt).AddMilliseconds(-4);
+        return beforeFirst < now ? beforeFirst : now;
+    }
+
+    private async Task ApplyNumberChangeAsync(IReadOnlyList<MessagingRoute> routes, UserIdChange change, DateTimeOffset occurredAt, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
         foreach (var route in routes)
         {
-            await ContactNumberChange.ApplyAsync(dbContext, route.TenantId, route.ConnectionId, change, now, cancellationToken);
+            await ContactNumberChange.ApplyAsync(dbContext, route.TenantId, route.ConnectionId, change, occurredAt, now, cancellationToken);
         }
 
         foreach (var tenantId in routes.Select(route => route.TenantId).Distinct())

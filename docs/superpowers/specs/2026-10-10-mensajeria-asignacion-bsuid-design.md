@@ -639,7 +639,11 @@ Dos señales, procesadas igual y de forma idempotente (la segunda no encuentra n
   conexiones de esa WABA.
 - Mensaje de sistema `user_changed_user_id`: ruta por `phone_number_id`, como cualquier mensaje. El
   BSUID nuevo es `system.user_id`; el anterior es `from_user_id` si es distinto, y si no, el que
-  dice el cuerpo (`changed from <OLD> to <NEW>`).
+  dice el cuerpo (`changed from <OLD> to <NEW>`). Se aplica **antes** que los entrantes del mismo
+  change (también con `Paused` o el módulo apagado): si en esa entrega viene el primer mensaje con el
+  BSUID nuevo, cae en la conversación movida en vez de abrir otra. Su evento se fecha 4 ms antes del
+  entrante más temprano del change (o a la hora de proceso si no hay entrantes o si ésa es anterior),
+  por debajo de los eventos de la ingesta (−1 a −3 ms), para que quede antes en el hilo.
 
 Por cada conexión de la ruta, en una transacción de Messaging:
 
