@@ -71,10 +71,16 @@ internal static class InboundIngestion
 
         if (message.Media is { } media)
         {
+            // §8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El
+            // mensaje entra; el medio queda rendido de una vez, con el motivo, y el worker nunca lo reclama.
+            var valid = Media.MediaCopyProcessor.IsValidMetaMediaId(media.MetaMediaId);
+            var metaMediaId = valid ? media.MetaMediaId : string.Empty;
+            var nextAttemptAt = valid ? now : Media.MediaCopyProcessor.GiveUpAt;
+            var lastError = valid ? null : "invalid_media_id";
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, attempts, next_attempt_at)
-                VALUES ({messageId}, {media.MimeType}, {media.FileName}, {media.MetaMediaId}, {media.Sha256}, 0, {now})
+                INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, attempts, next_attempt_at, last_error)
+                VALUES ({messageId}, {media.MimeType}, {media.FileName}, {metaMediaId}, {media.Sha256}, 0, {nextAttemptAt}, {lastError})
                 """, cancellationToken);
         }
 

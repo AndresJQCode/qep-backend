@@ -410,6 +410,14 @@ internal static class MessagingApiHarness
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Corre una pasada de la copia de medios (§8.6, P10): reclama y copia lo pendiente.</summary>
+    public static async Task DrainMediaAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Media.MediaCopyWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
     /// <summary>Un saliente ya guardado, como lo deja el envío (§8.3): Sent con wamid, o Failed -1 sin wamid.</summary>
     public static async Task<Guid> SeedOutboundAsync(
         string connectionString, Guid conversationId, Guid tenantId, Guid connectionId, string? wamid, short status = 1, int? failureCode = null, long occurredAtUnix = 1760000000)

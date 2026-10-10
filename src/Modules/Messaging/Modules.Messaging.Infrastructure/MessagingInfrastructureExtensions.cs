@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Media;
 using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
@@ -47,6 +48,10 @@ public static class MessagingInfrastructureExtensions
             .RemoveAllLoggers();
         services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
         services.AddScoped<IOutboundMessages, OutboundMessages>();
+        // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
+        services.AddScoped<IMediaReads, MediaReads>();
+        services.AddScoped<MediaCopyProcessor>();
+        services.AddHostedService<MediaCopyWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));

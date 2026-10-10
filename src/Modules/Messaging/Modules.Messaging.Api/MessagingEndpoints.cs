@@ -2,14 +2,15 @@ using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Net.Http.Headers;
 using Modules.Messaging.Application;
 
 namespace Modules.Messaging.Api;
 
 public static class MessagingEndpoints
 {
-    /// <summary>Lista, detalle e hilo (Task 14), búsqueda (Task 15) y envío (Task 16), leído, resolver y reabrir (Task 17);
-    /// el medio se suma en la siguiente, todos bajo <c>/api/v1/tenants/{tenantId:guid}/messaging</c>.</summary>
+    /// <summary>Lista, detalle e hilo (Task 14), búsqueda (Task 15) y envío (Task 16), leído, resolver y reabrir (Task 17)
+    /// y el medio (Task 18), todos bajo <c>/api/v1/tenants/{tenantId:guid}/messaging</c>.</summary>
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta; cada endpoint su política (spec 2026-10-09 §6.4). Los handlers revalidan
@@ -77,8 +78,54 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-09 §8.6: el medio copiado, servido con la sesión. 404 sin código mientras no esté.
+        group.MapGet("/media/{messageId:guid}", GetMediaAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationRead)
+            .Produces(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .Produces(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
+
+    /// <summary>§8.6, «Servir»: nosniff + CSP sandbox siempre; inline sólo para imagen (salvo SVG), audio y
+    /// video; attachment con nombre para lo demás, para que un HTML o un SVG no se ejecute en el origen de
+    /// la API. 404 sin código mientras no esté copiado: la URL es opaca y no hay nada que el cliente corrija.</summary>
+    private static async Task<IResult> GetMediaAsync(
+        Guid tenantId, Guid messageId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var media = await dispatcher.QueryAsync(new GetMediaQuery(tenantId, messageId), cancellationToken);
+        if (media is null)
+        {
+            return Results.NotFound();
+        }
+
+        var headers = httpContext.Response.Headers;
+        headers.XContentTypeOptions = "nosniff";
+        headers.ContentSecurityPolicy = "sandbox; default-src 'none'";
+        headers.CacheControl = "private, max-age=3600";
+        headers.ContentDisposition = ContentDispositionFor(media.ContentType, media.FileName, messageId);
+        headers.ContentLength = media.Length;
+        return Results.Stream(media.Content, media.ContentType);
+    }
+
+    internal static string ContentDispositionFor(string contentType, string? fileName, Guid messageId)
+    {
+        if (IsInlineSafe(contentType))
+        {
+            return "inline";
+        }
+
+        // RFC 6266 con filename* (RFC 5987) para los nombres con tildes; las comillas y los controles los escapa SetHttpFileName.
+        var disposition = new ContentDispositionHeaderValue("attachment");
+        disposition.SetHttpFileName(string.IsNullOrWhiteSpace(fileName) ? messageId.ToString("N") : fileName);
+        return disposition.ToString();
+    }
+
+    private static bool IsInlineSafe(string contentType) =>
+        (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !contentType.StartsWith("image/svg", StringComparison.OrdinalIgnoreCase))
+        || contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)
+        || contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IResult> ListConversationsAsync(
         Guid tenantId, string? status, string? search, int? page, int? pageSize, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

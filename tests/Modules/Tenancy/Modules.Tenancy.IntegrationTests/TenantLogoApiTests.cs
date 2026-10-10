@@ -701,6 +701,13 @@ public sealed class TenantLogoApiTests
             return Task.CompletedTask;
         }
 
+        public Task UploadAsync(
+            string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
     }
 

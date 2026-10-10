@@ -78,6 +78,13 @@ internal sealed class SigningObjectStorage : IObjectStorage
     public Task UploadAsync(
         string key, byte[] content, string contentType, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task UploadAsync(
+        string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>El bucket público: sólo arma URLs.</summary>
@@ -258,6 +265,13 @@ internal sealed class UntouchableObjectStorage : IObjectStorage
     public Task<byte[]> DownloadAsync(string key, CancellationToken cancellationToken) => throw Touched();
 
     public Task UploadAsync(string key, byte[] content, string contentType, CancellationToken cancellationToken) =>
+        throw Touched();
+
+    public Task UploadAsync(
+        string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+        throw Touched();
+
+    public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
         throw Touched();
 }
 
