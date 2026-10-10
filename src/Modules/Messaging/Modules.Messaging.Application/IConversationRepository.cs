@@ -24,7 +24,7 @@ public interface IConversationRepository
     Task<AutoAssignOutcome> TryAutoAssignAsync(Guid tenantId, Guid conversationId, Guid memberId, Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
-/// <summary>Spec 2026-10-10 §8.5 paso 4.</summary>
+/// <summary>Spec 2026-10-10 §8.5 paso 5.</summary>
 public enum AutoAssignOutcome
 {
     /// <summary>Estaba sin asignar y ahora es de quien envía (evento AutoTaken y auditoría ya commiteados).</summary>

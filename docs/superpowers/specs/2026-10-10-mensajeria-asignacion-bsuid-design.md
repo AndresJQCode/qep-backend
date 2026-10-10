@@ -684,15 +684,17 @@ Orden nuevo de chequeos:
    client_id)`. Si existe y no es `Failed` → 201 con ese mensaje, sin mirar nada más («lo que ya
    salió, ya salió», base §8.3).
 3. `status = Open` (`not_open`) → ventana (`window_closed`).
-4. **Asignación:**
+4. **`replyTo`** si vino: el mensaje existe en esta conversación, tiene `wamid`, `kind` no es
+   `Reaction` ni `Event`. Si no → `ValidationException` con `errors["replyTo"]`. Va antes de la
+   asignación porque un request que no pasa la validación no cambia estado: una cita inválida
+   deja la conversación sin dueño, sin `AutoTaken`, sin auditoría y con la misma `version`.
+5. **Asignación:**
    - asignada a otro → 422 `messaging.conversation.assigned_to_other`;
    - sin asignar → `UPDATE conversations SET assigned_member_id = @me, assigned_at = @now,
      version = version + 1, updated_at = @now WHERE id = @c AND assigned_member_id IS NULL
      RETURNING id`, con el evento `AutoTaken` y la auditoría, en una transacción **corta y propia**
      (§3, corrección 7). Si no actualizó, se relee: si ahora es de otro → 422
      `assigned_to_other`; si es de quien envía, sigue.
-5. **`replyTo`** si vino: el mensaje existe en esta conversación, tiene `wamid`, `kind` no es
-   `Reaction` ni `Event`. Si no → `ValidationException` con `errors["replyTo"]`.
 6. El reclamo de base §8.3 (`INSERT … ON CONFLICT (conversation_id, client_id)`), que sigue
    cubriendo dos requests en vuelo con el mismo `clientId`, ahora con `reply_to_message_id`.
 7. Conexión `Active` → Meta con `recipient` (o `to`, fila vieja) y `context.message_id` si hay
@@ -703,7 +705,7 @@ responder: intentar responder es tomar.
 
 ### 8.6 Respuestas citadas
 
-- **Saliente:** §8.5 pasos 5 y 7. Meta no dibuja la cita de un mensaje de más de ~30 días (§3); no
+- **Saliente:** §8.5 pasos 4 y 7. Meta no dibuja la cita de un mensaje de más de ~30 días (§3); no
   se bloquea: el mensaje sale igual, sin la burbuja citada del lado de la persona.
 - **Entrante:** `context.id` → `reply_to_wamid`, y `reply_to_message_id` si QEP tiene ese `wamid` en
   la misma conexión. Si no lo tiene (mensaje enviado desde la app del teléfono en coexistencia, o

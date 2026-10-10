@@ -29,9 +29,10 @@ public sealed class SendMessageValidator : AbstractValidator<SendMessageCommand>
 }
 
 /// <summary>Spec 2026-10-10 §8.5, en este orden: validador → tenant, permiso y módulo → conversación del tenant →
-/// membresía → lo ya enviado con ese <c>clientId</c> (sin candado) → status Open → ventana → dueño (sólo el asignado
-/// responde; sin asignar, responder es tomar, con un UPDATE condicional en su propia transacción) → el citado →
-/// reclamo → conexión Active → Meta → tabla de respuestas.
+/// membresía → lo ya enviado con ese <c>clientId</c> (sin candado) → status Open → ventana → el citado → dueño (sólo
+/// el asignado responde; sin asignar, responder es tomar, con un UPDATE condicional en su propia transacción) →
+/// reclamo → conexión Active → Meta → tabla de respuestas. Todo lo que puede fallar por validación va antes de la
+/// autoasignación: un request inválido no cambia estado.
 /// La transacción del reclamo sigue abierta mientras Meta responde (≤ 10 s, §8.3): es lo que hace esperar
 /// a un segundo request con el mismo <c>clientId</c> y lo que impide que se vea una fila a medio enviar.
 /// Bloquea una sola fila de mensaje, nunca la conversación. El envío no sube <c>version</c>; la autoasignación sí.</summary>
@@ -83,16 +84,8 @@ public sealed class SendMessageHandler(
             throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "More than 24 hours passed since the person last wrote.");
         }
 
-        // §8.5 paso 4: sólo el asignado responde; sin asignar, responder es tomar (atómico, fuera del candado largo).
-        // Si Meta rechaza después, la conversación queda asignada: intentar responder es tomar.
-        if (conversation.AssignedMemberId is { } owner
-                ? owner != member
-                : await repository.TryAutoAssignAsync(command.TenantId, conversation.Id, member, executionContext.SubjectId, now, cancellationToken) == AutoAssignOutcome.AssignedToOther)
-        {
-            throw new MessagingDomainException(MessagingErrorCodes.AssignedToOther, "The conversation is assigned to someone else.");
-        }
-
-        // §8.5 paso 5: lo citado es de esta conversación, salió por WhatsApp y no es una reacción ni un evento.
+        // §8.5: lo citado es de esta conversación, salió por WhatsApp y no es una reacción ni un evento. Va antes del
+        // dueño: un request que no pasa la validación no cambia estado, así que una cita inválida no autoasigna.
         // Nunca se manda a Meta un context.message_id de otra conversación.
         ReplyTargetRow? quoted = null;
         if (command.ReplyTo is { } replyTo)
@@ -103,6 +96,15 @@ public sealed class SendMessageHandler(
             {
                 throw new ValidationException([new ValidationFailure("replyTo", "Elige un mensaje de esta conversación que se pueda citar.")]);
             }
+        }
+
+        // §8.5: sólo el asignado responde; sin asignar, responder es tomar (atómico, fuera del candado largo).
+        // Si Meta rechaza después, la conversación queda asignada: intentar responder es tomar.
+        if (conversation.AssignedMemberId is { } owner
+                ? owner != member
+                : await repository.TryAutoAssignAsync(command.TenantId, conversation.Id, member, executionContext.SubjectId, now, cancellationToken) == AutoAssignOutcome.AssignedToOther)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.AssignedToOther, "The conversation is assigned to someone else.");
         }
 
         var text = command.Text!.Trim();

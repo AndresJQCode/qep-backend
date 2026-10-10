@@ -181,6 +181,20 @@ public sealed class SendMessageHandlerTests
         Assert.Empty(bed.Meta.Sends);
     }
 
+    // Un request que no pasa la validación no cambia estado: la cita se valida antes de la autoasignación.
+    [Fact]
+    public async Task AnInvalidQuoteOnAnUnassignedConversationDoesNotTakeIt()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "Sí", Guid.CreateVersion7()), Ct));
+
+        Assert.Empty(bed.Repository.AutoAssigned);
+        Assert.Empty(bed.Outbound.Claims);
+    }
+
     [Theory]
     [InlineData("other-conversation")]
     [InlineData("no-wamid")]

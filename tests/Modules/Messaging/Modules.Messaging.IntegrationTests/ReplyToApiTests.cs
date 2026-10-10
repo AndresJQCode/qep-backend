@@ -54,6 +54,28 @@ public sealed class ReplyToApiTests
         Assert.Equal(inbound, (await retry.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("replyTo").GetProperty("id").GetGuid());
     }
 
+    // Un request que no pasa la validación no cambia estado: una cita inválida no autoasigna la conversación sin dueño.
+    [Fact]
+    public async Task AnInvalidQuoteLeavesAnUnassignedConversationUntouched()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var other = await SeedBsuidConversationAsync(f.Factory, f.ConnectionString, f.Tenant.TenantId, f.ConnectionId, "CO.2", null);
+        var foreign = await SeedOutboundAsync(f.ConnectionString, other, f.Tenant.TenantId, f.ConnectionId, "wamid.otra");
+        var before = await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations WHERE id = @c", ("c", f.ConversationId));
+
+        var response = await ReplyAsync(f, Guid.CreateVersion7(), foreign);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await ProblemAsync(response);
+        Assert.Equal(("validation.failed", "replyTo"), (problem.Code, Assert.Single(problem.ErrorKeys)));
+        Assert.Equal(before, await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations WHERE id = @c", ("c", f.ConversationId)));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations WHERE id = @c AND assigned_member_id IS NOT NULL", ("c", f.ConversationId)));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE details->>'type' = 'AutoTaken'"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.conversation.auto_taken'"));
+    }
+
     [Fact]
     public async Task AReplyToThatCannotBeQuotedIs422OnReplyToWithoutCallingMeta()
     {
