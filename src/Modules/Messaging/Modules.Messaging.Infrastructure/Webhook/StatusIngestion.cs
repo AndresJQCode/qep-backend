@@ -20,8 +20,15 @@ internal static class StatusIngestion
         var newStatus = MessageColumnCodes.ToCode(update.Status);
         // Sin callback no hay id que buscar: Guid.Empty no coincide con ninguna fila.
         var callback = update.CallbackMessageId ?? Guid.Empty;
+        // Meta casi siempre manda errors[] con el failed; 0 es «falló sin código» y cae en el failureReason genérico.
         int? failureCode = update.Status == MessageStatus.Failed ? update.ErrorCode ?? 0 : null;
         var failureTitle = update.Status == MessageStatus.Failed ? update.ErrorTitle : null;
+
+        // §8.2: cada cambio en su transacción. El candado que toma el UPDATE del mensaje se mantiene hasta que la
+        // foto commitea: dos réplicas con el delivered y el read del mismo mensaje se serializan, y la foto no
+        // puede quedar en el estado del que perdió. Además el par es atómico: un corte entre los dos no deja
+        // la foto vieja para siempre (el reintento vería NoChange y no la repararía).
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         var updated = await dbContext.Database.SqlQuery<AppliedRow>(
             $"""
             UPDATE messaging.messages
@@ -40,6 +47,7 @@ internal static class StatusIngestion
 
         if (updated.Count == 0)
         {
+            // RETURNING vacío no distingue «no existe» de «existe pero no avanza»; el reintento depende de eso.
             var exists = await dbContext.Database.SqlQuery<int>(
                 $"""SELECT 1 AS "Value" FROM messaging.messages WHERE connection_id = {connectionId} AND (wamid = {update.Wamid} OR id = {callback}) AND direction = 2""")
                 .ToListAsync(cancellationToken);
@@ -54,6 +62,7 @@ internal static class StatusIngestion
                 cancellationToken);
         }
 
+        await transaction.CommitAsync(cancellationToken);
         return StatusOutcome.Applied;
     }
 

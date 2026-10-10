@@ -23,4 +23,26 @@ public sealed class WebhookPurgeTests
 
         Assert.Equal("02,03", await ScalarAsync<string>(connectionString, "SELECT string_agg(encode(body_sha256, 'hex'), ',' ORDER BY id) FROM messaging.webhook_deliveries"));
     }
+
+    // El borde: «más de 7 días» es processed_at < cutoff; la que cae justo en el cutoff se queda.
+    [Fact]
+    public async Task ADeliveryProcessedExactlyAtTheCutoffStays()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var clock = new TestClock { UtcNow = new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero) };
+        using var baseFactory = new QepApiFactory(connectionString);
+        using var factory = baseFactory.WithTestClock(clock);
+        _ = factory.Services;
+        var cutoff = clock.UtcNow.AddDays(-7);
+        await ExecuteAsync(connectionString, """
+            INSERT INTO messaging.webhook_deliveries (body_sha256, payload, received_at, processed_at) VALUES
+              (decode('01', 'hex'), '{}', @cutoff - interval '1 day', @cutoff - interval '1 microsecond'),
+              (decode('02', 'hex'), '{}', @cutoff - interval '1 day', @cutoff)
+            """, ("cutoff", cutoff));
+
+        await DrainPurgeAsync(factory);
+
+        Assert.Equal("02", await ScalarAsync<string>(connectionString, "SELECT string_agg(encode(body_sha256, 'hex'), ',' ORDER BY id) FROM messaging.webhook_deliveries"));
+    }
 }

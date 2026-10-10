@@ -1,3 +1,7 @@
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Persistence;
+using Modules.Messaging.Infrastructure.Webhook;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -61,6 +65,11 @@ public sealed class StatusIngestionTests
         await ApplyAsync(f, "wamid.two", "failed", 1760000600, errorCode: 131047);
         Assert.Equal("4|131047|wamid.two|4|1", await StateAsync(f, sent));
         Assert.Equal("Some title", await ScalarAsync<string>(f.ConnectionString, "SELECT failure_title FROM messaging.messages WHERE id = @id", ("id", sent)));
+
+        // Review Focus 4, literal: un Delivered tampoco se vuelve Failed.
+        var delivered = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, "wamid.three", status: 2, occurredAtUnix: 1760000700);
+        await ApplyAsync(f, "wamid.three", "failed", 1760000800, errorCode: 131026);
+        Assert.Equal("2|-|wamid.three|2|1", await StateAsync(f, delivered));
     }
 
     [Fact]
@@ -148,6 +157,36 @@ public sealed class StatusIngestionTests
         }
 
         Assert.Equal("9|f", await ScalarAsync<string>(f.ConnectionString, DeliverySql));
+    }
+
+    // Dos réplicas con el delivered y el read del mismo mensaje a la vez: el UPDATE del mensaje y el de la
+    // foto van en una transacción, así que el candado de la fila los serializa y la foto termina en Read.
+    [Fact]
+    public async Task ConcurrentDeliveredAndReadLeaveTheSnapshotAtRead()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        for (var iteration = 0; iteration < 20; iteration++)
+        {
+            var wamid = $"wamid.race.{iteration}";
+            var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, wamid, occurredAtUnix: 1760000000 + iteration);
+
+            await Task.WhenAll(
+                ApplyDirectAsync(f, new StatusUpdate(wamid, MessageStatus.Delivered, DateTimeOffset.UtcNow, null, null, null)),
+                ApplyDirectAsync(f, new StatusUpdate(wamid, MessageStatus.Read, DateTimeOffset.UtcNow, null, null, null)));
+
+            Assert.Equal($"3|-|{wamid}|3|1", await StateAsync(f, id));
+        }
+    }
+
+    private static async Task ApplyDirectAsync(Fixture f, StatusUpdate update)
+    {
+        await Task.Yield();
+        await using var scope = f.Factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+        await StatusIngestion.ApplyAsync(dbContext, f.ConnectionId, update, TestContext.Current.CancellationToken);
     }
 
     // Decisión 7: con la conexión pausada los statuses sí se aplican.
