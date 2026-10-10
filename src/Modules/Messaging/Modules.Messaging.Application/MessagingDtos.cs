@@ -60,6 +60,10 @@ public sealed record MessageDto(
 
 public sealed record MessagePageDto(IReadOnlyList<MessageDto> Items, bool HasMore);
 
+/// <summary>Un <c>Message</c> (§8.7) más su conversación, contacto, cliente y conexión (§8.8). BFF: la lista
+/// de resultados dibuja de quién es cada mensaje y abre su conversación sin pedir nada aparte; por eso estos
+/// cuatro viajan resueltos por página y no como un <c>conversationId</c> pelado que obligaría a una llamada
+/// por resultado.</summary>
 public sealed record MessageHitDto(
     Guid Id,
     string Direction,

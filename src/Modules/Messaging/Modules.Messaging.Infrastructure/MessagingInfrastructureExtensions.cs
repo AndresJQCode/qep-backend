@@ -25,6 +25,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IConversationQueries, ConversationQueries>();
         services.AddScoped<IMessageQueries, MessageQueries>();
         services.AddScoped<ConversationSummaryBuilder>();
+        // §7.3 y §8.8: la búsqueda full-text con statement_timeout acotado.
+        services.AddScoped<IMessageSearch, MessageSearch>();
         // Spec 2026-10-09 §8.2: la firma del webhook y la cola deduplicada de entregas.
         services.AddSingleton<IWebhookSignatureVerifier, HmacWebhookSignatureVerifier>();
         services.AddScoped<IWebhookDeliveries, WebhookDeliveries>();
@@ -43,6 +45,7 @@ public static class MessagingInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<MessagingWebhookOptions>, MessagingWebhookOptionsValidator>();
         services.AddOptions<MessagingWorkerOptions>().Bind(configuration.GetSection(MessagingWorkerOptions.SectionName));
+        services.AddOptions<MessagingSearchOptions>().Bind(configuration.GetSection(MessagingSearchOptions.SectionName));
 
         return services;
     }

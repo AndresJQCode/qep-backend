@@ -8,7 +8,7 @@ namespace Modules.Messaging.Api;
 
 public static class MessagingEndpoints
 {
-    /// <summary>Lista, detalle e hilo (Task 14); envío, leído, resolver, reabrir, búsqueda y medio se suman
+    /// <summary>Lista, detalle e hilo (Task 14) y búsqueda (Task 15); envío, leído, resolver, reabrir y medio se suman
     /// en las siguientes, todos bajo <c>/api/v1/tenants/{tenantId:guid}/messaging</c>.</summary>
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -35,6 +35,13 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapGet("/messages/search", SearchMessagesAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationRead)
+            .Produces<SearchPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -48,4 +55,9 @@ public static class MessagingEndpoints
     private static async Task<IResult> ListMessagesAsync(
         Guid tenantId, Guid conversationId, int? limit, Guid? before, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListMessagesQuery(tenantId, conversationId, limit, before), cancellationToken));
+
+    private static async Task<IResult> SearchMessagesAsync(
+        Guid tenantId, string? q, Guid? conversationId, DateTimeOffset? from, DateTimeOffset? to, int? limit, Guid? before,
+        IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new SearchMessagesQuery(tenantId, q, conversationId, from, to, limit, before), cancellationToken));
 }

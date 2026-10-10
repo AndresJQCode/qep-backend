@@ -529,6 +529,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListConversationsQuery, ConversationPageDto>, ListConversationsHandler>();
         services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
         services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
+        // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
+        services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
