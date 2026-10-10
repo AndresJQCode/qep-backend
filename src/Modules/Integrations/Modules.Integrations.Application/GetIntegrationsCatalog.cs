@@ -10,6 +10,7 @@ public sealed class GetIntegrationsCatalogHandler(
     IIntegrationProviderCatalog catalog,
     IIntegrationConnectionRepository repository,
     ITenantModules tenantModules,
+    IMetaAppSettings metaApp,
     IExecutionContext executionContext)
     : IQueryHandler<GetIntegrationsCatalogQuery, IntegrationsCatalogResponse>
 {
@@ -18,13 +19,14 @@ public sealed class GetIntegrationsCatalogHandler(
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, IntegrationsPermissions.ConnectionRead);
 
-        var visible = await ProviderVisibility.VisibleAsync(catalog, tenantModules, query.TenantId, cancellationToken);
+        var visible = await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, query.TenantId, cancellationToken);
         var connections = await repository.ListAsync(query.TenantId, cancellationToken);
 
         return new IntegrationsCatalogResponse(visible
             .Select(provider => ConnectionMapping.ToProvider(
                 provider,
-                connections.Count(connection => string.Equals(connection.ProviderKey, provider.Key, StringComparison.Ordinal))))
+                connections.Count(connection => string.Equals(connection.ProviderKey, provider.Key, StringComparison.Ordinal)),
+                metaApp))
             .ToArray());
     }
 }

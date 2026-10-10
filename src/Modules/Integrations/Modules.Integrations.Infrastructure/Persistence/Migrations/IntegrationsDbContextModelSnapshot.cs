@@ -161,10 +161,50 @@ namespace Modules.Integrations.Infrastructure.Persistence.Migrations
 
                     b.ToTable("connections", "integrations", t =>
                         {
-                            t.HasCheckConstraint("CK_connections_provider_key", "provider_key IN ('zenvia')");
+                            t.HasCheckConstraint("CK_connections_provider_key", "provider_key IN ('zenvia','whatsapp-cloud')");
 
                             t.HasCheckConstraint("CK_connections_status", "status IN ('Active','Paused','NeedsAttention')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Integrations.Domain.IntegrationConnectionRoute", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<string>("AccountId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("account_id");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("external_id");
+
+                    b.Property<string>("ProviderKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("provider_key");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("ConnectionId");
+
+                    b.HasIndex("ProviderKey", "AccountId")
+                        .HasDatabaseName("IX_connection_routes_provider_account")
+                        .HasFilter("account_id IS NOT NULL");
+
+                    b.HasIndex("ProviderKey", "ExternalId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_connection_routes_provider_external");
+
+                    b.ToTable("connection_routes", "integrations");
                 });
 
             modelBuilder.Entity("Modules.Integrations.Infrastructure.Persistence.IntegrationsOutboxMessage", b =>
@@ -255,6 +295,15 @@ namespace Modules.Integrations.Infrastructure.Persistence.Migrations
                         });
 
                     b.Navigation("Secrets");
+                });
+
+            modelBuilder.Entity("Modules.Integrations.Domain.IntegrationConnectionRoute", b =>
+                {
+                    b.HasOne("Modules.Integrations.Domain.IntegrationConnection", null)
+                        .WithMany()
+                        .HasForeignKey("ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

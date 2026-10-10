@@ -20,6 +20,10 @@ public sealed record ResolvedConnection(
 
 public sealed record ConnectionSummary(Guid Id, string ProviderKey, string Name);
 
+/// <summary>Nombre y estado de una conexión del proveedor, Active o no (spec 2026-10-09 §6.1): la
+/// bandeja muestra <c>connectionName</c> también en conversaciones de una conexión pausada.</summary>
+public sealed record ConnectionListing(Guid Id, string Name, ConnectionStatus Status);
+
 /// <summary>
 /// Spec 2026-10-08, «Puertos para los consumidores». Cada consumidor declara su propio puerto en su
 /// Application y el adaptador vive en Bootstrapper: un módulo de negocio nunca referencia
@@ -34,6 +38,9 @@ public interface IIntegrationConnections
 
     /// <summary>Las Active de un proveedor, para que la pantalla del consumidor deje elegir una.</summary>
     Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
+
+    /// <summary>Todas las del proveedor en el tenant, por nombre; no filtra por estado ni por visibilidad.</summary>
+    Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
 }
 
 public sealed class IntegrationConnections(
@@ -83,4 +90,13 @@ public sealed class IntegrationConnections(
             .Select(connection => new ConnectionSummary(connection.Id, connection.ProviderKey, connection.Name))
             .ToArray();
     }
+
+    public async Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(
+        Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
+        (await repository.ListAsync(tenantId, cancellationToken))
+            .Where(connection => string.Equals(connection.ProviderKey, providerKey, StringComparison.Ordinal))
+            .OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(connection => connection.Id)
+            .Select(connection => new ConnectionListing(connection.Id, connection.Name, connection.Status))
+            .ToArray();
 }

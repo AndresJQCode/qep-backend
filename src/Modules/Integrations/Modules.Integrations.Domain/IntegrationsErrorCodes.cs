@@ -18,6 +18,11 @@ public static class IntegrationsErrorCodes
     public const string ProviderUnreachable = "integrations.connection.provider_unreachable";
     public const string NotFound = "integrations.connection.not_found";
     public const string SecretProtectionUnavailable = "integrations.secret_protection.unavailable";
+
+    // Spec 2026-10-09 §10.1, los tres de Embedded Signup.
+    public const string WhatsAppCodeExchangeFailed = "integrations.whatsapp.code_exchange_failed";
+    public const string WhatsAppRegistrationFailed = "integrations.whatsapp.registration_failed";
+    public const string WhatsAppNumberAlreadyConnected = "integrations.whatsapp.number_already_connected";
 }
 
 /// <summary>Lo que va a <c>last_failure_code</c> (varchar(64)): el resultado, no el código HTTP.</summary>
@@ -26,4 +31,9 @@ public static class ConnectionFailureCodes
     public const string CredentialsRejected = "credentials_rejected";
     public const string ProviderUnreachable = "provider_unreachable";
     public const string FieldInvalid = "field_invalid";
+
+    // Spec 2026-10-09 §6.1 y §10.2.
+    public const string TokenExpired = "token_expired";
+    public const string NumberUnregistered = "number_unregistered";
+    public const string AccountDisabled = "account_disabled";
 }

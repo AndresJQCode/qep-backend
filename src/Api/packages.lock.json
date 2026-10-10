@@ -179,6 +179,8 @@
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Application": "[1.0.0, )",
           "Modules.Integrations.Infrastructure": "[1.0.0, )",
+          "Modules.Messaging.Application": "[1.0.0, )",
+          "Modules.Messaging.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
           "Modules.Platform.Application": "[1.0.0, )",
           "Modules.Platform.Infrastructure": "[1.0.0, )",
@@ -365,7 +367,8 @@
           "Microsoft.EntityFrameworkCore": "[10.0.11, )",
           "Modules.Customers.Application": "[1.0.0, )",
           "Modules.Customers.Domain": "[1.0.0, )",
-          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )",
+          "libphonenumber-csharp": "[9.0.41, )"
         }
       },
       "modules.geography.api": {
@@ -460,6 +463,44 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Application": "[1.0.0, )",
           "Modules.Integrations.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.messaging.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Messaging.Application": "[1.0.0, )",
+          "Modules.Messaging.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.messaging.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Messaging.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.messaging.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.messaging.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.11, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Messaging.Application": "[1.0.0, )",
+          "Modules.Messaging.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
@@ -732,6 +773,12 @@
         "dependencies": {
           "FluentValidation": "12.1.1"
         }
+      },
+      "libphonenumber-csharp": {
+        "type": "CentralTransitive",
+        "requested": "[9.0.41, )",
+        "resolved": "9.0.41",
+        "contentHash": "GpBGFg/L1OuHem8qpZ2Ca6Tm5pPqL81iDLiUwNIbfSWVIyiQpui5jqMOr7pgVKg9rD5ppK2iCHDfg9hvtQe1OQ=="
       },
       "Microsoft.AspNetCore.Authentication.JwtBearer": {
         "type": "CentralTransitive",

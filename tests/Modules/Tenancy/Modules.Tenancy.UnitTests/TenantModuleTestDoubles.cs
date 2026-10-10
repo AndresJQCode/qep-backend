@@ -8,7 +8,7 @@ namespace Modules.Tenancy.UnitTests;
 /// estático compartido acumularía <see cref="Asked"/> entre pruebas.</summary>
 internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
 {
-    /// <summary>Un doble con los siete módulos contratados, nuevo en cada llamada.</summary>
+    /// <summary>Un doble con todos los módulos contratados, nuevo en cada llamada.</summary>
     public static FixedTenantModules AllEnabled() => new(TenantModuleSet.FromStored(TenantModuleKeys.All));
 
     public List<Guid> Asked { get; } = [];

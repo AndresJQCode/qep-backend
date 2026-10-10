@@ -21,6 +21,10 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
     /// modela índices por expresión— y IntegrationsUnitOfWork lo traduce por este nombre.</summary>
     public const string ConnectionNameIndex = "IX_connections_tenant_provider_name";
 
+    /// <summary>Spec 2026-10-09 §6.1: el único (provider_key, external_id). Traducido por nombre a
+    /// <c>number_already_connected</c>.</summary>
+    public const string RouteExternalIndex = "IX_connection_routes_provider_external";
+
     private static readonly JsonSerializerOptions FieldsJson = new(JsonSerializerDefaults.General);
 
     // fields es jsonb con sólo los campos públicos; el dominio lo expone como diccionario de sólo lectura.
@@ -38,6 +42,8 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
 
     public DbSet<IntegrationConnection> Connections => Set<IntegrationConnection>();
 
+    public DbSet<IntegrationConnectionRoute> Routes => Set<IntegrationConnectionRoute>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IntegrationsOutboxMessage> Outbox => Set<IntegrationsOutboxMessage>();
@@ -50,6 +56,7 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureConnection(modelBuilder);
+        ConfigureConnectionRoute(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -99,6 +106,25 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
             secret.HasIndex(value => value.KeyId).HasDatabaseName("IX_connection_secrets_key_id");
         });
         connection.Navigation(value => value.Secrets).UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    private static void ConfigureConnectionRoute(ModelBuilder modelBuilder)
+    {
+        var route = modelBuilder.Entity<IntegrationConnectionRoute>();
+        route.ToTable("connection_routes", Schema);
+        route.HasKey(value => value.ConnectionId);
+        route.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
+        route.Property(value => value.ProviderKey).HasColumnName("provider_key").HasMaxLength(IntegrationProvider.KeyMaxLength);
+        route.Property(value => value.ExternalId).HasColumnName("external_id").HasMaxLength(IntegrationConnectionRoute.ExternalIdMaxLength);
+        route.Property(value => value.AccountId).HasColumnName("account_id").HasMaxLength(IntegrationConnectionRoute.ExternalIdMaxLength);
+        route.Property(value => value.TenantId).HasColumnName("tenant_id");
+        route.HasIndex(value => new { value.ProviderKey, value.ExternalId }).IsUnique().HasDatabaseName(RouteExternalIndex);
+        // account_update llega por WABA (D-M2); una WABA tiene varios números, así que no es único.
+        route.HasIndex(value => new { value.ProviderKey, value.AccountId })
+            .HasDatabaseName("IX_connection_routes_provider_account")
+            .HasFilter("account_id IS NOT NULL");
+        // La cascada borra la ruta con la conexión y libera el número (§6.1).
+        route.HasOne<IntegrationConnection>().WithMany().HasForeignKey(value => value.ConnectionId).OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

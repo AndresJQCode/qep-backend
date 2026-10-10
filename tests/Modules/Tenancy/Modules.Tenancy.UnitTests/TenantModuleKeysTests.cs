@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -46,13 +46,18 @@ public sealed class TenantModuleKeysTests
         Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Catalog));
     }
 
+    // Spec 2026-10-09 §6.2: messaging es vendible y se prende por tenant, como pos.
     [Fact]
-    public void DefaultForNewTenantsIsEverythingButPos()
+    public void DefaultForNewTenantsIsEverythingButPosAndMessaging()
     {
         Assert.Equal(
             ["catalog", "customers", "companies", "quotations", "orders", "reporting"],
             TenantModuleKeys.DefaultForNewTenants.Select(key => key.Value));
     }
+
+    [Fact]
+    public void MessagingHasNoDependencies() =>
+        Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Messaging));
 
     [Fact]
     public void ParseReturnsTheSameInstanceForEveryKey()

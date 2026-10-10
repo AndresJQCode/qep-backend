@@ -36,7 +36,8 @@ public sealed class UpdateCustomerHandler(
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<UpdateCustomerCommand> validator)
+    IValidator<UpdateCustomerCommand> validator,
+    IPhoneNumberNormalizer phoneNormalizer)
     : ICommandHandler<UpdateCustomerCommand, CustomerDto>
 {
     public async Task<CustomerDto> HandleAsync(
@@ -107,7 +108,8 @@ public sealed class UpdateCustomerHandler(
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),
             classification.Prefix,
-            now);
+            now,
+            phoneNormalizer);
 
         auditPublisher.Publish(
             command.TenantId,

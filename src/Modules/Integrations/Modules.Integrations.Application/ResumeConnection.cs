@@ -40,6 +40,11 @@ public sealed class ResumeConnectionHandler(
         {
             case ConnectionTestOutcome.Ok:
                 connection.Resume(now);
+                if (result.RefreshedFields is { Count: > 0 } refreshed)
+                {
+                    connection.ApplyProviderFields(provider, refreshed);
+                }
+
                 ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Resumed, [], now);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
                 return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);

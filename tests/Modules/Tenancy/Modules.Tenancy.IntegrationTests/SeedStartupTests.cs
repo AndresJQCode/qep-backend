@@ -132,16 +132,16 @@ public sealed class SeedStartupTests
         Assert.Contains("admin", membership.Roles);
     }
 
-    // Spec 2026-10-07, «Semilla»: el tenant de la semilla nace con los siete, pos incluido.
+    // Spec 2026-10-07, «Semilla»: el tenant de la semilla nace con todos, pos y messaging incluidos.
     [Fact]
-    public async Task SeedEnablesTheSevenModules()
+    public async Task SeedEnablesEveryModule()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["catalog", "companies", "customers", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -174,7 +174,7 @@ public sealed class SeedStartupTests
             Guid.CreateVersion7(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ["catalog", "companies", "customers", "orders", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -229,14 +229,14 @@ public sealed class SeedStartupTests
     }
 
     [Fact]
-    public async Task SeedEnablesTheSevenModulesInTheOperatorTenant()
+    public async Task SeedEnablesEveryModuleInTheOperatorTenant()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["catalog", "companies", "customers", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -263,7 +263,7 @@ public sealed class SeedStartupTests
         Assert.Equal(ownerUserId, membership.UserId);
         Assert.NotEqual(operatorUserId, membership.UserId);
         Assert.Equal(
-            ["catalog", "companies", "customers", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -343,7 +343,7 @@ public sealed class SeedStartupTests
             membership => membership.TenantId == new TenantId(OperatorTenantId),
             TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["catalog", "companies", "customers", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Messaging\Modules.Messaging.Application\Modules.Messaging.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Messaging\Modules.Messaging.Domain\Modules.Messaging.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Messaging\Modules.Messaging.Infrastructure\Modules.Messaging.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

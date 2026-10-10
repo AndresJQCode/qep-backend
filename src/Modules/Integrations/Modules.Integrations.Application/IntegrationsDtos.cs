@@ -16,9 +16,23 @@ public sealed record ProviderResponse(
     string Category,
     IReadOnlyList<ProviderFieldResponse> Fields,
     int MaxConnections,
-    int ConnectionCount);
+    int ConnectionCount,
+    ProviderOnboardingResponse Onboarding);
 
-/// <summary>Sin el patrón: el formulario no valida con regex del backend; el 422 marca el campo.</summary>
+/// <summary>BFF: la tarjeta del catálogo decide si abre un formulario o el popup de Meta sin conocer el
+/// proveedor. <c>appId</c> y <c>configId</c> son públicos (viajan en la URL del popup); el secreto nunca
+/// sale. Con <c>Kind = "Form"</c> los otros tres van ausentes, para que la forma sea exactamente
+/// <c>{ "kind": "Form" }</c>.</summary>
+public sealed record ProviderOnboardingResponse(
+    string Kind,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? AppId,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ConfigId,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? GraphApiVersion);
+
+/// <summary>Sin el patrón: el formulario no valida con regex del backend; el 422 marca el campo. Sin los
+/// campos internos (spec 2026-10-09 §6.1): los llena el backend —Embedded Signup o el probador— y el
+/// formulario no tiene nada que pedir por ellos; sí salen en <c>ConnectionResponse</c>, que es lo que la
+/// pantalla muestra de una conexión ya hecha.</summary>
 public sealed record ProviderFieldResponse(string Key, string Label, string Kind, bool Required, int MaxLength);
 
 /// <summary>Sin paginación: hay tope de 20 conexiones por proveedor (spec, «Endpoints»).</summary>

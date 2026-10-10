@@ -362,6 +362,32 @@ public sealed class IntegrationConnectionTests
         Assert.Equal(IntegrationsErrorCodes.FieldRequired, Rejects(() => CreateWith(Fields(null!), Secrets())).Code);
     }
 
+    // Spec 2026-10-09 §6.1: el probador refresca número, nombre y calidad; nunca un secreto ni un
+    // campo de un proveedor por formulario.
+    [Fact]
+    public void ApplyProviderFieldsTouchesOnlyBackendOwnedFields()
+    {
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.WhatsAppCloud, Guid.CreateVersion7(), "Ventas",
+            new Dictionary<string, string> { ["phoneNumberId"] = "111", ["wabaId"] = "222", ["displayPhoneNumber"] = "+57 1" },
+            new Dictionary<string, string> { ["accessToken"] = "t" },
+            (_, key, plain) => new ProtectedSecret("test", System.Text.Encoding.UTF8.GetBytes(key + plain)),
+            Guid.CreateVersion7(), Now);
+
+        var changed = connection.ApplyProviderFields(
+            IntegrationProviders.WhatsAppCloud,
+            new Dictionary<string, string> { ["displayPhoneNumber"] = "+57 300 123 4567", ["qualityRating"] = "GREEN", ["accessToken"] = "x" });
+
+        Assert.Equal(["displayPhoneNumber", "qualityRating"], changed);
+        Assert.Equal("+57 300 123 4567", connection.Fields["displayPhoneNumber"]);
+        Assert.Equal("GREEN", connection.Fields["qualityRating"]);
+        Assert.Equal("111", connection.Fields["phoneNumberId"]);
+        Assert.Equal(1, connection.Version);
+
+        var zenvia = CreateWith(Fields(), Secrets());
+        Assert.Empty(zenvia.ApplyProviderFields(IntegrationProviders.Zenvia, new Dictionary<string, string> { ["fromNumber"] = "573001111111" }));
+    }
+
     private static (string Name, string Fields, long Version, DateTimeOffset UpdatedAt, string Secret) Snapshot(
         IntegrationConnection connection) =>
         (connection.Name,

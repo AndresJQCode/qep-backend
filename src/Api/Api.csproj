@@ -5,6 +5,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- RequestFailureCaptureTests: la excepción del webhook en el log de fallas (spec 2026-10-09 §11). -->
+    <InternalsVisibleTo Include="Modules.Messaging.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Bootstrapper\Bootstrapper.csproj" />
     <ProjectReference Include="..\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Catalog\Modules.Catalog.Api\Modules.Catalog.Api.csproj" />
@@ -15,6 +20,8 @@
     <ProjectReference Include="..\Modules\Pos\Modules.Pos.Infrastructure\Modules.Pos.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Integrations\Modules.Integrations.Api\Modules.Integrations.Api.csproj" />
     <ProjectReference Include="..\Modules\Integrations\Modules.Integrations.Infrastructure\Modules.Integrations.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Messaging\Modules.Messaging.Api\Modules.Messaging.Api.csproj" />
+    <ProjectReference Include="..\Modules\Messaging\Modules.Messaging.Infrastructure\Modules.Messaging.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Api\Modules.Customers.Api.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Api\Modules.Geography.Api.csproj" />

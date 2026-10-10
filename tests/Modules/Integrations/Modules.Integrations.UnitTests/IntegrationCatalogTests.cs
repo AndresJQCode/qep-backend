@@ -15,9 +15,34 @@ public sealed class IntegrationCatalogTests
         [new FieldDefinition("apiKey", "Clave", FieldKind.Secret, required: true, maxLength: 64, pattern: null, invalidMessage: "Revisa la clave.")],
         maxConnections: 1);
 
+    // Spec 2026-10-09 §6.1: la fila literal del proveedor nuevo.
     [Fact]
-    public void TheFirstCatalogHasOnlyZenvia() =>
-        Assert.Equal(["zenvia"], IntegrationProviders.All.Select(provider => provider.Key));
+    public void WhatsAppCloudIsInTheCatalogWithItsFieldsAndOnboarding()
+    {
+        var provider = IntegrationProviders.WhatsAppCloud;
+
+        Assert.Equal("whatsapp-cloud", provider.Key);
+        Assert.Equal("WhatsApp Business (Meta)", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Messaging, provider.Category);
+        Assert.Equal([TenantModuleKeys.Messaging], provider.ConsumingModules);
+        Assert.Equal(5, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.MetaEmbeddedSignup, provider.Onboarding);
+        Assert.Equal(
+            ["displayPhoneNumber", "verifiedName", "phoneNumberId", "wabaId", "qualityRating", "accessToken"],
+            provider.Fields.Select(field => field.Key));
+        Assert.Equal(["displayPhoneNumber", "verifiedName"], provider.CatalogFields.Select(field => field.Key));
+        Assert.True(provider.FindField("accessToken")!.Internal);
+        Assert.True(provider.FindField("accessToken")!.IsSecret);
+        Assert.Equal(2048, provider.FindField("accessToken")!.MaxLength);
+        Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
+        Assert.Equal([IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud], IntegrationProviders.All);
+        Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
+    }
+
+    // Meta devuelve el número formateado: "+57 300 123 4567" tiene que pasar tal cual.
+    [Fact]
+    public void TheDisplayPhoneNumberAcceptsMetaFormatting() =>
+        Assert.True(IntegrationProviders.WhatsAppCloud.FindField("displayPhoneNumber")!.HasValidShape("+57 300 123 4567"));
 
     [Fact]
     public void ZenviaDeclaresWhatTheSpecSays()

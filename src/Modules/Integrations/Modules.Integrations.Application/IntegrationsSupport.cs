@@ -36,10 +36,18 @@ internal static class IntegrationsNotFound
 internal static class ProviderVisibility
 {
     public static async Task<IReadOnlyList<IntegrationProvider>> VisibleAsync(
-        IIntegrationProviderCatalog catalog, ITenantModules tenantModules, Guid tenantId, CancellationToken cancellationToken)
+        IIntegrationProviderCatalog catalog,
+        ITenantModules tenantModules,
+        IMetaAppSettings metaApp,
+        Guid tenantId,
+        CancellationToken cancellationToken)
     {
         var modules = await tenantModules.FindAsync(tenantId, cancellationToken);
-        return catalog.All.Where(provider => provider.IsVisibleFor(modules)).ToArray();
+        return catalog.All
+            .Where(provider => provider.IsVisibleFor(modules))
+            // D-M3: sin la app de Meta configurada (sólo fuera de Production) no hay cómo conectar.
+            .Where(provider => provider.Onboarding != ProviderOnboarding.MetaEmbeddedSignup || metaApp.IsConfigured)
+            .ToArray();
     }
 
     public static async Task EnsureVisibleAsync(
@@ -79,16 +87,19 @@ internal static class ConnectionLoader
 
 internal static class ConnectionMapping
 {
-    public static ProviderResponse ToProvider(IntegrationProvider provider, int connectionCount) =>
+    public static ProviderResponse ToProvider(IntegrationProvider provider, int connectionCount, IMetaAppSettings metaApp) =>
         new(
             provider.Key,
             provider.DisplayName,
             provider.Category.ToString(),
-            provider.Fields
+            provider.CatalogFields
                 .Select(field => new ProviderFieldResponse(field.Key, field.Label, field.Kind.ToString(), field.Required, field.MaxLength))
                 .ToArray(),
             provider.MaxConnections,
-            connectionCount);
+            connectionCount,
+            provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup
+                ? new ProviderOnboardingResponse(nameof(ProviderOnboarding.MetaEmbeddedSignup), metaApp.AppId, metaApp.ConfigId, metaApp.GraphApiVersion)
+                : new ProviderOnboardingResponse(nameof(ProviderOnboarding.Form), null, null, null));
 
     public static async Task<ConnectionResponse> ToResponseAsync(
         IntegrationConnection connection,

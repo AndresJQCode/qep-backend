@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
@@ -38,6 +39,7 @@ public sealed class ZenviaConnectionTesterTests : IDisposable
             .Build();
         var services = new ServiceCollection();
         services.AddLogging(builder => builder.AddProvider(_logs));
+        services.AddSingleton<IHostEnvironment>(new UnitTestHostEnvironment());
         services.AddIntegrationsInfrastructure(configuration);
         services.AddHttpClient(ZenviaConnectionTester.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => _zenvia);
         _services = services.BuildServiceProvider();

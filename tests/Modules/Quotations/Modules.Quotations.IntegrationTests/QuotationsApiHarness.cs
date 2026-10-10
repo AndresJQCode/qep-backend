@@ -981,6 +981,7 @@ internal static class QuotationsApiHarness
         // Concurrente desde el 2026-09-16: PaymentProofMoveWorker corre en el host cada 3 s y borra
         // temporales mientras la prueba sube y lee (hallazgo 9 del plan).
         private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, string> _contentTypes = new(StringComparer.Ordinal);
 
         public Task<Uri> CreatePresignedUploadUrlAsync(
             string key, string contentType, CancellationToken cancellationToken) =>
@@ -1031,8 +1032,27 @@ internal static class QuotationsApiHarness
             string key, byte[] content, string contentType, CancellationToken cancellationToken)
         {
             _objects[key] = content.ToArray();
+            _contentTypes[key] = contentType;
             return Task.CompletedTask;
         }
+
+        // Spec 2026-10-09 §6.6: el camino por stream guarda lo mismo que el de byte[].
+        public async Task UploadAsync(
+            string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken)
+        {
+            using var buffer = new MemoryStream();
+            await content.CopyToAsync(buffer, cancellationToken);
+            _objects[key] = buffer.ToArray();
+            _contentTypes[key] = contentType;
+        }
+
+        public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
+            Task.FromResult(_objects.TryGetValue(key, out var bytes)
+                ? new StoredObjectStream(
+                    new MemoryStream(bytes),
+                    _contentTypes.TryGetValue(key, out var contentType) ? contentType : "application/octet-stream",
+                    bytes.LongLength)
+                : null);
 
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
 

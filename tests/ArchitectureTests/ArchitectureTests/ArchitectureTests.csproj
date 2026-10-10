@@ -39,6 +39,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Integrations\Modules.Integrations.Application\Modules.Integrations.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Integrations\Modules.Integrations.Domain\Modules.Integrations.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Integrations\Modules.Integrations.Infrastructure\Modules.Integrations.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Messaging\Modules.Messaging.Api\Modules.Messaging.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Messaging\Modules.Messaging.Application\Modules.Messaging.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Messaging\Modules.Messaging.Domain\Modules.Messaging.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Messaging\Modules.Messaging.Infrastructure\Modules.Messaging.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Api\Modules.Geography.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Application\Modules.Geography.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Geography\Modules.Geography.Domain\Modules.Geography.Domain.csproj" />

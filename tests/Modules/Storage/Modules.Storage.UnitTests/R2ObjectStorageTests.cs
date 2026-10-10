@@ -47,6 +47,27 @@ public sealed class R2ObjectStorageTests
         Assert.True(request.DisablePayloadSigning);
     }
 
+    // Spec 2026-10-09 §6.6: un medio de WhatsApp puede pesar 100 MB; sube por stream con el largo
+    // explícito y las mismas dos banderas que el byte[], porque R2 no implementa el cuerpo firmado en chunks.
+    [Fact]
+    public async Task UploadByStreamKeepsTheR2FlagsAndTheExplicitLength()
+    {
+        using var client = new CapturingS3Client();
+        var storage = new R2ObjectStorage(client, Options.Create(new StorageOptions
+        {
+            R2 = new R2Options { Bucket = "qep-private" },
+        }));
+        await using var content = new MemoryStream(new byte[10]);
+
+        await storage.UploadAsync("k", content, 10, "image/jpeg", TestContext.Current.CancellationToken);
+
+        var request = Assert.IsType<PutObjectRequest>(client.Captured);
+        Assert.False(request.UseChunkEncoding);
+        Assert.True(request.DisablePayloadSigning);
+        Assert.Equal("image/jpeg", request.ContentType);
+        Assert.Equal(10, request.Headers.ContentLength);
+    }
+
     [Fact]
     public async Task DownloadUrlHonoursTheRequestedExpiryAndFileName()
     {

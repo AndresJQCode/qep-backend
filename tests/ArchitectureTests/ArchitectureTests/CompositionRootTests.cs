@@ -7,6 +7,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Integrations.Application;
+using Modules.Messaging.Application;
 using Modules.Pos.Application;
 using Modules.Tenancy.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -166,13 +167,12 @@ public sealed class CompositionRootTests
 
     /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec de
     /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
-    /// specs de 2026-10-08.</summary>
+    /// specs de 2026-10-08, y las dos <c>messaging.*</c> del spec 2026-10-09.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFortySixConstants()
+    public void PermissionDiscoveryFindsTheFortyEightConstants()
     {
-        // +6 de PosPermissions (spec 2026-10-07), +3 de OperatorPermissions y +2 de
-        // IntegrationsPermissions (specs 2026-10-08).
-        Assert.Equal(46, PermissionConstants().Length);
+        // 46 + los dos de Messaging (spec 2026-10-09 §6.3).
+        Assert.Equal(48, PermissionConstants().Length);
     }
 
     /// <summary>
@@ -197,6 +197,32 @@ public sealed class CompositionRootTests
         Assert.All(definitions, definition =>
         {
             Assert.Equal("Integrations", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
+    }
+
+    /// <summary>Spec 2026-10-09 §6.3 (decisión 5): en <c>admin</c> y <c>advisor</c>, de núcleo; el
+    /// módulo lo revisa cada handler con <c>TenantModuleGuard</c>.</summary>
+    [Fact]
+    public void TheAdminAndAdvisorRolesCarryTheMessagingPermissionsAsCore()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] messagingPermissions =
+            [MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage];
+
+        foreach (var role in new[] { "admin", "advisor" })
+        {
+            Assert.All(messagingPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor(role)));
+        }
+
+        var definitions = catalog.ListPermissions()
+            .Where(definition => messagingPermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(2, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Messaging", definition.Category);
             Assert.Empty(definition.RequiredModules!);
         });
     }

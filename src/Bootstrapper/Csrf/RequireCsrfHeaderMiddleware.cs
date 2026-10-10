@@ -43,8 +43,12 @@ internal sealed class RequireCsrfHeaderMiddleware(
 
     public async Task InvokeAsync(HttpContext context)
     {
-        if (SafeMethods.Contains(context.Request.Method) ||
-            string.Equals(context.Request.Headers[HeaderName], ExpectedValue, StringComparison.Ordinal))
+        // Spec 2026-10-09 §6.7: la excepción explícita por ruta que este comentario pedía (WebhookPaths,
+        // ordinal y con la barra). El webhook no acepta la cookie de sesión; se autentica con la firma
+        // HMAC de Meta.
+        if (SafeMethods.Contains(context.Request.Method)
+            || WebhookPaths.IsWebhook(context.Request.Path)
+            || string.Equals(context.Request.Headers[HeaderName], ExpectedValue, StringComparison.Ordinal))
         {
             await next(context);
             return;

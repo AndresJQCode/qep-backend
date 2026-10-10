@@ -8,6 +8,7 @@ using Bootstrapper.Health;
 using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
+using Microsoft.Extensions.Options;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
 using Modules.Catalog.Api;
@@ -21,6 +22,9 @@ using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
+using Modules.Messaging.Api;
+using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
@@ -67,6 +71,25 @@ builder.Services.AddRateLimiter(options =>
         httpContext => RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: FixedWindow));
+
+    // Spec 2026-10-09 §6.7 y §8.2: Meta manda desde pocas IPs compartidas y en ráfagas; con Public un
+    // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod. Los valores
+    // salen de MessagingWebhookOptions ya bindeadas y validadas al arrancar (> 0); la fábrica de la
+    // partición corre una sola vez, con el primer request.
+    options.AddPolicy(
+        RateLimiterPolicies.Webhook,
+        httpContext => RateLimitPartition.GetConcurrencyLimiter(
+            partitionKey: "webhook",
+            factory: _ =>
+            {
+                var webhook = httpContext.RequestServices.GetRequiredService<IOptions<MessagingWebhookOptions>>().Value;
+                return new ConcurrencyLimiterOptions
+                {
+                    PermitLimit = webhook.ConcurrencyLimit,
+                    QueueLimit = webhook.QueueLimit,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                };
+            }));
 });
 
 var app = builder.Build();
@@ -147,6 +170,8 @@ app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
 app.MapPosEndpoints();
 app.MapIntegrationsEndpoints();
+app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
+app.MapMessagingEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -193,6 +218,12 @@ await app.Services.InitializePosDatabaseAsync(
 // Integrations (spec 2026-10-08): sin FKs a otros esquemas. Va después de Audit porque escribe en
 // audit.entries, que crea la migración de Audit.
 await app.Services.InitializeIntegrationsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Messaging (spec 2026-10-09): después de Audit (escribe en audit.entries); no tiene FKs a otros
+// esquemas: Integrations y Customers entran por puertos. Las extensiones (pg_trgm, unaccent,
+// btree_gin) van en public, como las de Customers y Catalog.
+await app.Services.InitializeMessagingDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

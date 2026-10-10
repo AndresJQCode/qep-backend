@@ -49,7 +49,7 @@ public sealed class OperatorReadHandlerTests
     }
 
     [Fact]
-    public async Task TheDetailListsTheSevenModulesInCatalogOrder()
+    public async Task TheDetailListsEveryModuleInCatalogOrder()
     {
         var reader = new FixedOperatorTenantReader();
         var modules = OperatorSnapshots.Signup()
@@ -65,7 +65,7 @@ public sealed class OperatorReadHandlerTests
         var detail = await Detail(reader, new OperatorContext(Operator, OperatorPermissions.TenantsRead))
             .HandleAsync(new GetOperatorTenantQuery(Operator, Target), TestContext.Current.CancellationToken);
 
-        Assert.Equal(["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos"],
+        Assert.Equal(["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging"],
             detail.Modules.Select(module => module.Key));
         var byKey = detail.Modules.ToDictionary(module => module.Key);
         Assert.Equal("inactive", byKey["customers"].Status);
@@ -98,7 +98,7 @@ public sealed class OperatorReadHandlerTests
 
         Assert.Equal(2, page.Total);
         Assert.Equal(new OperatorTenantSummaryDto(6, 1, 1), page.Summary);
-        Assert.All(page.Items, item => Assert.Equal(7, item.TotalModules));
+        Assert.All(page.Items, item => Assert.Equal(8, item.TotalModules));
         Assert.True(page.Items[0].IsOperator);
         Assert.Equal("Suspended", page.Items[1].Status);
         Assert.Equal(["list:o:1:25"], reader.Asked);

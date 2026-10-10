@@ -138,6 +138,13 @@ local y por variable de entorno en k8s
 | `Integrations:SecretProtection:Keys:<id>`              | user-secrets                                                                                  | Llave AES-256 (32 bytes en base64). Es un secreto: en k8s va en el Secret, nunca en el ConfigMap |
 | `Integrations:SecretProtection:RekeyIntervalMinutes`   | `60`                                                                                          | Cada cuánto el worker re-cifra con la llave activa, además de al arrancar. Entre 1 y 1440 |
 | `Integrations:Zenvia:BaseUrl`                          | `https://api.zenvia.com`                                                                      | URL de la prueba de credenciales de Zenvia (`GET /v2/templates`). HTTPS absoluta. El sender global de cotizaciones sigue usando `Quotations:WhatsApp:BaseUrl` |
+| `Meta:App:AppId`, `Meta:App:ConfigId`                | ausentes (user-secrets en local)                                                              | La app de Meta de toda la plataforma (spec 2026-10-09). Públicos: viajan en el popup de Embedded Signup. **En `Production` son obligatorios** junto con los tres de abajo (`MetaAppOptionsValidator`); fuera, sin ellos `whatsapp-cloud` no sale en el catálogo y el webhook responde 403/401 |
+| `Meta:App:GraphApiVersion`                           | `v24.0` (sólo fuera de `Production`)                                                          | Versión de Graph; patrón `^v\d+\.\d+$`. **También es obligatoria en `Production`** (`MetaAppOptionsValidator` exige las cinco claves: AppId, ConfigId, GraphApiVersion, AppSecret, WebhookVerifyToken); el ConfigMap de k8s la fija en `v24.0` |
+| `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`  | user-secrets                                                                                  | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret |
+| `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
+| `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
+| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios y purga |
+| `Messaging:Search:StatementTimeoutMs`                | `2000`                                                                                        | Tope de la búsqueda en el historial; al pasarlo responde 422 en `q` |
 
 Ejemplo con variables de entorno:
 
@@ -365,7 +372,7 @@ catálogo de diecinueve productos con la tasa `IVA 19%`, y le deja configurados 
 número de pedido (`PW…`) y las columnas del Excel de pedidos de su ERP (ver
 [homologación](#columnas-del-excel-de-pedidos-por-tenant-homologación)). Después crea el
 [tenant operador](#tenant-operador) **QCode** (`qcode`, id `01900000-0000-7000-8000-000000000006`)
-con los siete módulos y una membresía `admin` para `Seed:OperatorOwnerEmail`. Pensada para el ambiente
+con todos los módulos del catálogo y una membresía `admin` para `Seed:OperatorOwnerEmail`. Pensada para el ambiente
 desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
 de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
 
@@ -630,20 +637,20 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting` y `pos`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos` y `messaging`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations` y `pos` exige `catalog` y
-`companies`. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`. `messaging` (la bandeja de WhatsApp; último de la lista, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
 Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
 desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
 trabajos en vuelo. La SPA lo lee de `GET /api/v1/tenants/{tenantId}/modules` (autenticado, sin
-permiso), que siempre devuelve los siete con `enabled`, `contracted` y `missingDependencies`, y se
+permiso), que siempre devuelve los ocho con `enabled`, `contracted` y `missingDependencies`, y se
 entera en hasta 5 minutos.
 
 Un tenant del signup nace con los seis sin `pos` mientras `Entitlements:GrantDefaultModulesOnSignup`
-esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con los siete. Ni el
+esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con todos los del catálogo. Ni el
 signup ni la semilla escriben historial: el origen queda en `source`.
 
 ### Consola de operador
@@ -783,6 +790,9 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
+| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `read` (`POST`), `resolve` y `reopen` (`POST`, `If-Match`); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
+| `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 **403, nunca 404**, cuando el recurso pertenece a otro tenant.
@@ -1771,11 +1781,24 @@ clave es opcional.
 ### Integraciones (conexiones del tenant)
 
 Cada tenant conecta sus propias cuentas de plataformas externas en **Ajustes → Integraciones**
-(spec 2026-10-08). Hoy el catálogo tiene un proveedor, **Zenvia (WhatsApp)**, visible para los
+(spec 2026-10-08). El catálogo base tiene **Zenvia (WhatsApp)**, visible para los
 tenants con `quotations` activo; un proveedor nuevo es otra entrada de `IntegrationProviders`, su
 probador y una migración que cambia el `CHECK` de `provider_key`. Varias conexiones por proveedor
-(tope de 20), cada una con nombre. Ningún módulo **usa** todavía las conexiones: cada consumidor lo
-hará en su spec, por los puertos `IIntegrationConnections` e `IConnectionHealthReporter`.
+(tope de 20), cada una con nombre. Cada consumidor las usa en su spec (Messaging ya lo hace con
+`whatsapp-cloud`), por los puertos `IIntegrationConnections` e `IConnectionHealthReporter`.
+
+Desde el spec 2026-10-09 el catálogo tiene dos proveedores: **Zenvia (WhatsApp)** y **WhatsApp Business
+(Meta)** (`whatsapp-cloud`, visible con `messaging` activo, tope de 5). El segundo no se conecta por
+formulario sino por **Embedded Signup**: el frontend abre el popup de Meta con `Meta:App:AppId` y
+`Meta:App:ConfigId`, y al cerrar manda `POST …/integrations/whatsapp/embedded-signup` con el `code`
+(vence a los 30 s). El backend canjea el `code` por un token de sistema, registra el número con un PIN
+aleatorio de seis dígitos que **no se guarda**, suscribe la app a la WABA y lee el número verificado;
+todo queda en una conexión `Active` con su fila en `integrations.connection_routes`, que es lo que
+impide que un número quede conectado en dos tenants y lo que el webhook usa para enrutar. El probador
+de `whatsapp-cloud` hace `GET /{phoneNumberId}` y refresca número, nombre y calidad; `190` deja
+`token_expired`, `133010` deja `number_unregistered`, y un `account_update` de cuenta deshabilitada
+deja `account_disabled`. Eliminar la conexión no llama a Meta (el número sigue registrado en la Cloud
+API) y conserva las conversaciones de sólo lectura.
 
 Al guardar, la credencial se prueba contra el proveedor (Zenvia: `GET /v2/templates` con
 `X-API-TOKEN`); si la rechaza o no responde, no se guarda nada. Las credenciales son de sólo
@@ -1850,6 +1873,92 @@ Nunca se retira una llave a la que todavía apunta algún secreto.
    merge. `Quotations__WhatsApp__*` se quedan: el sender global sigue hasta el spec del consumidor.
 3. Frontend, después. **Rollback del backend:** el frontend muestra la tarjeta y la API responde 404;
    nada se corrompe porque ningún consumidor depende del módulo.
+
+### Mensajería (WhatsApp Cloud)
+
+La bandeja de WhatsApp (spec 2026-10-09): lo que una persona escribe al número del tenant llega por el
+webhook de Meta, se lee en `/messaging/conversations` y se responde desde ahí dentro de la ventana de
+24 horas. Módulo `messaging` (se prende por tenant), permisos `messaging.conversation.read|manage` en
+`admin` y `advisor`, esquema `messaging` (`conversations`, `messages`, `message_media`,
+`webhook_deliveries`).
+
+**Webhook.** `GET /api/webhooks/whatsapp` responde el `hub.challenge` si `hub.verify_token` coincide
+con `Meta:App:WebhookVerifyToken`. `POST` valida `X-Hub-Signature-256` (HMAC-SHA256 del cuerpo crudo
+con `Meta:App:AppSecret`) y guarda el cuerpo deduplicado por su SHA-256 en `webhook_deliveries`; nada
+más pasa en el request. Un worker reclama cada entrega con un lease (8 intentos, ~1 h) y procesa:
+`messages` entrantes (una conversación por `wa_id` y conexión, reabre si estaba resuelta, sube
+`unread_count`), `statuses` (monótonos: `sent < delivered < read`; `failed` sólo sobre `sent`;
+`played` cuenta como `read`), `account_update` (cuenta deshabilitada → la conexión queda en
+`NeedsAttention`). Con la conexión `Paused` o el módulo apagado los entrantes se descartan y los
+`statuses` sí se aplican. Las entregas procesadas se purgan a los 7 días. No se suscriben los campos
+de coexistencia (`history`, `smb_app_state_sync`, `smb_message_echoes`): lo que se responde desde la app
+del teléfono no aparece en QEP todavía.
+
+**Envío.** `POST …/conversations/{id}/messages` con `{ clientId, text }` es idempotente por
+`(conversación, clientId)`: repetir devuelve el mismo mensaje; un `Failed` se reenvía. Cada envío lleva
+`biz_opaque_callback_data = "qep:{messageId}"`, que es como se correlaciona un acuse que llegue antes de
+que el `wamid` esté guardado.
+
+**Medios.** Los entrantes se copian a R2 (bucket privado, `messaging/{tenantId}/{messageId}`) con un
+worker que verifica el SHA-256 de Meta; `GET …/messaging/media/{messageId}` los sirve con la sesión,
+con `nosniff`, CSP `sandbox` y `attachment` para todo lo que no sea imagen, audio o video. Mientras no
+está copiado responde 404 sin código. El campo `sha256` de Meta se acepta en hex (64) o base64 (44); si
+llega en otro formato el medio se guarda **sin verificar** y queda un warning `stored without
+verification` por fila en el log.
+
+**Búsqueda.** `GET …/messaging/messages/search?q=` busca por palabra en texto y leyendas con la
+configuración `messaging.es_unaccent` (español sin acentos ni flexiones, prefijo con 3+ letras) y el
+índice GIN `IX_messages_tenant_search`; el servidor arma la `tsquery` (nunca la persona) y corta a los
+2 s con 422 en `q`.
+
+**Redacción del query en la traza.** El canje del `code` de Embedded Signup lleva `client_secret` y
+`code` en el query de la URL de Graph. La instrumentación de `HttpClient` de OpenTelemetry .NET
+(`AddHttpClientInstrumentation`) redacta por defecto los **valores** del query en `url.full` (desde la 1.7;
+aparecen como `Redacted`). Nunca se pone `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION`
+en `true`.
+
+#### Secretos en local
+
+```powershell
+dotnet user-secrets set "Meta:App:AppSecret" "<el app secret>" --project src/Api | Out-Null
+dotnet user-secrets set "Meta:App:WebhookVerifyToken" "<32+ caracteres aleatorios>" --project src/Api | Out-Null
+dotnet user-secrets set "Meta:App:AppId" "<app id>" --project src/Api | Out-Null
+dotnet user-secrets set "Meta:App:ConfigId" "<config id>" --project src/Api | Out-Null
+dotnet user-secrets list --project src/Api | Select-String -Pattern "Meta:App" | Measure-Object
+```
+
+El último comando tiene que dar `Count 4`. Nunca `list` sin el filtro y el conteo.
+
+#### Probar el webhook en local
+
+El cuerpo va a archivo (PowerShell rompe las comillas). La firma se calcula sobre los bytes exactos del
+archivo y `curl.exe` los manda tal cual con `--data-binary` (`-d "@archivo"` quita los saltos de línea y la
+firma dejaría de coincidir, con un 401):
+
+```powershell
+$bytes = [IO.File]::ReadAllBytes("$PWD\webhook.json")
+$secret = Read-Host -AsSecureString "AppSecret"
+$plain = [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($secret))
+$hmac = New-Object Security.Cryptography.HMACSHA256 (,[Text.Encoding]::UTF8.GetBytes($plain))
+$signature = "sha256=" + (($hmac.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+Remove-Variable plain, secret, hmac
+curl.exe -s -o NUL -w "%{http_code}" -X POST "http://localhost:5000/api/webhooks/whatsapp" -H "Content-Type: application/json" -H "X-Hub-Signature-256: $signature" --data-binary "@webhook.json"
+```
+
+Esperado: `200`. Sin el header: `401`. La entrega se procesa en los 3 s siguientes
+(`Messaging:Workers:DeliveryPollSeconds`).
+
+#### Despliegue
+
+1. Variables secretas `META_APP_SECRET` y `META_WEBHOOK_VERIFY_TOKEN` en `Backend-prod`;
+   `META_APP_ID` y `META_CONFIG_ID` como variables normales. Sin las cinco claves,
+   `MetaAppOptionsValidator` deja el pod en crash-loop: es a propósito.
+2. Backend primero (migraciones `AddWhatsAppCloudProvider`, `AddConnectionRoutes`,
+   `AddMessagingModuleKey`, `AddCustomerPhoneE164`, `InitialMessaging`), después se verifica el webhook
+   en Meta (hace el `GET` al guardarlo), después el frontend.
+3. Prender `messaging` al tenant (consola de operador o el SQL de respaldo de «Módulos por tenant»).
+   Lo que hace el owner del lado de Meta está en
+   `docs/superpowers/plans/2026-10-09-mensajeria-whatsapp-handoff-meta.md`.
 
 ## Verificación
 

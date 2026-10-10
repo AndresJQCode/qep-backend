@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
+using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Zenvia;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -29,6 +30,15 @@ internal static class IntegrationsApiHarness
 
     /// <summary>Un cuerpo de Zenvia inventado: no puede aparecer en ningún camino de salida.</summary>
     public const string SentinelZenviaBody = "zenvia-body-SENTINEL-5b2d1e";
+
+    public const string MetaAppId = "100200300";
+
+    public const string MetaConfigId = "400500600";
+
+    /// <summary>Centinelas: la prueba de fugas los persigue igual que al token de Zenvia.</summary>
+    public const string SentinelMetaAppSecret = "meta-app-secret-SENTINEL-9e8d7c";
+
+    public const string SentinelMetaVerifyToken = "meta-verify-token-SENTINEL-6b5a4f-0123456789";
 
     public const string FromNumber = "573001234567";
 
@@ -89,6 +99,8 @@ internal static class IntegrationsApiHarness
             .WithDatabase("qep")
             .WithUsername("qep")
             .WithPassword("qep-integration")
+            // Clases en paralelo, cada una con su host y su pool: el límite por defecto (100) se agota (53300).
+            .WithCommand("-c", "max_connections=400")
             .Build();
         await server.StartAsync(CancellationToken.None);
         await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
@@ -137,10 +149,15 @@ internal static class IntegrationsApiHarness
         /// <summary>Lo que sale hacia Zenvia lo ve este handler; las pruebas cambian su respuesta.</summary>
         public FakeZenviaHandler ZenviaHandler { get; } = new();
 
+        /// <summary>Lo que sale hacia Graph (signup y probador de whatsapp-cloud) lo ve este handler: ninguna
+        /// prueba llega a graph.facebook.com.</summary>
+        public FakeMetaGraphHandler MetaHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
-            builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pool acotado sólo en pruebas: un host no puede acaparar las conexiones del contenedor compartido.
+            builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 80 }.ConnectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -164,9 +181,20 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);
             builder.UseSetting("Integrations:SecretProtection:Keys:k1", string.Empty);
             builder.UseSetting("Integrations:Zenvia:BaseUrl", ZenviaBaseUrl);
-            builder.ConfigureTestServices(services => services
-                .AddHttpClient(ZenviaConnectionTester.HttpClientName)
-                .ConfigurePrimaryHttpMessageHandler(() => ZenviaHandler));
+            // Spec 2026-10-09 §9: fijadas, nunca heredadas. Con las cinco, whatsapp-cloud es visible
+            // (D-M3); las pruebas que quieren el caso contrario las vacían con WithoutMetaApp.
+            builder.UseSetting("Meta:App:AppId", MetaAppId);
+            builder.UseSetting("Meta:App:ConfigId", MetaConfigId);
+            builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:App:AppSecret", SentinelMetaAppSecret);
+            builder.UseSetting("Meta:App:WebhookVerifyToken", SentinelMetaVerifyToken);
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddHttpClient(ZenviaConnectionTester.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => ZenviaHandler);
+                services.AddHttpClient(MetaGraphClient.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+            });
         }
     }
 
@@ -281,6 +309,18 @@ internal static class IntegrationsApiHarness
             ("tenantId", tenantId),
             ("moduleKey", moduleKey));
 
+    /// <summary>Prende un módulo que no viene con el signup (messaging, pos), como PosApiHarness.EnablePosAsync.</summary>
+    public static Task<int> EnableModuleAsync(string connectionString, Guid tenantId, string moduleKey) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+            VALUES (@tenantId, @moduleKey, now(), 'manual')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+            """,
+            ("tenantId", tenantId),
+            ("moduleKey", moduleKey));
+
     public static async Task<T> ScalarAsync<T>(
         string connectionString, string sql, params (string Name, object Value)[] parameters)
     {
@@ -337,6 +377,55 @@ internal static class IntegrationsApiHarness
         return connection.Id;
     }
 
+    public const string SentinelMetaAccessToken = "meta-access-token-SENTINEL-2c3d4e";
+
+    public const string SentinelMetaCode = "meta-code-SENTINEL-4d5e6f";
+
+    public static string EmbeddedSignupUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup";
+
+    public static object SignupBody(string name = "Ventas", string @event = "FINISH", string? phoneNumberId = "111", string wabaId = "222") =>
+        new { name, path = @event == "FINISH" ? "new_number" : "existing_business_app", @event, code = SentinelMetaCode, wabaId, phoneNumberId, businessId = "333" };
+
+    /// <summary>Graph feliz para FINISH: canje, register, subscribed_apps y lectura del número.</summary>
+    public static void ScriptHappySignup(FakeMetaGraphHandler meta, string phoneNumberId = "111", string wabaId = "222")
+    {
+        meta.Respond("/oauth/access_token", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelMetaAccessToken}}","token_type":"bearer"}""");
+        meta.Respond($"/{phoneNumberId}/register", HttpStatusCode.OK, """{"success":true}""");
+        meta.Respond($"/{wabaId}/subscribed_apps", HttpStatusCode.OK, """{"success":true}""");
+        meta.Respond($"/{phoneNumberId}\\?fields=", HttpStatusCode.OK, """{"display_phone_number":"+57 300 123 4567","verified_name":"Origen Botánico","quality_rating":"GREEN","status":"CONNECTED","id":"111"}""");
+    }
+
+    /// <summary>Una conexión whatsapp-cloud con su ruta, escrita directo por el repositorio (sin Meta).</summary>
+    public static async Task<Guid> SeedWhatsAppConnectionAsync(
+        WebApplicationFactory<Program> host, Guid tenantId, string name, string phoneNumberId, string wabaId,
+        string accessToken = SentinelMetaAccessToken)
+    {
+        using var scope = host.Services.CreateScope();
+        var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.WhatsAppCloud,
+            tenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [WhatsAppCloudFieldKeys.DisplayPhoneNumber] = "+57 300 123 4567",
+                [WhatsAppCloudFieldKeys.VerifiedName] = "Prueba",
+                [WhatsAppCloudFieldKeys.PhoneNumberId] = phoneNumberId,
+                [WhatsAppCloudFieldKeys.WabaId] = wabaId,
+                [WhatsAppCloudFieldKeys.QualityRating] = "GREEN",
+            },
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.AccessToken] = accessToken },
+            protector.Protect,
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
+            IntegrationConnectionRoute.Create(IntegrationProviders.WhatsAppCloud.Key, phoneNumberId, wabaId, tenantId, connection.Id));
+        await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+        return connection.Id;
+    }
+
     /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider registrados,
     /// así que esto ve lo mismo que la consola.</summary>
     public static WebApplicationFactory<Program> WithCapturedLogs(
@@ -354,6 +443,18 @@ internal static class IntegrationsApiHarness
             foreach (var (id, value) in keys)
             {
                 builder.UseSetting($"Integrations:SecretProtection:Keys:{id}", value);
+            }
+        });
+
+    private static readonly string[] MetaAppRequiredKeys = ["AppId", "ConfigId", "AppSecret", "WebhookVerifyToken"];
+
+    /// <summary>Vacía la sección Meta:App (D-M3): whatsapp-cloud desaparece del catálogo.</summary>
+    public static WebApplicationFactory<Program> WithoutMetaApp(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            foreach (var key in MetaAppRequiredKeys)
+            {
+                builder.UseSetting($"Meta:App:{key}", string.Empty);
             }
         });
 

@@ -51,7 +51,7 @@ public static class TenantModulesEndpoints
 }
 
 /// <summary>
-/// Regla BFF (spec 2026-10-07): **siempre las siete, en el orden de <c>TenantModuleKeys.All</c>,
+/// Regla BFF (spec 2026-10-07): **siempre todas, en el orden de <c>TenantModuleKeys.All</c>,
 /// aunque estén apagadas** — si faltara una, la SPA tendría que conocer la lista del backend para
 /// dibujar la que no vino.
 /// </summary>

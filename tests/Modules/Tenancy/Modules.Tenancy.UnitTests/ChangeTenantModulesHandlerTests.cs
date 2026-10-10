@@ -162,7 +162,7 @@ public sealed class ChangeTenantModulesHandlerTests
             new(Operator, fixture.Target.Id, [null!], "contract", null),   // [null] en el JSON llega así
             new(Operator, fixture.Target.Id, [], "contract", null),
             new(Operator, fixture.Target.Id, null, "contract", null),
-            new(Operator, fixture.Target.Id, Enumerable.Range(0, 8).Select(_ => new TenantModuleChangeInput("pos", "active")).ToArray(), "contract", null),
+            new(Operator, fixture.Target.Id, Enumerable.Range(0, TenantModuleKeys.All.Count + 1).Select(_ => new TenantModuleChangeInput("pos", "active")).ToArray(), "contract", null),
         ];
 
         foreach (var command in commands)

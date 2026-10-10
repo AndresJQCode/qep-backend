@@ -158,6 +158,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
 
+                    b.Property<string>("PhoneE164")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("phone_e164");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -201,6 +206,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "Cuc")
                         .IsUnique()
                         .HasDatabaseName("IX_customers_tenant_cuc");
+
+                    b.HasIndex("TenantId", "PhoneE164")
+                        .HasDatabaseName("IX_customers_tenant_phone_e164")
+                        .HasFilter("phone_e164 IS NOT NULL");
 
                     b.HasIndex("TenantId", "IdentificationType", "IdentificationNumber")
                         .IsUnique()

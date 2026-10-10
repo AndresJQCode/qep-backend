@@ -66,6 +66,14 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.Phone)
             .HasColumnName("phone")
             .HasMaxLength(CustomerContactInfo.PhoneMaxLength);
+        // Spec 2026-10-09 §6.5: E.164 con «+» (máximo 15 dígitos). Índice parcial por tenant para el
+        // emparejamiento de Messaging (phone_e164 = ANY(@phones)).
+        customer.Property(value => value.PhoneE164)
+            .HasColumnName("phone_e164")
+            .HasMaxLength(16);
+        customer.HasIndex(value => new { value.TenantId, value.PhoneE164 })
+            .HasDatabaseName("IX_customers_tenant_phone_e164")
+            .HasFilter("phone_e164 IS NOT NULL");
         customer.Property(value => value.Email)
             .HasColumnName("email")
             .HasMaxLength(CustomerContactInfo.EmailMaxLength);

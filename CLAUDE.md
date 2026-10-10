@@ -252,10 +252,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
-- **`Conversations` no existe**, aunque los requisitos la supongan. Los catorce módulos
-  construidos son Audit, Authorization, Catalog, Companies, Customers, Geography, Identity,
-  Integrations, Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada uno con su
-  `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`.
+- **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
+  Los quince módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Messaging, Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada
+  uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`. Messaging no referencia
+  Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
+  `IMessagingCustomerDirectory` e `IMessagingMediaStore`, con adaptadores en Bootstrapper.
+- **El webhook de Meta (`/api/webhooks/whatsapp`) no se prueba con el stub de auth.** En modo stub el
+  middleware de CSRF ni se registra, así que la exención por ruta sólo se ve con
+  `Authentication__UseDevelopmentStub=false`. Y su limitador `webhook` no es el `Public`: es concurrencia
+  global con cola, porque un 429 hace que Meta reintente hasta 7 días. El resto está en
+  [README § Mensajería](README.md#mensajería-whatsapp-cloud).
 - **Integrations no usa el `IAuditRecorder` ni el `IOutboxWriter` compartidos:** los dos están
   ligados a `TenancyDbContext`, y una segunda ligadura le robaría en silencio la auditoría o el outbox a
   Tenancy. Un módulo nuevo con auditoría atómica declara su propio puerto (`IIntegrationsAuditRecorder`,

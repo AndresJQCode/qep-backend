@@ -99,7 +99,7 @@ public static class TenancySeeder
     }
 
     /// <summary>
-    /// Siembra QCode con los siete módulos y su dueño admin, por el mismo camino que Origen
+    /// Siembra QCode con todos los módulos y su dueño admin, por el mismo camino que Origen
     /// botánico. Idempotente por id, como el resto.
     /// </summary>
     public static Task<Guid> SeedOperatorTenantWithOwnerAsync(
@@ -187,7 +187,7 @@ public static class TenancySeeder
             origin,
             now));
 
-        // Spec 2026-10-07, «Semilla»: los siete, pos incluido, en la misma escritura que el tenant.
+        // Spec 2026-10-07, «Semilla»: todos, pos y messaging incluidos, en la misma escritura que el tenant.
         // Sólo al crear: si el tenant ya existía el método devolvió arriba, y una base local vieja
         // prende pos con el SQL de «Operación» (README § Módulos por tenant).
         foreach (var key in TenantModuleKeys.All)

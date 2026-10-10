@@ -69,6 +69,26 @@ public sealed class ConsumerPortsTests
         Assert.Empty(await bed.ConnectionsPort().ListActiveAsync(bed.TenantId, "zenvia", Ct));
     }
 
+    // Spec 2026-10-09 §6.1: la bandeja muestra el nombre también en una conexión pausada u oculta.
+    [Fact]
+    public async Task ListByProviderReturnsEveryStatusOfThatProviderByNameWithoutVisibility()
+    {
+        var bed = new IntegrationsTestBed();
+        var south = bed.Seed("sur");
+        var north = bed.Seed("Norte");
+        var paused = bed.Seed("Pausada");
+        paused.Pause(IntegrationsTestBed.Now);
+        bed.Seed("Ajena", tenantId: Guid.CreateVersion7());
+        bed.HideQuotations();
+
+        var listing = await bed.ConnectionsPort().ListByProviderAsync(bed.TenantId, "zenvia", Ct);
+
+        Assert.Equal(
+            [(north.Id, "Norte", ConnectionStatus.Active), (paused.Id, "Pausada", ConnectionStatus.Paused), (south.Id, "sur", ConnectionStatus.Active)],
+            listing.Select(entry => (entry.Id, entry.Name, entry.Status)));
+        Assert.Empty(await bed.ConnectionsPort().ListByProviderAsync(bed.TenantId, "otro", Ct));
+    }
+
     // D2 y P15: sin umbral; actor = la conexión, tipo Integration.
     [Fact]
     public async Task TheReporterMovesActiveToNeedsAttentionAuditsAsIntegrationAndPublishes()

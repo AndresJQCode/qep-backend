@@ -151,6 +151,54 @@ public sealed class LifecycleHandlersTests
             bed.PauseHandler().HandleAsync(new PauseConnectionCommand(bed.TenantId, connection.Id, 1), Ct))).Code);
     }
 
+    // Spec 2026-10-09 §6.1: lo que el probador refresca se guarda con la verificación.
+    [Fact]
+    public async Task APassingTestAppliesTheRefreshedFields()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedWhatsAppCloud();
+        bed.Tester.Result = ConnectionTestResult.OkWith(
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.QualityRating] = "RED" });
+        bed.Clock.UtcNow = Later;
+
+        var response = await bed.TestHandler().HandleAsync(new TestConnectionCommand(bed.TenantId, connection.Id), Ct);
+
+        Assert.Equal("RED", response.Fields[WhatsAppCloudFieldKeys.QualityRating]);
+        Assert.Equal("1234567890", response.Fields[WhatsAppCloudFieldKeys.PhoneNumberId]);
+        Assert.Equal(Later, response.LastVerifiedAt);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+    }
+
+    // Spec 2026-10-09 §6.1: el código del probador llega a last_failure_code.
+    [Fact]
+    public async Task ARejectionWithItsOwnCodeKeepsThatCode()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedWhatsAppCloud();
+        bed.Tester.Result = ConnectionTestResult.RejectedWith(ConnectionFailureCodes.TokenExpired);
+
+        var response = await bed.TestHandler().HandleAsync(new TestConnectionCommand(bed.TenantId, connection.Id), Ct);
+
+        Assert.Equal("NeedsAttention", response.Status);
+        Assert.Equal("token_expired", response.LastFailureCode);
+    }
+
+    // Spec 2026-10-09 §6.1: reanudar también refresca lo que el probador trae.
+    [Fact]
+    public async Task ResumeAppliesTheRefreshedFields()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedWhatsAppCloud();
+        connection.Pause(IntegrationsTestBed.Now);
+        bed.Tester.Result = ConnectionTestResult.OkWith(
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.VerifiedName] = "Ventas Origen" });
+
+        var response = await bed.ResumeHandler().HandleAsync(new ResumeConnectionCommand(bed.TenantId, connection.Id, 2), Ct);
+
+        Assert.Equal("Active", response.Status);
+        Assert.Equal("Ventas Origen", response.Fields[WhatsAppCloudFieldKeys.VerifiedName]);
+    }
+
     // D4: reanudar vuelve a probar.
     [Fact]
     public async Task ResumeRetestsAndActivates()

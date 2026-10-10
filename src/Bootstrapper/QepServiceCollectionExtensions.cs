@@ -28,6 +28,8 @@ using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Application;
 using Modules.Integrations.Infrastructure;
+using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
@@ -516,6 +518,27 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteConnectionCommand, bool>,
             DeleteConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<CompleteWhatsAppSignupCommand, ConnectionResponse>,
+            CompleteWhatsAppSignupHandler>();
+        // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
+        services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
+        services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();
+        // Messaging (spec 2026-10-09 §8.7): lista, detalle e hilo. Cada handler a mano: sin registro, 500.
+        services.AddValidatorsFromAssemblyContaining<ListConversationsValidator>();
+        services.AddScoped<IQueryHandler<ListConversationsQuery, ConversationPageDto>, ListConversationsHandler>();
+        services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
+        services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
+        // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
+        services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
+        // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
+        services.AddScoped<ICommandHandler<SendMessageCommand, MessageDto>, SendMessageHandler>();
+        // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
+        services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
+        services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
+        services.AddScoped<ICommandHandler<ReopenConversationCommand, ConversationSummary>, ReopenConversationHandler>();
+        // Messaging (spec 2026-10-09 §8.6): servir el medio ya copiado con la sesión de QEP.
+        services.AddScoped<IQueryHandler<GetMediaQuery, MediaStreamDto?>, GetMediaHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -548,6 +571,10 @@ public static class QepServiceCollectionExtensions
         // registra más abajo, con los demás.
         services.AddIntegrationsInfrastructure(configuration);
 
+        // Messaging (spec 2026-10-09): la bandeja de WhatsApp. Sólo ve Tenancy y Audit; conexiones,
+        // clientes y almacenamiento entran por adaptadores que se registran más abajo.
+        services.AddMessagingInfrastructure(configuration);
+
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
@@ -563,6 +590,15 @@ public static class QepServiceCollectionExtensions
 
         // Integrations (P23): el nombre de quien creó la conexión sale de Tenancy e Identity.
         services.AddScoped<IConnectionAuthorNames, IntegrationsConnectionAuthorNames>();
+
+        // Messaging (spec 2026-10-09 §6.4): conexiones de WhatsApp por Integrations. El único punto donde
+        // los dos módulos se tocan.
+        services.AddScoped<IMessagingConnectionDirectory, MessagingConnectionDirectory>();
+        // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
+        services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
+        services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
+        services.AddScoped<IMessagingMediaStore, MessagingMediaStore>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
@@ -762,7 +798,11 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
                 // código, así que no hay migración de datos.
                 IntegrationsPermissions.ConnectionRead,
-                IntegrationsPermissions.ConnectionManage
+                IntegrationsPermissions.ConnectionManage,
+                // Spec 2026-10-09 (Mensajería), decisión 5: la bandeja de WhatsApp. De núcleo; el
+                // módulo messaging lo revisa cada handler. El rol vive en código: sin migración.
+                MessagingPermissions.ConversationRead,
+                MessagingPermissions.ConversationManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -809,7 +849,10 @@ public static class QepServiceCollectionExtensions
                 // Solo los dos reportes de su trabajo diario. Cambios de precio y padron de
                 // clientes quedan en admin: son la vista agregada del negocio, no la operacion.
                 ReportingPermissions.OrdersRead,
-                ReportingPermissions.QuotationRead
+                ReportingPermissions.QuotationRead,
+                // Spec 2026-10-09 (Mensajería), decisión 5: la asesora lee y responde la bandeja.
+                MessagingPermissions.ConversationRead,
+                MessagingPermissions.ConversationManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -1197,6 +1240,22 @@ public static class QepServiceCollectionExtensions
             "Integrations",
             "high",
             RequiredModules: []));
+        // Spec 2026-10-09 §6.3: categoría "Messaging" y núcleo (RequiredModules vacío), para que el
+        // enmascarado por módulos no las toque y el 403 con módulo apagado salga con su código.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.ConversationRead,
+            "Ver la bandeja de WhatsApp",
+            "Permite ver las conversaciones de WhatsApp del tenant, su hilo y sus archivos.",
+            "Messaging",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.ConversationManage,
+            "Responder en la bandeja de WhatsApp",
+            "Permite responder mensajes, marcarlos como leídos y resolver o reabrir conversaciones.",
+            "Messaging",
+            "medium",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1464,7 +1523,13 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))
             .AddPolicy(
                 IntegrationsPermissions.ConnectionManage,
-                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionManage));
+                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionManage))
+            .AddPolicy(
+                MessagingPermissions.ConversationRead,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationRead))
+            .AddPolicy(
+                MessagingPermissions.ConversationManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage));
     }
 
     private static void AddPermissionRequirement(

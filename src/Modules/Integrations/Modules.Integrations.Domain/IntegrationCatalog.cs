@@ -18,6 +18,14 @@ public enum FieldKind
     Url,
 }
 
+/// <summary>Spec 2026-10-09 §6.1: cómo se conecta un proveedor. <c>Form</c> es el formulario genérico;
+/// <c>MetaEmbeddedSignup</c> abre el popup de Meta y el backend llena los campos.</summary>
+public enum ProviderOnboarding
+{
+    Form,
+    MetaEmbeddedSignup,
+}
+
 /// <summary>
 /// Un campo que el proveedor pide para conectarse (spec 2026-10-08, «Catálogo»). Su clave es la del
 /// JSON y la de <c>fields.&lt;key&gt;</c> en el mapa <c>errors</c>. <see cref="Label"/> e
@@ -38,7 +46,8 @@ public sealed class FieldDefinition
         bool required,
         int maxLength,
         string? pattern,
-        string invalidMessage)
+        string invalidMessage,
+        bool isInternal = false)
     {
         if (!IsValidKey(key))
         {
@@ -56,6 +65,7 @@ public sealed class FieldDefinition
         MaxLength = maxLength;
         Pattern = pattern is null ? null : new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant);
         InvalidMessage = invalidMessage;
+        Internal = isInternal;
     }
 
     public string Key { get; }
@@ -71,6 +81,10 @@ public sealed class FieldDefinition
     public Regex? Pattern { get; }
 
     public string InvalidMessage { get; }
+
+    /// <summary>Spec 2026-10-09 §6.1: lo llena el backend (Embedded Signup o el probador). No sale en
+    /// <c>GET /catalog</c>, sí en <c>ConnectionResponse</c>, y <c>POST</c>/<c>PUT</c> lo rechazan.</summary>
+    public bool Internal { get; }
 
     public bool IsSecret => Kind == FieldKind.Secret;
 
@@ -124,7 +138,8 @@ public sealed class IntegrationProvider
         IntegrationCategory category,
         IReadOnlyList<TenantModuleKey> consumingModules,
         IReadOnlyList<FieldDefinition> fields,
-        int maxConnections)
+        int maxConnections,
+        ProviderOnboarding onboarding = ProviderOnboarding.Form)
     {
         if (!KeyShape.IsMatch(key))
         {
@@ -151,6 +166,8 @@ public sealed class IntegrationProvider
         PublicFields = Fields.Where(field => !field.IsSecret).ToArray();
         SecretFields = Fields.Where(field => field.IsSecret).ToArray();
         MaxConnections = maxConnections;
+        Onboarding = onboarding;
+        CatalogFields = Fields.Where(field => !field.Internal).ToArray();
     }
 
     public string Key { get; }
@@ -172,6 +189,11 @@ public sealed class IntegrationProvider
 
     /// <summary>Tope por tenant y proveedor (D1).</summary>
     public int MaxConnections { get; }
+
+    public ProviderOnboarding Onboarding { get; }
+
+    /// <summary>Los que dibuja el formulario (sin internos). Secretos incluidos: el formulario los pide como password.</summary>
+    public IReadOnlyList<FieldDefinition> CatalogFields { get; }
 
     public FieldDefinition? FindField(string key) =>
         Fields.FirstOrDefault(field => string.Equals(field.Key, key, StringComparison.Ordinal));

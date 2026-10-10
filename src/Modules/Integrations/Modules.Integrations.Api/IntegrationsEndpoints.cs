@@ -87,6 +87,15 @@ public static class IntegrationsEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-10-09 §5.2: lo manda el frontend al cerrar el popup de Meta; el code vence en 30 s.
+        group.MapPost("/whatsapp/embedded-signup", CompleteSignupAsync)
+            .RequireAuthorization(IntegrationsPermissions.ConnectionManage)
+            .Accepts<EmbeddedSignupRequest>("application/json")
+            .Produces<ConnectionResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         return endpoints;
     }
 
@@ -103,6 +112,16 @@ public static class IntegrationsEndpoints
     {
         var connection = await dispatcher.SendAsync(
             new CreateConnectionCommand(tenantId, request.ProviderKey, request.Name, request.Fields, request.Secrets),
+            cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/integrations/connections/{connection.Id}", connection);
+    }
+
+    private static async Task<IResult> CompleteSignupAsync(
+        Guid tenantId, EmbeddedSignupRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var connection = await dispatcher.SendAsync(
+            new CompleteWhatsAppSignupCommand(
+                tenantId, request.Name, request.Path, request.Event, request.Code, request.WabaId, request.PhoneNumberId, request.BusinessId),
             cancellationToken);
         return Results.Created($"/api/v1/tenants/{tenantId}/integrations/connections/{connection.Id}", connection);
     }
@@ -195,4 +214,14 @@ public sealed record UpdateConnectionRequest(
         $"UpdateConnectionRequest {{ Name = {Name}, "
         + $"Fields = [{(Fields is null ? string.Empty : string.Join(", ", Fields.Keys))}], "
         + $"Secrets = [{(Secrets is null ? string.Empty : string.Join(", ", Secrets.Keys))}] }}";
+}
+
+/// <summary>El cuerpo de <c>POST /integrations/whatsapp/embedded-signup</c> (spec 2026-10-09 §5.2).
+/// <see cref="ToString"/> no imprime el <c>code</c>: vence en 30 s, pero se canjea por el token.</summary>
+public sealed record EmbeddedSignupRequest(
+    string? Name, string? Path, string? Event, string? Code, string? WabaId, string? PhoneNumberId, string? BusinessId)
+{
+    public override string ToString() =>
+        $"EmbeddedSignupRequest {{ Name = {Name}, Path = {Path}, Event = {Event}, WabaId = {WabaId}, "
+        + $"PhoneNumberId = {PhoneNumberId}, BusinessId = {BusinessId} }}";
 }

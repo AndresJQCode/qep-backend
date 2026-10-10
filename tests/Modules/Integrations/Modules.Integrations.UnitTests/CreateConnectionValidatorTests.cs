@@ -131,4 +131,17 @@ public sealed class CreateConnectionValidatorTests
         Assert.Equal(2, errors.Count);
         Assert.All(errors, error => Assert.DoesNotContain("SENTINEL", error.ErrorMessage, StringComparison.Ordinal));
     }
+
+    // Spec §6.1: el formulario genérico no puede crear una conexión de Meta sin token.
+    [Fact]
+    public async Task AMetaSignupProviderIsRejectedOnTheProviderKey()
+    {
+        var errors = await ErrorsAsync(new CreateConnectionCommand(
+            Guid.CreateVersion7(), "whatsapp-cloud", "Ventas",
+            new Dictionary<string, string?>(), new Dictionary<string, string?>()));
+
+        var error = Assert.Single(errors);
+        Assert.Equal("providerKey", error.PropertyName);
+        Assert.Contains("flujo de Meta", error.ErrorMessage, StringComparison.Ordinal);
+    }
 }
