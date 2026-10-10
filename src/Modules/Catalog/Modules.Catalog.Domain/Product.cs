@@ -59,8 +59,8 @@ public sealed class Product
     public bool IsActive { get; private set; }
 
     // --- CAT-04: propiedades opcionales. Nacen nullable porque hay productos ya cargados: una
-    // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por el
-    // precio en USD/COP de más abajo.
+    // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por los
+    // precios por moneda de más abajo.
 
     public string? Description { get; private set; }
 
@@ -82,15 +82,21 @@ public sealed class Product
     /// </summary>
     public TaxRateId? TaxRateId { get; private set; }
 
-    // --- CAT-09: precio base y final en dos monedas fijas, más las escalas por cantidad.
-    // Único precio del producto — reemplazó por completo al viejo Price, retirado.
+    // --- Prices per currency (spec 2026-10-08, D3). They replaced the two fixed-currency base
+    // prices: the legacy price_base_usd/price_base_cop columns stay in catalog.products until
+    // DropLegacyProductPriceColumns, unmapped.
 
-    /// <summary>Precio base en dólares. Junto con <see cref="PriceBaseCop"/>, al menos uno de
-    /// los dos es obligatorio: un producto sin precio en ninguna moneda no es válido.</summary>
-    public decimal? PriceBaseUsd { get; private set; }
+    private readonly List<ProductPrice> _prices = [];
 
-    /// <summary>Precio base en pesos colombianos. Ver <see cref="PriceBaseUsd"/>.</summary>
-    public decimal? PriceBaseCop { get; private set; }
+    public IReadOnlyCollection<ProductPrice> Prices => _prices;
+
+    /// <summary>The currencies this product can be quoted and sold in, in ordinal order.</summary>
+    public IReadOnlyCollection<string> PricedCurrencies =>
+        _prices.Select(price => price.Currency).Order(StringComparer.Ordinal).ToArray();
+
+    /// <summary>Null when the product has no price in that currency. Never a conversion.</summary>
+    public decimal? PriceIn(string currency) =>
+        _prices.Find(price => price.Currency == currency)?.Amount;
 
     private readonly List<PriceScale> _priceScales = [];
 
@@ -171,22 +177,23 @@ public sealed class Product
         TaxRateId = normalized.TaxRateId;
     }
 
-    // CAT-09.
     private void ApplyPricing(ProductPricing pricing)
     {
-        EnsurePriceNotNegative(pricing.BaseUsd);
-        EnsurePriceNotNegative(pricing.BaseCop);
-
-        // Incondicional: todo producto necesita precio en al menos una moneda, sin excepción.
-        if (pricing.BaseUsd is null && pricing.BaseCop is null)
+        // Unconditional: every product needs a price in at least one currency (CAT-09, spec D3).
+        if (pricing.Prices.Count == 0)
         {
             throw new CatalogDomainException(
-                "catalog.product.price_base_currency_required",
-                "The product requires a base price in at least one currency.");
+                "catalog.product.price_required",
+                "The product requires a price in at least one currency.");
         }
 
-        PriceBaseUsd = pricing.BaseUsd;
-        PriceBaseCop = pricing.BaseCop;
+        foreach (var (currency, amount) in pricing.Prices)
+        {
+            EnsureCurrencyCodeShape(currency);
+            EnsurePriceNotNegative(amount);
+        }
+
+        ReplacePrices(pricing.Prices);
         PackagingUnits = NormalizePackagingUnits(pricing.PackagingUnits);
 
         ReplaceScales(pricing.Scales);
@@ -199,6 +206,37 @@ public sealed class Product
             throw new CatalogDomainException(
                 "catalog.product.packaging_units_required",
                 "A price scale restricted to the packaging unit requires the product to have at least one packaging unit.");
+        }
+    }
+
+    // In place and not Clear()+Add: the owned rows are keyed (product_id, currency), and EF would
+    // track a deleted and an added row with the same key in the same SaveChanges.
+    private void ReplacePrices(IReadOnlyDictionary<string, decimal> prices)
+    {
+        _prices.RemoveAll(price => !prices.ContainsKey(price.Currency));
+        foreach (var (currency, amount) in prices)
+        {
+            var existing = _prices.Find(price => price.Currency == currency);
+            if (existing is null)
+            {
+                _prices.Add(new ProductPrice(currency, amount));
+            }
+            else
+            {
+                existing.ChangeAmount(amount);
+            }
+        }
+    }
+
+    // Shape only — the catalogue check is Currencies.Normalize in the application. A code that
+    // reaches the aggregate unnormalised is a programming error, so it is not a 422.
+    private static void EnsureCurrencyCodeShape(string currency)
+    {
+        if (currency is not { Length: 3 } || !currency.All(char.IsAsciiLetterUpper))
+        {
+            throw new ArgumentException(
+                $"Currency '{currency}' must arrive normalised (three upper-case letters).",
+                nameof(currency));
         }
     }
 
@@ -248,10 +286,6 @@ public sealed class Product
     /// para no borrarlos — y un lote que arrastre mal cualquiera de esos campos los limpia en
     /// todos los destinos de una vez. Acá no hay nada que arrastrar.
     ///
-    /// Las escalas entrantes se validan contra el precio base **de este** producto, que es la
-    /// razón por la que la copia recalcula el precio final antes de llegar acá. Ver
-    /// <see cref="PriceScaleCopy"/>.
-    ///
     /// Y quedan **incompletas**: sin restricción, múltiplo, empaque ni agrupación
     /// (<see cref="PriceScale.CreateIncomplete"/>). Es el único camino que las produce, y por eso
     /// el nombre dice "copiadas": el formulario pasa por <see cref="Update"/>, que sigue exigiendo
@@ -267,7 +301,7 @@ public sealed class Product
         foreach (var scale in scales)
         {
             _priceScales.Add(
-                PriceScale.CreateIncomplete(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
+                PriceScale.CreateIncomplete(Id, TenantId, scale));
         }
 
         Version++;
@@ -279,11 +313,11 @@ public sealed class Product
         _priceScales.Clear();
         foreach (var scale in scales)
         {
-            _priceScales.Add(PriceScale.Create(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
+            _priceScales.Add(PriceScale.Create(Id, TenantId, scale));
         }
     }
 
-    private static void EnsurePriceNotNegative(decimal? value)
+    private static void EnsurePriceNotNegative(decimal value)
     {
         if (value < 0m)
         {

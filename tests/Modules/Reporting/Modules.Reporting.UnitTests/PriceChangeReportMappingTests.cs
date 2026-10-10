@@ -15,9 +15,9 @@ public sealed class PriceChangeReportMappingTests
     [Fact]
     public void CarriesTheRowThroughAndComputesTheDifference()
     {
-        var dto = Row(PriceChangeField.PriceBaseCop, 1000m, 1200m).ToDto();
+        var dto = Row(PriceChangeField.PriceBase, 1000m, 1200m).ToDto();
 
-        Assert.Equal("PriceBaseCop", dto.Field);
+        Assert.Equal("PriceBase", dto.Field);
         Assert.Equal(1000m, dto.PreviousValue);
         Assert.Equal(1200m, dto.NewValue);
         Assert.Equal(200m, dto.Difference);
@@ -33,7 +33,7 @@ public sealed class PriceChangeReportMappingTests
     [Fact]
     public void DropsTheScaleRangeForABasePriceChange()
     {
-        var row = Row(PriceChangeField.PriceBaseUsd, 100m, 120m) with
+        var row = Row(PriceChangeField.PriceBase, 100m, 120m) with
         {
             ScaleFromUnit = 1,
             ScaleToUnit = 9
@@ -63,12 +63,23 @@ public sealed class PriceChangeReportMappingTests
     }
 
     [Fact]
+    public void ABasePriceRowKeepsItsCurrencyAndADiscountRowHasNone()
+    {
+        var basePrice = (Row(PriceChangeField.PriceBase, 10m, 12m) with { Currency = "EUR" }).ToDto();
+        // The contract describes the response, not the table: a discount row never shows a currency.
+        var discount = (Row(PriceChangeField.ScaleDiscount, 10m, 12m) with { Currency = "EUR" }).ToDto();
+
+        Assert.Equal(("PriceBase", "EUR"), (basePrice.Field, basePrice.Currency));
+        Assert.Equal(("ScaleDiscount", (string?)null), (discount.Field, discount.Currency));
+    }
+
+    [Fact]
     public void MapsEveryRowOfThePage()
     {
         IReadOnlyList<PriceChangeReportRow> rows =
         [
-            Row(PriceChangeField.PriceBaseUsd, null, 90m),
-            Row(PriceChangeField.PriceBaseCop, 400_000m, null)
+            Row(PriceChangeField.PriceBase, null, 90m),
+            Row(PriceChangeField.PriceBase, 400_000m, null)
         ];
 
         var dtos = rows.ToDtos();
@@ -88,6 +99,7 @@ public sealed class PriceChangeReportMappingTests
             "VS-001",
             "Vela de soja",
             field,
+            field == PriceChangeField.PriceBase ? "COP" : null,
             ScaleFromUnit: null,
             ScaleToUnit: null,
             previousValue,

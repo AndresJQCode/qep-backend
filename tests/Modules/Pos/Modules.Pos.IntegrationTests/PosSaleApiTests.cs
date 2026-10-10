@@ -176,7 +176,7 @@ public sealed class PosSaleApiTests
                 firstSend,
                 retry);
             Assert.False(retry.IsCompleted);
-            await ExecuteSqlAsync(database, "UPDATE catalog.products SET price_base_cop = 13000 WHERE id = @id", ("id", world.Shampoo));
+            await ExecuteSqlAsync(database, "UPDATE catalog.product_prices SET amount = 13000 WHERE product_id = @id AND currency = 'COP'", ("id", world.Shampoo));
 
             gate.Release.SetResult();
             var responses = await Task.WhenAll(firstSend, retry);
@@ -440,5 +440,40 @@ public sealed class PosSaleApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains("pos.sale.price_changed", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+    }
+
+    // Spec D9/D6: the session freezes the tenant default when it opens. An EUR session sells the EUR
+    // price, refuses a product that only has COP (never a fallback), and keeps EUR after the tenant
+    // default moves back to COP.
+    [Fact]
+    public async Task AnEurSessionSellsTheEurPriceRefusesCopOnlyProductsAndKeepsItsCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        await ExecuteSqlAsync(
+            database, "UPDATE tenancy.tenants SET default_currency = 'EUR' WHERE id = @id", ("id", world.Tenant.TenantId));
+        var eurProduct = await CreateProductAsync(
+            world.Tenant.Seeder, world.Tenant.TenantId, "EU-01", "Crema EUR", 0m, null,
+            new Dictionary<string, decimal> { ["EUR"] = 9.5m, ["COP"] = 40_000m });
+        var session = await world.OpenSessionAsync(world.Admin);
+        Assert.Equal("EUR", session.Currency);
+
+        var refused = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
+            PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m)),
+            TestContext.Current.CancellationToken);
+        await ExecuteSqlAsync(
+            database, "UPDATE tenancy.tenants SET default_currency = 'COP' WHERE id = @id", ("id", world.Tenant.TenantId));
+        var sold = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
+            PosWorld.SaleBody(Guid.CreateVersion7(), session.Id,
+                [new { productId = eurProduct, quantity = 2m, discountPercentage = 0m, expectedUnitPrice = 9.5m, expectedTaxPercentage = 0 }],
+                PosWorld.CashPayment(20m)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        Assert.Contains("pos.sale.product_price_unavailable", await refused.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Created, sold.StatusCode);
+        var sale = await sold.Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal(("EUR", 19m), (sale!.Currency, sale.Total));
     }
 }

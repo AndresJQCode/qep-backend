@@ -15,7 +15,7 @@ namespace Modules.Reporting.Application;
 /// precio" en cambio significa lo mismo sin importar en qué moneda estaba cada fila. Por eso todo
 /// lo que se cuenta acá son **filas**, nunca importes, y por eso este resumen no reusa
 /// <see cref="ReportMonthlyPointDto"/> ni <see cref="ReportRankEntryDto"/>, que llevan un
-/// <c>Total</c> que aquí sería siempre mentira o siempre cero.
+/// <c>Totals</c> por moneda que aquí serían siempre mentira o siempre vacíos.
 ///
 /// <see cref="ProductCount"/> son los productos distintos tocados en el periodo — el denominador
 /// que le falta a <see cref="ChangeCount"/> para saber si fueron muchos cambios sobre pocos
@@ -41,21 +41,18 @@ public sealed record PriceChangeReportSummaryDto(
 public sealed record ReportCountPointDto(int Year, int Month, int Count);
 
 /// <summary>
-/// Un campo del histórico con cuántas veces se tocó.
-///
-/// <c>Field</c> viaja como el nombre del enum (<c>PriceBaseUsd</c>), igual que en
-/// <see cref="PriceChangeReportItemDto"/>: la traducción es del frontend, que ya tiene el
-/// diccionario. **Vienen los tres siempre**, incluso en cero — mismo criterio que
-/// <see cref="ReportStatusSliceDto"/>: un campo que desaparece de la respuesta obligaría a la
-/// pantalla a saber cuáles existen para dibujar el que falta.
+/// A field — and for PriceBase a currency — with how many times it changed. One PriceBase slice
+/// per catalogue currency plus the ScaleDiscount slice, all present even at zero: the catalogue
+/// is fixed per deploy, so the screen never has to know which slices exist (same criterion as
+/// <see cref="ReportStatusSliceDto"/>).
 /// </summary>
-public sealed record PriceChangeFieldSliceDto(string Field, int Count);
+public sealed record PriceChangeFieldSliceDto(string Field, string? Currency, int Count);
 
 /// <summary>
 /// Un producto del ranking de los más retocados, o la fila "Otros".
 ///
 /// Mismas reglas que <see cref="ReportRankEntryDto"/> —<c>ProductId</c> nulo es el resto plegado,
-/// <c>EntityCount</c> dice cuántos productos agrupa— pero sin <c>Total</c>: ver el encabezado de
+/// <c>EntityCount</c> dice cuántos productos agrupa— pero sin <c>Totals</c>: ver el encabezado de
 /// <see cref="PriceChangeReportSummaryDto"/>. El código viaja además del nombre porque es como se
 /// identifica un producto en el resto del reporte.
 /// </summary>

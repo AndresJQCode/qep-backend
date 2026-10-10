@@ -3,6 +3,7 @@ using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Modules.Reporting.Application;
 using Modules.Reporting.Domain;
+using Modules.Tenancy.Application;
 
 namespace Bootstrapper;
 
@@ -11,7 +12,7 @@ namespace Bootstrapper;
 /// nombre y el codigo del producto resueltos por join. Ver <see cref="OrdersReportSource"/> sobre
 /// por que los adaptadores de <c>reporting</c> viven en el composition root.
 ///
-/// **Es el historico del catalogo, no el de las cotizaciones.** Sigue los dos precios base del
+/// **Es el historico del catalogo, no el de las cotizaciones.** Sigue el precio base en cada moneda del
 /// producto y el descuento de una escala; los precios de una linea de cotizacion no pasan por
 /// aca.
 ///
@@ -121,24 +122,21 @@ internal sealed class PriceChangeReportSource(
             .ToArray();
     }
 
-    /// <summary>Los tres campos, siempre, incluso en cero: ver
-    /// <c>PriceChangeFieldSliceDto</c>.</summary>
+    /// <summary>One PriceBase slice per catalogue currency plus ScaleDiscount, always, even at
+    /// zero: see <c>PriceChangeFieldSliceDto</c>.</summary>
     private static async Task<IReadOnlyList<PriceChangeFieldSliceDto>> SummarizeByFieldAsync(
         IQueryable<ProductPriceChange> changes,
         CancellationToken cancellationToken)
     {
         var slices = await changes
-            .GroupBy(change => change.Field)
-            .Select(group => new { Field = group.Key, Count = group.Count() })
+            .GroupBy(change => new { change.Field, change.Currency })
+            .Select(group => new { group.Key.Field, group.Key.Currency, Count = group.Count() })
             .ToListAsync(cancellationToken);
 
-        var found = slices.ToDictionary(slice => slice.Field, slice => slice.Count);
-
-        return Enum.GetValues<ProductPriceField>()
-            .Select(field => new PriceChangeFieldSliceDto(
-                MapField(field).ToString(),
-                found.GetValueOrDefault(field)))
-            .ToArray();
+        // Trim: a character(3) column pads shorter values; catalogue codes are always three
+        // letters, so this only makes the lookup independent of the column type.
+        var found = slices.ToDictionary(slice => (slice.Field, slice.Currency?.Trim()), slice => slice.Count);
+        return FieldSlices(key => found.GetValueOrDefault(key));
     }
 
     /// <summary>
@@ -202,10 +200,15 @@ internal sealed class PriceChangeReportSource(
         return ranked;
     }
 
-    private static PriceChangeFieldSliceDto[] EmptyFieldSlices() =>
-        Enum.GetValues<ProductPriceField>()
-            .Select(field => new PriceChangeFieldSliceDto(MapField(field).ToString(), 0))
-            .ToArray();
+    private static PriceChangeFieldSliceDto[] EmptyFieldSlices() => FieldSlices(_ => 0);
+
+    private static PriceChangeFieldSliceDto[] FieldSlices(Func<(ProductPriceField, string?), int> countOf) =>
+    [
+        .. Currencies.All.Select(currency => new PriceChangeFieldSliceDto(
+            nameof(PriceChangeField.PriceBase), currency.Code, countOf((ProductPriceField.PriceBase, currency.Code)))),
+        new PriceChangeFieldSliceDto(
+            nameof(PriceChangeField.ScaleDiscount), null, countOf((ProductPriceField.ScaleDiscount, null))),
+    ];
 
     private IQueryable<ChangeRow> BuildQuery(PriceChangeReportCriteria criteria)
     {
@@ -228,6 +231,7 @@ internal sealed class PriceChangeReportSource(
                 row.product.Code,
                 row.product.Name,
                 row.change.Field,
+                row.change.Currency,
                 row.change.ScaleFromUnit,
                 row.change.ScaleToUnit,
                 row.change.PreviousValue,
@@ -273,6 +277,11 @@ internal sealed class PriceChangeReportSource(
             changes = changes.Where(change => change.Field == mapped);
         }
 
+        if (criteria.Currency is { } currency)
+        {
+            changes = changes.Where(change => change.Currency == currency);
+        }
+
         return changes;
     }
 
@@ -298,6 +307,7 @@ internal sealed class PriceChangeReportSource(
                 row.ProductCode,
                 row.ProductName,
                 MapField(row.Field),
+                row.Currency?.Trim(),
                 row.ScaleFromUnit,
                 row.ScaleToUnit,
                 row.PreviousValue,
@@ -311,16 +321,14 @@ internal sealed class PriceChangeReportSource(
     // Sin default a proposito, en las dos direcciones: ver MapPaymentStatus en OrdersReportSource.
     private static ProductPriceField MapField(PriceChangeField value) => value switch
     {
-        PriceChangeField.PriceBaseUsd => ProductPriceField.PriceBaseUsd,
-        PriceChangeField.PriceBaseCop => ProductPriceField.PriceBaseCop,
+        PriceChangeField.PriceBase => ProductPriceField.PriceBase,
         PriceChangeField.ScaleDiscount => ProductPriceField.ScaleDiscount,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown price field.")
     };
 
     private static PriceChangeField MapField(ProductPriceField value) => value switch
     {
-        ProductPriceField.PriceBaseUsd => PriceChangeField.PriceBaseUsd,
-        ProductPriceField.PriceBaseCop => PriceChangeField.PriceBaseCop,
+        ProductPriceField.PriceBase => PriceChangeField.PriceBase,
         ProductPriceField.ScaleDiscount => PriceChangeField.ScaleDiscount,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown price field.")
     };
@@ -331,6 +339,7 @@ internal sealed class PriceChangeReportSource(
         string ProductCode,
         string ProductName,
         ProductPriceField Field,
+        string? Currency,
         int? ScaleFromUnit,
         int? ScaleToUnit,
         decimal? PreviousValue,

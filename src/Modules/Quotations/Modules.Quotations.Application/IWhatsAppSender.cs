@@ -28,5 +28,7 @@ public sealed record WhatsAppQuotationMessage(
     string FullName,
     string OrderNumber,
     decimal Total,
+    /// <summary>ISO code; the sender prints its catalogue symbol and decimals.</summary>
+    string Currency,
     DateOnly ValidUntil,
     string DocumentUrl);

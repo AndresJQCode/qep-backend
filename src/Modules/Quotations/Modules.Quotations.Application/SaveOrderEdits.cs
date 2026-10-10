@@ -41,6 +41,7 @@ public sealed class SaveOrderEditsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IQuotationProductLookup productLookup,
     IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
@@ -267,7 +268,7 @@ public sealed class SaveOrderEditsHandler(
             // Antes del estado de pago: las altas, bajas y cambios de cantidad de esta tanda
             // mueven el descuento de toda la cotización, y con él su total.
             await QuotationPricingRecalculation.ApplyAsync(
-                pricingLookup, command.TenantId, quotation, now, cancellationToken);
+                pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
 
             // Pasos 7 y 8: el estado de pago lo deriva el servidor una sola vez (decisión 5), y todo
             // se escribe junto.

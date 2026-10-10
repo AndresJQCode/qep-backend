@@ -31,12 +31,12 @@ public enum QuotationStatusFilter
     Converted
 }
 
-/// <summary>Los tres valores de <c>ProductPriceField</c> en Catalog. Ver
-/// <see cref="OrderPaymentStatusFilter"/> sobre por qué se redeclaran.</summary>
+/// <summary>The two values of Catalog's <c>ProductPriceField</c>; a base-price row says its
+/// currency in its own column. See <see cref="OrderPaymentStatusFilter"/> on why the enum is
+/// redeclared here.</summary>
 public enum PriceChangeField
 {
-    PriceBaseUsd,
-    PriceBaseCop,
+    PriceBase,
     ScaleDiscount
 }
 

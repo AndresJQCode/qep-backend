@@ -14,6 +14,13 @@ public static class ProductEndpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/catalog")
             .WithTags("Catalog");
 
+        // Spec D10. Under the catalogue because it is catalogue data. /auth/me already carries it for
+        // every member; this route is for screens that refresh it after saving a product.
+        group.MapGet("/currencies-in-use", GetCurrenciesInUseAsync)
+            .RequireAuthorization(CatalogPermissions.ProductRead)
+            .Produces<IReadOnlyList<string>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapGet("/products", ListProductsAsync)
             .RequireAuthorization(CatalogPermissions.ProductRead)
             .Produces<ProductsResponse>()
@@ -81,6 +88,10 @@ public static class ProductEndpoints
 
         return endpoints;
     }
+
+    private static async Task<IResult> GetCurrenciesInUseAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetCurrenciesInUseQuery(tenantId), cancellationToken));
 
     private static async Task<IResult> ExportProductsAsync(
         Guid tenantId,
@@ -231,8 +242,7 @@ public static class ProductEndpoints
         product.ImageFileId,
         product.ImageUrl,
         product.TaxRateId,
-        product.PriceBaseUsd,
-        product.PriceBaseCop,
+        product.Prices,
         product.PackagingUnits,
         product.PriceScales,
         product.CreatedAt,

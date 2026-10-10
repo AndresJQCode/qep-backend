@@ -32,6 +32,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<OrdersExportLayout> OrdersExportLayouts => Set<OrdersExportLayout>();
 
+    internal DbSet<TenantQuotationSettingsRow> TenantQuotationSettings => Set<TenantQuotationSettingsRow>();
+
+    internal DbSet<TenantMinimumTotalRow> TenantMinimumTotals => Set<TenantMinimumTotalRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -46,6 +50,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureOrderNumberCounter(modelBuilder);
         ConfigureExportJob(modelBuilder);
         ConfigureOrdersExportLayout(modelBuilder);
+        ConfigureQuotationSettings(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -76,14 +81,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("global_scale_floor");
         quotation.Property(value => value.CreatedAt).HasColumnName("created_at");
         quotation.Property(value => value.ValidUntil).HasColumnName("valid_until");
-        // El codigo ISO y no el nombre del miembro del enum: la columna dice COP/USD, que es lo
-        // que dice la cuenta bancaria de la empresa de la que sale y lo que espera cualquiera que
-        // lea la tabla a mano. Texto y no entero, mismo criterio que Status.
+        // The ISO code as text (COP/USD/EUR): what the company bank account says and what anyone
+        // reading the table expects. A plain string since spec 2026-10-08 D6 — no enum to convert.
         quotation.Property(value => value.Currency)
             .HasColumnName("currency")
-            .HasConversion(
-                currency => currency.ToCode(),
-                code => QuotationCurrencies.FromCode(code))
             .HasMaxLength(3);
         quotation.Property(value => value.PaymentMethod)
             .HasColumnName("payment_method")
@@ -586,6 +587,33 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         job.HasIndex(value => new { value.TenantId, value.RequestedBy, value.Status })
             .HasDatabaseName("IX_export_jobs_requester")
             .HasFilter(ActiveExportJobFilter);
+    }
+
+    private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)
+    {
+        var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
+        settings.ToTable("tenant_quotation_settings", "quotations", table =>
+            table.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1"));
+        settings.HasKey(value => value.TenantId);
+        settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        settings.Property(value => value.MinimumUnits).HasColumnName("minimum_units");
+
+        var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
+        totals.ToTable("tenant_minimum_totals", "quotations", table =>
+            table.HasCheckConstraint("CK_tenant_minimum_totals_amount_not_negative", "amount >= 0"));
+        totals.HasKey(value => new { value.TenantId, value.Currency });
+        totals.Property(value => value.TenantId).HasColumnName("tenant_id");
+        totals.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasColumnType("character(3)")
+            .HasMaxLength(3);
+        totals.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+        // Same schema, same module: a real FK. CASCADE because a total means nothing without its
+        // tenant's settings row.
+        totals.HasOne<TenantQuotationSettingsRow>()
+            .WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     /// <summary>

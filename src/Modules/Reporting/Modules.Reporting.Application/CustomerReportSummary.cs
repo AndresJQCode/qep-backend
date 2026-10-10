@@ -13,8 +13,8 @@ namespace Modules.Reporting.Application;
 /// no tiene un número que sumar. Lo que sí se puede medir sin inventar nada es cuántos son, cuántos
 /// están activos, cuándo entraron y cómo se reparten por clasificación y por geografía. Por eso
 /// este resumen reusa <see cref="ReportCountPointDto"/> —el punto mensual sin monto que estrenó el
-/// de cambios de precio— y no <see cref="ReportMonthlyPointDto"/>, que lleva un <c>Total</c> que
-/// aquí sería siempre cero.
+/// de cambios de precio— y no <see cref="ReportMonthlyPointDto"/>, que lleva los <c>Totals</c> por moneda, que
+/// aquí serían siempre vacíos.
 ///
 /// **Los inactivos no viajan: son la resta.** <c>CustomerCount - ActiveCount</c>, y un campo más
 /// es un campo más que puede desincronizarse de los dos que lo definen — mismo criterio que el
@@ -35,7 +35,7 @@ public sealed record CustomerReportSummaryDto(
 ///
 /// Mismas reglas que <see cref="ReportRankEntryDto"/>: <c>Id</c> nulo es el resto plegado, y
 /// <c>EntityCount</c> dice cuántas entidades agrupa (1 en una fila normal, el resto en la de
-/// "Otros") para que el frontend escriba "Otros (7)" sin adivinar. Sin <c>Total</c>, por lo que
+/// "Otros") para que el frontend escriba "Otros (7)" sin adivinar. Sin <c>Totals</c>, por lo que
 /// dice el encabezado de <see cref="CustomerReportSummaryDto"/>.
 ///
 /// <c>Label</c> nulo en una fila con <c>Id</c> es una clasificación que ya no existe: el join es

@@ -35,6 +35,10 @@ public sealed record QuotationPdfDocument(
     /// <summary>La moneda de todos los importes del documento, la de la cuenta de cobro: un PDF
     /// que cobra a una cuenta en dólares imprime dólares.</summary>
     string Currency,
+    /// <summary>The currency symbol printed before every amount (spec D8: fixed per currency).</summary>
+    string Symbol,
+    /// <summary>How many decimals the amounts print with: 0 for COP, 2 for USD/EUR.</summary>
+    int Decimals,
     /// <summary>A nombre de quién y a qué cuenta se paga. Nulo si la cotización todavía no
     /// eligió cuenta: el documento sale igual, sin ese pie.</summary>
     QuotationPdfBillingAccount? BillingAccount,

@@ -35,7 +35,7 @@ public sealed class TenantTests
     {
         var tenant = CreateTenant();
 
-        Assert.Equal(TenantCurrencies.Cop, tenant.DefaultCurrency);
+        Assert.Equal("COP", tenant.DefaultCurrency);
         Assert.Equal(TenantNumberFormats.CommaDecimal, tenant.NumberFormat);
     }
 
@@ -56,16 +56,16 @@ public sealed class TenantTests
     }
 
     [Fact]
-    public void UpdateSettingsWithAnUnsupportedCurrencyThrowsAndChangesNothing()
+    public void UpdateSettingsWithAMalformedCurrencyThrowsAndChangesNothing()
     {
         var tenant = CreateTenant();
 
         var exception = Assert.Throws<TenantDomainException>(() => tenant.UpdateSettings(
             tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
-            "EUR", tenant.NumberFormat, CreatedAt.AddMinutes(5)));
+            "US", tenant.NumberFormat, CreatedAt.AddMinutes(5)));
 
         Assert.Equal("tenancy.settings.default_currency.invalid", exception.Code);
-        Assert.Equal(TenantCurrencies.Cop, tenant.DefaultCurrency);
+        Assert.Equal("COP", tenant.DefaultCurrency);
         Assert.Equal(1, tenant.Version);
     }
 

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
@@ -9,7 +10,7 @@ using Testcontainers.PostgreSql;
 namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>
-/// CAT-09 — precio base/final en USD y COP, y escalas por cantidad.
+/// CAT-09 — precio base por moneda, finales derivados y escalas por cantidad.
 ///
 /// Las reglas de negocio ya las cubren las unitarias de <c>ProductTests</c> contra el agregado
 /// en memoria. Lo que este archivo verifica es lo que esas pruebas no pueden ver: que
@@ -45,8 +46,7 @@ public sealed class ProductPricingApiTests
             code = "VS-001",
             pricing = new
             {
-                baseUsd = 100m,
-                baseCop = 400000m,
+                prices = new Dictionary<string, decimal> { ["USD"] = 100m, ["COP"] = 400000m },
                 packagingUnits = TwelvePack,
                 scales = new object[]
                 {
@@ -56,18 +56,14 @@ public sealed class ProductPricingApiTests
                         toUnit = 9,
                         discount = 5m,
                         restriction = "multiple",
-                        multiple = 3,
-                        finalUsd = 95m,
-                        finalCop = 380000m
+                        multiple = 3
                     },
                     new
                     {
                         fromUnit = 10,
                         toUnit = 50,
                         discount = 15m,
-                        restriction = "packaging_unit",
-                        finalUsd = 85m,
-                        finalCop = 340000m
+                        restriction = "packaging_unit"
                     }
                 }
             }
@@ -75,7 +71,7 @@ public sealed class ProductPricingApiTests
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
-        Assert.Equal(100m, created.PriceBaseUsd);
+        Assert.Equal(100m, created.Prices["USD"]);
         Assert.Equal(2, created.PriceScales.Count);
 
         // Releído desde la base, no desde la respuesta de la escritura — eso probaría el
@@ -89,7 +85,7 @@ public sealed class ProductPricingApiTests
         Assert.Equal(1, multipleScale.FromUnit);
         Assert.Equal(9, multipleScale.ToUnit);
         Assert.Equal(3, multipleScale.Multiple);
-        Assert.Equal(95m, multipleScale.FinalUsd);
+        Assert.Equal(95m, multipleScale.Finals["USD"]);
 
         Assert.Single(fetched.PriceScales, scale => scale.Restriction == "packaging_unit");
         // El empaque es del producto, no de la escala (2026-10-01).
@@ -121,7 +117,7 @@ public sealed class ProductPricingApiTests
             code = "VS-001",
             pricing = new
             {
-                baseUsd = 100m,
+                prices = new Dictionary<string, decimal> { ["USD"] = 100m },
                 scales = new object[]
                 {
                     new
@@ -130,8 +126,7 @@ public sealed class ProductPricingApiTests
                         toUnit = 9,
                         discount = 0m,
                         restriction = "multiple",
-                        multiple = 3,
-                        finalUsd = 100m
+                        multiple = 3
                     }
                 }
             }
@@ -146,8 +141,7 @@ public sealed class ProductPricingApiTests
                 code = "VS-001",
                 pricing = new
                 {
-                    baseUsd = 100m,
-                    finalUsd = 100m,
+                    prices = new Dictionary<string, decimal> { ["USD"] = 100m },
                     packagingUnits = SixPack,
                     scales = new object[]
                     {
@@ -156,8 +150,7 @@ public sealed class ProductPricingApiTests
                             fromUnit = 20,
                             toUnit = 40,
                             discount = 0m,
-                            restriction = "packaging_unit",
-                            finalUsd = 100m
+                            restriction = "packaging_unit"
                         }
                     }
                 }
@@ -199,14 +192,14 @@ public sealed class ProductPricingApiTests
             code = "VS-AGR-001",
             pricing = new
             {
-                baseCop = 100_000m,
+                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
                 scales = new object[]
                 {
                     new
                     {
                         fromUnit = 5, toUnit = 48, discount = 5m,
                         restriction = "multiple", multiple = 3,
-                        finalCop = 95_000m, allowGrouping = true
+                        allowGrouping = true
                     }
                 }
             }
@@ -230,7 +223,7 @@ public sealed class ProductPricingApiTests
             code = "VS-AGR-002",
             pricing = new
             {
-                baseCop = 100_000m,
+                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
                 packagingUnits = TwelvePack,
                 scales = new object[]
                 {
@@ -238,7 +231,7 @@ public sealed class ProductPricingApiTests
                     {
                         fromUnit = 1, toUnit = 999, discount = 0m,
                         restriction = "packaging_unit",
-                        finalCop = 100_000m, allowGrouping = true
+                        allowGrouping = true
                     }
                 }
             }
@@ -271,13 +264,13 @@ public sealed class ProductPricingApiTests
             code = "KR-120",
             pricing = new
             {
-                baseCop = 100_000m,
+                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
                 scales = new object[]
                 {
                     new
                     {
                         fromUnit = 100, toUnit = 999, discount = 0m,
-                        restriction = "packaging_unit", finalCop = 100_000m
+                        restriction = "packaging_unit"
                     }
                 }
             }
@@ -301,7 +294,11 @@ public sealed class ProductPricingApiTests
         {
             name = "Keratina 120 ml",
             code = "KR-120",
-            pricing = new { baseCop = 100_000m, packagingUnits = DuplicatedPackagingUnits }
+            pricing = new
+            {
+                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+                packagingUnits = DuplicatedPackagingUnits
+            }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -327,14 +324,14 @@ public sealed class ProductPricingApiTests
             code = "KR-120",
             pricing = new
             {
-                baseCop = 100_000m,
+                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
                 packagingUnits = UnsortedPackagingUnits,
                 scales = new object[]
                 {
                     new
                     {
                         fromUnit = 100, toUnit = 999, discount = 0m,
-                        restriction = "packaging_unit", finalCop = 100_000m
+                        restriction = "packaging_unit"
                     }
                 }
             }
@@ -368,12 +365,101 @@ public sealed class ProductPricingApiTests
             {
                 name = "Keratina 120 ml",
                 code = "KR-120",
-                pricing = new { baseCop = 100_000m }
+                pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = 100_000m } }
             },
             TestContext.Current.CancellationToken);
         var body = await cleared.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.True(cleared.IsSuccessStatusCode, body);
         Assert.Contains("\"packagingUnits\":[]", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateWithPricesInThreeCurrenciesReturnsThemWithDerivedFinals()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var product = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-EUR",
+            pricing = new
+            {
+                prices = new Dictionary<string, decimal> { ["eur"] = 11.4m, ["COP"] = 45_000m, ["USD"] = 12.5m },
+                scales = new object[] { new { fromUnit = 1, toUnit = 9, discount = 10m, restriction = "multiple", multiple = 1 } }
+            }
+        }));
+
+        Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 45_000m, ["USD"] = 12.5m, ["EUR"] = 11.4m }, product.Prices);
+        Assert.Equal(
+            new Dictionary<string, decimal> { ["COP"] = 40_500m, ["USD"] = 11.25m, ["EUR"] = 10.26m },
+            Assert.Single(product.PriceScales).Finals);
+    }
+
+    [Fact]
+    public async Task CreateWithAnUnknownCurrencyIsA422OnThatPriceRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-XYZ",
+            pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = 1m, ["XYZ"] = 2m } }
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Pricing.Prices.XYZ", out _));
+    }
+
+    [Fact]
+    public async Task CreateWithoutAnyPriceIsA422PriceRequired()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-NONE",
+            pricing = new { prices = new Dictionary<string, decimal>() }
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal("catalog.product.price_required", problem!.Code);
+    }
+
+    [Fact]
+    public async Task UpdateDropsAPriceThatIsNoLongerSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
+        {
+            name = "Vela de soja",
+            code = "VS-DROP",
+            pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = 45_000m, ["USD"] = 12.5m } }
+        }));
+
+        var updated = await ReadProductAsync(await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            new
+            {
+                name = "Vela de soja",
+                code = "VS-DROP",
+                pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 13m } }
+            },
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(new Dictionary<string, decimal> { ["USD"] = 13m }, updated.Prices);
     }
 
     private static Task<HttpResponseMessage> CreateProductAsync(

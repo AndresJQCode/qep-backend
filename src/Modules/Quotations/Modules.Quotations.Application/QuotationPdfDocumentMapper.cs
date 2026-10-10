@@ -24,8 +24,10 @@ public static class QuotationPdfDocumentMapper
     /// <summary>El <paramref name="calendar"/> es el del tenant de la cotización: la fecha de emisión
     /// se imprime en su día, no en el de UTC (spec 2026-09-17, punto 7).</summary>
     public static QuotationPdfDocument From(
-        QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo) =>
-        new(
+        QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo)
+    {
+        var currency = Currencies.Get(quotation.Currency);
+        return new(
             quotation.QuotationNumber,
             DateOnly.FromDateTime(calendar.ToLocal(quotation.CreatedAt).DateTime),
             quotation.ValidUntil,
@@ -38,6 +40,8 @@ public static class QuotationPdfDocumentMapper
             quotation.IsStorePickup,
             AdvisorLabelFor(quotation),
             quotation.Currency,
+            currency.Symbol,
+            currency.Decimals,
             BillingAccountFor(quotation),
             quotation.PaymentMethod,
             quotation.Notes,
@@ -51,6 +55,7 @@ public static class QuotationPdfDocumentMapper
             quotation.NetTotal,
             quotation.CustomerVatSurplus,
             logo);
+    }
 
     /// <summary>
     /// Los importes que el cliente comprueba con la calculadora.

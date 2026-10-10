@@ -32,52 +32,39 @@ public static class ProductPriceChangeDetector
 
         var changes = new List<ProductPriceChange>();
 
-        AddBasePriceChange(
-            changes,
-            product,
-            ProductPriceField.PriceBaseUsd,
-            product.PriceBaseUsd,
-            newPricing.BaseUsd,
-            changedBy,
-            occurredAt);
-        AddBasePriceChange(
-            changes,
-            product,
-            ProductPriceField.PriceBaseCop,
-            product.PriceBaseCop,
-            newPricing.BaseCop,
-            changedBy,
-            occurredAt);
+        AddBasePriceChanges(changes, product, newPricing, changedBy, occurredAt);
         AddScaleDiscountChanges(changes, product, newPricing, changedBy, occurredAt);
 
         return changes;
     }
 
-    // `!=` sobre `decimal?` compara por valor y no por representación: 100m y 100.00m son el
-    // mismo número con distinta escala decimal, y un formulario que reenvía el precio con otro
-    // formato no cambió el precio. Los dos null tampoco son un cambio; uno solo sí lo es.
-    private static void AddBasePriceChange(
+    // One row per currency whose amount changed, appeared or disappeared (spec D3). Ordinal order
+    // so the same PUT always writes the same rows. `!=` on decimal? compares by value: 100m and
+    // 100.00m are the same price.
+    private static void AddBasePriceChanges(
         List<ProductPriceChange> changes,
         Product product,
-        ProductPriceField field,
-        decimal? previousValue,
-        decimal? newValue,
+        ProductPricing newPricing,
         Guid changedBy,
         DateTimeOffset occurredAt)
     {
-        if (previousValue == newValue)
-        {
-            return;
-        }
+        var currencies = product.Prices
+            .Select(price => price.Currency)
+            .Union(newPricing.Prices.Keys)
+            .Order(StringComparer.Ordinal);
 
-        changes.Add(ProductPriceChange.ForBasePrice(
-            product.TenantId,
-            product.Id,
-            field,
-            previousValue,
-            newValue,
-            changedBy,
-            occurredAt));
+        foreach (var currency in currencies)
+        {
+            var previousValue = product.PriceIn(currency);
+            decimal? newValue = newPricing.Prices.TryGetValue(currency, out var amount) ? amount : null;
+            if (previousValue == newValue)
+            {
+                continue;
+            }
+
+            changes.Add(ProductPriceChange.ForBasePrice(
+                product.TenantId, product.Id, currency, previousValue, newValue, changedBy, occurredAt));
+        }
     }
 
     // Las escalas se aparean por su rango `(FromUnit, ToUnit)` y no por id: un `PUT` las

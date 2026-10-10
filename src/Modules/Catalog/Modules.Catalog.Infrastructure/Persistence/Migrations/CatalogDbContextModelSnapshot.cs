@@ -37,16 +37,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("discount");
 
-                    b.Property<decimal?>("FinalCop")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("final_cop");
-
-                    b.Property<decimal?>("FinalUsd")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("final_usd");
-
                     b.Property<int>("FromUnit")
                         .HasColumnType("integer")
                         .HasColumnName("from_unit");
@@ -122,16 +112,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnName("packaging_units")
                         .HasDefaultValueSql("'{}'");
 
-                    b.Property<decimal?>("PriceBaseCop")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_base_cop");
-
-                    b.Property<decimal?>("PriceBaseUsd")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_base_usd");
-
                     b.Property<Guid?>("TaxRateId")
                         .HasColumnType("uuid")
                         .HasColumnName("tax_rate_id");
@@ -188,6 +168,11 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ChangedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("changed_by");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency");
 
                     b.Property<string>("Field")
                         .IsRequired()
@@ -346,6 +331,35 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TaxRateId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.OwnsMany("Modules.Catalog.Domain.ProductPrice", "Prices", b1 =>
+                        {
+                            b1.Property<Guid>("ProductId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("product_id");
+
+                            b1.Property<string>("Currency")
+                                .HasMaxLength(3)
+                                .HasColumnType("character(3)")
+                                .HasColumnName("currency");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("amount");
+
+                            b1.HasKey("ProductId", "Currency");
+
+                            b1.ToTable("product_prices", "catalog", t =>
+                                {
+                                    t.HasCheckConstraint("CK_product_prices_amount_not_negative", "amount >= 0");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("ProductId");
+                        });
+
+                    b.Navigation("Prices");
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.ProductPriceChange", b =>

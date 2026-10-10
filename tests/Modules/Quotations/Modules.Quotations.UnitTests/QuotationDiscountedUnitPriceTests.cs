@@ -64,7 +64,8 @@ public sealed class QuotationDiscountedUnitPriceTests
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new UnknownProductLookup(),
-            new UnresolvedCompanyLookup());
+            new UnresolvedCompanyLookup(),
+            new FixedQuotationSettingsStore());
 
         var response = await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -95,7 +96,7 @@ public sealed class QuotationDiscountedUnitPriceTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
-            QuotationCurrency.Cop,
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

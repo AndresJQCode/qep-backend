@@ -34,6 +34,7 @@ public sealed class QuotationsReportApiTests
         Assert.Equal(customer.Cuc, item.ClientCuc);
         Assert.Equal("Verde Esencial S.A.S.", item.ClientName);
         Assert.Equal(tenant.OwnerEmail, item.AdvisorName);
+        Assert.Equal("COP", item.Currency);
         Assert.Equal(quotation.Total, item.Total);
     }
 

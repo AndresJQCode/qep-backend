@@ -155,6 +155,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ExportProductsCommand, ExportProductsResult>,
             ExportProductsHandler>();
         services.AddScoped<
+            IQueryHandler<GetCurrenciesInUseQuery, IReadOnlyList<string>>,
+            GetCurrenciesInUseHandler>();
+        services.AddScoped<
             ICommandHandler<CreateProductCommand, ProductDto>,
             CreateProductHandler>();
         services.AddScoped<
@@ -462,6 +465,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateOrdersExportLayoutCommand, OrdersExportLayoutDto>,
             UpdateOrdersExportLayoutHandler>();
+        // The tenant's minimum purchase (spec 2026-10-08, D7), registered by hand like the rest.
+        services.AddScoped<
+            IQueryHandler<GetQuotationSettingsQuery, QuotationSettingsDto>,
+            GetQuotationSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
+            UpdateQuotationSettingsHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.

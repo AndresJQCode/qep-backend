@@ -70,13 +70,26 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.TaxRateId)
             .OnDelete(DeleteBehavior.Restrict);
-        // CAT-09. Independientes del viejo Price: no lo reemplazan.
-        product.Property(value => value.PriceBaseUsd)
-            .HasColumnName("price_base_usd")
-            .HasPrecision(18, 2);
-        product.Property(value => value.PriceBaseCop)
-            .HasColumnName("price_base_cop")
-            .HasPrecision(18, 2);
+        // Spec D3. An owned collection and not an entity of its own: a price has no identity outside
+        // its product and is always loaded with it, so no repository method needs an extra Include.
+        // The legacy columns price_base_usd/price_base_cop stay in the table, unmapped, until
+        // DropLegacyProductPriceColumns (deploy N+1).
+        product.OwnsMany(value => value.Prices, price =>
+        {
+            price.ToTable("product_prices", "catalog", table =>
+                table.HasCheckConstraint("CK_product_prices_amount_not_negative", "amount >= 0"));
+            price.WithOwner().HasForeignKey("ProductId");
+            price.Property<ProductId>("ProductId")
+                .HasColumnName("product_id")
+                .HasConversion(id => id.Value, value => new ProductId(value));
+            price.Property(value => value.Currency)
+                .HasColumnName("currency")
+                .HasColumnType("character(3)")
+                .HasMaxLength(3);
+            price.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+            price.HasKey("ProductId", nameof(ProductPrice.Currency));
+        });
+        product.Navigation(value => value.Prices).UsePropertyAccessMode(PropertyAccessMode.Field);
         product.Navigation(value => value.PriceScales)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
         // integer[] de PostgreSQL y no una tabla hija: es un puñado de números sin identidad
@@ -169,8 +182,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasMaxLength(20);
         scale.Property(value => value.Multiple).HasColumnName("multiple");
         scale.Property(value => value.AllowGrouping).HasColumnName("allow_grouping");
-        scale.Property(value => value.FinalUsd).HasColumnName("final_usd").HasPrecision(18, 2);
-        scale.Property(value => value.FinalCop).HasColumnName("final_cop").HasPrecision(18, 2);
+        // final_usd/final_cop stay in the table, unmapped, until DropLegacyProductPriceColumns.
         scale.HasIndex(value => value.ProductId).HasDatabaseName("IX_product_price_scales_product");
 
         // CASCADE y no RESTRICT, a diferencia de la FK de TaxRate: una escala no tiene sentido
@@ -201,12 +213,17 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("field")
             .HasConversion<string>()
             .HasMaxLength(20);
+        // Spec D5: which currency a PriceBase row talks about; null for ScaleDiscount.
+        change.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasColumnType("character(3)")
+            .HasMaxLength(3);
         // Nullable de verdad: sólo las filas de ScaleDiscount los llenan. Ver
         // ProductPriceChange.ScaleFromUnit.
         change.Property(value => value.ScaleFromUnit).HasColumnName("scale_from_unit");
         change.Property(value => value.ScaleToUnit).HasColumnName("scale_to_unit");
-        // La misma precisión que price_base_usd/cop: el histórico tiene que poder guardar
-        // cualquier valor que la columna de origen aceptó, o redondearía la evidencia.
+        // The same precision as product_prices.amount: the history has to hold any value the
+        // source column accepted, or it would round the evidence.
         change.Property(value => value.PreviousValue)
             .HasColumnName("previous_value")
             .HasPrecision(18, 2);

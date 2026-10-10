@@ -374,6 +374,8 @@ public sealed partial class QuotationTemplateTests
         IsStorePickup: false,
         AdvisorLabel: "ana.perez@ejemplo.co",
         Currency: "COP",
+        Symbol: "$",
+        Decimals: 0,
         BillingAccount: new QuotationPdfBillingAccount(
             "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
             "Bancolombia", "123-456789-01", "COP"),
@@ -407,6 +409,8 @@ public sealed partial class QuotationTemplateTests
         IsStorePickup: false,
         AdvisorLabel: string.Empty,
         Currency: "USD",
+        Symbol: "US$",
+        Decimals: 2,
         BillingAccount: null,
         PaymentMethod: null,
         Notes: null,

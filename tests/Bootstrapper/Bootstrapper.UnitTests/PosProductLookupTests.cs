@@ -68,7 +68,7 @@ public sealed class PosProductLookupTests
 
         var found = await lookup.FindManyAsync(TenantId, [product.Id.Value], TestContext.Current.CancellationToken);
 
-        Assert.Equal((11_900m, 3.25m), (found[product.Id.Value].PriceCop, found[product.Id.Value].PriceUsd));
+        Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 11_900m, ["USD"] = 3.25m }, found[product.Id.Value].Prices);
     }
 
     private static PosProductLookup LookupFor(Guid fileId, ProductImageRef image, out Guid productId)
@@ -83,7 +83,12 @@ public sealed class PosProductLookupTests
         Product.Create(
             ProductId.New(), TenantId, "Shampoo 400 ml", $"SH-{Guid.CreateVersion7():N}"[..12],
             new ProductDetails { ImageFileId = imageFileId },
-            new ProductPricing { BaseCop = 11_900m, BaseUsd = baseUsd },
+            new ProductPricing
+            {
+                Prices = baseUsd is { } usd
+                    ? new Dictionary<string, decimal> { ["COP"] = 11_900m, ["USD"] = usd }
+                    : new Dictionary<string, decimal> { ["COP"] = 11_900m }
+            },
             Now);
 
     private sealed class StubImageLookup(IReadOnlyCollection<ProductImageRef> images) : IProductImageLookup

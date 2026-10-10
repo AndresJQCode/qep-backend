@@ -76,13 +76,10 @@
   signo + partes.join(".")
 }
 
-// Monedas sin fracción de uso corriente. La distinción importa: redondear a entero está bien
-// en pesos y es plata mal dicha en dólares — un unitario de 12,50 impreso como 13 no cierra
-// contra su propia línea, y esa diferencia la descubre el cliente con la calculadora.
-#let sin-decimales = ("COP", "CLP", "PYG", "JPY", "KRW", "VND", "ISK")
-
+// Los decimales los manda el mapper desde el catálogo de monedas (spec 2026-10-08): 0 en pesos,
+// 2 en dólares y euros. Redondear a entero está bien en pesos y es plata mal dicha en dólares.
 #let importe(valor) = {
-  if data.currency in sin-decimales {
+  if data.decimals == 0 {
     miles(calc.round(valor))
   } else {
     let centavos = int(calc.round(valor * 100))
@@ -91,6 +88,8 @@
     miles(calc.quo(centavos, 100)) + "," + decimales
   }
 }
+
+#let moneda = data.symbol + " "
 
 // Las cantidades pueden ser fraccionarias (metros, kilos) pero casi nunca lo son: imprimir
 // "12,00" donde va "12" mete ruido en la columna que se lee de un vistazo.
@@ -378,26 +377,26 @@
 
 #let renglones = {
   let filas = (
-    ("Valor antes de IVA:", "$ " + importe(data.subtotal), 0),
+    ("Valor antes de IVA:", moneda + importe(data.subtotal), 0),
     (
       if data.customerVatSurplus { "Total IVA · excedente de IVA:" } else { "Total IVA:" },
-      "$ " + importe(data.taxAmount),
+      moneda + importe(data.taxAmount),
       0,
     ),
     (
       "Retención en la fuente:",
-      (if hay-retencion { "-$ " } else { "$ " }) + importe(data.retentionAmount),
+      (if hay-retencion { "-" + moneda } else { moneda }) + importe(data.retentionAmount),
       0,
     ),
     (
       "Total inversión (" + data.currency + "):",
-      "$ " + importe(data.total),
+      moneda + importe(data.total),
       if hay-retencion { 1 } else { 2 },
     ),
   )
 
   if hay-retencion {
-    filas.push(("Neto a pagar (" + data.currency + "):", "$ " + importe(data.netTotal), 2))
+    filas.push(("Neto a pagar (" + data.currency + "):", moneda + importe(data.netTotal), 2))
   }
 
   filas
@@ -411,7 +410,7 @@
     // Lo que el mayorista gana si revende a valor público: la suma de los descuentos de línea.
     // Es un argumento de venta, y por eso vive al lado del total y no escondido en la tabla.
     if data.discountAmount > 0 [
-      #text(style: "italic")[Total utilidad: \$ #importe(data.discountAmount)]
+      #text(style: "italic")[Total utilidad: #moneda#importe(data.discountAmount)]
     ] else [],
     block(width: 82mm)[
       #table(

@@ -7,15 +7,11 @@ internal static class PosProductMapping
     public const string NotFound = "NotFound";
 
     /// <summary>
-    /// The list that matches the session, never a fallback to the other one: selling a USD session
-    /// at the peso price would be a silent 4000x error.
+    /// The price in the session currency, never a fallback to another one: selling an EUR session at
+    /// the peso price would be a silent 4000x error, and there is no conversion anywhere (spec).
     /// </summary>
-    /// <remarks>
-    /// The literal, not TenantCurrencies.Usd: Pos.Application references Modules.Tenancy.Application
-    /// only, and PosLayerTests forbids Modules.Tenancy.Domain.
-    /// </remarks>
     internal static decimal? PriceIn(this PosProductRef product, string currency) =>
-        currency == "USD" ? product.PriceUsd : product.PriceCop;
+        product.Prices.TryGetValue(currency, out var price) ? price : null;
 
     public static string? UnsellableReason(PosProductRef product, string currency) =>
         !product.IsActive ? Inactive

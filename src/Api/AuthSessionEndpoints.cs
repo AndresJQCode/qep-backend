@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Modules.Authorization.Application;
+using Modules.Catalog.Application;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Tenancy.Application;
@@ -59,6 +60,7 @@ public static class AuthSessionEndpoints
         IActiveTenantsQuery activeTenantsQuery,
         ITenantRoleCatalog roleCatalog,
         ITenantDirectory tenantDirectory,
+        ICurrenciesInUse currenciesInUse,
         ISessionService sessionService,
         IOptions<QepSessionOptions> sessionOptions,
         IHostEnvironment environment,
@@ -115,6 +117,7 @@ public static class AuthSessionEndpoints
             activeTenants,
             roleCatalog,
             tenantDirectory,
+            currenciesInUse,
             cancellationToken);
 
         var issued = await sessionService.IssueAsync(
@@ -124,7 +127,7 @@ public static class AuthSessionEndpoints
             cancellationToken);
         SessionCookieWriter.Append(httpContext, sessionOptions.Value, environment, issued);
 
-        return Results.Ok(new SessionResponse(userId, email, activeTenantIds, tenants));
+        return Results.Ok(new SessionResponse(userId, email, activeTenantIds, tenants, Currencies.All));
     }
 
     private static async Task<IResult> GetCurrentSessionAsync(
@@ -132,6 +135,7 @@ public static class AuthSessionEndpoints
         IActiveTenantsQuery activeTenantsQuery,
         ITenantRoleCatalog roleCatalog,
         ITenantDirectory tenantDirectory,
+        ICurrenciesInUse currenciesInUse,
         IUserDirectory userDirectory,
         CancellationToken cancellationToken)
     {
@@ -150,8 +154,9 @@ public static class AuthSessionEndpoints
             activeTenants,
             roleCatalog,
             tenantDirectory,
+            currenciesInUse,
             cancellationToken);
-        return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, tenants));
+        return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, tenants, Currencies.All));
     }
 
     /// <summary>
@@ -173,6 +178,7 @@ public static class AuthSessionEndpoints
         IReadOnlyCollection<ActiveTenantSummary> activeTenants,
         ITenantRoleCatalog roleCatalog,
         ITenantDirectory tenantDirectory,
+        ICurrenciesInUse currenciesInUse,
         CancellationToken cancellationToken)
     {
         var responses = new List<ActiveTenantResponse>(activeTenants.Count);
@@ -186,6 +192,9 @@ public static class AuthSessionEndpoints
             var regional = await tenantDirectory.GetRegionalSettingsAsync(
                 new TenantId(tenant.TenantId),
                 cancellationToken);
+            // Through the port and not through a catalog permission: like the regional format, it is how
+            // this tenant's money is shown, and every member needs it before the first paint.
+            var inUse = await currenciesInUse.GetAsync(tenant.TenantId, cancellationToken);
 
             responses.Add(new ActiveTenantResponse(
                 tenant.TenantId,
@@ -198,7 +207,8 @@ public static class AuthSessionEndpoints
                 regional?.TimeZone,
                 regional?.DateFormat,
                 regional?.DefaultCurrency,
-                regional?.NumberFormat));
+                regional?.NumberFormat,
+                inUse));
         }
 
         return responses;
@@ -239,11 +249,15 @@ public static class AuthSessionEndpoints
 /// persona en él, con su nombre, para que el menú de usuario muestre «Administrador» y no la
 /// clave.
 /// </summary>
+/// <remarks><c>Currencies</c> is the global catalogue (spec D2): the SPA keeps no currency list
+/// and needs symbols and decimals before the first paint, for every member — including roles
+/// without <c>tenancy.settings.read</c>.</remarks>
 public sealed record SessionResponse(
     Guid UserId,
     string? Email,
     IReadOnlyCollection<Guid> ActiveTenantIds,
-    IReadOnlyCollection<ActiveTenantResponse> ActiveTenants);
+    IReadOnlyCollection<ActiveTenantResponse> ActiveTenants,
+    IReadOnlyList<CurrencyInfo> Currencies);
 
 /// <summary>
 /// Un tenant activo con los roles de la persona en él. Record propio de la API y no el
@@ -255,6 +269,8 @@ public sealed record SessionResponse(
 /// <c>tenancy.settings.read</c>, que roles como <c>cashier</c> no tienen, y la SPA necesita el
 /// formato antes de la primera pintura. No es sensible: es cómo se muestran fechas y montos de un
 /// tenant al que la persona pertenece. Null sólo si el tenant no tiene fila.
+/// <c>CurrenciesInUse</c>: currencies with at least one product price in the tenant, catalogue
+/// order (spec D10).
 /// </remarks>
 public sealed record ActiveTenantResponse(
     Guid TenantId,
@@ -263,7 +279,8 @@ public sealed record ActiveTenantResponse(
     string? TimeZone,
     string? DateFormat,
     string? DefaultCurrency,
-    string? NumberFormat);
+    string? NumberFormat,
+    IReadOnlyList<string> CurrenciesInUse);
 
 /// <summary>
 /// <c>Role</c> es la clave que guarda la membresía; <c>DisplayName</c>, el nombre que ve la

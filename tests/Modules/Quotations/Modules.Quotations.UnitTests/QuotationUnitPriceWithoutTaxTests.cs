@@ -72,7 +72,7 @@ public sealed class QuotationUnitPriceWithoutTaxTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
-            QuotationCurrency.Cop,
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

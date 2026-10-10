@@ -1,4 +1,5 @@
 using Modules.Catalog.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
@@ -21,28 +22,32 @@ internal static class ProductMapping
         product.ImageFileId,
         imageUrl,
         product.TaxRateId?.Value,
-        product.PriceBaseUsd,
-        product.PriceBaseCop,
+        PricesOf(product),
         product.PackagingUnits.ToArray(),
         // Ordered here, and not left to whatever order the aggregate or the database hands
         // over: the grid paints the tiers from the smallest up, and neither the write order
         // nor the row order the database returns is a contract it can rely on. Same criterion
         // the Excel export already applies (`ClosedXmlProductExportBuilder`), and doing it in
         // the mapping covers every product response instead of one query at a time.
-        product.PriceScales.OrderBy(scale => scale.FromUnit).Select(ToResponse).ToArray(),
+        product.PriceScales.OrderBy(scale => scale.FromUnit).Select(scale => ToResponse(scale, product)).ToArray(),
         product.CreatedAt,
         product.UpdatedAt);
 
-    private static PriceScaleResponse ToResponse(PriceScale scale) => new(
-        scale.Id.Value,
-        scale.FromUnit,
-        scale.ToUnit,
-        scale.Discount,
-        scale.Restriction?.ToWireValue(),
-        scale.Multiple,
-        scale.FinalUsd,
-        scale.FinalCop,
-        scale.AllowGrouping);
+    // Catalogue order (spec D10), not insertion order: the form and the product table paint one
+    // column per currency in that order.
+    private static Dictionary<string, decimal> PricesOf(Product product) =>
+        product.Prices
+            .OrderBy(price => Currencies.OrderOf(price.Currency))
+            .ToDictionary(price => price.Currency, price => price.Amount);
+
+    private static PriceScaleResponse ToResponse(PriceScale scale, Product product) => new(
+        scale.Id.Value, scale.FromUnit, scale.ToUnit, scale.Discount,
+        scale.Restriction?.ToWireValue(), scale.Multiple,
+        scale.AllowGrouping,
+        // Derived, never stored (spec D4): one final per currency the product has.
+        product.Prices
+            .OrderBy(price => Currencies.OrderOf(price.Currency))
+            .ToDictionary(price => price.Currency, price => PriceScale.FinalFor(price.Amount, scale.Discount)!.Value));
 
     /// <summary>
     /// Mapea una colección resolviendo las URLs en **una sola** consulta al puerto.

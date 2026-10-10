@@ -7,6 +7,6 @@ namespace Modules.Tenancy.Application;
 /// </summary>
 public interface ITenantDefaultCurrency
 {
-    /// <summary>Devuelve "COP" o "USD".</summary>
+    /// <summary>Returns a catalogue code (<see cref="Currencies"/>).</summary>
     Task<string> GetAsync(Guid tenantId, CancellationToken cancellationToken);
 }

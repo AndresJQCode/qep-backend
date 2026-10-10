@@ -100,7 +100,7 @@ public sealed class ProductDetailsApiTests
             description = "Cera de soja, 200 g",
             imageFileId = image,
             taxRateId,
-            pricing = new { baseUsd = 10m }
+            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -127,7 +127,7 @@ public sealed class ProductDetailsApiTests
 
         var response = await CreateProductAsync(
             client, TenantId,
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } });
+            new { name = "Vela de soja", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
@@ -153,12 +153,12 @@ public sealed class ProductDetailsApiTests
             description = "Cera de soja",
             imageFileId = await UploadImageAsync(client, TenantId, database),
             taxRateId,
-            pricing = new { baseUsd = 10m }
+            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
         }));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } },
+            new { name = "Vela de soja", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -194,7 +194,7 @@ public sealed class ProductDetailsApiTests
             name = "Vela de soja",
             code = "VS-001",
             taxRateId = foreignTaxRateId,
-            pricing = new { baseUsd = 10m }
+            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -219,7 +219,7 @@ public sealed class ProductDetailsApiTests
             name = "Vela de soja",
             code = "VS-001",
             taxRateId = Guid.CreateVersion7(),
-            pricing = new { baseUsd = 10m }
+            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
         });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -250,7 +250,7 @@ public sealed class ProductDetailsApiTests
             name = "Vela de soja",
             code = "VS-001",
             taxRateId,
-            pricing = new { baseUsd = 10m }
+            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -267,7 +267,7 @@ public sealed class ProductDetailsApiTests
 
         var created = await ReadProductAsync(await CreateProductAsync(
             client, TenantId,
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } }));
+            new { name = "Vela de soja", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } }));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
@@ -276,7 +276,7 @@ public sealed class ProductDetailsApiTests
                 name = "Vela de soja",
                 code = "VS-001",
                 description = "Cera de soja, 200 g",
-                pricing = new { baseUsd = 10m }
+                pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
             },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -361,7 +361,7 @@ public sealed class ProductDetailsApiTests
             "Vela de soja",
             "VS-001",
             ProductDetails.Empty with { TaxRateId = TaxRateId.New() },
-            new ProductPricing { BaseUsd = 10m },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
             DateTimeOffset.UtcNow));
 
         var error = await Assert.ThrowsAsync<CatalogDomainException>(
@@ -393,7 +393,7 @@ public sealed class ProductDetailsApiTests
             "Shampoo 400 ml",
             "SH-400",
             ProductDetails.Empty,
-            new ProductPricing { BaseCop = 11_900m },
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 11_900m } },
             DateTimeOffset.UtcNow);
         repository.Add(product);
         await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);

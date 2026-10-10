@@ -64,7 +64,7 @@ public sealed class CreateQuotationHandler(
 
         // Sin cuenta de cobro, la cotización nace en la moneda por defecto del tenant. Se lee
         // siempre, haya cuenta o no: el agregado decide cuál gana, no el handler.
-        var defaultCurrency = QuotationCurrencies.FromCode(
+        var defaultCurrency = Currencies.Normalize(
             await tenantDefaultCurrency.GetAsync(command.TenantId, cancellationToken));
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(

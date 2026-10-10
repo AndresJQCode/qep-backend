@@ -1,17 +1,12 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Qué precio cambió en una fila de <see cref="ProductPriceChange"/>. Son los tres únicos
-/// valores que el histórico sigue: los dos precios base del producto y el descuento de una
-/// escala.
-///
-/// Los precios finales de la escala no están: se derivan de la base y el descuento
-/// —<c>PriceScale.ValidateFinal</c> lo hace cumplir—, así que guardarlos sería registrar dos
-/// veces el mismo cambio.
+/// What changed in a <see cref="ProductPriceChange"/> row: a base price (one row per currency,
+/// <see cref="ProductPriceChange.Currency"/> says which) or the discount of a scale. Stored as
+/// text; the Reporting mirror <c>PriceChangeField</c> follows.
 /// </summary>
 public enum ProductPriceField
 {
-    PriceBaseUsd,
-    PriceBaseCop,
+    PriceBase,
     ScaleDiscount
 }

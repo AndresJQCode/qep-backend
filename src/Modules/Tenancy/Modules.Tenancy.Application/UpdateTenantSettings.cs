@@ -61,6 +61,16 @@ public sealed class UpdateTenantSettingsHandler(
                 "Tenant settings changed after they were loaded.");
         }
 
+        // The catalogue check lives here because the aggregate cannot see Currencies. It answers with
+        // the settings-level code (spec, Error codes) — the form maps it to the currency field — and
+        // not with tenancy.currency.unsupported.
+        if (!Currencies.IsSupported(command.DefaultCurrency))
+        {
+            throw new TenantDomainException(
+                "tenancy.settings.default_currency.invalid",
+                $"Currency '{command.DefaultCurrency}' is not in the catalogue.");
+        }
+
         var changed = tenant.UpdateSettings(
             command.DisplayName,
             command.DefaultCulture,

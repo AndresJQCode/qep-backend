@@ -185,7 +185,7 @@ public sealed class ExportOrdersHandlerTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null,
-            defaultCurrency: QuotationCurrency.Cop,
+            defaultCurrency: "COP",
             customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
         var order = Order.Create(
             OrderId.New(), TenantId, "PED-2026-0001", quotation.Id, OrderPaymentStatus.PaymentPending,

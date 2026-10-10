@@ -55,7 +55,7 @@ public sealed class Tenant
 
     public string DateFormat { get; private set; } = string.Empty;
 
-    public string DefaultCurrency { get; private set; } = TenantCurrencies.Cop;
+    public string DefaultCurrency { get; private set; } = "COP";
 
     public string NumberFormat { get; private set; } = TenantNumberFormats.CommaDecimal;
 
@@ -134,7 +134,7 @@ public sealed class Tenant
         var validatedCulture = ValidateCulture(defaultCulture);
         var validatedTimeZone = ValidateTimeZone(timeZone);
         var validatedDateFormat = ValidateDateFormat(dateFormat);
-        var validatedCurrency = TenantCurrencies.Normalize(defaultCurrency);
+        var validatedCurrency = NormalizeCurrencyCode(defaultCurrency);
         var validatedNumberFormat = TenantNumberFormats.Normalize(numberFormat);
         List<string> changedFields = [];
 
@@ -365,6 +365,19 @@ public sealed class Tenant
                 "tenancy.settings.time_zone.invalid",
                 "Time zone data is invalid.");
         }
+    }
+
+    // Shape only: Tenancy.Domain cannot see the catalogue (Currencies lives in Tenancy.Application,
+    // which references this assembly). UpdateTenantSettingsHandler checks the catalogue first and
+    // answers with this same field-level code, so the settings form marks the currency select.
+    private static string NormalizeCurrencyCode(string value)
+    {
+        var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
+        return normalized.Length == 3 && normalized.All(char.IsAsciiLetterUpper)
+            ? normalized
+            : throw new TenantDomainException(
+                "tenancy.settings.default_currency.invalid",
+                "Default currency must be a three-letter ISO 4217 code.");
     }
 
     private static string ValidateDateFormat(string value)

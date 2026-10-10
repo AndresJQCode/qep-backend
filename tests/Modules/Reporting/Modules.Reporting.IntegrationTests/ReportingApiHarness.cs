@@ -361,7 +361,8 @@ internal static class ReportingApiHarness
     }
 
     public static async Task<Guid> CreateProductAsync(
-        HttpClient client, Guid tenantId, decimal baseCop = 100_000m)
+        HttpClient client, Guid tenantId, decimal baseCop = 100_000m,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -371,13 +372,14 @@ internal static class ReportingApiHarness
                 code = $"VS-{Guid.NewGuid():N}"[..12],
                 pricing = new
                 {
-                    baseCop,
+                    // A given map wins over the COP shorthand, so tests can price in any currency.
+                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
                     scales = new object[]
                     {
                         new
                         {
                             fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1, finalCop = baseCop
+                            restriction = "multiple", multiple = 1
                         }
                     }
                 }
@@ -394,7 +396,8 @@ internal static class ReportingApiHarness
     /// <c>catalog.product_price_changes</c> — el unico origen del reporte de cambios de
     /// precio.</summary>
     public static async Task ChangeProductBaseCopAsync(
-        HttpClient client, Guid tenantId, Guid productId, decimal newBaseCop)
+        HttpClient client, Guid tenantId, Guid productId, decimal newBaseCop,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var current = await client.GetFromJsonAsync<ProductDetailResponseDto>(
             $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
@@ -409,13 +412,13 @@ internal static class ReportingApiHarness
                 code = current.Code,
                 pricing = new
                 {
-                    baseCop = newBaseCop,
+                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = newBaseCop },
                     scales = new object[]
                     {
                         new
                         {
                             fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1, finalCop = newBaseCop
+                            restriction = "multiple", multiple = 1
                         }
                     }
                 }
@@ -441,12 +444,14 @@ internal static class ReportingApiHarness
         Guid tenantId,
         Guid clientId,
         Guid productId,
-        DateOnly? validUntil = null)
+        DateOnly? validUntil = null,
+        string currency = "COP")
     {
         // Sin cuenta de cobro la cotización se envía igual, pero convertirla en pedido devuelve 422
         // `quotation.billing.account_required`: toda prueba del reporte de pedidos se caería en
         // `ConvertToOrderAsync`, lejos de lo que mide.
-        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        // The quotation takes the billing account's currency, so this is how a test quotes in EUR.
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, currency);
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations",
             new CreateQuotationRequest(
@@ -487,12 +492,11 @@ internal static class ReportingApiHarness
     /// así que no alcanza con inventar un banco. Mismo helper que el harness de Quotations.
     /// </summary>
     private static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
-        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId)
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency)
     {
         var cityId = await EnsureCityIdAsync(client);
         const string bankName = "Bancolombia";
         var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
-        const string currency = "COP";
 
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/companies",
@@ -598,7 +602,7 @@ internal static class ReportingApiHarness
 
     private sealed record CompanyResponseDto(Guid Id, string Name);
 
-    private sealed record ProductDetailResponseDto(Guid Id, string Name, string Code);
+    internal sealed record ProductDetailResponseDto(Guid Id, string Name, string Code);
 
     private sealed record UploadSessionResponseDto(
         Guid FileResourceId, string UploadUrl, string StorageKey);

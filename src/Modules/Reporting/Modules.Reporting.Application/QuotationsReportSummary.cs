@@ -19,12 +19,16 @@ namespace Modules.Reporting.Application;
 /// **No hay estado «Aprobada».** Convertir una cotización en pedido la deja en <c>Converted</c>.
 /// Las que se convirtieron antes de que ese estado existiera siguen en <c>Sent</c> (no hubo
 /// backfill), así que cuántas terminaron en pedido se lee en el reporte de pedidos, no acá.
+///
+/// <para>Subtotals, TaxAmounts and Totals carry one amount per currency with quotations in the
+/// window (spec, Reports). The counts stay single numbers: a quotation is one quotation in any
+/// currency.</para>
 /// </summary>
 public sealed record QuotationsReportSummaryDto(
     int QuotationCount,
-    decimal Subtotal,
-    decimal TaxAmount,
-    decimal Total,
+    IReadOnlyList<ReportMoneyDto> Subtotals,
+    IReadOnlyList<ReportMoneyDto> TaxAmounts,
+    IReadOnlyList<ReportMoneyDto> Totals,
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportStatusSliceDto> ByStatus,
     IReadOnlyList<ReportRankEntryDto> ByAdvisor,
@@ -40,7 +44,7 @@ public sealed record QuotationsReportSummaryDto(
 /// diccionario. **Vienen los cinco siempre**, incluso en cero: un estado que desaparece de la
 /// respuesta obligaría a la pantalla a saber cuáles existen para dibujar el que falta.
 /// </summary>
-public sealed record ReportStatusSliceDto(string Status, int Count, decimal Total);
+public sealed record ReportStatusSliceDto(string Status, int Count, IReadOnlyList<ReportMoneyDto> Totals);
 
 /// <summary>
 /// Cuánta plata se vence y cuándo, sobre las cotizaciones **en estado <c>Sent</c>**: las únicas
@@ -63,8 +67,9 @@ public sealed record QuotationValidityDto(
     ReportBucketDto Beyond,
     int WithoutExpiry);
 
-/// <summary>Un tramo: cuántas y por cuánto.</summary>
-public sealed record ReportBucketDto(int Count, decimal Total);
+/// <summary>Un tramo: cuántas y por cuánto. The amount is per currency, like every money
+/// figure of the report.</summary>
+public sealed record ReportBucketDto(int Count, IReadOnlyList<ReportMoneyDto> Totals);
 
 /// <summary>
 /// Una cotización que vence pronto: la única vista de fila que sobrevive en un panel de
@@ -72,7 +77,10 @@ public sealed record ReportBucketDto(int Count, decimal Total);
 /// una fecha.
 ///
 /// Ordenadas por monto y no por fecha: lo que decide a cuál llamar primero es la plata en juego.
+/// Default-currency quotations come first, then by total (plan decision A10): amounts only compare
+/// within one currency.
 /// </summary>
+/// <param name="Currency">The quotation's currency: every amount of this row is in it.</param>
 /// <param name="DaysLeft">Días entre hoy y el vencimiento. Cero es «vence hoy»; nunca es
 /// negativo, porque lo ya vencido no entra en esta lista.</param>
 /// <param name="AdvisorName">El <b>email</b> del asesor, no su nombre. Ver
@@ -85,6 +93,7 @@ public sealed record QuotationExpiringDto(
     string? ClientName,
     string? ClientCuc,
     string? AdvisorName,
+    string Currency,
     decimal Total);
 
 /// <summary>
@@ -103,9 +112,9 @@ public sealed record QuotationsSummaryOptions(
 /// <see cref="OrdersReportAggregate"/>.</summary>
 public sealed record QuotationsReportAggregate(
     int QuotationCount,
-    decimal Subtotal,
-    decimal TaxAmount,
-    decimal Total,
+    IReadOnlyList<ReportMoneyDto> Subtotals,
+    IReadOnlyList<ReportMoneyDto> TaxAmounts,
+    IReadOnlyList<ReportMoneyDto> Totals,
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportStatusSliceDto> ByStatus,
     IReadOnlyList<ReportRankEntryDto> ByAdvisor,
@@ -161,9 +170,9 @@ public sealed class GetQuotationsReportSummaryHandler(
 
         return new QuotationsReportSummaryDto(
             current.QuotationCount,
-            current.Subtotal,
-            current.TaxAmount,
-            current.Total,
+            current.Subtotals,
+            current.TaxAmounts,
+            current.Totals,
             current.Monthly,
             current.ByStatus,
             current.ByAdvisor,
@@ -200,6 +209,6 @@ public sealed class GetQuotationsReportSummaryHandler(
             options with { RankSize = 0, ExpiringSize = 0 },
             cancellationToken);
 
-        return new ReportComparisonDto(preceding.QuotationCount, preceding.Total);
+        return new ReportComparisonDto(preceding.QuotationCount, preceding.Totals);
     }
 }

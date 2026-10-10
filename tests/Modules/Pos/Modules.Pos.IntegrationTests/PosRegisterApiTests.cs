@@ -115,7 +115,8 @@ public sealed class PosRegisterApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var world = await PosWorld.ArrangeAsync(factory, database);
         await ExecuteSqlAsync(database, "UPDATE catalog.products SET is_active = false WHERE id = @id", ("id", world.Jabon));
-        await ExecuteSqlAsync(database, "UPDATE catalog.products SET price_base_cop = NULL, price_base_usd = 10 WHERE id = @id", ("id", world.Avena));
+        await ExecuteSqlAsync(database, "DELETE FROM catalog.product_prices WHERE product_id = @id AND currency = 'COP'", ("id", world.Avena));
+        await ExecuteSqlAsync(database, "INSERT INTO catalog.product_prices (product_id, currency, amount) VALUES (@id, 'USD', 10)", ("id", world.Avena));
 
         var exact = await world.Admin.GetFromJsonAsync<PosProductResponse>($"{world.Url}/products/by-code?code=SH-400", TestContext.Current.CancellationToken);
         var lower = await world.Admin.GetAsync($"{world.Url}/products/by-code?code=sh-400", TestContext.Current.CancellationToken);

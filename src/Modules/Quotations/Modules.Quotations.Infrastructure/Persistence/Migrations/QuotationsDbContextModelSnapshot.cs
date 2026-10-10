@@ -816,6 +816,48 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantMinimumTotalRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("amount");
+
+                    b.HasKey("TenantId", "Currency");
+
+                    b.ToTable("tenant_minimum_totals", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_minimum_totals_amount_not_negative", "amount >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantQuotationSettingsRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<int>("MinimumUnits")
+                        .HasColumnType("integer")
+                        .HasColumnName("minimum_units");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("tenant_quotation_settings", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>
                 {
                     b.HasOne("Modules.Quotations.Domain.Quotation", null)
@@ -947,6 +989,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasOne("Modules.Quotations.Domain.Quotation", null)
                         .WithMany()
                         .HasForeignKey("QuotationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantMinimumTotalRow", b =>
+                {
+                    b.HasOne("Modules.Quotations.Infrastructure.Persistence.TenantQuotationSettingsRow", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -47,6 +47,7 @@ public sealed class BatchUpdateQuotationItemsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IQuotationProductLookup productLookup,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
@@ -167,7 +168,7 @@ public sealed class BatchUpdateQuotationItemsHandler(
         // entera, así que resolverlo en medio del lote lo calcularía contra un estado a medio
         // aplicar.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
 
         // Una sola escritura para toda la tanda: es justo lo que esto reemplaza — antes,
         // guardar tres altas y una baja eran cuatro viajes a la base, cada uno con su propia

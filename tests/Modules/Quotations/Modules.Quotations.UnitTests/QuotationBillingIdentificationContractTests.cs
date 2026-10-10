@@ -38,7 +38,7 @@ public sealed class QuotationBillingIdentificationContractTests
             new QuotationParties(
                 new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
                 Shipping: null),
-            null, QuotationCurrency.Cop, false, false, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
+            null, "COP", false, false, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
 
         var party = Assert.Single(quotation.ToDto().Parties);
 

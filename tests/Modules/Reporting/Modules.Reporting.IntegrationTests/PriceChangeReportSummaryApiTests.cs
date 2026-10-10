@@ -14,9 +14,10 @@ namespace Modules.Reporting.IntegrationTests;
 /// </summary>
 public sealed class PriceChangeReportSummaryApiTests
 {
-    /// <summary>Los tres campos del enum, en el orden en el que el contrato los devuelve.</summary>
-    private static readonly string[] EveryField =
-        ["PriceBaseUsd", "PriceBaseCop", "ScaleDiscount"];
+    /// <summary>The four slices, always, in the order the contract returns them: one PriceBase per
+    /// catalogue currency, then the discount.</summary>
+    private static readonly (string Field, string? Currency)[] EverySlice =
+        [("PriceBase", "COP"), ("PriceBase", "USD"), ("PriceBase", "EUR"), ("ScaleDiscount", null)];
 
     // Spec 2026-09-17, punto 5: el cambio de precio del 31 de diciembre a las 23:00 de Bogotá —ya
     // enero en UTC— cuenta en la serie de diciembre del tenant.
@@ -99,7 +100,7 @@ public sealed class PriceChangeReportSummaryApiTests
 
         Assert.NotNull(summary);
         Assert.Equal(0, summary.ChangeCount);
-        Assert.Equal(EveryField, summary.ByField.Select(slice => slice.Field));
+        Assert.Equal(EverySlice, summary.ByField.Select(slice => (slice.Field, slice.Currency)));
         Assert.All(summary.ByField, slice => Assert.Equal(0, slice.Count));
         Assert.Empty(summary.Monthly);
         Assert.Empty(summary.ByProduct);
@@ -117,15 +118,55 @@ public sealed class PriceChangeReportSummaryApiTests
         var productId = await CreateProductAsync(client, tenant.TenantId, baseCop: 100_000m);
         await ChangeProductBaseCopAsync(client, tenant.TenantId, productId, 120_000m);
 
-        var cop = await client.GetFromJsonAsync<PriceChangeReportSummary>(
-            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=PriceBaseCop",
+        var basePrice = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=PriceBase",
             TestContext.Current.CancellationToken);
-        var usd = await client.GetFromJsonAsync<PriceChangeReportSummary>(
-            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=PriceBaseUsd",
+        var discount = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=ScaleDiscount",
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(1, cop?.ChangeCount);
+        Assert.Equal(1, basePrice?.ChangeCount);
+        Assert.Equal(0, discount?.ChangeCount);
+    }
+
+    [Fact]
+    public async Task SummaryCountsAnEurChangeInItsOwnSlice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        var client = tenant.Client;
+        var productId = await CreateProductAsync(
+            client, tenant.TenantId, prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["EUR"] = 20m });
+        await ChangeProductBaseCopAsync(
+            client, tenant.TenantId, productId, 100_000m,
+            new Dictionary<string, decimal> { ["COP"] = 100_000m, ["EUR"] = 24m });
+
+        var all = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+        var usd = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?currency=USD",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, all?.ChangeCount);
+        Assert.Equal(
+            [("PriceBase", "COP", 0), ("PriceBase", "USD", 0), ("PriceBase", "EUR", 1), ("ScaleDiscount", null, 0)],
+            all!.ByField.Select(slice => (slice.Field, slice.Currency, slice.Count)));
         Assert.Equal(0, usd?.ChangeCount);
+    }
+
+    [Fact]
+    public async Task SummaryRejectsAnUnknownCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+
+        var response = await tenant.Client.GetAsync(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?currency=XYZ",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
     [Fact]

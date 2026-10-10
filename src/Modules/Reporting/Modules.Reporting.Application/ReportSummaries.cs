@@ -13,12 +13,16 @@ namespace Modules.Reporting.Application;
 /// Toma **exactamente los mismos filtros que el listado**, menos la paginación. Que los dos
 /// caminos compartan <see cref="OrdersReportFilter"/> es lo que hace imposible que el panel y la
 /// tabla hablen de conjuntos distintos.
+///
+/// <para>Subtotals, TaxAmounts and Totals carry one amount per currency with orders in the
+/// window (spec, Reports). The counts stay single numbers: an order is one order in any
+/// currency.</para>
 /// </summary>
 public sealed record OrdersReportSummaryDto(
     int OrderCount,
-    decimal Subtotal,
-    decimal TaxAmount,
-    decimal Total,
+    IReadOnlyList<ReportMoneyDto> Subtotals,
+    IReadOnlyList<ReportMoneyDto> TaxAmounts,
+    IReadOnlyList<ReportMoneyDto> Totals,
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportRankEntryDto> ByAdvisor,
     IReadOnlyList<ReportRankEntryDto> ByClient,
@@ -31,12 +35,16 @@ public sealed record OrdersReportSummaryDto(
 /// **Sólo vienen los meses con pedidos.** Rellenar los vacíos con cero es una decisión de
 /// presentación —depende del rango que el eje dibuje— y se toma en el frontend, no acá.
 /// </summary>
-public sealed record ReportMonthlyPointDto(int Year, int Month, int Count, decimal Total);
+public sealed record ReportMonthlyPointDto(int Year, int Month, int Count, IReadOnlyList<ReportMoneyDto> Totals);
 
 /// <summary>
 /// Una fila del ranking por asesor o por cliente.
 ///
 /// <c>Id</c> nulo es **la fila "Otros"**: todo lo que quedó fuera del tope, ya sumado.
+///
+/// <para>Ordered by the total in the tenant default currency, then by count (plan decision A10):
+/// a total across currencies is not a number. Totals lists every currency of that entity; on the
+/// "Otros" row it is the per-currency remainder.</para>
 /// <c>EntityCount</c> dice cuántas entidades distintas agrupa (1 en una fila normal, el resto en
 /// la de "Otros"), que es lo que le permite al frontend escribir "Otros (7)" sin adivinar.
 ///
@@ -51,11 +59,14 @@ public sealed record ReportRankEntryDto(
     string? Secondary,
     int EntityCount,
     int Count,
-    decimal Total);
+    IReadOnlyList<ReportMoneyDto> Totals);
 
 /// <summary>El mismo cálculo sobre la ventana anterior, recortado a lo que un delta necesita: un
-/// panel compara el total y el conteo, no la serie mensual entera.</summary>
-public sealed record ReportComparisonDto(int Count, decimal Total);
+/// panel compara el total y el conteo, no la serie mensual entera.
+///
+/// <para>The previous window's count and its totals per currency, for a delta per
+/// currency.</para></summary>
+public sealed record ReportComparisonDto(int Count, IReadOnlyList<ReportMoneyDto> Totals);
 
 /// <summary>
 /// Lo que devuelve el origen de datos: el resumen de **una** ventana, sin comparación.
@@ -66,9 +77,9 @@ public sealed record ReportComparisonDto(int Count, decimal Total);
 /// </summary>
 public sealed record OrdersReportAggregate(
     int OrderCount,
-    decimal Subtotal,
-    decimal TaxAmount,
-    decimal Total,
+    IReadOnlyList<ReportMoneyDto> Subtotals,
+    IReadOnlyList<ReportMoneyDto> TaxAmounts,
+    IReadOnlyList<ReportMoneyDto> Totals,
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportRankEntryDto> ByAdvisor,
     IReadOnlyList<ReportRankEntryDto> ByClient);

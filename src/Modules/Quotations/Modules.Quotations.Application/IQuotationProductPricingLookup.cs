@@ -5,10 +5,10 @@ namespace Modules.Quotations.Application;
 /// producto). Mismo criterio de aislamiento que <see cref="IQuotationCustomerLookup"/> — el
 /// adaptador vive en <c>Bootstrapper</c>.
 ///
-/// Expone las **dos** monedas que el catálogo guarda, no una: la cotización se expresa en la
-/// moneda de su cuenta de cobro (<c>Quotation.Currency</c>), y cuál de los dos precios aplica lo
-/// decide <see cref="QuotationProductPricingResolver"/>. Un producto sin precio en la moneda de
-/// la cotización no se puede cotizar ahí — no hay tabla de cambio y este módulo no convierte.
+/// Exposes **every** base price the catalogue holds, one per currency: the quotation is expressed
+/// in its billing account currency (<c>Quotation.Currency</c>) and
+/// <see cref="QuotationProductPricingResolver"/> takes that one and no other. A product without a
+/// price in that currency cannot be quoted there — there is no conversion.
 ///
 /// <see cref="FindManyAsync"/> existe para revalorizar: cambiar la moneda de una cotización
 /// obliga a volver a pedir el precio de **cada** línea, y una consulta por línea convierte un
@@ -35,8 +35,7 @@ public sealed record QuotationProductPricingRef(
     /// por su propia consulta: el producto ya se carga entero para cotizarlo.</summary>
     string Name,
     bool IsActive,
-    decimal? UnitPriceCop,
-    decimal? UnitPriceUsd,
+    IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyCollection<QuotationPriceScaleRef> Scales,
     int? TaxPercentage);
 

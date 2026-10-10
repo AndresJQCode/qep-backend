@@ -275,7 +275,7 @@ public sealed class TaxRateApiTests
             await CreateTaxRateAsync(client, TenantId, "IVA en uso", 19))).Id;
         var product = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-201", taxRateId, pricing = new { baseUsd = 10m } },
+            new { name = "Vela de soja", code = "VS-201", taxRateId, pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, product.StatusCode);
 
@@ -426,11 +426,11 @@ public sealed class TaxRateApiTests
 
         await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } },
+            new { name = "Vela de soja", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
             TestContext.Current.CancellationToken);
         var productClash = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Otra vela", code = "VS-001", pricing = new { baseUsd = 10m } },
+            new { name = "Otra vela", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
             TestContext.Current.CancellationToken);
         var productBody = await productClash.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);

@@ -28,6 +28,7 @@ public sealed class ZenviaWhatsAppSenderTests
         FullName: "Juan Pérez",
         OrderNumber: "COT-000123",
         Total: 2450000m,
+        Currency: "COP",
         ValidUntil: new DateOnly(2026, 9, 30),
         DocumentUrl: "https://r2.example.com/cotizacion.pdf?sig=abc");
 
@@ -44,6 +45,17 @@ public sealed class ZenviaWhatsAppSenderTests
     }
 
     [Fact]
+    public async Task SendFormatsTheTotalWithTheQuotationCurrencySymbolAndDecimals()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendQuotationAsync(
+            Message with { Total = 2450.5m, Currency = "EUR" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("€ 2.450,50", capture.Fields().GetProperty("total").GetString());
+    }
+
+    [Fact]
     public async Task SendFormatsTheTotalAsColombianPesos()
     {
         var (sender, capture, _) = NewSender();
@@ -51,11 +63,9 @@ public sealed class ZenviaWhatsAppSenderTests
         await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
 
         var total = capture.Fields().GetProperty("total").GetString();
-        Assert.NotNull(total);
-        Assert.Contains("2.450.000", total);
         // Sin centavos: en es-CO el separador decimal es la coma, y un precio de cotización
         // redondo con ",00" al final sólo agrega ruido en un mensaje de WhatsApp.
-        Assert.DoesNotContain(",", total);
+        Assert.Equal("$ 2.450.000", total);
     }
 
     [Fact]

@@ -17,12 +17,15 @@ internal static class ReportRankFolding
     ///
     /// <paramref name="countDistinctAsync"/> se invoca **solo** si el tope se lleno: con menos
     /// entidades que el tope no puede haber resto, y cada ranking se ahorra una consulta.
+    ///
+    /// The remainder is per currency (<see cref="ReportMoney.Remainder"/>): the named entries are
+    /// subtracted from <paramref name="totals"/> currency by currency, never across them.
     /// </summary>
     public static async Task<ReportRankEntryDto?> FoldOthersAsync(
         List<ReportRankEntryDto> named,
         int rankSize,
         int totalCount,
-        decimal totalAmount,
+        IReadOnlyList<ReportMoneyDto> totals,
         Func<Task<int>> countDistinctAsync)
     {
         if (named.Count < rankSize)
@@ -43,6 +46,6 @@ internal static class ReportRankFolding
             Secondary: null,
             remaining,
             totalCount - named.Sum(entry => entry.Count),
-            totalAmount - named.Sum(entry => entry.Total));
+            ReportMoney.Remainder(totals, named.Select(entry => entry.Totals)));
     }
 }

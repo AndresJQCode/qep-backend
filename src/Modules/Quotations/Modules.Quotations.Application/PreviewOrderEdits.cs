@@ -40,6 +40,7 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationRepository quotationRepository,
     IOrderRepository orderRepository,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -122,7 +123,7 @@ public sealed class PreviewOrderEditsHandler(
         // La misma pasada que corre SaveOrderEditsHandler, y por el mismo motivo: si el preview no
         // la hace, muestra un total y un descuento distintos de los que va a dejar el guardado.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, query.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, query.TenantId, quotation, now, cancellationToken);
 
         order.RecalculatePaymentStatus(quotation.NetTotal, now);
 

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Infrastructure.Whatsapp;
 
@@ -27,6 +28,12 @@ internal sealed partial class ZenviaWhatsAppSender(
     // El formato con el que el cliente ve el monto y la vigencia lo fija el locale de la
     // plantilla (`es` en Zenvia), no el contrato de Application — por eso se arma acá.
     private static readonly CultureInfo Colombia = CultureInfo.GetCultureInfo("es-CO");
+
+    private static string FormatTotal(decimal total, string currency)
+    {
+        var info = Currencies.Get(currency);
+        return $"{info.Symbol} {total.ToString($"N{info.Decimals}", Colombia)}";
+    }
 
     private const string UnknownMessageId = "(unknown)";
 
@@ -68,7 +75,9 @@ internal sealed partial class ZenviaWhatsAppSender(
                     {
                         fullname = message.FullName,
                         order_number = message.OrderNumber,
-                        total = message.Total.ToString("C0", Colombia),
+                        // The quotation currency's symbol and decimals (catalogue), Colombian grouping: "€ 2.450,50",
+                        // "$ 2.450.000". The template variable is the same, so the approved template stays valid.
+                        total = FormatTotal(message.Total, message.Currency),
                         valid_until = message.ValidUntil.ToString(
                             "d 'de' MMMM 'de' yyyy", Colombia),
                         // La clave se llama `documentUrl` porque así la nombra Zenvia para los

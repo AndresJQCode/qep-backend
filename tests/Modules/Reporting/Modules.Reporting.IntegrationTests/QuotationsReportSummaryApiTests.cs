@@ -41,6 +41,63 @@ public sealed class QuotationsReportSummaryApiTests
         Assert.Equal(0, expiring.DaysLeft);
     }
 
+    /// <summary>
+    /// Review Focus 5 and plan decision A10. A tenant with COP and EUR quotations gets one amount
+    /// per currency in every money figure of the summary, never a sum across them. The expiring
+    /// queue puts the default-currency (COP) quotation first, even though the EUR one has the
+    /// numerically larger total.
+    /// </summary>
+    [Fact]
+    public async Task CopAndEurQuotationsComeBackAsSeparateTotalsAndTheQueueLeadsWithTheDefaultCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var copProduct = await CreateProductAsync(client, tenant.TenantId);
+        var eurProduct = await CreateProductAsync(
+            client, tenant.TenantId, prices: new Dictionary<string, decimal> { ["EUR"] = 900_000m });
+        // Three days out: inside the seven-day bucket and the expiring queue, away from both edges.
+        var dueSoon = TodayInBogota().AddDays(3);
+        var inPesos = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, copProduct, validUntil: dueSoon);
+        var inEuros = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, eurProduct, validUntil: dueSoon, currency: "EUR");
+
+        var summary = await client.GetFromJsonAsync<QuotationsReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/quotations/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        MoneyAmount[] totals = [new MoneyAmount("COP", inPesos.Total), new MoneyAmount("EUR", inEuros.Total)];
+        Assert.Equal(2, summary.QuotationCount);
+        Assert.Equal(
+            [new MoneyAmount("COP", inPesos.Subtotal), new MoneyAmount("EUR", inEuros.Subtotal)],
+            summary.Subtotals);
+        Assert.Equal(
+            [new MoneyAmount("COP", inPesos.TaxAmount), new MoneyAmount("EUR", inEuros.TaxAmount)],
+            summary.TaxAmounts);
+        Assert.Equal(totals, summary.Totals);
+        Assert.Equal(totals, Assert.Single(summary.Monthly).Totals);
+        Assert.Equal(totals, Assert.Single(summary.ByAdvisor).Totals);
+
+        var sent = Assert.Single(summary.ByStatus, slice => slice.Status == "Sent");
+        Assert.Equal(2, sent.Count);
+        Assert.Equal(totals, sent.Totals);
+        // A status with no quotations is a zero count and no money, not a zero in some currency.
+        var draft = Assert.Single(summary.ByStatus, slice => slice.Status == "Draft");
+        Assert.Equal(0, draft.Count);
+        Assert.Empty(draft.Totals);
+
+        Assert.Equal(2, summary.Validity.WithinSevenDays.Count);
+        Assert.Equal(totals, summary.Validity.WithinSevenDays.Totals);
+        Assert.Empty(summary.Validity.Beyond.Totals);
+
+        Assert.Equal([inPesos.Id, inEuros.Id], summary.Expiring.Select(entry => entry.QuotationId));
+        Assert.Equal(["COP", "EUR"], summary.Expiring.Select(entry => entry.Currency));
+        Assert.Equal(inEuros.Total, summary.Expiring[1].Total);
+    }
+
     // Spec 2026-09-17, punto 5: la cotización creada el 31 de diciembre a las 23:00 de Bogotá —ya
     // enero en UTC— cuenta en la serie de diciembre del tenant.
     [Fact]
@@ -63,7 +120,7 @@ public sealed class QuotationsReportSummaryApiTests
         Assert.Equal(1, summary.QuotationCount);
         var month = Assert.Single(summary.Monthly);
         Assert.Equal((2026, 12), (month.Year, month.Month));
-        Assert.Equal(quotation.Total, month.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], month.Totals);
     }
 
     [Fact]
@@ -88,20 +145,20 @@ public sealed class QuotationsReportSummaryApiTests
         Assert.NotNull(summary);
 
         Assert.Equal(1, summary.QuotationCount);
-        Assert.Equal(quotation.Subtotal, summary.Subtotal);
-        Assert.Equal(quotation.TaxAmount, summary.TaxAmount);
-        Assert.Equal(quotation.Total, summary.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Subtotal)], summary.Subtotals);
+        Assert.Equal([new MoneyAmount("COP", quotation.TaxAmount)], summary.TaxAmounts);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], summary.Totals);
 
         var month = Assert.Single(summary.Monthly);
         Assert.Equal(1, month.Count);
-        Assert.Equal(quotation.Total, month.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], month.Totals);
 
         // Los cinco estados vienen siempre, incluso en cero: la pantalla no tiene que saber
         // cuáles existen para dibujar el que falta.
         Assert.Equal(5, summary.ByStatus.Count);
         var sent = Assert.Single(summary.ByStatus, slice => slice.Status == "Sent");
         Assert.Equal(1, sent.Count);
-        Assert.Equal(quotation.Total, sent.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], sent.Totals);
         Assert.All(
             summary.ByStatus.Where(slice => slice.Status != "Sent"),
             slice => Assert.Equal(0, slice.Count));
@@ -175,7 +232,7 @@ public sealed class QuotationsReportSummaryApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(summary);
         Assert.Equal(0, summary.QuotationCount);
-        Assert.Equal(0m, summary.Total);
+        Assert.Empty(summary.Totals);
         Assert.Empty(summary.Monthly);
         Assert.Empty(summary.ByAdvisor);
         Assert.Empty(summary.Expiring);
@@ -212,7 +269,7 @@ public sealed class QuotationsReportSummaryApiTests
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(0, summary.Previous.Count);
-        Assert.Equal(0m, summary.Previous.Total);
+        Assert.Empty(summary.Previous.Totals);
     }
 
     [Fact]

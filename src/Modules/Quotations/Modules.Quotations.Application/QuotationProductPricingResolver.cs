@@ -19,7 +19,7 @@ internal static class QuotationProductPricingResolver
         Guid tenantId,
         Guid productId,
         decimal quantity,
-        QuotationCurrency currency,
+        string currency,
         bool isRetail,
         CancellationToken cancellationToken)
     {
@@ -58,7 +58,7 @@ internal static class QuotationProductPricingResolver
         IQuotationProductPricingLookup lookup,
         Guid tenantId,
         IReadOnlyCollection<(Guid ProductId, decimal Quantity)> lines,
-        QuotationCurrency currency,
+        string currency,
         bool isRetail,
         CancellationToken cancellationToken)
     {
@@ -91,18 +91,15 @@ internal static class QuotationProductPricingResolver
     private static QuotationItemPricing PriceFor(
         QuotationProductPricingRef product,
         decimal quantity,
-        QuotationCurrency currency,
+        string currency,
         bool isRetail)
     {
-        var unitPrice = currency == QuotationCurrency.Usd
-            ? product.UnitPriceUsd
-            : product.UnitPriceCop;
-
-        if (unitPrice is not { } price)
+        // The quotation currency's own price, never another one: there is no conversion.
+        if (!product.Prices.TryGetValue(currency, out var price))
         {
             throw new QuotationsDomainException(
                 "quotation.item.product_price_unavailable",
-                $"The product does not have a price in {currency.ToCode()}.");
+                $"The product does not have a price in {currency}.");
         }
 
         // Cotización detal (decisión del owner, 2026-09-23): "el sistema debe omitir cualquier

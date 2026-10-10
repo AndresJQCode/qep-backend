@@ -9,7 +9,7 @@ namespace Bootstrapper;
 /// criterio de aislamiento que <see cref="QuotationCustomerLookup"/>.
 ///
 /// No decide nada: sólo traduce el producto y sus escalas de precio al vocabulario de
-/// <c>quotations</c>, con **los dos** precios base que el catálogo guarda. Cuál de los dos aplica
+/// <c>quotations</c>, con **todos** los precios base que el catálogo guarda. Cuál aplica
 /// —y qué escala, para una cantidad— es de
 /// <c>QuotationDiscountResolver</c>/<c>QuotationProductPricingResolver</c>, en Application.
 /// </summary>
@@ -43,7 +43,8 @@ internal sealed class QuotationProductPricingLookup(
 
         return new QuotationProductPricingRef(
             product.Id.Value, product.TenantId, product.Name, product.IsActive,
-            product.PriceBaseCop, product.PriceBaseUsd, scales, taxPercentage);
+            product.Prices.ToDictionary(price => price.Currency, price => price.Amount),
+            scales, taxPercentage);
     }
 
     // Una consulta para todos los productos y otra para todas las tasas: revalorizar una
@@ -86,8 +87,7 @@ internal sealed class QuotationProductPricingLookup(
                 product.TenantId,
                 product.Name,
                 product.IsActive,
-                product.PriceBaseCop,
-                product.PriceBaseUsd,
+                product.Prices.ToDictionary(price => price.Currency, price => price.Amount),
                 product.PriceScales
                     .Select(scale => scale.ToQuotationRef(product.PackagingUnits))
                     .ToArray(),

@@ -75,6 +75,42 @@ public sealed class TenantSettingsApiTests
     }
 
     [Fact]
+    public async Task PutAcceptsEurNowThatTheCatalogueHasIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), defaultCurrency: "eur");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("EUR", body.GetProperty("defaultCurrency").GetString());
+    }
+
+    [Fact]
+    public async Task GetCurrenciesReturnsTheCatalogueToAnyAuthenticatedCaller()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var currencies = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/currencies", TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, currencies.GetArrayLength());
+        Assert.Equal("COP", currencies[0].GetProperty("code").GetString());
+        Assert.Equal("$", currencies[0].GetProperty("symbol").GetString());
+        Assert.Equal(0, currencies[0].GetProperty("decimals").GetInt32());
+        Assert.Equal("EUR", currencies[2].GetProperty("code").GetString());
+        Assert.Equal("€", currencies[2].GetProperty("symbol").GetString());
+        Assert.Equal(2, currencies[2].GetProperty("decimals").GetInt32());
+    }
+
+    [Fact]
     public async Task PutWithUnsupportedCurrencyIsA422WithTheDomainCode()
     {
         await using var database = await StartDatabaseAsync();
@@ -83,7 +119,7 @@ public sealed class TenantSettingsApiTests
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
 
-        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), defaultCurrency: "EUR");
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), defaultCurrency: "XYZ");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>(

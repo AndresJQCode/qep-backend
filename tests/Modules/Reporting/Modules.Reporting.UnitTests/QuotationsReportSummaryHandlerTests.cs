@@ -136,7 +136,7 @@ public sealed class QuotationsReportSummaryHandlerTests
         Assert.Single(source.SummarizedCriteria);
         Assert.Null(summary.Previous);
         Assert.Equal(9, summary.QuotationCount);
-        Assert.Equal(900m, summary.Total);
+        Assert.Equal([new ReportMoneyDto("COP", 900m)], summary.Totals);
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public sealed class QuotationsReportSummaryHandlerTests
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(20, summary.Previous.Count);
-        Assert.Equal(2_500m, summary.Previous.Total);
+        Assert.Equal([new ReportMoneyDto("COP", 2_500m)], summary.Previous.Totals);
     }
 
     [Fact]

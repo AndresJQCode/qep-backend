@@ -98,7 +98,8 @@ public sealed class QuotationItemProductLabelTests
             {
                 [ProductId] = new(ProductId, liveName, liveCode, ImageUrl: null, Scales: []),
             }),
-            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()));
+            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
+            new FixedQuotationSettingsStore());
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -116,7 +117,7 @@ public sealed class QuotationItemProductLabelTests
                 AccountNumber = "12345678",
                 Currency = "COP",
             },
-            QuotationCurrency.Cop,
+            "COP",
             false, false, AdvisorId, Now);
         quotation.AddItem(
             QuotationItemId.New(), ProductId, quantity: 1m, unitPrice: 1_000m,

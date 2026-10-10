@@ -1,8 +1,8 @@
 namespace Modules.Pos.Application;
 
 /// <summary>
-/// Puerto hacia Catalog (adaptador en Bootstrapper). Viajan las dos listas base, con IVA incluido
-/// (regla detal); cuál se cobra lo decide la moneda de la caja (PosProductMapping.PriceIn).
+/// Catalog → Pos (adapter in Bootstrapper). Every base price the product has, VAT included; which
+/// one is charged is the session currency's (PosProductMapping.PriceIn).
 /// TaxPercentage 0 sin tasa o con tasa inexistente, como QuotationProductPricingResolver.
 /// </summary>
 public interface IPosProductLookup
@@ -24,7 +24,6 @@ public sealed record PosProductRef(
     string Code,
     string Name,
     bool IsActive,
-    decimal? PriceCop,
-    decimal? PriceUsd,
+    IReadOnlyDictionary<string, decimal> Prices,
     int TaxPercentage,
     string? ImageUrl);

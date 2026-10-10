@@ -25,6 +25,8 @@ public sealed record OrdersReportItemDto(
     string? ClientCuc,
     string Status,
     string PaymentStatus,
+    /// <summary>The quotation's currency: every amount of this row is in it.</summary>
+    string Currency,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total);
@@ -47,13 +49,17 @@ public sealed record QuotationsReportItemDto(
     string? ClientName,
     string? ClientCuc,
     string Status,
+    /// <summary>The quotation's currency: every amount of this row is in it.</summary>
+    string Currency,
     decimal Subtotal,
     decimal TaxAmount,
     decimal Total);
 
 /// <summary>
-/// Un cambio de precio del **catálogo de productos**: los dos precios base y el descuento de una
-/// escala. No tiene nada que ver con los precios de una línea de cotización.
+/// Un cambio de precio del **catálogo de productos**: el precio base en cada moneda y el descuento
+/// de una escala. No tiene nada que ver con los precios de una línea de cotización.
+///
+/// <c>Currency</c> is the ISO 4217 code of a <c>PriceBase</c> row; null for <c>ScaleDiscount</c>.
 ///
 /// <c>ScaleFromUnit</c>/<c>ScaleToUnit</c> vienen con valor sólo cuando <c>Field</c> es
 /// <c>ScaleDiscount</c>: los precios base son del producto entero y no tienen rango.
@@ -66,6 +72,7 @@ public sealed record PriceChangeReportItemDto(
     string ProductCode,
     string ProductName,
     string Field,
+    string? Currency,
     int? ScaleFromUnit,
     int? ScaleToUnit,
     decimal? PreviousValue,

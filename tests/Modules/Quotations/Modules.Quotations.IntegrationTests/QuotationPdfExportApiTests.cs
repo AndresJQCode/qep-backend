@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Modules.Quotations.Application;
 using Modules.Tenancy.Application;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -48,6 +49,34 @@ public sealed class QuotationPdfExportApiTests
         var second = await secondExport.Content.ReadFromJsonAsync<ExportDto>(TestContext.Current.CancellationToken);
 
         Assert.NotEqual(first!.GeneratedAt, second!.GeneratedAt);
+    }
+
+    // Spec 2026-10-08: the document carries the catalogue symbol and decimals of the quotation
+    // currency (the billing account's), so the template stops hardcoding "$ " and COP decimals.
+    [Fact]
+    public async Task TheDocumentCarriesTheSymbolAndDecimalsOfTheQuotationCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, currency: "EUR");
+        var quotation = await CreateQuotationAsync(
+            client,
+            tenantId,
+            customerId,
+            validUntil: null,
+            billingAccount: new QuotationBillingAccountRequest(
+                billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency));
+
+        var export = await client.PostAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/pdf", content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+        var document = factory.PdfRenderer.LastDocument;
+        Assert.NotNull(document);
+        Assert.Equal(("EUR", "€", 2), (document.Currency, document.Symbol, document.Decimals));
     }
 
     /// <summary>Sube el logo del tenant (mismo pipeline de Storage que ya ejerce

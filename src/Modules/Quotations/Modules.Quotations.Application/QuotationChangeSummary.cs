@@ -28,10 +28,10 @@ public static class QuotationChangeSummary
     /// acá y no en PostgreSQL, que respondería con un 500 en vez de guardar la fila.</summary>
     public const int MaxLength = 500;
 
-    public static string Created(string? clientName, QuotationCurrency currency) =>
+    public static string Created(string? clientName, string currency) =>
         Trim(clientName is null
-            ? $"Cotización creada en {currency.ToCode()}."
-            : $"Cotización creada para {clientName}, en {currency.ToCode()}.");
+            ? $"Cotización creada en {currency}."
+            : $"Cotización creada para {clientName}, en {currency}.");
 
     public static string ItemAdded(string productName, decimal quantity) =>
         Trim($"Agregó {productName} x{Number(quantity)}.");
@@ -213,7 +213,7 @@ public static class QuotationChangeSummary
         if (before.Currency != after.Currency)
         {
             changes.Add(
-                $"moneda ({before.Currency.ToCode()} → {after.Currency.ToCode()}), " +
+                $"moneda ({before.Currency} → {after.Currency}), " +
                 "con los precios de todas las líneas revalorizados");
         }
 
@@ -268,7 +268,7 @@ public sealed record QuotationHeaderSnapshot(
     string? Billing,
     string? Shipping,
     QuotationBillingAccountSummary? BillingAccount,
-    QuotationCurrency Currency,
+    string Currency,
     bool IsStorePickup,
     bool BillsToFinalConsumer,
     bool? BillingWithRetention,

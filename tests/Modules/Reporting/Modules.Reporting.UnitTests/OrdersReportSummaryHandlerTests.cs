@@ -101,7 +101,7 @@ public sealed class OrdersReportSummaryHandlerTests
         Assert.Single(source.SummarizedCriteria);
         Assert.Null(summary.Previous);
         Assert.Equal(12, summary.OrderCount);
-        Assert.Equal(1_200m, summary.Total);
+        Assert.Equal([new ReportMoneyDto("COP", 1_200m)], summary.Totals);
     }
 
     /// <summary>
@@ -133,7 +133,7 @@ public sealed class OrdersReportSummaryHandlerTests
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(20, summary.Previous.Count);
-        Assert.Equal(2_500m, summary.Previous.Total);
+        Assert.Equal([new ReportMoneyDto("COP", 2_500m)], summary.Previous.Totals);
     }
 
     /// <summary>
@@ -200,6 +200,9 @@ public sealed class OrdersReportSummaryHandlerTests
         string? paymentStatus = null) =>
         new(Tenant, from, to, advisorId, ClientId: null, paymentStatus);
 
-    private static OrdersReportAggregate Aggregate(int orderCount = 0, decimal total = 0m) =>
-        new(orderCount, total, 0m, total, [], [], []);
+    private static OrdersReportAggregate Aggregate(int orderCount = 0, decimal total = 0m)
+    {
+        IReadOnlyList<ReportMoneyDto> totals = total == 0m ? [] : [new ReportMoneyDto("COP", total)];
+        return new(orderCount, totals, [], totals, [], [], []);
+    }
 }

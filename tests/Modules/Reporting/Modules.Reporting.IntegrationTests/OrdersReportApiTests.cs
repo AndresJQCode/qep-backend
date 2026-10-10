@@ -54,6 +54,7 @@ public sealed class OrdersReportApiTests
         // cotizaciones, no a los reportes (spec 2026-09-11, D1). Ver la seccion del contrato al
         // respecto.
         Assert.Equal(tenant.OwnerEmail, item.AdvisorName);
+        Assert.Equal("COP", item.Currency);
         Assert.Equal(quotation.Subtotal, item.Subtotal);
         Assert.Equal(quotation.TaxAmount, item.TaxAmount);
         Assert.Equal(quotation.Total, item.Total);

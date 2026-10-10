@@ -88,6 +88,6 @@ public sealed class QuotationFinalConsumerContractTests
             QuotationId.New(), Guid.CreateVersion7(), "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), null, null, null,
             QuotationParties.Empty with { BillsToFinalConsumer = true },
-            null, QuotationCurrency.Cop, false, customerVatSurplus, new MemberId(Guid.CreateVersion7()),
+            null, "COP", false, customerVatSurplus, new MemberId(Guid.CreateVersion7()),
             DateTimeOffset.UtcNow);
 }

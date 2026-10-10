@@ -343,12 +343,12 @@ public sealed class GlobalScaleDiscountApiTests
                 new
                 {
                     fromUnit = 1, toUnit = 99, discount = 0m,
-                    restriction = "multiple", multiple = 1, finalCop = 100_000m
+                    restriction = "multiple", multiple = 1
                 },
                 new
                 {
                     fromUnit = 100, toUnit = 999_999, discount = 25m,
-                    restriction = "packaging_unit", finalCop = 75_000m
+                    restriction = "packaging_unit"
                 }
             ],
             packagingUnits: FiftyPack);

@@ -606,13 +606,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
-            new QuotationMinimumPurchaseResponse(
-                quotation.MinimumPurchase.Met,
-                quotation.MinimumPurchase.Units,
-                quotation.MinimumPurchase.MinimumUnits,
-                quotation.MinimumPurchase.MinimumTotal,
-                quotation.MinimumPurchase.MissingUnits,
-                quotation.MinimumPurchase.MissingTotal),
+            MinimumPurchaseOf(quotation),
             [],
             quotation.Version,
             quotation.GlobalScaleFloor,
@@ -620,6 +614,42 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             // El stub no mira el catalogo, asi que no puede resolver los pisos disponibles. El
             // composer real los llena; esto solo ejerce que el PDF se regenere.
             []));
+
+    // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
+    // way the real composer does, against the defaults a tenant without settings reads.
+    private static QuotationMinimumPurchaseResponse MinimumPurchaseOf(QuotationDto quotation)
+    {
+        var minimum = QuotationMinimumPurchase.DescribeFor(
+            quotation.Items.Sum(item => item.Quantity),
+            quotation.Total,
+            quotation.Currency,
+            QuotationSettings.Default);
+
+        return new QuotationMinimumPurchaseResponse(
+            minimum.Met,
+            minimum.Units,
+            minimum.MinimumUnits,
+            minimum.Currency,
+            minimum.MinimumTotal,
+            minimum.MissingUnits,
+            minimum.MissingTotal);
+    }
+}
+
+/// <summary>Settings held in memory; <see cref="QuotationSettings.Default"/> unless the test
+/// gives others.</summary>
+public sealed class FixedQuotationSettingsStore(QuotationSettings? settings = null) : IQuotationSettingsStore
+{
+    public QuotationSettings Settings { get; private set; } = settings ?? QuotationSettings.Default;
+
+    public Task<QuotationSettings> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Settings);
+
+    public Task SaveAsync(Guid tenantId, QuotationSettings settings, CancellationToken cancellationToken)
+    {
+        Settings = settings;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>

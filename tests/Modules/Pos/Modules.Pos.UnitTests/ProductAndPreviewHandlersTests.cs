@@ -327,4 +327,20 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.Contains(tooMany.Errors, failure => failure.PropertyName == "Lines");
         Assert.Equal(200, atTheLimit.Lines.Count);
     }
+
+    [Fact]
+    public async Task SearchInAnEurTenantPricesInEurAndMarksProductsWithoutItAsUnsellable()
+    {
+        var bed = new PosTestBed { DefaultCurrency = new FakeTenantDefaultCurrency("EUR") };
+        bed.Products.Add("SH-400", "Shampoo 400 ml", null, 0,
+            prices: new Dictionary<string, decimal> { ["COP"] = 40_000m, ["EUR"] = 9.5m });
+        bed.Products.Add("CR-77", "Crema", 25_000m, 19);
+
+        var page = await Search(bed, Seller).HandleAsync(
+            new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
+
+        Assert.Equal(9.5m, page.Items.Single(item => item.Code == "SH-400").UnitPrice);
+        var cream = page.Items.Single(item => item.Code == "CR-77");
+        Assert.Equal((false, "PriceMissing", (decimal?)null), (cream.Sellable, cream.UnsellableReason, cream.UnitPrice));
+    }
 }

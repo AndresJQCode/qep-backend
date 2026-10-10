@@ -3,6 +3,7 @@ using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Reporting.Application;
 using Modules.Reporting.Domain;
+using Modules.Tenancy.Application;
 
 namespace Bootstrapper;
 
@@ -27,7 +28,8 @@ namespace Bootstrapper;
 internal sealed class OrdersReportSource(
     QuotationsDbContext quotations,
     ReportingClientLookup clientLookup,
-    ReportingPeopleLookup peopleLookup) : IOrdersReportSource
+    ReportingPeopleLookup peopleLookup,
+    ITenantDefaultCurrency tenantDefaultCurrency) : IOrdersReportSource
 {
     public async Task<(IReadOnlyList<OrdersReportItemDto> Items, int Total)> ListAsync(
         OrdersReportCriteria criteria,
@@ -54,8 +56,8 @@ internal sealed class OrdersReportSource(
     /// metodo. Proyectarlo antes a un record nombrado —que fue el primer intento— hace que EF no
     /// vea a traves del constructor y falle con "could not be translated" en tiempo de ejecucion.
     ///
-    /// Son varias consultas y no una porque son agregaciones de distinta granularidad —el total,
-    /// la serie por mes y dos rankings—; una sola que las mezclara necesitaria funciones de
+    /// Son varias consultas y no una porque son agregaciones de distinta granularidad —los totales
+    /// por moneda, la serie por mes y dos rankings—; una sola que las mezclara necesitaria funciones de
     /// ventana que EF no arma. Todas atacan el mismo indice.
     /// </summary>
     public async Task<OrdersReportAggregate> SummarizeAsync(
@@ -73,26 +75,32 @@ internal sealed class OrdersReportSource(
                          on order.QuotationId equals quotation.Id
                      select new { order, quotation };
 
-        // GroupBy sobre una constante es el "agregar todo el conjunto", que traduce a un SELECT
-        // con agregados y sin GROUP BY. Sobre cero filas no devuelve ninguna, y de ahi el
-        // fallback: un resumen vacio es cero, nunca nulo.
-        var totals = await joined
-            .GroupBy(_ => 1)
+        // One row per currency: COP and USD are never added together (spec 2026-10-08, Reports).
+        // Grouping by currency also replaces the old GroupBy over a constant: zero orders give zero
+        // rows, and the count below is zero.
+        var byCurrency = await joined
+            .GroupBy(row => row.quotation.Currency)
             .Select(group => new
             {
+                Currency = group.Key,
                 Count = group.Count(),
                 Subtotal = group.Sum(row => row.quotation.Subtotal),
                 TaxAmount = group.Sum(row => row.quotation.TaxAmount),
                 Total = group.Sum(row => row.quotation.Total),
             })
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
 
         // Sin pedidos no hay nada que agrupar ni ninguna etiqueta que resolver: cinco consultas
         // menos, y el resto del metodo tendria que tratar el cero como caso especial igual.
-        if (totals is null || totals.Count == 0)
+        var orderCount = byCurrency.Sum(row => row.Count);
+        if (orderCount == 0)
         {
-            return new OrdersReportAggregate(0, 0m, 0m, 0m, [], [], []);
+            return new OrdersReportAggregate(0, [], [], [], [], [], []);
         }
+
+        var subtotals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Subtotal)));
+        var taxAmounts = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.TaxAmount)));
+        var totals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Total)));
 
         // La serie mensual va en el mes del tenant (spec 2026-09-17, punto 5): el pedido de las 20:00
         // del último día en Bogotá es de ese mes, aunque en UTC ya sea el siguiente. Se agrupa en SQL
@@ -108,40 +116,64 @@ internal sealed class OrdersReportSource(
             {
                 TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Year,
                 TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Month,
+                row.quotation.Currency,
             })
             .Select(group => new
             {
                 group.Key.Year,
                 group.Key.Month,
+                group.Key.Currency,
                 Count = group.Count(),
                 Total = group.Sum(row => row.quotation.Total),
             })
-            .OrderBy(point => point.Year)
-            .ThenBy(point => point.Month)
             .ToListAsync(cancellationToken);
 
+        // Folded in memory: one point per month, its totals per currency.
         var monthly = monthRows
-            .Select(point => new ReportMonthlyPointDto(
-                point.Year, point.Month, point.Count, point.Total))
+            .GroupBy(point => (point.Year, point.Month))
+            .OrderBy(month => month.Key.Year)
+            .ThenBy(month => month.Key.Month)
+            .Select(month => new ReportMonthlyPointDto(
+                month.Key.Year,
+                month.Key.Month,
+                month.Sum(point => point.Count),
+                ReportMoney.From(month.Select(point => (point.Currency, point.Total)))))
             .ToArray();
 
-        // Desempate por id en los dos rankings: sin un orden total, dos entidades con el mismo
-        // monto pueden intercambiarse entre dos llamadas identicas y el ranking "parpadea".
+        // Ranked by the total in the tenant default currency (plan decision A10): a single-currency
+        // tenant ranks exactly as before, and a mixed one has a deterministic order that never adds
+        // two currencies. Count and id break ties so the ranking does not "blink" between two
+        // identical calls.
+        var defaultCurrency = await tenantDefaultCurrency.GetAsync(criteria.TenantId, cancellationToken);
+
         var topAdvisors = await joined
             .GroupBy(row => row.quotation.AdvisorId)
             .Select(group => new
             {
                 AdvisorId = group.Key,
                 Count = group.Count(),
-                Total = group.Sum(row => row.quotation.Total),
+                Ranking = group.Sum(row => row.quotation.Currency == defaultCurrency ? row.quotation.Total : 0m),
             })
-            .OrderByDescending(entry => entry.Total)
+            .OrderByDescending(entry => entry.Ranking)
+            .ThenByDescending(entry => entry.Count)
             .ThenBy(entry => entry.AdvisorId)
             .Take(rankSize)
             .ToListAsync(cancellationToken);
 
+        var advisorIds = topAdvisors.Select(entry => entry.AdvisorId).ToArray();
+        var advisorTotals = await joined
+            .Where(row => advisorIds.Contains(row.quotation.AdvisorId))
+            .GroupBy(row => new { row.quotation.AdvisorId, row.quotation.Currency })
+            .Select(group => new
+            {
+                group.Key.AdvisorId,
+                group.Key.Currency,
+                Total = group.Sum(row => row.quotation.Total),
+            })
+            .ToListAsync(cancellationToken);
+
         var emails = await peopleLookup.EmailsByMembershipIdAsync(
-            topAdvisors.Select(entry => entry.AdvisorId.Value).ToArray(), cancellationToken);
+            advisorIds.Select(id => id.Value).ToArray(), cancellationToken);
 
         var byAdvisor = topAdvisors
             .Select(entry => new ReportRankEntryDto(
@@ -150,11 +182,13 @@ internal sealed class OrdersReportSource(
                 Secondary: null,
                 EntityCount: 1,
                 entry.Count,
-                entry.Total))
+                ReportMoney.From(advisorTotals
+                    .Where(total => total.AdvisorId == entry.AdvisorId)
+                    .Select(total => (total.Currency, total.Total)))))
             .ToList();
 
         var otherAdvisors = await ReportRankFolding.FoldOthersAsync(
-            byAdvisor, rankSize, totals.Count, totals.Total,
+            byAdvisor, rankSize, orderCount, totals,
             () => joined
                 .Select(row => row.quotation.AdvisorId)
                 .Distinct()
@@ -170,16 +204,27 @@ internal sealed class OrdersReportSource(
             {
                 ClientId = group.Key,
                 Count = group.Count(),
-                Total = group.Sum(row => row.quotation.Total),
+                Ranking = group.Sum(row => row.quotation.Currency == defaultCurrency ? row.quotation.Total : 0m),
             })
-            .OrderByDescending(entry => entry.Total)
+            .OrderByDescending(entry => entry.Ranking)
+            .ThenByDescending(entry => entry.Count)
             .ThenBy(entry => entry.ClientId)
             .Take(rankSize)
             .ToListAsync(cancellationToken);
 
-        var clients = await clientLookup.FindAsync(
-            criteria.TenantId, topClients.Select(entry => entry.ClientId).ToArray(),
-            cancellationToken);
+        var clientIds = topClients.Select(entry => entry.ClientId).ToArray();
+        var clientTotals = await joined
+            .Where(row => clientIds.Contains(row.quotation.ClientId))
+            .GroupBy(row => new { row.quotation.ClientId, row.quotation.Currency })
+            .Select(group => new
+            {
+                group.Key.ClientId,
+                group.Key.Currency,
+                Total = group.Sum(row => row.quotation.Total),
+            })
+            .ToListAsync(cancellationToken);
+
+        var clients = await clientLookup.FindAsync(criteria.TenantId, clientIds, cancellationToken);
 
         var byClient = topClients
             .Select(entry =>
@@ -191,12 +236,14 @@ internal sealed class OrdersReportSource(
                     client?.Cuc,
                     EntityCount: 1,
                     entry.Count,
-                    entry.Total);
+                    ReportMoney.From(clientTotals
+                        .Where(total => total.ClientId == entry.ClientId)
+                        .Select(total => (total.Currency, total.Total))));
             })
             .ToList();
 
         var otherClients = await ReportRankFolding.FoldOthersAsync(
-            byClient, rankSize, totals.Count, totals.Total,
+            byClient, rankSize, orderCount, totals,
             () => joined
                 .Select(row => row.quotation.ClientId)
                 .Distinct()
@@ -207,8 +254,7 @@ internal sealed class OrdersReportSource(
         }
 
         return new OrdersReportAggregate(
-            totals.Count, totals.Subtotal, totals.TaxAmount, totals.Total,
-            monthly, byAdvisor, byClient);
+            orderCount, subtotals, taxAmounts, totals, monthly, byAdvisor, byClient);
     }
 
     /// <summary>
@@ -300,6 +346,7 @@ internal sealed class OrdersReportSource(
                 row.quotation.ClientId,
                 row.order.Status,
                 row.order.PaymentStatus,
+                row.quotation.Currency,
                 row.quotation.Subtotal,
                 row.quotation.TaxAmount,
                 row.quotation.Total));
@@ -338,6 +385,7 @@ internal sealed class OrdersReportSource(
                     client?.Cuc,
                     row.Status.ToString(),
                     row.PaymentStatus.ToString(),
+                    row.Currency,
                     row.Subtotal,
                     row.TaxAmount,
                     row.Total);
@@ -369,6 +417,7 @@ internal sealed class OrdersReportSource(
         Guid ClientId,
         OrderStatus Status,
         OrderPaymentStatus PaymentStatus,
+        string Currency,
         decimal Subtotal,
         decimal TaxAmount,
         decimal Total);

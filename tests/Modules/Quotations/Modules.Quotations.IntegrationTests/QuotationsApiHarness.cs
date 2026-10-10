@@ -420,7 +420,8 @@ internal static class QuotationsApiHarness
         decimal baseCop = 100_000m,
         object[]? scales = null,
         Guid? taxRateId = null,
-        int[]? packagingUnits = null)
+        int[]? packagingUnits = null,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -431,7 +432,8 @@ internal static class QuotationsApiHarness
                 taxRateId,
                 pricing = new
                 {
-                    baseCop,
+                    // A given map wins over the COP shorthand, so tests can price in any currency.
+                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
                     scales = scales ?? DefaultScales(baseCop),
                     packagingUnits = packagingUnits ?? []
                 }
@@ -475,7 +477,7 @@ internal static class QuotationsApiHarness
             {
                 name,
                 code,
-                pricing = new { baseCop, scales = DefaultScales(baseCop) }
+                pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = baseCop }, scales = DefaultScales(baseCop) }
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
@@ -486,17 +488,17 @@ internal static class QuotationsApiHarness
         new
         {
             fromUnit = 1, toUnit = 9, discount = 0m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop
+            restriction = "multiple", multiple = 1
         },
         new
         {
             fromUnit = 10, toUnit = 19, discount = 5m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop * 0.95m
+            restriction = "multiple", multiple = 1
         },
         new
         {
             fromUnit = 20, toUnit = 999_999, discount = 10m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop * 0.90m
+            restriction = "multiple", multiple = 1
         }
     ];
 
@@ -512,7 +514,7 @@ internal static class QuotationsApiHarness
                 new
                 {
                     fromUnit = 10, toUnit = 19, discount = 5m,
-                    restriction = "multiple", multiple = 1, finalCop = baseCop * 0.95m
+                    restriction = "multiple", multiple = 1
                 }
             ]);
 
@@ -592,12 +594,11 @@ internal static class QuotationsApiHarness
     /// antes de copiarla, así que no alcanza con inventar un nombre de banco.
     /// </summary>
     public static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
-        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId)
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency = "COP")
     {
         var cityId = await EnsureCityIdAsync(client);
         const string bankName = "Bancolombia";
         var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
-        const string currency = "COP";
 
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/companies",
@@ -842,11 +843,18 @@ internal static class QuotationsApiHarness
             Task.FromResult($"https://r2.example.com/{storageKey}?X-Amz-Signature=stub");
     }
 
-    private sealed class StubPdfRenderer : IQuotationPdfRenderer
+    /// <summary>Keeps the last document it was asked to render, so a test can assert what the
+    /// mapper sends to the PDF service without rendering anything.</summary>
+    public sealed class StubPdfRenderer : IQuotationPdfRenderer
     {
+        public QuotationPdfDocument? LastDocument { get; private set; }
+
         public Task<byte[]> RenderAsync(
-            QuotationPdfDocument document, CancellationToken cancellationToken) =>
-            Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+            QuotationPdfDocument document, CancellationToken cancellationToken)
+        {
+            LastDocument = document;
+            return Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+        }
     }
 
     private sealed record ProductResponseDto(Guid Id);
@@ -872,6 +880,9 @@ internal static class QuotationsApiHarness
         /// test, así que este harness sustituye la implementación real por una que guarda los
         /// bytes en un diccionario.</summary>
         public InMemoryObjectStorage ObjectStorage { get; } = new();
+
+        /// <summary>The stub that replaces the PDF service; exposes the last document rendered.</summary>
+        public StubPdfRenderer PdfRenderer { get; } = new();
 
         /// <summary>Doble de <c>IPublicObjectStorage</c> (spec 2026-09-15): el publicador real de
         /// comprobantes copia entre buckets de R2, que en una prueba no existen. Anota las copias y
@@ -950,7 +961,7 @@ internal static class QuotationsApiHarness
                 // un servicio ajeno, y consumiendo la cuota de una API key real. Mismo criterio
                 // que `IObjectStorage`, que tampoco habla con R2 aca.
                 services.RemoveAll<IQuotationPdfRenderer>();
-                services.AddSingleton<IQuotationPdfRenderer, StubPdfRenderer>();
+                services.AddSingleton<IQuotationPdfRenderer>(PdfRenderer);
 
                 // El adaptador real copia al bucket publico de R2 y falla si no esta
                 // configurado -- que es el caso aca, y a proposito: un envio que no puede

@@ -42,24 +42,24 @@ public sealed class CatalogSeedTests
         Assert.All(products, product => Assert.Equal(5, product.PriceScales.Count));
 
         var bronceador = products.Single(product => product.Code == "7416");
-        Assert.Equal(35900m, bronceador.PriceBaseCop);
-        Assert.Equal(9.97m, bronceador.PriceBaseUsd);
+        Assert.Equal(35900m, bronceador.PriceIn("COP"));
+        Assert.Equal(9.97m, bronceador.PriceIn("USD"));
         // Ocho de los diecinueve nombres llevan tilde; si el recurso embebido se lee con la
         // codificación equivocada, esta es la aserción que lo detecta.
         Assert.Equal(
             "COMBO ROSADO RITUAL DE SEDUCCIÓN",
             products.Single(product => product.Code == "3001").Name);
 
-        // Los finales no vienen en el JSON: los calcula el seeder con PriceScale.FinalFor a
-        // partir de los precios base. 9.97 × 0.85 = 8.4745 → 8.47; 35900 × 0.85 = 30515.
+        // Finals are derived, never stored (spec D4): PriceScale.FinalFor over the product prices.
+        // 9.97 × 0.85 = 8.4745 → 8.47; 35900 × 0.85 = 30515.
         var bronceadorFirst = bronceador.PriceScales.Single(scale => scale.FromUnit == 6);
         Assert.Equal(48, bronceadorFirst.ToUnit);
         Assert.Equal(15m, bronceadorFirst.Discount);
         Assert.Equal(PriceScaleRestriction.Multiple, bronceadorFirst.Restriction);
         Assert.Equal(3, bronceadorFirst.Multiple);
         Assert.True(bronceadorFirst.AllowGrouping);
-        Assert.Equal(8.47m, bronceadorFirst.FinalUsd);
-        Assert.Equal(30515m, bronceadorFirst.FinalCop);
+        Assert.Equal(8.47m, PriceScale.FinalFor(bronceador.PriceIn("USD"), bronceadorFirst.Discount));
+        Assert.Equal(30515m, PriceScale.FinalFor(bronceador.PriceIn("COP"), bronceadorFirst.Discount));
 
         // 9.97 × 0.65 = 6.4805 → 6.48; 35900 × 0.65 = 23335.
         var bronceadorLast = bronceador.PriceScales.Single(scale => scale.FromUnit == 1000);
@@ -70,8 +70,8 @@ public sealed class CatalogSeedTests
         // El empaque es del producto desde el 2026-10-01, no de la escala.
         Assert.Equal([108], bronceador.PackagingUnits);
         Assert.False(bronceadorLast.AllowGrouping);
-        Assert.Equal(6.48m, bronceadorLast.FinalUsd);
-        Assert.Equal(23335m, bronceadorLast.FinalCop);
+        Assert.Equal(6.48m, PriceScale.FinalFor(bronceador.PriceIn("USD"), bronceadorLast.Discount));
+        Assert.Equal(23335m, PriceScale.FinalFor(bronceador.PriceIn("COP"), bronceadorLast.Discount));
 
         // KIT KERATINA tiene su propia columna de descuentos. 33.33 es el 0.6667 de la hoja:
         // 39.47 × 0.6667 = 26.3146… → 26.31; 150000 × 0.6667 = 100005.
@@ -81,8 +81,8 @@ public sealed class CatalogSeedTests
         Assert.Equal(33.33m, keratinaThird.Discount);
         Assert.Equal(PriceScaleRestriction.PackagingUnit, keratinaThird.Restriction);
         Assert.Equal([25], keratina.PackagingUnits);
-        Assert.Equal(26.31m, keratinaThird.FinalUsd);
-        Assert.Equal(100005m, keratinaThird.FinalCop);
+        Assert.Equal(26.31m, PriceScale.FinalFor(keratina.PriceIn("USD"), keratinaThird.Discount));
+        Assert.Equal(100005m, PriceScale.FinalFor(keratina.PriceIn("COP"), keratinaThird.Discount));
     }
 
     // La app reinicia sola en k8s, así que la semilla corre muchas veces sobre la misma base.

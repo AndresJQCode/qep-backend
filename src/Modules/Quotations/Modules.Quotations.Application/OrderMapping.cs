@@ -42,7 +42,7 @@ internal static class OrderMapping
         row.Order.PaymentStatus.ToString(),
         row.Quotation.PaymentMethod,
         row.Order.ConvertedAt,
-        row.Quotation.Currency.ToCode(),
+        row.Quotation.Currency,
         row.Quotation.Total);
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(

@@ -71,7 +71,8 @@ public sealed record PriceChangeReportFilter(
     DateOnly? To,
     Guid? ProductId,
     Guid? ChangedBy,
-    string? Field);
+    string? Field,
+    string? Currency = null);
 
 /// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
 public sealed record PriceChangeReportCriteria(
@@ -79,7 +80,8 @@ public sealed record PriceChangeReportCriteria(
     ReportPeriod Period,
     Guid? ProductId,
     Guid? ChangedBy,
-    PriceChangeField? Field);
+    PriceChangeField? Field,
+    string? Currency);
 
 /// <summary>
 /// <c>From</c> y <c>To</c> cortan por **fecha de alta** (<c>Customer.CreatedAt</c>), que es la
@@ -141,7 +143,8 @@ public static class ReportFilterMapping
             ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.ProductId,
             filter.ChangedBy,
-            ReportFilterParser.ParsePriceChangeField(filter.Field));
+            ReportFilterParser.ParsePriceChangeField(filter.Field),
+            string.IsNullOrWhiteSpace(filter.Currency) ? null : Currencies.Normalize(filter.Currency));
 
     public static CustomerReportCriteria ToCriteria(this CustomerReportFilter filter, TenantCalendar calendar) =>
         new(
@@ -199,7 +202,11 @@ public sealed class PriceChangeReportFilterValidator : AbstractValidator<PriceCh
         RuleFor(filter => filter.Field)
             .Must(value => ReportFilterParser.TryParsePriceChangeField(value, out _))
             .When(filter => !string.IsNullOrWhiteSpace(filter.Field))
-            .WithMessage("field must be one of PriceBaseUsd, PriceBaseCop, ScaleDiscount.");
+            .WithMessage("field must be one of PriceBase, ScaleDiscount.");
+        RuleFor(filter => filter.Currency)
+            .Must(Currencies.IsSupported)
+            .When(filter => !string.IsNullOrWhiteSpace(filter.Currency))
+            .WithMessage("currency must be one of the catalogue currencies.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)

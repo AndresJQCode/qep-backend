@@ -68,12 +68,40 @@ public sealed class PriceChangeReportSummaryHandlerTests
         Assert.Empty(source.SummarizedCriteria);
     }
 
-    /// <summary>Los tres campos del histórico, y no más: el resumen filtra exactamente por lo
+    [Fact]
+    public async Task SummarizingRejectsACurrencyOutsideTheCatalogue()
+    {
+        var source = new FakePriceChangeReportSource();
+        var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            handler.HandleAsync(
+                new GetPriceChangeReportSummaryQuery(Filter(currency: "XYZ")),
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == "Currency");
+        Assert.Empty(source.SummarizedCriteria);
+    }
+
+    [Fact]
+    public async Task SummarizingNormalizesTheCurrencyBeforeAskingTheSource()
+    {
+        var source = new FakePriceChangeReportSource();
+        var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
+
+        await handler.HandleAsync(
+            new GetPriceChangeReportSummaryQuery(Filter(currency: "usd")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("USD", Assert.Single(source.SummarizedCriteria).Currency);
+    }
+
+    /// <summary>Los dos campos del histórico, y no más: el resumen filtra exactamente por lo
     /// mismo que el listado.</summary>
     [Fact]
-    public async Task SummarizingAcceptsTheThreeRealFields()
+    public async Task SummarizingAcceptsTheTwoRealFields()
     {
-        foreach (var field in new[] { "PriceBaseUsd", "PriceBaseCop", "ScaleDiscount" })
+        foreach (var field in new[] { "PriceBase", "ScaleDiscount" })
         {
             var source = new FakePriceChangeReportSource();
             var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
@@ -206,6 +234,7 @@ public sealed class PriceChangeReportSummaryHandlerTests
         DateOnly? to = null,
         Guid? productId = null,
         Guid? changedBy = null,
-        string? field = null) =>
-        new(Tenant, from, to, productId, changedBy, field);
+        string? field = null,
+        string? currency = null) =>
+        new(Tenant, from, to, productId, changedBy, field, currency);
 }

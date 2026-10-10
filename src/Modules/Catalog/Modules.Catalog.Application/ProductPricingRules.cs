@@ -1,5 +1,6 @@
 using FluentValidation;
 using Modules.Catalog.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
@@ -7,10 +8,9 @@ namespace Modules.Catalog.Application;
 /// Validación de forma para precio y escalas (CAT-09), compartida por <c>POST</c> y
 /// <c>PUT</c> por inclusión, mismo criterio que <see cref="ProductWriteRules"/>.
 ///
-/// Sólo lo que es atribuible a un campo concreto vive acá: límites numéricos y el rango
-/// desde/hasta de cada escala. Las reglas que cruzan producto y escala —moneda de la escala
-/// sin base del producto, precio final que no cuadra con base × descuento, restricción sin su
-/// campo obligatorio— las hace cumplir el dominio (<see cref="Product"/>/<see cref="PriceScale"/>)
+/// Sólo lo que es atribuible a un campo concreto vive acá: cada fila de precios, los límites
+/// numéricos y el rango desde/hasta de cada escala. Las reglas que cruzan producto y escala
+/// —restricción sin su campo obligatorio— las hace cumplir el dominio (<see cref="Product"/>/<see cref="PriceScale"/>)
 /// y llegan como 422 con código, sin mapa por campo: no hay un único campo al que apuntar
 /// cuando el problema es la relación entre dos.
 /// </summary>
@@ -18,8 +18,20 @@ internal sealed class ProductPricingRules : AbstractValidator<ProductPricingRequ
 {
     public ProductPricingRules()
     {
-        RuleFor(pricing => pricing.BaseUsd).GreaterThanOrEqualTo(0m).When(p => p.BaseUsd.HasValue);
-        RuleFor(pricing => pricing.BaseCop).GreaterThanOrEqualTo(0m).When(p => p.BaseCop.HasValue);
+        // Per row (CurrencyAmountRules). A missing or empty map is left to the domain, which
+        // answers catalog.product.price_required: a code and not a field, because no row is wrong.
+        RuleFor(pricing => pricing.Prices).Custom((prices, context) =>
+        {
+            if (prices is null)
+            {
+                return;
+            }
+
+            foreach (var failure in CurrencyAmountRules.Check(prices, context.PropertyPath))
+            {
+                context.AddFailure(failure);
+            }
+        });
 
         RuleForEach(pricing => pricing.Scales).SetValidator(new PriceScaleRequestRules());
     }
@@ -35,7 +47,5 @@ internal sealed class PriceScaleRequestRules : AbstractValidator<PriceScaleReque
             .WithMessage("The price scale's ending unit must be greater than its starting unit.");
         RuleFor(scale => scale.Discount)
             .InclusiveBetween((decimal)PriceScale.MinDiscount, (decimal)PriceScale.MaxDiscount);
-        RuleFor(scale => scale.FinalUsd).GreaterThanOrEqualTo(0m).When(s => s.FinalUsd.HasValue);
-        RuleFor(scale => scale.FinalCop).GreaterThanOrEqualTo(0m).When(s => s.FinalCop.HasValue);
     }
 }

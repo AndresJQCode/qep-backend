@@ -23,6 +23,7 @@ public sealed class ProductPriceChange
         Guid tenantId,
         ProductId productId,
         ProductPriceField field,
+        string? currency,
         int? scaleFromUnit,
         int? scaleToUnit,
         decimal? previousValue,
@@ -34,6 +35,7 @@ public sealed class ProductPriceChange
         TenantId = tenantId;
         ProductId = productId;
         Field = field;
+        Currency = currency;
         ScaleFromUnit = scaleFromUnit;
         ScaleToUnit = scaleToUnit;
         PreviousValue = previousValue;
@@ -49,6 +51,10 @@ public sealed class ProductPriceChange
     public ProductId ProductId { get; private set; }
 
     public ProductPriceField Field { get; private set; }
+
+    /// <summary>The currency of a <see cref="ProductPriceField.PriceBase"/> row; null for a
+    /// <see cref="ProductPriceField.ScaleDiscount"/> row (a discount is a percentage).</summary>
+    public string? Currency { get; private set; }
 
     /// <summary>
     /// Qué escala cambió, identificada por su rango. No nulo **sólo** cuando
@@ -82,31 +88,17 @@ public sealed class ProductPriceChange
     public DateTimeOffset ChangedAt { get; private set; }
 
     /// <summary>
-    /// Una fila de cambio de uno de los dos precios base del producto.
+    /// A change row for the base price of the product in one currency.
     ///
-    /// <c>internal</c> a propósito, igual que <c>PriceScale.Create</c>: el único que decide qué
-    /// cambió es <see cref="ProductPriceChangeDetector"/>, y dejar que un caso de uso arme filas
-    /// a mano abriría la puerta a un histórico que no se corresponde con lo que se guardó.
+    /// <c>internal</c> on purpose, like <c>PriceScale.Create</c>: only
+    /// <see cref="ProductPriceChangeDetector"/> decides what changed, and letting a use case build
+    /// rows by hand would open the door to a history that does not match what was saved.
     /// </summary>
     internal static ProductPriceChange ForBasePrice(
-        Guid tenantId,
-        ProductId productId,
-        ProductPriceField field,
-        decimal? previousValue,
-        decimal? newValue,
-        Guid changedBy,
-        DateTimeOffset changedAt) =>
-        new(
-            ProductPriceChangeId.New(),
-            tenantId,
-            productId,
-            field,
-            scaleFromUnit: null,
-            scaleToUnit: null,
-            previousValue,
-            newValue,
-            changedBy,
-            changedAt);
+        Guid tenantId, ProductId productId, string currency,
+        decimal? previousValue, decimal? newValue, Guid changedBy, DateTimeOffset changedAt) =>
+        new(ProductPriceChangeId.New(), tenantId, productId, ProductPriceField.PriceBase, currency,
+            scaleFromUnit: null, scaleToUnit: null, previousValue, newValue, changedBy, changedAt);
 
     /// <summary>
     /// Una fila de cambio del descuento de una escala. Ver <see cref="ForBasePrice"/> sobre por
@@ -114,23 +106,8 @@ public sealed class ProductPriceChange
     /// por su rango.
     /// </summary>
     internal static ProductPriceChange ForScaleDiscount(
-        Guid tenantId,
-        ProductId productId,
-        int scaleFromUnit,
-        int scaleToUnit,
-        decimal? previousValue,
-        decimal? newValue,
-        Guid changedBy,
-        DateTimeOffset changedAt) =>
-        new(
-            ProductPriceChangeId.New(),
-            tenantId,
-            productId,
-            ProductPriceField.ScaleDiscount,
-            scaleFromUnit,
-            scaleToUnit,
-            previousValue,
-            newValue,
-            changedBy,
-            changedAt);
+        Guid tenantId, ProductId productId, int scaleFromUnit, int scaleToUnit,
+        decimal? previousValue, decimal? newValue, Guid changedBy, DateTimeOffset changedAt) =>
+        new(ProductPriceChangeId.New(), tenantId, productId, ProductPriceField.ScaleDiscount, currency: null,
+            scaleFromUnit, scaleToUnit, previousValue, newValue, changedBy, changedAt);
 }
