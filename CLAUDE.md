@@ -67,6 +67,9 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
   **estado** y cambia entre comandos —mismo criterio que con el checkout de `qep-frontend`—,
   así que ni el contexto inicial ni un `git status` de hace diez minutos son autoridad sobre
   ella.
+- **Prohibido mergear a `main`** (decisión del owner, 2026-10-10). Los merges de un agente
+  terminan en `develop`; llevar `develop` a `main` lo hace el owner, nunca un agente. Un pedido de
+  "mergear" o "publicar" sin destino significa `develop`.
 
 ## Entorno de desarrollo
 
