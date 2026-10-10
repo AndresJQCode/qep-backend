@@ -139,7 +139,7 @@ Base: `/api/v1/tenants/{tenantId}`. Enums por nombre. Lo que no se menciona sigu
                "username": "laura.perez" | null,
                "profileName": "Laura Pérez" | null },
   "customer": { "id": "…", "name": "Laura Pérez", "isComplete": false } | null,
-  "assignedTo": { "memberId": "…", "displayName": "Andrés" } | null,
+  "assignedTo": { "memberId": "…", "displayName": "Andrés", "isMe": true } | null,
   "status": "Open", "unreadCount": 2, "lastMessage": { … } | null,
   "customerWindowExpiresAt": "…" | null, "updatedAt": "…", "version": 3 }
 ```
@@ -151,6 +151,9 @@ Base: `/api/v1/tenants/{tenantId}`. Enums por nombre. Lo que no se menciona sigu
   `isComplete` viaja para que el encabezado del hilo ofrezca «Completar ficha» sin otra llamada
   (BFF; D-A8). `customer` sólo es `null` en una conversación vieja sin cliente y sin coincidencia
   por teléfono.
+- `assignedTo.isMe` es `true` cuando `assigned_member_id` es la membresía activa de quien llama en ese
+  tenant (D-A13). BFF: la SPA no conoce su `memberId` (`/auth/me` y `/authorization/me` sólo dan el
+  `userId`), así que no puede decidir sola si la conversación es suya. Se resuelve una vez por request.
 - `assignedTo.displayName` nunca es `null`: la membresía que ya no está viaja como
   `"Miembro eliminado"` (D-M20 del spec base).
 - `lastMessage` nunca es un evento (§6.1.5).
@@ -851,6 +854,7 @@ al final, comparada por nombre contra `develop` (base §12).
 | D-A10 | `counts.mine` y `counts.unassigned` sólo cuentan abiertas | Quitar un filtro |
 | D-A11 | `CK_customers_complete_fields` sólo sobre columnas hoy `NOT NULL`; teléfono, correo y ciudad siguen en el validador | Un backfill y ampliar el `CHECK` |
 | D-A12 | `customer_id` en la conversación reemplaza la decisión 10 del spec base (emparejar al leer); el teléfono queda sólo para filas viejas | — (es lo que el owner pidió; se anota porque contradice el spec base) |
+| D-A13 | `assignedTo.isMe` calculado en el servidor, porque la SPA no conoce su `memberId` | Un campo; sin él, el frontend no sabe si la conversación es suya |
 
 ### Riesgos
 
