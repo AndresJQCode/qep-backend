@@ -1,6 +1,10 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Persistence;
 using Npgsql;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
@@ -152,6 +156,11 @@ public sealed class MessagingPersistenceTests
             """INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, details, created_at) VALUES (gen_random_uuid(), @c, @t, @n, now(), 3, 1, 2, '{"type":"Taken"}', now())""",
             ("c", conversationId), ("t", tenantId), ("n", connectionId)));
         Assert.Equal("CK_messages_system_is_event", systemText.ConstraintName);
+        // La otra mitad de la igualdad: un Event que no es System (Inbound). Con details y status 2, ningún otro CHECK falla.
+        var inboundEvent = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            """INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, details, created_at) VALUES (gen_random_uuid(), @c, @t, @n, now(), 1, 13, 2, '{"type":"Taken"}', now())""",
+            ("c", conversationId), ("t", tenantId), ("n", connectionId)));
+        Assert.Equal("CK_messages_system_is_event", inboundEvent.ConstraintName);
         var eventWithoutDetails = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
             "INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, created_at) VALUES (gen_random_uuid(), @c, @t, @n, now(), 3, 13, 2, now())",
             ("c", conversationId), ("t", tenantId), ("n", connectionId)));
@@ -163,7 +172,25 @@ public sealed class MessagingPersistenceTests
         await SeedBsuidConversationAsync(factory, connectionString, tenantId, connectionId, "CO.2", "573001234567");
         await SeedBsuidConversationAsync(factory, connectionString, tenantId, connectionId, "CO.3", "573001234567");
         await SeedConversationAsync(factory, tenantId, connectionId, "573001234567");
-        await Assert.ThrowsAnyAsync<Exception>(() => SeedConversationAsync(factory, tenantId, connectionId, "573001234567"));
+        var legacyDuplicate = await Assert.ThrowsAsync<DbUpdateException>(() => SeedConversationAsync(factory, tenantId, connectionId, "573001234567"));
+        Assert.Equal("IX_conversations_connection_wa_legacy", Assert.IsType<PostgresException>(legacyDuplicate.InnerException).ConstraintName);
+    }
+
+    // El Down de AddBsuidAssignmentAndEvents deja wa_id como lo creó InitialMessaging: NOT NULL y sin DEFAULT.
+    // Un DEFAULT '' que el esquema original nunca tuvo dejaría entrar una conversación sin teléfono en silencio.
+    [Fact]
+    public async Task TheDownOfAddBsuidAssignmentAndEventsRestoresWaIdWithoutDefault()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var scope = factory.Services.CreateScope();
+        var migrator = scope.ServiceProvider.GetRequiredService<MessagingDbContext>().GetService<IMigrator>();
+
+        await migrator.MigrateAsync("20261010003115_InitialMessaging", Ct);
+
+        Assert.Equal("NO|", await ScalarAsync<string>(connectionString,
+            "SELECT is_nullable || '|' || coalesce(column_default, '') FROM information_schema.columns WHERE table_schema = 'messaging' AND table_name = 'conversations' AND column_name = 'wa_id'"));
     }
 
     [Fact]
