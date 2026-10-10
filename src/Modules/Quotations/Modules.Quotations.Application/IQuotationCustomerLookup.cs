@@ -65,10 +65,11 @@ public interface IQuotationCustomerLookup
 // WithRetention/VatSurplus se agregan para el snapshot de totales al crear la cotizacion
 // (Quotation.CustomerWithRetention/CustomerVatSurplus): igual criterio que Name/Phone/Address
 // arriba, un pass-through desde Customer para no ir y volver al modulo por dos booleanos.
+// Cuc es nulo en un cliente incompleto (spec 2026-10-10 §6.2); QuotationCustomerEligibility lo rechaza.
 public sealed record QuotationCustomerRef(
     Guid Id,
     Guid TenantId,
-    string Cuc,
+    string? Cuc,
     bool IsActive,
     string Name,
     string? Phone,

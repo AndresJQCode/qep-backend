@@ -24,6 +24,12 @@ public sealed class Customer
     // consecutivo (6). 28 como maximo, y 32 deja margen sin tener que tocar esta constante.
     public const int CucMaxLength = 32;
 
+    /// <summary>Spec 2026-10-10 §6.2: el BSUID de Meta mide hasta 131 (2 + 1 + 128); 150 deja margen.</summary>
+    public const int WhatsAppUserIdMaxLength = 150;
+
+    // P14: libphonenumber ignora la región cuando el número empieza con «+», pero ToE164 exige una.
+    private const string UnknownRegion = "ZZ";
+
     /// <summary>
     /// Colombia en ISO-3166-1 alpha-2. Es una bifurcacion de negocio y no un string suelto: con
     /// este pais el domicilio se ubica con la ciudad DIVIPOLA (<see cref="CityId"/>) y con
@@ -35,11 +41,7 @@ public sealed class Customer
     // punto de entrada, y es el que hace cumplir los invariantes.
     private Customer()
     {
-        Cuc = string.Empty;
         Name = string.Empty;
-        IdentificationNumber = string.Empty;
-        Address = string.Empty;
-        Country = string.Empty;
     }
 
     private Customer(
@@ -82,8 +84,9 @@ public sealed class Customer
         Address = string.Empty;
         Country = string.Empty;
         Assign(contact);
-        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country ?? UnknownRegion);
         Assign(commercial);
+        Completeness = CustomerCompleteness.Complete;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -104,8 +107,10 @@ public sealed class Customer
     ///
     /// Donde vive su emision es `SDD-OD-06`, que sigue abierta: hoy la resuelve este modulo porque
     /// no existe un modulo `identifiers` al que delegarla.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public string Cuc { get; private set; }
+    public string? Cuc { get; private set; }
 
     /// <summary>
     /// A quien se le habla: la persona de contacto del cliente. En un cliente que es una empresa
@@ -151,10 +156,13 @@ public sealed class Customer
     /// <summary>
     /// El tipo de documento. Junto con <see cref="IdentificationNumber"/> forma la clave unica del
     /// cliente dentro del tenant.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public IdentificationType IdentificationType { get; private set; }
+    public IdentificationType? IdentificationType { get; private set; }
 
-    public string IdentificationNumber { get; private set; }
+    /// <summary>Nulo en un cliente incompleto (spec 2026-10-10 §6.2).</summary>
+    public string? IdentificationNumber { get; private set; }
 
     /// <summary>
     /// Las dos partes de la identificacion como el value object que las valida.
@@ -164,9 +172,13 @@ public sealed class Customer
     /// un complex type. Aplanar el mapeo y conservar el value object para las firmas deja las dos
     /// cosas: un `Create` que no permite intercambiar tipo y numero, y un indice que se declara
     /// como cualquier otro.
+    ///
+    /// <c>null</c> mientras la ficha está incompleta (spec 2026-10-10 §6.2).
     /// </summary>
-    public CustomerIdentification Identification =>
-        new() { Type = IdentificationType, Number = IdentificationNumber };
+    public CustomerIdentification? Identification =>
+        IdentificationType is { } type && IdentificationNumber is { } number
+            ? new() { Type = type, Number = number }
+            : null;
 
     public bool IsActive { get; private set; }
 
@@ -186,16 +198,20 @@ public sealed class Customer
     /// 2026-09-18): <see cref="Addresses"/> son destinos de envío y su principal es sólo la que
     /// se ofrece primero. CLI-DIR-01 había fundido las dos cosas y marcar otra principal movía el
     /// domicilio; volvieron a separarse.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public string Address { get; private set; }
+    public string? Address { get; private set; }
 
     /// <summary>
     /// El pais del cliente, ISO-3166-1 alpha-2. Ver <see cref="CustomerContactInfo.Country"/>.
     ///
     /// Es el discriminante del domicilio: <c>CO</c> ⇒ <see cref="CityId"/>; cualquier otro ⇒
     /// <see cref="CityName"/>. Nunca los dos.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public string Country { get; private set; }
+    public string? Country { get; private set; }
 
     /// <summary>
     /// FK blanda a <c>Modules.Geography</c>: <see cref="Guid"/> y no un id fuertemente tipado de
@@ -220,8 +236,19 @@ public sealed class Customer
     /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado.
     /// Obligatoria: reemplaza al viejo enum fijo <c>CustomerClassification</c>, que no tenia
     /// relacion con este catalogo y ya no tiene consumidores.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public ClientClassificationId ClassificationId { get; private set; }
+    public ClientClassificationId? ClassificationId { get; private set; }
+
+    /// <summary>Spec 2026-10-10 §6.2. La base lo exige con <c>CK_customers_complete_fields</c>.</summary>
+    public CustomerCompleteness Completeness { get; private set; }
+
+    public bool IsComplete => Completeness == CustomerCompleteness.Complete;
+
+    /// <summary>Spec 2026-10-10 §6.2: el BSUID de WhatsApp de esta persona, único por tenant
+    /// (<c>IX_customers_tenant_whatsapp_user_id</c>). Lo pone la ingesta de Messaging; nunca viaja por HTTP.</summary>
+    public string? WhatsAppUserId { get; private set; }
 
     public bool WithRetention { get; private set; }
 
@@ -267,6 +294,135 @@ public sealed class Customer
             commercial,
             occurredAt,
             phoneNormalizer);
+
+    /// <summary>
+    /// Spec 2026-10-10 §6.2: la persona que escribió por WhatsApp y todavía no tiene ficha. Sólo nombre,
+    /// teléfono (E.164 con «+», como lo arma Messaging), país si se conoce y BSUID; sin libreta. Lo crea el
+    /// sistema, nunca una persona por HTTP. El nombre y el país los decide <c>IncompleteCustomerProfile</c>
+    /// (Application); acá sólo se validan.
+    /// </summary>
+    public static Customer CreateIncomplete(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        string? phone,
+        string? country,
+        string whatsAppUserId,
+        DateTimeOffset now,
+        IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
+        var normalizedCountry = string.IsNullOrWhiteSpace(country) ? null : country.Trim().ToUpperInvariant();
+        return new Customer
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = NormalizeName(name),
+            Phone = normalizedPhone,
+            Country = normalizedCountry,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, normalizedCountry ?? UnknownRegion),
+            WhatsAppUserId = NormalizeWhatsAppUserId(whatsAppUserId),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+    }
+
+    /// <summary>
+    /// Spec 2026-10-10 §6.2: el <c>PUT</c> sobre un incompleto. Mismas reglas que <see cref="Create"/> (la
+    /// libreta nace igual) más el CUC que el handler acaba de emitir. Todo se valida antes de asignar: un
+    /// 422 deja la ficha como estaba.
+    /// </summary>
+    public void Complete(
+        string cuc,
+        string name,
+        string? businessName,
+        CustomerAddressDetails? principalAddress,
+        CustomerIdentification identification,
+        CustomerContactInfo contact,
+        CustomerCommercialInfo commercial,
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer = null)
+    {
+        ArgumentNullException.ThrowIfNull(identification);
+        ArgumentNullException.ThrowIfNull(contact);
+        ArgumentNullException.ThrowIfNull(commercial);
+        EnsureActive();
+        if (IsComplete)
+        {
+            throw new InvalidOperationException($"Customer '{Id}' is already complete; use Update.");
+        }
+
+        var normalizedCuc = NormalizeCuc(cuc);
+        var normalizedName = NormalizeName(name);
+        var normalizedBusinessName = NormalizeBusinessName(businessName);
+        var normalizedIdentification = identification.Normalized();
+        var normalizedContact = contact.Normalized();
+        var location = EnsureValidLocation(normalizedContact);
+        _ = EnsureValidClassificationId(commercial.ClassificationId);
+
+        Cuc = normalizedCuc;
+        Name = normalizedName;
+        BusinessName = normalizedBusinessName;
+        Assign(normalizedIdentification);
+        Assign(normalizedContact);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, location.Country);
+        Assign(commercial);
+        if (principalAddress is not null && _addresses.Count == 0)
+        {
+            var first = CustomerAddress.Create(Id, principalAddress, occurredAt);
+            first.MarkPrincipal(true, occurredAt);
+            _addresses.Add(first);
+        }
+
+        Completeness = CustomerCompleteness.Complete;
+        Touch(occurredAt);
+    }
+
+    /// <summary>D-A6: pone el BSUID sólo si no tenía uno (otro portafolio o un número reciclado no lo pisan).
+    /// P4: no sube la versión, como <see cref="RecomputePhoneE164"/>: no lo editó una persona.</summary>
+    public bool AttachWhatsAppUserId(string whatsAppUserId)
+    {
+        var normalized = NormalizeWhatsAppUserId(whatsAppUserId);
+        if (WhatsAppUserId is not null)
+        {
+            return false;
+        }
+
+        WhatsAppUserId = normalized;
+        return true;
+    }
+
+    /// <summary>Spec 2026-10-10 §8.3: la persona cambió de número y Meta le dio otro BSUID.</summary>
+    public bool ReplaceWhatsAppUserId(string previous, string current)
+    {
+        if (!string.Equals(WhatsAppUserId, previous, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        WhatsAppUserId = NormalizeWhatsAppUserId(current);
+        return true;
+    }
+
+    private static string NormalizeWhatsAppUserId(string value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) || trimmed.Length > WhatsAppUserIdMaxLength
+            ? throw new ArgumentException($"A WhatsApp user id has 1 to {WhatsAppUserIdMaxLength} characters.", nameof(value))
+            : trimmed;
+    }
+
+    private void EnsureComplete()
+    {
+        if (!IsComplete)
+        {
+            throw new InvalidOperationException($"Customer '{Id}' is incomplete; complete it before updating it.");
+        }
+    }
 
     /// <summary>Agrega una direccion. La primera de un cliente —o una marcada como principal—
     /// desplaza a la que lo era: el agregado no admite dos.</summary>
@@ -382,6 +538,7 @@ public sealed class Customer
         DateTimeOffset occurredAt,
         IPhoneNumberNormalizer? phoneNormalizer = null)
     {
+        EnsureComplete();
         EnsureActive();
 
         // Todo se normaliza a locales **antes** de asignar nada. Asignar campo por campo mientras
@@ -405,11 +562,12 @@ public sealed class Customer
         BusinessName = normalizedBusinessName;
         Assign(normalizedIdentification);
         Assign(normalizedContact);
-        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country ?? UnknownRegion);
 
         if (normalizedClassificationId != ClassificationId)
         {
-            Cuc = ReplaceClassificationPrefix(Cuc, normalizedClassificationPrefix);
+            // EnsureComplete garantiza el CUC: una ficha completa siempre lo tiene (CK_customers_complete_fields).
+            Cuc = ReplaceClassificationPrefix(Cuc!, normalizedClassificationPrefix);
         }
 
         Assign(commercial);
@@ -423,7 +581,7 @@ public sealed class Customer
     {
         ArgumentNullException.ThrowIfNull(phoneNormalizer);
 
-        var next = phoneNormalizer.ToE164(Phone, Country);
+        var next = phoneNormalizer.ToE164(Phone, Country ?? UnknownRegion);
         if (string.Equals(next, PhoneE164, StringComparison.Ordinal))
         {
             return false;

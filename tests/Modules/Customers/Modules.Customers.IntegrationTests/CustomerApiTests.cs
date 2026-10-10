@@ -70,8 +70,8 @@ public sealed class CustomerApiTests
         // `CityName` (ver los tests de pais en CustomerWriteApiTests).
         Assert.NotNull(item.City);
         Assert.Equal(city.CityId, item.City.Id);
-        Assert.Equal(classification.Id, item.Classification.Id);
-        Assert.Equal(classification.Prefix, item.Classification.Prefix);
+        Assert.Equal(classification.Id, item.Classification?.Id);
+        Assert.Equal(classification.Prefix, item.Classification?.Prefix);
     }
 
     // El departamento viaja resuelto en cada fila para el filtro multiple de
@@ -210,8 +210,8 @@ public sealed class CustomerApiTests
 
         var verde = Assert.Single(page.Items, item => item.Name == "Verde Esencial");
         var naturaleza = Assert.Single(page.Items, item => item.Name == "Naturaleza Viva");
-        Assert.Equal(retail.Id, verde.Classification.Id);
-        Assert.Equal(wholesale.Id, naturaleza.Classification.Id);
+        Assert.Equal(retail.Id, verde.Classification?.Id);
+        Assert.Equal(wholesale.Id, naturaleza.Classification?.Id);
     }
 
     // El listado tiene tres cajas separadas (CLI-FILTROS-01): nombre, numero de identificacion y
@@ -423,9 +423,9 @@ public sealed class CustomerApiTests
         Assert.NotNull(customer.Department);
         Assert.Equal(city.CityId, customer.City.Id);
         Assert.Equal(city.DepartmentDivipolaCode, customer.Department.DivipolaCode);
-        Assert.Equal(classification.Id, customer.Classification.Id);
-        Assert.Equal(classification.Name, customer.Classification.Name);
-        Assert.Equal(classification.Prefix, customer.Classification.Prefix);
+        Assert.Equal(classification.Id, customer.Classification?.Id);
+        Assert.Equal(classification.Name, customer.Classification?.Name);
+        Assert.Equal(classification.Prefix, customer.Classification?.Prefix);
     }
 
     // El 404 lleva su codigo de dominio. Sin el, el consumidor tiene que adivinar por el status y

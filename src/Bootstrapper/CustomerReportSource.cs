@@ -127,12 +127,15 @@ internal sealed class CustomerReportSource(
             return [];
         }
 
-        var distinctCount = await filtered
+        // Un incompleto no tiene clasificación (spec 2026-10-10 §6.2). La T4 excluye los incompletos
+        // de este reporte; esto sólo cubre el tipo.
+        var classified = filtered.Where(customer => customer.ClassificationId != null);
+        var distinctCount = await classified
             .Select(customer => customer.ClassificationId)
             .Distinct()
             .CountAsync(cancellationToken);
 
-        var top = await filtered
+        var top = await classified
             .GroupBy(customer => customer.ClassificationId)
             .Select(group => new { ClassificationId = group.Key, Count = group.Count() })
             .OrderByDescending(entry => entry.Count)
@@ -140,7 +143,8 @@ internal sealed class CustomerReportSource(
             .Take(rankSize)
             .ToListAsync(cancellationToken);
 
-        var ids = top.Select(entry => entry.ClassificationId).ToArray();
+        // El Where de `classified` garantiza la clasificación de cada grupo.
+        var ids = top.Select(entry => entry.ClassificationId!.Value).ToArray();
         // Una consulta de nombres para el ranking entero, no una por fila.
         var names = await customers.ClientClassifications
             .AsNoTracking()
@@ -150,8 +154,8 @@ internal sealed class CustomerReportSource(
 
         var ranked = top
             .Select(entry => new CustomerGroupEntryDto(
-                entry.ClassificationId.Value,
-                names.GetValueOrDefault(entry.ClassificationId)?.Name,
+                entry.ClassificationId!.Value.Value,
+                names.GetValueOrDefault(entry.ClassificationId!.Value)?.Name,
                 EntityCount: 1,
                 entry.Count))
             .ToList();
@@ -363,15 +367,17 @@ internal sealed class CustomerReportSource(
                     cities.TryGetValue(cityId, out city);
                 }
 
+                // La T4 excluye los incompletos de este reporte; los `??` sólo cubren el tipo (un
+                // incompleto no tiene CUC, documento ni clasificación, spec 2026-10-10 §6.2).
                 return new CustomerReportItemDto(
                     row.CustomerId.Value,
-                    row.Cuc,
+                    row.Cuc ?? string.Empty,
                     row.Name,
                     // El nombre del enum (`Nit`) y no el valor de cable en mayusculas (`NIT`) que
                     // usan los endpoints de customers: es lo que fija el contrato de este reporte.
-                    row.IdentificationType.ToString(),
-                    row.IdentificationNumber,
-                    row.ClassificationId.Value,
+                    row.IdentificationType?.ToString() ?? string.Empty,
+                    row.IdentificationNumber ?? string.Empty,
+                    row.ClassificationId?.Value ?? Guid.Empty,
                     row.ClassificationName,
                     city?.DepartmentId,
                     city?.DepartmentName,
@@ -386,11 +392,11 @@ internal sealed class CustomerReportSource(
 
     private sealed record CustomerRow(
         CustomerId CustomerId,
-        string Cuc,
+        string? Cuc,
         string Name,
-        IdentificationType IdentificationType,
-        string IdentificationNumber,
-        ClientClassificationId ClassificationId,
+        IdentificationType? IdentificationType,
+        string? IdentificationNumber,
+        ClientClassificationId? ClassificationId,
         string? ClassificationName,
         /// <summary>Nula para un cliente que no es de Colombia: no tiene ciudad DIVIPOLA.</summary>
         Guid? CityId,

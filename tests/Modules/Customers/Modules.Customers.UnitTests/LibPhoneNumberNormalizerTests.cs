@@ -29,4 +29,21 @@ public sealed class LibPhoneNumberNormalizerTests
     [InlineData(null, "CO")]
     public void InvalidNumbersAreNullNeverAnException(string? phone, string country) =>
         Assert.Null(_normalizer.ToE164(phone, country));
+
+    // Spec 2026-10-10 §6.2: el país del incompleto sale del prefijo del BSUID si libphonenumber lo conoce.
+    [Theory]
+    [InlineData("CO", true)]
+    [InlineData("us", true)]
+    [InlineData("XX", false)]
+    [InlineData("", false)]
+    public void KnownRegionsAreTheOnesLibPhoneNumberSupports(string region, bool expected) =>
+        Assert.Equal(expected, new LibPhoneNumberNormalizer().IsKnownRegion(region));
+
+    [Theory]
+    [InlineData("+573001234567", "CO")]
+    [InlineData("+14155550100", "US")]
+    [InlineData("3001234567", null)]
+    [InlineData(null, null)]
+    public void TheRegionOfAnE164NumberIsItsCountry(string? e164, string? expected) =>
+        Assert.Equal(expected, new LibPhoneNumberNormalizer().RegionOf(e164));
 }

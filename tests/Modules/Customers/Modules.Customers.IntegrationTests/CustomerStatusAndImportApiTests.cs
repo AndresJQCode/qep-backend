@@ -233,7 +233,7 @@ public sealed class CustomerStatusAndImportApiTests
         // que nunca es nula acá — pero el tipo lo admite desde que existe el pais.
         Assert.Contains(page.Items, item => item.Cuc == expectedFirstCuc && item.City?.Name == city.CityName);
         Assert.Contains(page.Items, item =>
-            item.Cuc == expectedSecondCuc && item.Classification.Name == classification.Name);
+            item.Cuc == expectedSecondCuc && item.Classification?.Name == classification.Name);
     }
 
     /// <summary>

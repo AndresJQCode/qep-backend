@@ -39,7 +39,7 @@ public sealed class CustomerWriteApiTests
         Assert.NotNull(customer);
         Assert.True(customer.IsActive);
         Assert.True(customer.WithRetention);
-        Assert.Equal(classification.Id, customer.Classification.Id);
+        Assert.Equal(classification.Id, customer.Classification?.Id);
         // `City`/`Department` son nulos para un cliente de afuera (ver los tests de pais al final
         // de este archivo). Este es colombiano, asi que tenerlos resueltos es parte de lo que se
         // afirma: si llegaran nulos, la asercion falla, que es lo correcto.
@@ -634,6 +634,7 @@ public sealed class CustomerWriteApiTests
         var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
         var newClassification = await CreateClassificationAsync(client, "Grande", "GRA");
         var created = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
+        Assert.NotNull(created.Cuc);
         var originalSuffix = created.Cuc[3..];
 
         var response = await client.PutAsJsonAsync(
@@ -645,7 +646,7 @@ public sealed class CustomerWriteApiTests
         var updated = await response.Content.ReadFromJsonAsync<CustomerResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(updated);
-        Assert.Equal(newClassification.Id, updated.Classification.Id);
+        Assert.Equal(newClassification.Id, updated.Classification?.Id);
         // La ciudad nueva es la del domicilio; el CUC conserva el departamento de alta.
         Assert.NotNull(updated.City);
         Assert.Equal(cities[1].CityId, updated.City.Id);

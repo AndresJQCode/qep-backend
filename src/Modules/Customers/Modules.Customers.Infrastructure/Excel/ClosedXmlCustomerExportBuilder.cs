@@ -75,8 +75,8 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     private static void WriteRow(IXLWorksheet sheet, int excelRow, CustomerDto customer, TenantCalendar calendar)
     {
         sheet.Cell(excelRow, 1).Value = customer.Name;
-        sheet.Cell(excelRow, 2).Value = customer.IdentificationType;
-        sheet.Cell(excelRow, 3).Value = customer.IdentificationNumber;
+        sheet.Cell(excelRow, 2).Value = customer.IdentificationType ?? string.Empty;
+        sheet.Cell(excelRow, 3).Value = customer.IdentificationNumber ?? string.Empty;
         sheet.Cell(excelRow, 4).Value = customer.Phone ?? string.Empty;
         sheet.Cell(excelRow, 5).Value = customer.Email ?? string.Empty;
         sheet.Cell(excelRow, 6).Value = customer.Address ?? string.Empty;
@@ -87,11 +87,11 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         // alta de un cliente de afuera es por formulario.
         sheet.Cell(excelRow, 7).Value = customer.Department?.Name ?? string.Empty;
         sheet.Cell(excelRow, 8).Value = customer.City?.Name ?? customer.CityName ?? string.Empty;
-        sheet.Cell(excelRow, 9).Value = customer.Classification.Name;
+        sheet.Cell(excelRow, 9).Value = customer.Classification?.Name ?? string.Empty;
         // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
         // que abre el archivo.
         sheet.Cell(excelRow, 10).Value = customer.WithRetention ? "Si" : "No";
-        sheet.Cell(excelRow, 11).Value = customer.Cuc;
+        sheet.Cell(excelRow, 11).Value = customer.Cuc ?? string.Empty;
         sheet.Cell(excelRow, 12).Value = customer.IsActive ? "Si" : "No";
         // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
         // regional de quien abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del
