@@ -138,6 +138,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
             // así que los SET NOT NULL de abajo morirían con 23502. No hay otra forma de volver al
             // esquema anterior que sacarlos; nacen sin libreta, así que no arrastran direcciones.
             migrationBuilder.Sql("DELETE FROM customers.customers WHERE completeness = 'Incomplete';");
+            // Ojo: messaging.conversations.customer_id no tiene FK hacia Customers (son módulos distintos), así que
+            // las conversaciones de esos incompletos quedan apuntando a un cliente que ya no existe. No se rompe nada:
+            // el armador del resumen (MessagingSupport, FindRefsAsync + GetValueOrDefault) no lo encuentra y lo mapea a
+            // customer null, y la conversación se ve sin cliente.
 
             migrationBuilder.DropIndex(
                 name: "IX_customers_tenant_incomplete",
