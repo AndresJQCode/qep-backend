@@ -55,7 +55,7 @@ public sealed class CustomerExportApiTests
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
 
-        // Las diez columnas de la importacion van primero y en su orden exacto, para que el
+        // Las columnas de la importacion van primero y en su orden exacto, para que el
         // archivo exportado se pueda volver a importar sin editarlo.
         for (var column = 0; column < CustomerImportColumns.Ordered.Count; column++)
         {
@@ -64,11 +64,11 @@ public sealed class CustomerExportApiTests
                 sheet.Cell(1, column + 1).GetString());
         }
 
-        var names = new[] { sheet.Cell(2, 1).GetString(), sheet.Cell(3, 1).GetString() };
+        var names = new[] { sheet.Cell(2, 2).GetString(), sheet.Cell(3, 2).GetString() };
         Assert.Contains("Verde Esencial S.A.S.", names);
         Assert.Contains("Azul Profundo Ltda.", names);
-        Assert.Equal(classification.Name, sheet.Cell(2, 9).GetString());
-        Assert.Equal(city.CityName, sheet.Cell(2, 8).GetString());
+        Assert.Equal(classification.Name, sheet.Cell(2, 11).GetString());
+        Assert.Equal(city.CityName, sheet.Cell(2, 10).GetString());
 
         // El correo no se manda en el request: queda encolado como evento de integracion.
         var events = await OutboxEventNamesAsync(database.GetConnectionString());
@@ -102,8 +102,117 @@ public sealed class CustomerExportApiTests
         Assert.NotNull(storage.Content);
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
-        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 13).GetString());
-        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 14).GetString());
+        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 15).GetString());
+        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 16).GetString());
+    }
+
+    // Spec 2026-10-10 §5.2: el export incluye los incompletos, con celdas vacías, y suma la columna
+    // «Estado de la ficha» al final, después de las propias del export.
+    [Fact]
+    public async Task TheExportIncludesIncompleteRecordsWithTheirStatusColumn()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = Factory(database, storage);
+        using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.123.456-1");
+        await SeedIncompleteAsync(factory);
+
+        var response = await client.PostAsync(
+            ExportUrl(), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        var sheet = workbook.Worksheets.First();
+        Assert.Equal("Estado de la ficha", sheet.Cell(1, StatusColumnIndex).GetString());
+        Assert.Equal(StatusColumnIndex, sheet.Row(1).LastCellUsed()!.Address.ColumnNumber);
+        var columns = HeaderColumns(sheet);
+        var rows = new[] { sheet.Row(2), sheet.Row(3) };
+        var incomplete = Assert.Single(rows, row => row.Cell(columns[CustomerImportColumns.Name]).GetString() == "Laura Pérez");
+        var complete = Assert.Single(rows, row => row.Cell(columns[CustomerImportColumns.Name]).GetString() == "Verde Esencial S.A.S.");
+        Assert.Equal("Incompleta", incomplete.Cell(StatusColumnIndex).GetString());
+        Assert.Equal(string.Empty, incomplete.Cell(columns[CustomerImportColumns.Cuc]).GetString());
+        Assert.Equal(string.Empty, incomplete.Cell(columns[CustomerImportColumns.IdentificationType]).GetString());
+        Assert.Equal(string.Empty, incomplete.Cell(columns[CustomerImportColumns.IdentificationNumber]).GetString());
+        Assert.Equal(string.Empty, incomplete.Cell(columns[CustomerImportColumns.Classification]).GetString());
+        Assert.Equal("Completa", complete.Cell(StatusColumnIndex).GetString());
+    }
+
+    // Desde a054cfd la lista de la importacion crecio (CUC, razon social, excedente de IVA) y el export
+    // seguia escribiendo por indices viejos: la columna «Cuc» traia el nombre. Cada cabecera tiene que
+    // traer su propio dato, o el archivo no se puede volver a importar.
+    [Fact]
+    public async Task EveryHeaderHoldsItsOwnValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = Factory(database, storage);
+        using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var customer = await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.123.456-1");
+
+        var response = await client.PostAsync(
+            ExportUrl(), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        var sheet = workbook.Worksheets.First();
+        // Sin cabeceras repetidas (antes iban «Cuc» y «CUC»): el importador ubica las columnas por nombre.
+        var headers = sheet.Row(1).CellsUsed().Select(cell => cell.GetString()).ToArray();
+        Assert.Equal(headers.Length, headers.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        var columns = HeaderColumns(sheet);
+        var row = sheet.Row(2);
+        string Value(string header) => row.Cell(columns[header]).GetString();
+        Assert.Equal(customer.Cuc, Value(CustomerImportColumns.Cuc));
+        Assert.Equal("Verde Esencial S.A.S.", Value(CustomerImportColumns.Name));
+        Assert.Equal(string.Empty, Value(CustomerImportColumns.BusinessName));
+        Assert.Equal(customer.IdentificationType, Value(CustomerImportColumns.IdentificationType));
+        Assert.Equal(customer.IdentificationNumber, Value(CustomerImportColumns.IdentificationNumber));
+        Assert.Equal(customer.Phone, Value(CustomerImportColumns.Phone));
+        Assert.Equal(customer.Email, Value(CustomerImportColumns.Email));
+        Assert.Equal(customer.Address, Value(CustomerImportColumns.Address));
+        Assert.Equal(customer.Department!.Name, Value(CustomerImportColumns.Department));
+        Assert.Equal(city.CityName, Value(CustomerImportColumns.City));
+        Assert.Equal(classification.Name, Value(CustomerImportColumns.Classification));
+        Assert.Equal("No", Value(CustomerImportColumns.WithRetention));
+        Assert.Equal("No", Value(CustomerImportColumns.VatSurplus));
+        Assert.Equal("Si", Value("Activo"));
+        Assert.Equal("Completa", Value("Estado de la ficha"));
+    }
+
+    // 13 de la importacion + Activo, Creado, Actualizado + «Estado de la ficha».
+    private const int StatusColumnIndex = 17;
+
+    // Por nombre, como lo hace el importador. Con cabeceras repetidas gana la primera; la prueba de
+    // alineacion comprueba aparte que no las haya.
+    private static Dictionary<string, int> HeaderColumns(IXLWorksheet sheet)
+    {
+        var columns = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var cell in sheet.Row(1).CellsUsed())
+        {
+            columns.TryAdd(cell.GetString(), cell.Address.ColumnNumber);
+        }
+
+        return columns;
+    }
+
+    private static async Task<Guid> SeedIncompleteAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>();
+        return (await directory.EnsureAsync(
+            Guid.Parse(TenantId),
+            new WhatsAppContact("CO.1349120865530274", "+573001234567", "Laura Pérez", null),
+            TestContext.Current.CancellationToken)).CustomerId;
     }
 
     [Fact]
