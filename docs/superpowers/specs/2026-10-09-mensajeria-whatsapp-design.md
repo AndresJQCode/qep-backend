@@ -1182,7 +1182,8 @@ transacción. Responden `ConversationSummary`. Un entrante nuevo reabre solo (§
    intento siguiente.
 4. `stored_at`, `storage_key`, `size_bytes`.
 
-Reintentos con espera creciente (1 min, 5 min, 30 min, 2 h, 6 h…). Meta guarda el medio **7 días**:
+Reintentos con espera creciente (6 min, 10 min, 30 min, 2 h, 6 h…; el primer lease supera el tope de
+5 min de una copia para que otra réplica no la reclame a mitad de camino). Meta guarda el medio **7 días**:
 pasado ese plazo se deja de intentar y queda `last_error`. El token no se registra nunca.
 
 **Servir (`GET /messaging/media/{messageId}`, read):** tenant, permiso y módulo; el mensaje es del
