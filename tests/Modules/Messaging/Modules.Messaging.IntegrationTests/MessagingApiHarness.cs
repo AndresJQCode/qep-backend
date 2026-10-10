@@ -344,6 +344,17 @@ internal static class MessagingApiHarness
         return (code, keys);
     }
 
+    /// <summary>Corre una pasada del worker de entregas (P10): reclama y procesa lo pendiente.</summary>
+    public static async Task DrainDeliveriesAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Webhook.WebhookDeliveryWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static Task<long> CountAsync(string connectionString, string sql, params (string Name, object Value)[] parameters) =>
+        ScalarAsync<long>(connectionString, sql, parameters);
+
     public static async Task<T> ScalarAsync<T>(
         string connectionString, string sql, params (string Name, object Value)[] parameters)
     {

@@ -576,6 +576,10 @@ public static class QepServiceCollectionExtensions
         // Integrations (P23): el nombre de quien creó la conexión sale de Tenancy e Identity.
         services.AddScoped<IConnectionAuthorNames, IntegrationsConnectionAuthorNames>();
 
+        // Messaging (spec 2026-10-09 §6.4): conexiones de WhatsApp por Integrations. El único punto donde
+        // los dos módulos se tocan.
+        services.AddScoped<IMessagingConnectionDirectory, MessagingConnectionDirectory>();
+
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
         // impide a propósito — y el composition root cablea el puerto que declara `customers`

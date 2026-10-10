@@ -205,6 +205,27 @@ public sealed class WebhookPayloadParserTests
         Assert.Null(message.ProfileName);
     }
 
+    // Un elemento roto en el arreglo no se lleva a sus hermanos: un from vacío o un timestamp ilegible se
+    // salta y el válido de al lado entra.
+    [Fact]
+    public void ABadEntryIsSkippedAndItsValidSiblingSurvives()
+    {
+        var json = Envelope("messages", new
+        {
+            metadata = new { phone_number_id = "111" },
+            messages = new object[]
+            {
+                new { from = string.Empty, id = "w.empty-from", timestamp = "1", type = "text", text = new { body = "x" } },
+                new { from = "573001234567", id = "w.bad-timestamp", timestamp = "abc", type = "text", text = new { body = "x" } },
+                new { from = "573001234567", id = "w.ok", timestamp = "1", type = "text", text = new { body = "ok" } },
+            },
+        });
+
+        var message = Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages);
+
+        Assert.Equal(("w.ok", "573001234567", "ok"), (message.Wamid, message.WaId, message.Text));
+    }
+
     [Fact]
     public void InvalidJsonIsEmpty() => Assert.Empty(WebhookPayloadParser.Parse("not json"));
 }

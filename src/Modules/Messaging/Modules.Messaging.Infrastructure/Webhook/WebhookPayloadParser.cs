@@ -110,7 +110,8 @@ internal static class WebhookPayloadParser
     {
         var wamid = ReadString(item, "id");
         var from = ReadString(item, "from");
-        if (wamid is null || from is null || !from.All(char.IsAsciiDigit) || ReadTimestamp(item) is not { } occurredAt)
+        // Un from vacío pasaría el All: sin wa_id no hay conversación a la que atarlo.
+        if (wamid is null || from is not { Length: > 0 } || !from.All(char.IsAsciiDigit) || ReadTimestamp(item) is not { } occurredAt)
         {
             return null;
         }

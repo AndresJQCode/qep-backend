@@ -24,6 +24,11 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-09 §8.2: la firma del webhook y la cola deduplicada de entregas.
         services.AddSingleton<IWebhookSignatureVerifier, HmacWebhookSignatureVerifier>();
         services.AddScoped<IWebhookDeliveries, WebhookDeliveries>();
+        // §8.2: rutas con caché por pod, procesador por entrega y el worker que reclama.
+        services.AddMemoryCache();
+        services.AddScoped<WebhookRouting>();
+        services.AddScoped<WebhookDeliveryProcessor>();
+        services.AddHostedService<WebhookDeliveryWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
