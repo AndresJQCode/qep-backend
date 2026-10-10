@@ -1,0 +1,132 @@
+using BuildingBlocks.Application;
+using FluentValidation;
+using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
+
+namespace Modules.Messaging.Application;
+
+public sealed record SendMessageCommand(Guid TenantId, Guid ConversationId, Guid? ClientId, string? Text) : ICommand<MessageDto>;
+
+/// <summary>§6.4: <c>text</c> no vacío tras <c>Trim</c>, ≤ 4096, sin <c>\0</c> ni otros caracteres de control
+/// (salto de línea, retorno y tabulador sí: un mensaje de WhatsApp los lleva); <c>clientId</c> GUID no vacío.
+/// Las claves de <c>errors</c> son las del cuerpo JSON (<c>OverridePropertyName</c>).</summary>
+public sealed class SendMessageValidator : AbstractValidator<SendMessageCommand>
+{
+    public const int TextMaxLength = 4096;
+
+    public SendMessageValidator()
+    {
+        RuleFor(command => command.Text)
+            .Must(text => text is not null && text.Trim().Length is > 0 and <= TextMaxLength && !text.Any(IsForbiddenControl))
+            .OverridePropertyName("text").WithMessage("Escribe un mensaje de hasta 4096 caracteres.");
+        RuleFor(command => command.ClientId).NotNull().NotEqual(Guid.Empty).OverridePropertyName("clientId");
+    }
+
+    private static bool IsForbiddenControl(char character) => char.IsControl(character) && character is not ('\n' or '\r' or '\t');
+}
+
+/// <summary>Spec 2026-10-09 §8.3, en este orden: validador → tenant, permiso y módulo → conversación del
+/// tenant → idempotencia → status Open → ventana → conexión Active → Meta → tabla de respuestas.
+/// La transacción del reclamo sigue abierta mientras Meta responde (≤ 10 s, §8.3): es lo que hace esperar
+/// a un segundo request con el mismo <c>clientId</c> y lo que impide que se vea una fila a medio enviar.
+/// Bloquea una sola fila de mensaje, nunca la conversación.</summary>
+public sealed class SendMessageHandler(
+    IConversationQueries conversations,
+    IOutboundMessages outbound,
+    IWhatsAppCloudClient meta,
+    IMessagingConnectionDirectory connections,
+    IMessagingMemberNames memberNames,
+    IMembershipDirectory membershipDirectory,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<SendMessageCommand> validator)
+    : ICommandHandler<SendMessageCommand, MessageDto>
+{
+    public const string CallbackPrefix = "qep:";
+
+    public async Task<MessageDto> HandleAsync(SendMessageCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
+        var conversation = await conversations.FindAsync(command.TenantId, command.ConversationId, cancellationToken)
+            ?? throw MessagingNotFound.Conversation(command.ConversationId);
+        var member = await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
+            ?? throw new RequestForbiddenException("authorization.denied", "The subject does not have an active membership in this tenant.");
+
+        var text = command.Text!.Trim();
+        var now = clock.UtcNow;
+        var draft = new OutboundDraft(Guid.CreateVersion7(), conversation.Id, command.TenantId, conversation.ConnectionId, command.ClientId!.Value, text, member, now);
+        await using var claim = await outbound.ClaimAsync(draft, cancellationToken);
+
+        // Idempotencia (decisión 11): lo que ya salió, ya salió, antes de mirar ventana o estado.
+        if (!claim.Inserted && claim.Existing is { } existing && existing.Status != MessageStatus.Failed)
+        {
+            await claim.RollbackAsync(cancellationToken);
+            return await ToDtoAsync(
+                command, new MessageRow(existing.Id, conversation.Id, MessageDirection.Outbound, MessageKind.Text, existing.Text, null, null, existing.Status, null, existing.OccurredAt, existing.SentByMemberId, command.ClientId, null),
+                cancellationToken);
+        }
+
+        if (conversation.Status != ConversationStatus.Open)
+        {
+            await claim.RollbackAsync(cancellationToken);
+            throw new MessagingDomainException(MessagingErrorCodes.ConversationNotOpen, "The conversation is resolved; reopen it to answer.");
+        }
+
+        if (conversation.LastInboundAt is not { } lastInbound || lastInbound.Add(Conversation.WindowLength) <= now)
+        {
+            await claim.RollbackAsync(cancellationToken);
+            throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "More than 24 hours passed since the person last wrote.");
+        }
+
+        var sender = await connections.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, cancellationToken);
+        if (sender is null)
+        {
+            await claim.RollbackAsync(cancellationToken);
+            throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
+        }
+
+        var result = await meta.SendTextAsync(sender, conversation.WaId, text, CallbackPrefix + claim.MessageId.ToString("D"), cancellationToken);
+        // §8.3: occurred_at del saliente = hora del servidor al recibir la respuesta de Meta.
+        var answeredAt = clock.UtcNow;
+        switch (result.Outcome)
+        {
+            case SendOutcome.Sent when !string.IsNullOrEmpty(result.Wamid):
+                await claim.CommitSentAsync(result.Wamid, answeredAt, cancellationToken);
+                return await ToDtoAsync(
+                    command, new MessageRow(claim.MessageId, conversation.Id, MessageDirection.Outbound, MessageKind.Text, text, null, null, MessageStatus.Sent, null, answeredAt, member, command.ClientId, null),
+                    cancellationToken);
+
+            case SendOutcome.GraphError when result.Code is 190 or 133010:
+                // §8.3: la credencial o el número ya no sirven; la fila no se guarda y la conexión pasa a NeedsAttention.
+                await claim.RollbackAsync(cancellationToken);
+                await connections.ReportRejectedAsync(command.TenantId, conversation.ConnectionId, result.Code == 190 ? "token_expired" : "number_unregistered", cancellationToken);
+                throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials.");
+
+            case SendOutcome.GraphError when result.Code is 131047:
+                await claim.CommitFailedAsync(131047, result.Title, answeredAt, cancellationToken);
+                throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "Meta closed the 24-hour window.");
+
+            case SendOutcome.GraphError:
+                await claim.CommitFailedAsync(result.Code ?? 0, result.Title, answeredAt, cancellationToken);
+                throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "Meta rejected the message.");
+
+            default:
+                // Timeout, 5xx, red o un 2xx sin messages[0].id: Meta pudo haberlo aceptado (riesgo residual de §8.3).
+                await claim.CommitFailedAsync(MessageFailureReasons.Unconfirmed, null, answeredAt, cancellationToken);
+                throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "The send could not be confirmed with Meta.");
+        }
+    }
+
+    // El mensaje sale con el mapeo de la lista (MessageMapping): mismo sentBy.displayName, nunca null (D-M20).
+    // En la idempotencia se devuelve el texto guardado, no el del request.
+    private async Task<MessageDto> ToDtoAsync(SendMessageCommand command, MessageRow row, CancellationToken cancellationToken)
+    {
+        var names = row.SentByMemberId is { } member
+            ? await memberNames.FindAsync(command.TenantId, [member], cancellationToken)
+            : new Dictionary<Guid, string>();
+        return MessageMapping.ToDto(row, command.TenantId, names);
+    }
+}

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
 using Modules.Messaging.Infrastructure.Webhook;
@@ -37,6 +38,13 @@ public static class MessagingInfrastructureExtensions
         services.AddHostedService<WebhookDeliveryWorker>();
         // §8.2: purga diaria de las entregas procesadas.
         services.AddHostedService<WebhookPurgeWorker>();
+        // Decisión 3: el cliente de Graph de Messaging, mismo patrón que el de Integrations (sin redirecciones,
+        // 10 s, sin los logs de HttpClient, que escribirían la URL). §8.3: el reclamo idempotente del envío.
+        services.AddHttpClient(WhatsAppCloudClient.HttpClientName, WhatsAppCloudClient.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
+        services.AddScoped<IOutboundMessages, OutboundMessages>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));

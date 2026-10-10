@@ -8,8 +8,8 @@ namespace Modules.Messaging.Api;
 
 public static class MessagingEndpoints
 {
-    /// <summary>Lista, detalle e hilo (Task 14) y búsqueda (Task 15); envío, leído, resolver, reabrir y medio se suman
-    /// en las siguientes, todos bajo <c>/api/v1/tenants/{tenantId:guid}/messaging</c>.</summary>
+    /// <summary>Lista, detalle e hilo (Task 14), búsqueda (Task 15) y envío (Task 16); leído, resolver, reabrir y medio
+    /// se suman en las siguientes, todos bajo <c>/api/v1/tenants/{tenantId:guid}/messaging</c>.</summary>
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta; cada endpoint su política (spec 2026-10-09 §6.4). Los handlers revalidan
@@ -31,6 +31,15 @@ public static class MessagingEndpoints
         group.MapGet("/conversations/{conversationId:guid}/messages", ListMessagesAsync)
             .RequireAuthorization(MessagingPermissions.ConversationRead)
             .Produces<MessagePageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec 2026-10-09 §8.3: envío de texto, idempotente por clientId.
+        group.MapPost("/conversations/{conversationId:guid}/messages", SendMessageAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<SendMessageRequest>("application/json")
+            .Produces<MessageDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -60,4 +69,14 @@ public static class MessagingEndpoints
         Guid tenantId, string? q, Guid? conversationId, DateTimeOffset? from, DateTimeOffset? to, int? limit, Guid? before,
         IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new SearchMessagesQuery(tenantId, q, conversationId, from, to, limit, before), cancellationToken));
+
+    private static async Task<IResult> SendMessageAsync(
+        Guid tenantId, Guid conversationId, SendMessageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var message = await dispatcher.SendAsync(new SendMessageCommand(tenantId, conversationId, request.ClientId, request.Text), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages", message);
+    }
 }
+
+/// <summary>§5.3: <c>clientId</c> lo genera la pantalla por intento de envío; un reintento con el mismo no duplica.</summary>
+public sealed record SendMessageRequest(Guid? ClientId, string? Text);
