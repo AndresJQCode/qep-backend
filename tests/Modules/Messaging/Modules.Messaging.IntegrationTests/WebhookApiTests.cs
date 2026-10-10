@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -59,16 +60,24 @@ public sealed class WebhookApiTests
         using var factory = new QepApiFactory(connectionString);
         using var client = factory.CreateClient();
 
-        var response = await PostWebhookAsync(client, MetaPayloads.InboundText("111", "573001234567", "wamid.1", 1760000000, "hola"), signature ?? "");
+        HttpResponseMessage response;
         if (signature is null)
         {
             // Sin header en absoluto.
             using var request = new HttpRequestMessage(HttpMethod.Post, WebhookUrl) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             response = await client.SendAsync(request, Ct);
         }
+        else
+        {
+            response = await PostWebhookAsync(client, MetaPayloads.InboundText("111", "573001234567", "wamid.1", 1760000000, "hola"), signature);
+        }
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("messaging.webhook.signature_invalid", problem.RootElement.GetProperty("code").GetString());
         Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM messaging.webhook_deliveries"));
+        // §11, firma antes de la base: tampoco deja fila en el log de fallas.
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM platform.request_failures"));
     }
 
     [Fact]
@@ -85,6 +94,7 @@ public sealed class WebhookApiTests
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM messaging.webhook_deliveries"));
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM platform.request_failures"));
     }
 
     // Sin Meta:App (D-M3, sólo fuera de producción): 403 al GET y 401 al POST.

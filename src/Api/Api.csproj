@@ -5,6 +5,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- RequestFailureCaptureTests: la excepción del webhook en el log de fallas (spec 2026-10-09 §11). -->
+    <InternalsVisibleTo Include="Modules.Messaging.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Bootstrapper\Bootstrapper.csproj" />
     <ProjectReference Include="..\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Catalog\Modules.Catalog.Api\Modules.Catalog.Api.csproj" />

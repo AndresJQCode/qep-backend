@@ -1,4 +1,4 @@
-namespace Modules.Messaging.Infrastructure.Options;
+namespace Modules.Messaging.Application;
 
 /// <summary>Spec 2026-10-09 §9 y §8.2.</summary>
 public sealed class MessagingWebhookOptions

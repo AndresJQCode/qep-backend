@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
 
 namespace Modules.Messaging.Api;
@@ -52,44 +52,26 @@ public static class WhatsAppWebhookEndpoints
     }
 
     private static async Task<IResult> ReceiveAsync(
-        HttpContext httpContext, IRequestDispatcher dispatcher, IConfiguration configuration, CancellationToken cancellationToken)
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        IOptions<MessagingWebhookOptions> options,
+        CancellationToken cancellationToken)
     {
-        var maxBytes = configuration.GetValue("Messaging:Webhook:MaxBodyBytes", 4 * 1024 * 1024);
+        var maxBytes = options.Value.MaxBodyBytes;
         if (httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sizeFeature)
         {
             sizeFeature.MaxRequestBodySize = maxBytes;
         }
 
-        if (httpContext.Request.ContentLength is { } declared && declared > maxBytes)
+        var read = await WebhookBodyReader.ReadAsync(
+            httpContext.Request.Body, httpContext.Request.ContentLength, maxBytes, cancellationToken);
+        if (read.Body is null)
         {
-            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
-        }
-
-        // Crudo, sin pasar por el binder de JSON: la firma es sobre los bytes exactos.
-        using var buffer = new MemoryStream();
-        var chunk = new byte[16 * 1024];
-        try
-        {
-            int read;
-            while ((read = await httpContext.Request.Body.ReadAsync(chunk, cancellationToken)) > 0)
-            {
-                if (buffer.Length + read > maxBytes)
-                {
-                    return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
-                }
-
-                buffer.Write(chunk, 0, read);
-            }
-        }
-        catch (BadHttpRequestException exception) when (exception.StatusCode == StatusCodes.Status413PayloadTooLarge)
-        {
-            // Kestrel corta el cuerpo sin Content-Length (chunked) al pasar el tope que fijamos arriba;
-            // sin esto el ApiExceptionHandler lo volvería un 500.
-            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            return Results.StatusCode(read.Status);
         }
 
         await dispatcher.SendAsync(
-            new ReceiveWebhookCommand(buffer.ToArray(), httpContext.Request.Headers["X-Hub-Signature-256"].FirstOrDefault()),
+            new ReceiveWebhookCommand(read.Body, httpContext.Request.Headers["X-Hub-Signature-256"].FirstOrDefault()),
             cancellationToken);
         return Results.Ok();
     }

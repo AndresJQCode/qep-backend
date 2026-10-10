@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
@@ -26,7 +27,10 @@ public static class MessagingInfrastructureExtensions
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
-        services.AddOptions<MessagingWebhookOptions>().Bind(configuration.GetSection(MessagingWebhookOptions.SectionName));
+        services.AddOptions<MessagingWebhookOptions>()
+            .Bind(configuration.GetSection(MessagingWebhookOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<MessagingWebhookOptions>, MessagingWebhookOptionsValidator>();
         services.AddOptions<MessagingWorkerOptions>().Bind(configuration.GetSection(MessagingWorkerOptions.SectionName));
 
         return services;

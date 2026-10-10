@@ -8,6 +8,7 @@ using Bootstrapper.Health;
 using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
+using Microsoft.Extensions.Options;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
 using Modules.Catalog.Api;
@@ -22,6 +23,7 @@ using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
 using Modules.Messaging.Api;
+using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Api;
@@ -71,17 +73,23 @@ builder.Services.AddRateLimiter(options =>
             factory: FixedWindow));
 
     // Spec 2026-10-09 §6.7 y §8.2: Meta manda desde pocas IPs compartidas y en ráfagas; con Public un
-    // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod.
-    var webhook = builder.Configuration.GetSection("Messaging:Webhook");
-    var webhookLimiter = new ConcurrencyLimiterOptions
-    {
-        PermitLimit = webhook.GetValue("ConcurrencyLimit", 64),
-        QueueLimit = webhook.GetValue("QueueLimit", 256),
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-    };
+    // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod. Los valores
+    // salen de MessagingWebhookOptions ya bindeadas y validadas al arrancar (> 0); la fábrica de la
+    // partición corre una sola vez, con el primer request.
     options.AddPolicy(
         RateLimiterPolicies.Webhook,
-        _ => RateLimitPartition.GetConcurrencyLimiter(partitionKey: "webhook", factory: _ => webhookLimiter));
+        httpContext => RateLimitPartition.GetConcurrencyLimiter(
+            partitionKey: "webhook",
+            factory: _ =>
+            {
+                var webhook = httpContext.RequestServices.GetRequiredService<IOptions<MessagingWebhookOptions>>().Value;
+                return new ConcurrencyLimiterOptions
+                {
+                    PermitLimit = webhook.ConcurrencyLimit,
+                    QueueLimit = webhook.QueueLimit,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                };
+            }));
 });
 
 var app = builder.Build();
