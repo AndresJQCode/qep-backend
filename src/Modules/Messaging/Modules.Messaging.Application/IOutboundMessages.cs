@@ -15,7 +15,7 @@ public sealed record ExistingOutbound(Guid Id, MessageStatus Status, DateTimeOff
 /// mensaje insertada (o reclamada con FOR UPDATE si ya existía con ese clientId). Un segundo request con
 /// el mismo clientId espera en el INSERT hasta que esta transacción termine. Se cierra con uno de los
 /// tres: commit Sent (con wamid y foto de la conversación), commit Failed, o rollback (nada se guarda).
-/// Desecharlo sin cerrar es rollback.
+/// Desecharlo sin cerrar es rollback. Reenviar un Failed reescribe el texto guardado con el del request nuevo.
 /// </summary>
 public interface IOutboundClaim : IAsyncDisposable
 {

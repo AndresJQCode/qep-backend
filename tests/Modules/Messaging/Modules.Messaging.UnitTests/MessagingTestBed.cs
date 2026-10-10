@@ -142,8 +142,17 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
     public Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 
+    /// <summary>Simula que Integrations no pudo guardar el cambio de estado.</summary>
+    public Exception? ReportFailure { get; set; }
+
     public Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ReportFailure is { } failure)
+        {
+            throw failure;
+        }
+
         Reported.Add(new RejectedReport(tenantId, connectionId, failureCode));
         return Task.CompletedTask;
     }
@@ -157,9 +166,15 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 
     public List<SentText> Sends { get; } = [];
 
+    /// <summary>Corre mientras "Meta" procesa: p. ej., la persona cierra la pestaña (se cancela el request).</summary>
+    public Action? DuringSend { get; set; }
+
+    /// <summary>Como HttpClient: Meta ya recibió el mensaje, pero un token cancelado a mitad de la llamada lanza.</summary>
     public Task<SendTextResult> SendTextAsync(MessagingSender sender, string waId, string body, string callbackData, CancellationToken cancellationToken)
     {
         Sends.Add(new SentText(sender, waId, body, callbackData));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(NextSend);
     }
 
@@ -201,12 +216,14 @@ internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing)
 
     public ExistingOutbound? Existing => existing;
 
-    public Task CommitSentAsync(string wamid, DateTimeOffset occurredAt, CancellationToken cancellationToken) => Close("committed-sent:" + wamid);
+    // Como EF/Npgsql: un token ya cancelado hace fallar el commit o el rollback antes de llegar a la base.
+    public Task CommitSentAsync(string wamid, DateTimeOffset occurredAt, CancellationToken cancellationToken) =>
+        Close("committed-sent:" + wamid, cancellationToken);
 
     public Task CommitFailedAsync(int failureCode, string? failureTitle, DateTimeOffset occurredAt, CancellationToken cancellationToken) =>
-        Close("committed-failed:" + failureCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Close("committed-failed:" + failureCode.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
 
-    public Task RollbackAsync(CancellationToken cancellationToken) => Close("rolled-back");
+    public Task RollbackAsync(CancellationToken cancellationToken) => Close("rolled-back", cancellationToken);
 
     public ValueTask DisposeAsync()
     {
@@ -214,8 +231,9 @@ internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing)
         return ValueTask.CompletedTask;
     }
 
-    private Task Close(string outcome)
+    private Task Close(string outcome, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (Outcome is not null)
         {
             throw new InvalidOperationException($"The claim was already closed as {Outcome}.");

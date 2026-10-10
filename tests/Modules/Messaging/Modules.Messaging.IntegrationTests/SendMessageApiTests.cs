@@ -43,11 +43,13 @@ public sealed class SendMessageApiTests
         using var _ = f.Factory;
         ScriptSendOk(f.Factory.MetaHandler);
         var clientId = Guid.CreateVersion7();
-        var versionBefore = await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations");
+        // Fix 1, hallazgo 1: el envío no sube version ni updated_at (un resolver con la versión de antes no da 412).
+        var before = await ScalarAsync<string>(f.ConnectionString, "SELECT version || '|' || updated_at::text FROM messaging.conversations");
 
         var response = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId, text = " Sí, tenemos 12 unidades. " });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Null(response.Headers.Location);
         var message = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
         Assert.Equal("Sent", message.GetProperty("status").GetString());
         Assert.Equal("Outbound", message.GetProperty("direction").GetString());
@@ -61,8 +63,8 @@ public sealed class SendMessageApiTests
         Assert.Contains($"\"biz_opaque_callback_data\":\"qep:{message.GetProperty("id").GetGuid()}\"", send.Body, StringComparison.Ordinal);
         Assert.Contains("\"to\":\"573001234567\"", send.Body, StringComparison.Ordinal);
         Assert.Equal("1|wamid.out|2|1", await ScalarAsync<string>(f.ConnectionString, "SELECT m.status || '|' || m.wamid || '|' || c.last_message_direction || '|' || c.last_message_status FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.direction = 2"));
-        Assert.Equal(versionBefore + 1, await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations"));
-        Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT c.last_message_id = m.id AND c.last_activity_at = m.occurred_at AND c.updated_at = m.occurred_at AND c.last_message_preview = m.text FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.direction = 2"));
+        Assert.Equal(before, await ScalarAsync<string>(f.ConnectionString, "SELECT version || '|' || updated_at::text FROM messaging.conversations"));
+        Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT c.last_message_id = m.id AND c.last_activity_at = m.occurred_at AND c.last_message_preview = m.text FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.direction = 2"));
         var list = await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct);
         Assert.Equal("Outbound", list.GetProperty("items")[0].GetProperty("lastMessage").GetProperty("direction").GetString());
     }

@@ -81,6 +81,81 @@ public sealed class SendMessageHandlerTests
         Assert.Equal(reported is null ? [] : [reported], bed.Connections.Reported.Select(report => report.FailureCode));
     }
 
+    /// <summary>Fix 1, hallazgo 2: la persona cierra la pestaña mientras Meta acepta el mensaje. El envío ya salió:
+    /// la fila tiene que quedar Sent, o el reintento con el mismo clientId lo mandaría dos veces.</summary>
+    [Fact]
+    public async Task AnAbortedRequestAfterMetaAcceptedStillCommitsSentAndARetryDoesNotResend()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Meta.NextSend = new SendTextResult(SendOutcome.Sent, "wamid.aborted", null, null);
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        bed.Meta.DuringSend = request.Cancel;
+
+        var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), request.Token);
+
+        Assert.Equal("Sent", message.Status);
+        Assert.Equal("committed-sent:wamid.aborted", Assert.Single(bed.Outbound.Claims).Outcome);
+
+        bed.Meta.DuringSend = null;
+        bed.Outbound.Existing = new ExistingOutbound(message.Id, MessageStatus.Sent, message.At, bed.MemberId, "x");
+        var retry = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), Ct);
+
+        Assert.Equal(message.Id, retry.Id);
+        Assert.Single(bed.Meta.Sends);
+    }
+
+    [Fact]
+    public async Task AnAbortedRequestOnAGraphErrorStillRollsBackAndReports()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, 190, "title");
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        bed.Meta.DuringSend = request.Cancel;
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() =>
+            bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), request.Token));
+
+        Assert.Equal(MessagingErrorCodes.ConnectionUnavailable, error.Code);
+        Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
+        Assert.Equal("token_expired", Assert.Single(bed.Connections.Reported).FailureCode);
+    }
+
+    /// <summary>Hallazgo 5: si Integrations no pudo pasar la conexión a NeedsAttention, el envío sigue siendo el 422
+    /// documentado, con la falla original adentro para que quede en <c>platform.request_failures</c>.</summary>
+    [Fact]
+    public async Task AFailedHealthReportStillAnswersConnectionUnavailableWithTheCause()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, 133010, "title");
+        var cause = new InvalidOperationException("integrations down");
+        bed.Connections.ReportFailure = cause;
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.ConnectionUnavailable, error.Code);
+        Assert.Same(cause, error.InnerException);
+        Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
+    }
+
+    /// <summary>Hallazgo 4: un 4xx sin <c>error.code</c> legible se guarda con <c>failure_code = 0</c>, que
+    /// <c>MessageFailureReasons</c> traduce al texto genérico.</summary>
+    [Fact]
+    public async Task AGraphErrorWithoutACodeIsFailedZeroWithTheGenericReason()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, null, null);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageRejected, error.Code);
+        Assert.Equal("committed-failed:0", Assert.Single(bed.Outbound.Claims).Outcome);
+        Assert.Equal(MessageFailureReasons.Generic, MessageFailureReasons.For(SendMessageHandler.UnknownGraphErrorCode));
+    }
+
     [Fact]
     public async Task AnUnconfirmedSendIsFailedMinusOne()
     {

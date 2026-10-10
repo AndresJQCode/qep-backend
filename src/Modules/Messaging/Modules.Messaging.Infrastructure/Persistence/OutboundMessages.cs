@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Messaging.Application;
@@ -80,7 +81,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 WHERE id = {MessageId}
                 """, cancellationToken);
             // La foto de la conversación, como la ingesta de §7.5: CASE por fecha para no pisar un entrante más
-            // nuevo, updated_at y version + 1 (la fila que la pantalla dibuja cambió).
+            // nuevo. No sube version ni updated_at: el envío no es una edición que la persona pueda pisar, y subirla
+            // convertiría un resolver justo después de responder en un 412 (mismo criterio que los acuses de §7.5).
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.conversations SET
@@ -90,13 +92,12 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                     last_message_kind      = CASE WHEN last_message_at IS NULL OR {occurredAt} >= last_message_at THEN 1 ELSE last_message_kind END,
                     last_message_preview   = CASE WHEN last_message_at IS NULL OR {occurredAt} >= last_message_at THEN {preview} ELSE last_message_preview END,
                     last_message_status    = CASE WHEN last_message_at IS NULL OR {occurredAt} >= last_message_at THEN 1 ELSE last_message_status END,
-                    last_message_at        = GREATEST(last_message_at, {occurredAt}),
-                    updated_at             = {occurredAt},
-                    version                = version + 1
+                    last_message_at        = GREATEST(last_message_at, {occurredAt})
                 WHERE id = {draft.ConversationId}
                 """, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            // Cerrado antes del commit: si el commit falla, DisposeAsync no intenta un rollback que taparía esa falla.
             _closed = true;
+            await transaction.CommitAsync(cancellationToken);
         }
 
         public async Task CommitFailedAsync(int failureCode, string? failureTitle, DateTimeOffset occurredAt, CancellationToken cancellationToken)
@@ -106,8 +107,9 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 UPDATE messaging.messages SET status = 4, failure_code = {failureCode}, failure_title = {failureTitle}, occurred_at = {occurredAt}, text = {draft.Text}
                 WHERE id = {MessageId}
                 """, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            // Cerrado antes del commit: si el commit falla, DisposeAsync no intenta un rollback que taparía esa falla.
             _closed = true;
+            await transaction.CommitAsync(cancellationToken);
         }
 
         public async Task RollbackAsync(CancellationToken cancellationToken)
@@ -119,9 +121,19 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             }
         }
 
+        /// <summary>Desecharlo sin cerrar es rollback. Si ese rollback falla (conexión caída tras un error previo),
+        /// no se propaga: taparía la excepción original, y PostgreSQL descarta la transacción igual al cerrarse.</summary>
         public async ValueTask DisposeAsync()
         {
-            await RollbackAsync(CancellationToken.None);
+            try
+            {
+                await RollbackAsync(CancellationToken.None);
+            }
+            catch (Exception exception) when (exception is DbException or InvalidOperationException)
+            {
+                // Ver summary.
+            }
+
             await transaction.DisposeAsync();
         }
     }

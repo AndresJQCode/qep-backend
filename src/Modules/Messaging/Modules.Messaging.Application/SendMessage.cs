@@ -45,6 +45,10 @@ public sealed class SendMessageHandler(
 {
     public const string CallbackPrefix = "qep:";
 
+    /// <summary>§8.3: un 4xx de Graph sin <c>error.code</c> legible se guarda con este <c>failure_code</c>; no está en
+    /// la tabla de §10.3, así que <c>MessageFailureReasons</c> lo muestra con el texto genérico.</summary>
+    public const int UnknownGraphErrorCode = 0;
+
     public async Task<MessageDto> HandleAsync(SendMessageCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -60,10 +64,15 @@ public sealed class SendMessageHandler(
         var draft = new OutboundDraft(Guid.CreateVersion7(), conversation.Id, command.TenantId, conversation.ConnectionId, command.ClientId!.Value, text, member, now);
         await using var claim = await outbound.ClaimAsync(draft, cancellationToken);
 
+        // Desde acá, todo cierre del reclamo va con CancellationToken.None: si la persona cierra la pestaña
+        // (RequestAborted) mientras Meta ya aceptó el mensaje, un rollback por cancelación borraría la fila y el
+        // reintento con el mismo clientId lo mandaría dos veces. La llamada a Meta igual tiene tope: los 10 s
+        // del cliente messaging.meta-graph.
+
         // Idempotencia (decisión 11): lo que ya salió, ya salió, antes de mirar ventana o estado.
         if (!claim.Inserted && claim.Existing is { } existing && existing.Status != MessageStatus.Failed)
         {
-            await claim.RollbackAsync(cancellationToken);
+            await claim.RollbackAsync(CancellationToken.None);
             return await ToDtoAsync(
                 command, new MessageRow(existing.Id, conversation.Id, MessageDirection.Outbound, MessageKind.Text, existing.Text, null, null, existing.Status, null, existing.OccurredAt, existing.SentByMemberId, command.ClientId, null),
                 cancellationToken);
@@ -71,52 +80,68 @@ public sealed class SendMessageHandler(
 
         if (conversation.Status != ConversationStatus.Open)
         {
-            await claim.RollbackAsync(cancellationToken);
+            await claim.RollbackAsync(CancellationToken.None);
             throw new MessagingDomainException(MessagingErrorCodes.ConversationNotOpen, "The conversation is resolved; reopen it to answer.");
         }
 
         if (conversation.LastInboundAt is not { } lastInbound || lastInbound.Add(Conversation.WindowLength) <= now)
         {
-            await claim.RollbackAsync(cancellationToken);
+            await claim.RollbackAsync(CancellationToken.None);
             throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "More than 24 hours passed since the person last wrote.");
         }
 
         var sender = await connections.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, cancellationToken);
         if (sender is null)
         {
-            await claim.RollbackAsync(cancellationToken);
+            await claim.RollbackAsync(CancellationToken.None);
             throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
         }
 
-        var result = await meta.SendTextAsync(sender, conversation.WaId, text, CallbackPrefix + claim.MessageId.ToString("D"), cancellationToken);
+        var result = await meta.SendTextAsync(sender, conversation.WaId, text, CallbackPrefix + claim.MessageId.ToString("D"), CancellationToken.None);
         // §8.3: occurred_at del saliente = hora del servidor al recibir la respuesta de Meta.
         var answeredAt = clock.UtcNow;
         switch (result.Outcome)
         {
             case SendOutcome.Sent when !string.IsNullOrEmpty(result.Wamid):
-                await claim.CommitSentAsync(result.Wamid, answeredAt, cancellationToken);
+                await claim.CommitSentAsync(result.Wamid, answeredAt, CancellationToken.None);
                 return await ToDtoAsync(
                     command, new MessageRow(claim.MessageId, conversation.Id, MessageDirection.Outbound, MessageKind.Text, text, null, null, MessageStatus.Sent, null, answeredAt, member, command.ClientId, null),
-                    cancellationToken);
+                    CancellationToken.None);
 
             case SendOutcome.GraphError when result.Code is 190 or 133010:
                 // §8.3: la credencial o el número ya no sirven; la fila no se guarda y la conexión pasa a NeedsAttention.
-                await claim.RollbackAsync(cancellationToken);
-                await connections.ReportRejectedAsync(command.TenantId, conversation.ConnectionId, result.Code == 190 ? "token_expired" : "number_unregistered", cancellationToken);
+                await claim.RollbackAsync(CancellationToken.None);
+                await ReportRejectedAsync(command.TenantId, conversation.ConnectionId, result.Code == 190 ? "token_expired" : "number_unregistered");
                 throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials.");
 
             case SendOutcome.GraphError when result.Code is 131047:
-                await claim.CommitFailedAsync(131047, result.Title, answeredAt, cancellationToken);
+                await claim.CommitFailedAsync(131047, result.Title, answeredAt, CancellationToken.None);
                 throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "Meta closed the 24-hour window.");
 
             case SendOutcome.GraphError:
-                await claim.CommitFailedAsync(result.Code ?? 0, result.Title, answeredAt, cancellationToken);
+                await claim.CommitFailedAsync(result.Code ?? UnknownGraphErrorCode, result.Title, answeredAt, CancellationToken.None);
                 throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "Meta rejected the message.");
 
             default:
                 // Timeout, 5xx, red o un 2xx sin messages[0].id: Meta pudo haberlo aceptado (riesgo residual de §8.3).
-                await claim.CommitFailedAsync(MessageFailureReasons.Unconfirmed, null, answeredAt, cancellationToken);
+                await claim.CommitFailedAsync(MessageFailureReasons.Unconfirmed, null, answeredAt, CancellationToken.None);
                 throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "The send could not be confirmed with Meta.");
+        }
+    }
+
+    // Si Integrations no logra pasar la conexión a NeedsAttention, la respuesta sigue siendo el 422 documentado;
+    // la causa viaja como InnerException y ApiExceptionHandler la deja en platform.request_failures (Application no
+    // tiene logger). El próximo envío vuelve a recibir 190/133010 y reintenta el reporte.
+    private async Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode)
+    {
+        try
+        {
+            await connections.ReportRejectedAsync(tenantId, connectionId, failureCode, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials; the connection state could not be updated.", exception);
         }
     }
 

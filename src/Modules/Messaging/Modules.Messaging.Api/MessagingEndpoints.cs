@@ -74,7 +74,8 @@ public static class MessagingEndpoints
         Guid tenantId, Guid conversationId, SendMessageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
         var message = await dispatcher.SendAsync(new SendMessageCommand(tenantId, conversationId, request.ClientId, request.Text), cancellationToken);
-        return Results.Created($"/api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages", message);
+        // Sin Location: no hay GET de un mensaje suelto, y apuntar a la colección del hilo confundiría.
+        return Results.Created((string?)null, message);
     }
 }
 
