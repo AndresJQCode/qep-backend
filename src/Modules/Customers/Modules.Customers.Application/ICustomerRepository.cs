@@ -29,6 +29,7 @@ public interface ICustomerRepository
         string? identificationNumber,
         string? cuc,
         IReadOnlyCollection<Guid>? cityIds,
+        bool? isComplete,
         int page,
         int pageSize,
         CancellationToken cancellationToken);

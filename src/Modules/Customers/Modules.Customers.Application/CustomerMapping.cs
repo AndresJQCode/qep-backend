@@ -49,7 +49,8 @@ internal static class CustomerMapping
         customer.VatSurplus,
         customer.IsActive,
         customer.CreatedAt,
-        customer.UpdatedAt);
+        customer.UpdatedAt,
+        customer.IsComplete);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo

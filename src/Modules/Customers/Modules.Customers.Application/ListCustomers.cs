@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
 
@@ -24,7 +25,21 @@ public sealed record ListCustomersQuery(
     IReadOnlyCollection<Guid>? DepartmentIds,
     IReadOnlyCollection<Guid>? CityIds,
     int Page,
-    int PageSize) : IQuery<CustomerPage>;
+    int PageSize,
+    string? IsComplete = null) : IQuery<CustomerPage>;
+
+/// <summary>Spec 2026-10-10 §5.2 (P2): <c>isComplete</c> llega como texto para que un valor raro sea 422 con su
+/// clave y no un 400 del binding.</summary>
+public sealed class ListCustomersValidator : AbstractValidator<ListCustomersQuery>
+{
+    public ListCustomersValidator()
+    {
+        RuleFor(query => query.IsComplete)
+            .Must(value => value is null || bool.TryParse(value, out _))
+            .OverridePropertyName("isComplete")
+            .WithMessage("isComplete debe ser true o false.");
+    }
+}
 
 /// <summary>Una pagina de clientes con el total que la UI necesita para paginar.</summary>
 public sealed record CustomerPage(
@@ -63,7 +78,8 @@ public sealed class ListCustomersHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    IValidator<ListCustomersQuery> validator)
     : IQueryHandler<ListCustomersQuery, CustomerPage>
 {
     public async Task<CustomerPage> HandleAsync(
@@ -72,6 +88,8 @@ public sealed class ListCustomersHandler(
     {
         CustomersAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, CustomersPermissions.CustomerRead);
+        await validator.ValidateAndThrowAsync(query, cancellationToken);
+        bool? isComplete = query.IsComplete is null ? null : bool.Parse(query.IsComplete);
 
         var page = CustomerPaging.NormalizePage(query.Page);
         var pageSize = CustomerPaging.NormalizePageSize(query.PageSize);
@@ -84,6 +102,7 @@ public sealed class ListCustomersHandler(
             query.IdentificationNumber,
             query.Cuc,
             cityIds,
+            isComplete,
             page,
             pageSize,
             cancellationToken);

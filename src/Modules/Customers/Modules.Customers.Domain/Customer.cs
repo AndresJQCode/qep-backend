@@ -432,6 +432,14 @@ public sealed class Customer
         CustomerAddressDetails details, bool isPrincipal, DateTimeOffset occurredAt)
     {
         EnsureActive();
+        // Spec 2026-10-10 §5.2: no hay edición parcial de un incompleto. La libreta nace al completarlo
+        // (Complete), con la dirección del PUT.
+        if (!IsComplete)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.incomplete",
+                "An incomplete customer cannot be edited until it is completed.");
+        }
 
         var address = CustomerAddress.Create(Id, details, occurredAt);
         _addresses.Add(address);

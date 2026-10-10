@@ -109,6 +109,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         string? identificationNumber,
         string? cuc,
         IReadOnlyCollection<Guid>? cityIds,
+        bool? isComplete,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -133,6 +134,13 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             // filtro se arma desde el catalogo de departamentos y ciudades colombianas.
             query = query.Where(customer =>
                 customer.CityId.HasValue && cityIds.Contains(customer.CityId.Value));
+        }
+
+        // Spec 2026-10-10 §5.2: el filtro usa IX_customers_tenant_incomplete.
+        if (isComplete is { } complete)
+        {
+            var completeness = complete ? CustomerCompleteness.Complete : CustomerCompleteness.Incomplete;
+            query = query.Where(customer => customer.Completeness == completeness);
         }
 
         // El total se cuenta sobre la consulta **ya filtrada** y antes de paginar: es cuantos

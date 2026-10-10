@@ -33,7 +33,7 @@ public sealed class CustomerPhoneDirectoryTests
 
         var match = Assert.Single(matches);
         Assert.Equal("+573001234567", match.Key);
-        Assert.Equal(new CustomerPhoneMatch(first.Id, "Primero"), match.Value);
+        Assert.Equal(new CustomerPhoneMatch(first.Id, "Primero", true), match.Value);
 
         // D-M7: manda created_at, no el orden de inserción ni el id. Si el segundo pasa a ser el más
         // viejo, gana él.

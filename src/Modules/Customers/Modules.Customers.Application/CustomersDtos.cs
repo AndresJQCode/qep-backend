@@ -67,7 +67,9 @@ public sealed record CustomerDto(
     bool VatSurplus,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
+    bool IsComplete);
 
 public sealed record CustomerResponse(
     Guid Id,
@@ -89,7 +91,9 @@ public sealed record CustomerResponse(
     bool VatSurplus,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
+    bool IsComplete);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -116,7 +120,9 @@ public sealed record CustomerListItemResponse(
     CustomerDepartmentDto? Department,
     string? CityName,
     ClientClassificationDto? Classification,
-    bool IsActive);
+    bool IsActive,
+    /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
+    bool IsComplete);
 
 /// <summary>
 /// El sobre del listado, con el total que la paginacion necesita.
