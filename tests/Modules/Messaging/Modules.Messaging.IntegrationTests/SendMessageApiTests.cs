@@ -61,7 +61,9 @@ public sealed class SendMessageApiTests
         Assert.Equal("/v24.0/111/messages", send.Uri!.AbsolutePath);
         Assert.Equal($"Bearer {SentinelMetaAccessToken}", send.Authorization);
         Assert.Contains($"\"biz_opaque_callback_data\":\"qep:{message.GetProperty("id").GetGuid()}\"", send.Body, StringComparison.Ordinal);
-        Assert.Contains("\"to\":\"573001234567\"", send.Body, StringComparison.Ordinal);
+        // Spec 2026-10-10 §8.1: la conversación nace con BSUID (MetaPayloads.UserIdFor), así que se le escribe por recipient.
+        Assert.Contains($"\"recipient\":\"{MetaPayloads.UserIdFor("573001234567")}\"", send.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"to\"", send.Body, StringComparison.Ordinal);
         Assert.Equal("1|wamid.out|2|1", await ScalarAsync<string>(f.ConnectionString, "SELECT m.status || '|' || m.wamid || '|' || c.last_message_direction || '|' || c.last_message_status FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.direction = 2"));
         Assert.Equal(before, await ScalarAsync<string>(f.ConnectionString, "SELECT version || '|' || updated_at::text FROM messaging.conversations"));
         Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT c.last_message_id = m.id AND c.last_activity_at = m.occurred_at AND c.last_message_preview = m.text FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.direction = 2"));

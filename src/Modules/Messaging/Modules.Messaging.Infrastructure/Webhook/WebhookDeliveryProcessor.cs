@@ -55,6 +55,10 @@ internal sealed partial class WebhookDeliveryProcessor(
                 case UnknownChange unknown:
                     LogIgnoredField(logger, deliveryId, unknown.Field);
                     break;
+                case UserIdUpdateChange:
+                    // Spec 2026-10-10 §8.3: se parsea desde ya; aplicarlo llega con la T10. Hasta entonces, al log.
+                    LogIgnoredField(logger, deliveryId, "user_id_update");
+                    break;
                 default:
                     break;
             }

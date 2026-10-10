@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Webhook;
 
@@ -14,11 +15,31 @@ public sealed class WebhookPayloadParserTests
         entry = new[] { new { id = "222", changes = new[] { new { field, value } } } },
     });
 
-    private static object Messages(object message, object? contact = null) => new
+    // Spec 2026-10-10 §8.1: sin from_user_id el mensaje se salta. El helper se lo agrega a los que no lo traen
+    // ("CO." + from, o "CO.1" sin from), así las pruebas viejas no cambian de intención.
+    private static object Messages(object message, object? contact = null)
+    {
+        var node = JsonSerializer.SerializeToNode(message)!.AsObject();
+        if (!node.ContainsKey("from_user_id"))
+        {
+            var sender = node["from"] is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0 ? text : "1";
+            node["from_user_id"] = "CO." + sender;
+        }
+
+        return new
+        {
+            messaging_product = "whatsapp",
+            metadata = new { display_phone_number = "15550000000", phone_number_id = "111" },
+            contacts = new[] { contact ?? new { profile = new { name = "Laura" }, user_id = "CO.573001234567", wa_id = "573001234567" } },
+            messages = new[] { node },
+        };
+    }
+
+    private static object BsuidOnly(string userId, object message) => new
     {
         messaging_product = "whatsapp",
         metadata = new { display_phone_number = "15550000000", phone_number_id = "111" },
-        contacts = new[] { contact ?? new { profile = new { name = "Laura" }, wa_id = "573001234567" } },
+        contacts = new[] { new { profile = new { name = "Laura", username = "laura.p" }, user_id = userId, parent_user_id = "CO.PARENT" } },
         messages = new[] { message },
     };
 
@@ -58,19 +79,21 @@ public sealed class WebhookPayloadParserTests
     }
 
     // conversations.wa_id es varchar(20): un from más largo haría fallar el INSERT de la ingesta en cada
-    // reintento. Se salta como cualquier otra forma rota; uno de 20 dígitos sí entra.
+    // reintento. Spec 2026-10-10 §8.1: el teléfono es un dato opcional, así que se descarta y el mensaje entra
+    // igual; uno de 20 dígitos sí se guarda.
     [Fact]
-    public void AFromLongerThanTheWaIdColumnIsSkipped()
+    public void AFromLongerThanTheWaIdColumnIsDroppedButTheMessageEnters()
     {
         var tooLong = new string('5', Conversation.WaIdMaxLength + 1);
         var longest = new string('5', Conversation.WaIdMaxLength);
+        var bsuidOnlyContact = new { profile = new { name = "Laura" }, user_id = "CO.1" };
 
-        var skipped = Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(
-            Envelope("messages", Messages(new { from = tooLong, id = "wamid.long", timestamp = "1760000000", type = "text", text = new { body = "hola" } })))));
+        var dropped = Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(
+            Envelope("messages", Messages(new { from_user_id = "CO.1", from = tooLong, id = "wamid.long", timestamp = "1760000000", type = "text", text = new { body = "hola" } }, bsuidOnlyContact)))));
         var kept = Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(
-            Envelope("messages", Messages(new { from = longest, id = "wamid.max", timestamp = "1760000000", type = "text", text = new { body = "hola" } })))));
+            Envelope("messages", Messages(new { from_user_id = "CO.1", from = longest, id = "wamid.max", timestamp = "1760000000", type = "text", text = new { body = "hola" } }, bsuidOnlyContact)))));
 
-        Assert.Empty(skipped.Messages);
+        Assert.Null(Assert.Single(dropped.Messages).WaId);
         Assert.Equal(longest, Assert.Single(kept.Messages).WaId);
     }
 
@@ -232,7 +255,7 @@ public sealed class WebhookPayloadParserTests
     [Fact]
     public void AMessageWithoutAMatchingContactStillHasItsWaIdFromFrom()
     {
-        var json = Envelope("messages", new { metadata = new { phone_number_id = "111" }, contacts = Array.Empty<object>(), messages = new[] { new { from = "573009999999", id = "w", timestamp = "1", type = "text", text = new { body = "x" } } } });
+        var json = Envelope("messages", new { metadata = new { phone_number_id = "111" }, contacts = Array.Empty<object>(), messages = new[] { new { from_user_id = "CO.573009999999", from = "573009999999", id = "w", timestamp = "1", type = "text", text = new { body = "x" } } } });
 
         var message = Assert.Single(Assert.IsType<MessagesChange>(WebhookPayloadParser.Parse(json)[0]).Messages);
 
@@ -250,15 +273,105 @@ public sealed class WebhookPayloadParserTests
             metadata = new { phone_number_id = "111" },
             messages = new object[]
             {
-                new { from = string.Empty, id = "w.empty-from", timestamp = "1", type = "text", text = new { body = "x" } },
-                new { from = "573001234567", id = "w.bad-timestamp", timestamp = "abc", type = "text", text = new { body = "x" } },
-                new { from = "573001234567", id = "w.ok", timestamp = "1", type = "text", text = new { body = "ok" } },
+                new { from_user_id = string.Empty, from = string.Empty, id = "w.empty-from", timestamp = "1", type = "text", text = new { body = "x" } },
+                new { from_user_id = "CO.573001234567", from = "573001234567", id = "w.bad-timestamp", timestamp = "abc", type = "text", text = new { body = "x" } },
+                new { from_user_id = "CO.573001234567", from = "573001234567", id = "w.ok", timestamp = "1", type = "text", text = new { body = "ok" } },
             },
         });
 
         var message = Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages);
 
         Assert.Equal(("w.ok", "573001234567", "ok"), (message.Wamid, message.WaId, message.Text));
+    }
+
+    // Spec 2026-10-10 §8.1 (RF1): sin from ni wa_id, el mensaje entra con BSUID y sin teléfono.
+    [Fact]
+    public void AMessageWithOnlyABsuidEntersWithoutPhone()
+    {
+        var json = Envelope("messages", BsuidOnly("CO.1349120865530274", new { from_user_id = "CO.1349120865530274", id = "wamid.b", timestamp = "1760000000", type = "text", text = new { body = "hola" } }));
+
+        var message = Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages);
+
+        Assert.Equal(("CO.1349120865530274", (string?)null, "Laura", "laura.p", "CO.PARENT"), (message.UserId, message.WaId, message.ProfileName, message.Username, message.ParentUserId));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("573001234567")]
+    [InlineData("co.123")]
+    public void AMessageWithoutAValidBsuidIsSkipped(string? fromUserId)
+    {
+        var json = Envelope("messages", BsuidOnly("CO.1", new { from_user_id = fromUserId, from = "573001234567", id = "wamid.x", timestamp = "1760000000", type = "text", text = new { body = "hola" } }));
+
+        Assert.Empty(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages);
+    }
+
+    // §8.1: un from inválido se descarta como dato; el mensaje entra igual.
+    [Fact]
+    public void AnInvalidFromIsDroppedButTheMessageEnters()
+    {
+        var json = Envelope("messages", BsuidOnly("CO.1", new { from_user_id = "CO.1", from = "57-300", id = "wamid.f", timestamp = "1760000000", type = "text", text = new { body = "hola" } }));
+
+        var message = Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages);
+        Assert.Null(message.WaId);
+    }
+
+    [Fact]
+    public void TheQuotedWamidComesFromTheContext()
+    {
+        var json = Envelope("messages", BsuidOnly("CO.1", new { from_user_id = "CO.1", id = "wamid.r", timestamp = "1760000000", type = "text", text = new { body = "sí" }, context = new { from = "15550000000", id = "wamid.quoted" } }));
+
+        Assert.Equal("wamid.quoted", Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages).QuotedWamid);
+    }
+
+    // §8.1 y §8.3: user_changed_user_id no es un mensaje Unsupported; el anterior sale de from_user_id o del cuerpo.
+    [Theory]
+    [InlineData("CO.OLD", "User Laura changed from CO.IGNORED to CO.NEW", "CO.OLD")]
+    [InlineData("CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "CO.OLD")]
+    public void AUserChangedUserIdSystemMessageIsANumberChange(string fromUserId, string body, string expectedPrevious)
+    {
+        var json = Envelope("messages", BsuidOnly(fromUserId, new
+        {
+            from_user_id = fromUserId,
+            id = "wamid.sys",
+            timestamp = "1760000000",
+            type = "system",
+            system = new { body, type = "user_changed_user_id", user_id = "CO.NEW", wa_id = "573009999999" },
+        }));
+
+        var change = Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json)));
+
+        Assert.Empty(change.Messages);
+        Assert.Equal(new UserIdChange(expectedPrevious, "CO.NEW", "573009999999"), Assert.Single(change.NumberChanges));
+    }
+
+    [Fact]
+    public void AnotherSystemMessageIsStillUnsupported()
+    {
+        var json = Envelope("messages", BsuidOnly("CO.1", new { from_user_id = "CO.1", id = "wamid.s", timestamp = "1", type = "system", system = new { type = "customer_identity_changed", body = "x" } }));
+
+        Assert.Equal(MessageKind.Unsupported, Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages).Kind);
+    }
+
+    [Fact]
+    public void AUserIdUpdateFieldIsANumberChangeRoutedByPhoneNumberIdOrWaba()
+    {
+        var withMetadata = Envelope("user_id_update", new { metadata = new { phone_number_id = "111" }, user_id = new { previous = "CO.OLD", current = "CO.NEW" } });
+        var withoutMetadata = Envelope("user_id_update", new { user_id = new { previous = "CO.OLD", current = "CO.NEW" } });
+        var broken = Envelope("user_id_update", new { user_id = new { previous = "CO.OLD" } });
+
+        Assert.Equal(new UserIdUpdateChange("222", "111", new UserIdChange("CO.OLD", "CO.NEW", null)), Assert.Single(WebhookPayloadParser.Parse(withMetadata)));
+        Assert.Equal(new UserIdUpdateChange("222", null, new UserIdChange("CO.OLD", "CO.NEW", null)), Assert.Single(WebhookPayloadParser.Parse(withoutMetadata)));
+        Assert.IsType<UnknownChange>(Assert.Single(WebhookPayloadParser.Parse(broken)));
+    }
+
+    // P1: un envío por BSUID sin teléfono trae el status sin recipient_id; se correlaciona igual por wamid.
+    [Fact]
+    public void AStatusWithoutRecipientIdStillParses()
+    {
+        var json = Envelope("messages", new { metadata = new { phone_number_id = "111" }, statuses = new[] { new { id = "wamid.out", status = "delivered", timestamp = "1760000000", recipient_user_id = "CO.1" } } });
+
+        Assert.Equal("wamid.out", Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Statuses).Wamid);
     }
 
     [Fact]
