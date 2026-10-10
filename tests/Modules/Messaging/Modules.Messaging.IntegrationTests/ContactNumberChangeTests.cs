@@ -47,17 +47,29 @@ public sealed class ContactNumberChangeTests
             "SELECT whatsapp_user_id FROM customers.customers WHERE id = (SELECT customer_id FROM messaging.conversations)"));
     }
 
-    [Fact]
-    public async Task BothSignalsInAnyOrderAndRepeatedApplyOnce()
+    // Revisión de la Task 10: las dos órdenes. true = el mensaje de sistema primero; false = user_id_update primero.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BothSignalsInAnyOrderAndRepeatedApplyOnce(bool systemMessageFirst)
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         await SendAsync(f, MetaPayloads.Inbound("111", "CO.OLD", null, "wamid.1", 1760000000, "antes"));
 
-        await SendAsync(f, MetaPayloads.UserChangedUserId("111", "CO.OLD", "CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "wamid.sys", 1760000050));
-        await SendAsync(f, MetaPayloads.UserIdUpdate("CO.OLD", "CO.NEW"));
-        await SendAsync(f, MetaPayloads.UserChangedUserId("111", "CO.NEW", "CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "wamid.sys2", 1760000060));
+        if (systemMessageFirst)
+        {
+            await SendAsync(f, MetaPayloads.UserChangedUserId("111", "CO.OLD", "CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "wamid.sys", 1760000050));
+            await SendAsync(f, MetaPayloads.UserIdUpdate("CO.OLD", "CO.NEW"));
+            await SendAsync(f, MetaPayloads.UserChangedUserId("111", "CO.NEW", "CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "wamid.sys2", 1760000060));
+        }
+        else
+        {
+            await SendAsync(f, MetaPayloads.UserIdUpdate("CO.OLD", "CO.NEW"));
+            await SendAsync(f, MetaPayloads.UserChangedUserId("111", "CO.OLD", "CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "wamid.sys", 1760000050));
+            await SendAsync(f, MetaPayloads.UserIdUpdate("CO.OLD", "CO.NEW"));
+        }
 
         Assert.Equal("CO.NEW", await ScalarAsync<string>(f.ConnectionString, "SELECT user_id FROM messaging.conversations"));
         Assert.Equal(1L, await ChangeEventsAsync(f));
@@ -89,6 +101,35 @@ public sealed class ContactNumberChangeTests
             SELECT (SELECT occurred_at FROM messaging.messages WHERE details->>'type' = 'ContactChangedNumber')
                  < (SELECT occurred_at FROM messaging.messages WHERE wamid = 'wamid.2')
             """));
+    }
+
+    // P7: el cambio de número es mantenimiento de identidad, como los statuses: se aplica con Paused o el módulo apagado.
+    // La conversación se siembra sin webhook para que la ruta no quede en caché antes de pausar; el entrante de CO.OTHER
+    // en el mismo lote prueba que el descarte sí estaba activo.
+    [Theory]
+    [InlineData("paused", "user-id-update")]
+    [InlineData("paused", "system-message")]
+    [InlineData("module-off", "user-id-update")]
+    [InlineData("module-off", "system-message")]
+    public async Task TheNumberChangeAppliesEvenWithTheConnectionPausedOrTheModuleOff(string scenario, string signal)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM integrations.connections");
+        var conversationId = await SeedBsuidConversationAsync(f.Factory, f.ConnectionString, f.Tenant.TenantId, connectionId, "CO.OLD", null);
+        await ExecuteAsync(f.ConnectionString, scenario == "paused"
+            ? "UPDATE integrations.connections SET status = 'Paused'"
+            : "UPDATE tenancy.tenant_modules SET status = 'inactive' WHERE module_key = 'messaging'");
+
+        await SendAsync(f, MetaPayloads.Inbound("111", "CO.OTHER", null, "wamid.other", 1760000010, "descartado"));
+        await SendAsync(f, signal == "user-id-update"
+            ? MetaPayloads.UserIdUpdate("CO.OLD", "CO.NEW")
+            : MetaPayloads.UserChangedUserId("111", "CO.OLD", "CO.NEW", "User Laura changed from CO.OLD to CO.NEW", "wamid.sys", 1760000050));
+
+        Assert.Equal($"1|{conversationId}|CO.NEW", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT count(*) OVER ()::text || '|' || id::text || '|' || user_id FROM messaging.conversations"));
+        Assert.Equal(1L, await ChangeEventsAsync(f));
     }
 
     [Fact]
