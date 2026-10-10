@@ -74,6 +74,9 @@ public sealed class ConversationsApiTests
     [InlineData("9999", "573009999999")]
     [InlineData("drogue", "573001234567")]
     [InlineData("nadie", null)]
+    [InlineData("300 123", "573001234567")]
+    // Revisión de la Task 14: el 9 suelto no busca por número (wa_id LIKE '%9%' traería a Pedro).
+    [InlineData("Laura 9", null)]
     public async Task TheSearchMatchesProfileNumberAndCustomerName(string search, string? expectedWaId)
     {
         await using var database = await StartDatabaseAsync();
@@ -87,8 +90,33 @@ public sealed class ConversationsApiTests
 
         var items = page.GetProperty("items").EnumerateArray().ToArray();
         Assert.Equal(expectedWaId is null ? [] : [expectedWaId], items.Select(item => item.GetProperty("contact").GetProperty("waId").GetString()));
-        // counts no respeta la búsqueda (§5.4).
+        // total sí respeta la búsqueda (el scroll infinito para en page * pageSize >= total); counts no (§5.4).
+        Assert.Equal(expectedWaId is null ? 0 : 1, page.GetProperty("total").GetInt32());
         Assert.Equal(2, page.GetProperty("counts").GetProperty("open").GetInt32());
+        Assert.Equal(2, page.GetProperty("counts").GetProperty("unread").GetInt32());
+    }
+
+    [Fact]
+    public async Task WithoutMessagesLastMessageIsNullAndAMediaWithoutCaptionHasNoPreview()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedConversationAsync(f.Factory, f.Tenant.TenantId, f.ConnectionId, "573005555555");
+        using (var anonymous = f.Factory.CreateClient())
+        {
+            await PostWebhookAsync(anonymous, MetaPayloads.InboundMedia("111", "573001234567", "w1", 1760000100, "image", "media-1", "image/jpeg"));
+            await DrainDeliveriesAsync(f.Factory);
+        }
+
+        var items = (await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct)).GetProperty("items").EnumerateArray().ToArray();
+
+        var empty = items.Single(item => item.GetProperty("contact").GetProperty("waId").GetString() == "573005555555");
+        Assert.Equal(JsonValueKind.Null, empty.GetProperty("lastMessage").ValueKind);
+        Assert.Equal(JsonValueKind.Null, empty.GetProperty("customerWindowExpiresAt").ValueKind);
+        var image = items.Single(item => item.GetProperty("contact").GetProperty("waId").GetString() == "573001234567").GetProperty("lastMessage");
+        Assert.Equal("Image", image.GetProperty("kind").GetString());
+        Assert.Equal(JsonValueKind.Null, image.GetProperty("preview").ValueKind);
     }
 
     [Fact]

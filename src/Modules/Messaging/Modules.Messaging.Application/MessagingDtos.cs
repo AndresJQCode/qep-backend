@@ -41,7 +41,9 @@ public sealed record MediaDto(string Url, string MimeType, string? FileName, str
 
 public sealed record LocationDto(double Latitude, double Longitude, string? Name, string? Address);
 
-public sealed record SentByDto(Guid MemberId, string? DisplayName);
+/// <summary><c>DisplayName</c> nunca es <c>null</c> (contrato <c>MessageActor.displayName: string</c>):
+/// la membresía que ya no está viaja como «Miembro eliminado» (D-M20).</summary>
+public sealed record SentByDto(Guid MemberId, string DisplayName);
 
 public sealed record MessageDto(
     Guid Id,

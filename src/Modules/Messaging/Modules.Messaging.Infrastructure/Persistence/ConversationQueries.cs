@@ -21,8 +21,8 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         if (search is not null)
         {
             var pattern = "%" + Escape(search) + "%";
-            var digits = new string(search.Where(char.IsAsciiDigit).ToArray());
-            var digitsPattern = digits.Length == 0 ? null : "%" + digits + "%";
+            var digits = ConversationSearchTerms.NumberDigits(search);
+            var digitsPattern = digits is null ? null : "%" + digits + "%";
             var phones = customerWaIds.ToArray();
             query = query.Where(conversation =>
                 (conversation.ProfileName != null && EF.Functions.ILike(conversation.ProfileName, pattern, "\\"))

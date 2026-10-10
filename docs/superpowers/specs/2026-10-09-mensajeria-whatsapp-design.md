@@ -1439,6 +1439,7 @@ el 2026-10-09 y quedan **a ratificar** en su lectura:
 | D-M17 | `connectionName` de una conexión eliminada = `"Conexión eliminada"` | DP-5 | Guardar el último nombre en la conversación |
 | D-M18 | Módulo `messaging` apagado con mensajes llegando: se descartan como con `Paused`; los `statuses` sí se aplican | DP-6 | Guardarlos para que aparezcan al reactivar |
 | D-M19 | `business_management` **no se pide** en App Review: Meta lo exige sólo a un Solution Partner que comparte línea de crédito (§3) | DP-7 | Pedirlo después, con otra revisión de Meta |
+| D-M20 | `sentBy.displayName` nunca es `null` (el contrato del frontend lo declara `string`): si la membresía ya no está, o no tiene nombre ni correo, viaja `"Miembro eliminado"`, como D-M17 con la conexión (revisión de la Task 14, 2026-10-09) | Contrato `MessageActor.displayName: string` | Guardar el nombre del autor en el mensaje |
 
 ### Riesgos
 

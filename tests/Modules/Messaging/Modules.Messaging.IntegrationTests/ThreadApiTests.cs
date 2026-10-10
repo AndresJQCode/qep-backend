@@ -89,6 +89,58 @@ public sealed class ThreadApiTests
         Assert.DoesNotContain("failureTitle", page.GetRawText(), StringComparison.Ordinal);
     }
 
+    // D-M20: displayName nunca es null.
+    [Fact]
+    public async Task AMessageFromAMemberThatNoLongerExistsSaysMiembroEliminado()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        var conversationId = await SeedConversationAsync(factory, tenant.TenantId, connectionId, "573001234567");
+        var ghost = Guid.CreateVersion7();
+        var messageId = await SeedOutboundAsync(connectionString, conversationId, tenant.TenantId, connectionId, "wamid.g");
+        await ExecuteAsync(connectionString, "UPDATE messaging.messages SET sent_by_member_id = @m WHERE id = @id", ("m", ghost), ("id", messageId));
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+
+        var sentBy = (await client.GetFromJsonAsync<JsonElement>(MessagesUrl(tenant.TenantId, conversationId), Ct)).GetProperty("items")[0].GetProperty("sentBy");
+
+        Assert.Equal(ghost, sentBy.GetProperty("memberId").GetGuid());
+        Assert.Equal("Miembro eliminado", sentBy.GetProperty("displayName").GetString());
+    }
+
+    [Fact]
+    public async Task ABeforeFromAnotherTenantIsAValidationError()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        var other = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await EnableMessagingAsync(connectionString, other.TenantId);
+        await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        await SeedWhatsAppConnectionAsync(factory, other.TenantId, "Otra", "333", "444");
+        using var anonymous = factory.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001234567", "w1", 1760000001, "a"));
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("333", "573001234567", "w2", 1760000002, "b"));
+        await DrainDeliveriesAsync(factory);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+        using var otherClient = CreateClient(factory, other.OwnerUserId, other.TenantId, ReadPermissions);
+        var conversationId = (await client.GetFromJsonAsync<JsonElement>(ConversationsUrl(tenant.TenantId), Ct)).GetProperty("items")[0].GetProperty("id").GetGuid();
+        var otherConversationId = (await otherClient.GetFromJsonAsync<JsonElement>(ConversationsUrl(other.TenantId), Ct)).GetProperty("items")[0].GetProperty("id").GetGuid();
+        var foreignMessage = (await otherClient.GetFromJsonAsync<JsonElement>(MessagesUrl(other.TenantId, otherConversationId), Ct)).GetProperty("items")[0].GetProperty("id").GetGuid();
+
+        var response = await client.GetAsync($"{MessagesUrl(tenant.TenantId, conversationId)}?before={foreignMessage}", Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal("validation.failed", code);
+        Assert.Equal(BeforeKey, keys);
+    }
+
     // Review Focus 3.
     [Fact]
     public async Task ABeforeFromAnotherConversationIsAValidationError()

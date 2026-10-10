@@ -64,18 +64,27 @@ public sealed class ConversationSummaryBuilder(IMessagingConnectionDirectory con
             matches.GetValueOrDefault(row.WaId),
             row.Status.ToString(),
             row.UnreadCount,
-            row.LastMessageId is null || row.LastMessageAt is null
-                ? null
-                : new LastMessageDto(row.LastMessageDirection!.Value.ToString(), row.LastMessageKind!.Value.ToString(), row.LastMessagePreview, row.LastMessageStatus!.Value.ToString(), row.LastMessageAt.Value),
+            LastMessageFrom(row),
             row.LastInboundAt?.Add(Conversation.WindowLength),
             row.UpdatedAt,
             row.Version);
     }
+
+    /// <summary>La foto del último mensaje sólo si están sus cinco campos: una fila a medio escribir
+    /// sale con <c>lastMessage: null</c>, nunca con un 500.</summary>
+    private static LastMessageDto? LastMessageFrom(ConversationRow row) =>
+        row is { LastMessageId: not null, LastMessageDirection: { } direction, LastMessageKind: { } kind, LastMessageStatus: { } status, LastMessageAt: { } at }
+            ? new LastMessageDto(direction.ToString(), kind.ToString(), row.LastMessagePreview, status.ToString(), at)
+            : null;
 }
 
 /// <summary>§8.7: un <c>MessageRow</c> a <c>Message</c>; la URL del medio es la de §8.6 aunque no esté copiado.</summary>
 internal static class MessageMapping
 {
+    /// <summary>D-M20: <c>sentBy.displayName</c> nunca es <c>null</c>; la membresía que ya no está (o sin
+    /// nombre ni correo) sale con este texto, como «Conexión eliminada» (D-M17).</summary>
+    public const string DeletedMemberName = "Miembro eliminado";
+
     public static string MediaUrl(Guid tenantId, Guid messageId) => $"/api/v1/tenants/{tenantId}/messaging/media/{messageId}";
 
     public static MessageDto ToDto(MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames) =>
@@ -89,7 +98,7 @@ internal static class MessageMapping
             row.Status.ToString(),
             MessageFailureReasons.For(row.FailureCode),
             row.OccurredAt,
-            row.SentByMemberId is { } member ? new SentByDto(member, memberNames.GetValueOrDefault(member)) : null,
+            row.SentByMemberId is { } member ? new SentByDto(member, memberNames.GetValueOrDefault(member) ?? DeletedMemberName) : null,
             row.ClientId);
 
     /// <summary><c>details</c> de un <c>location</c> es el objeto de Meta tal cual (§8.7). Si no trae
