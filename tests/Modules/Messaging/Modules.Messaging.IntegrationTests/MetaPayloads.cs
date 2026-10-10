@@ -61,6 +61,50 @@ internal static class MetaPayloads
         return Messages(phoneNumberId, "15550000000", waId, "Laura", message);
     }
 
+    /// <summary>El <c>value</c> de un <c>messages</c> con un mensaje <c>location</c>, para pasarlo a
+    /// <see cref="Change"/>.</summary>
+    public static string LocationValue(
+        string phoneNumberId,
+        string waId,
+        string wamid,
+        long timestamp,
+        double latitude,
+        double longitude,
+        string? name = null,
+        string? address = null,
+        string profileName = "Laura")
+    {
+        var location = new JsonObject { ["latitude"] = latitude, ["longitude"] = longitude };
+        if (name is not null)
+        {
+            location["name"] = name;
+        }
+
+        if (address is not null)
+        {
+            location["address"] = address;
+        }
+
+        var value = new
+        {
+            messaging_product = "whatsapp",
+            metadata = Metadata(phoneNumberId, "15550000000"),
+            contacts = new[] { new { profile = new { name = profileName }, wa_id = waId } },
+            messages = new[]
+            {
+                new JsonObject
+                {
+                    ["from"] = waId,
+                    ["id"] = wamid,
+                    ["timestamp"] = Seconds(timestamp),
+                    ["type"] = "location",
+                    ["location"] = location,
+                },
+            },
+        };
+        return JsonSerializer.Serialize(value);
+    }
+
     public static string Status(
         string phoneNumberId,
         string wamid,

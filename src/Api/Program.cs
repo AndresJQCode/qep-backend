@@ -171,6 +171,7 @@ app.MapPlatformEndpoints();
 app.MapPosEndpoints();
 app.MapIntegrationsEndpoints();
 app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
+app.MapMessagingEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

@@ -298,6 +298,64 @@ internal static class MessagingApiHarness
         return conversation.Id;
     }
 
+    /// <summary>Un cliente de QEP creado por HTTP, con el cuerpo mínimo de <c>CustomersApiHarness.NewCustomerBody</c>
+    /// (colombiano, ciudad DIVIPOLA real y una clasificación nueva). Customers calcula <c>phone_e164</c> al
+    /// crear, que es lo que Messaging empareja (spec 2026-10-09 §6.5). Devuelve el <c>id</c>.</summary>
+    public static async Task<Guid> CreateCustomerAsync(
+        WebApplicationFactory<Program> factory, RegisteredTenant tenant, string name, string phone)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var client = CreateClient(
+            factory, tenant.OwnerUserId, tenant.TenantId,
+            "customers.customer.read", "customers.customer.manage", "customers.classification.read", "customers.classification.manage");
+
+        var departments = await client.GetFromJsonAsync<List<GeographyItemDto>>("/api/v1/departments", ct);
+        Assert.NotNull(departments);
+        Guid? cityId = null;
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<GeographyItemDto>>($"/api/v1/cities?departmentId={department.Id}", ct);
+            if (cities is { Count: > 0 })
+            {
+                cityId = cities[0].Id;
+                break;
+            }
+        }
+
+        Assert.NotNull(cityId);
+        var customersUrl = $"/api/v1/tenants/{tenant.TenantId}/customers";
+        var classificationResponse = await client.PostAsJsonAsync($"{customersUrl}/classifications", new { name = "Mediano", prefix = "CLI" }, ct);
+        classificationResponse.EnsureSuccessStatusCode();
+        var classification = await classificationResponse.Content.ReadFromJsonAsync<IdDto>(ct);
+        Assert.NotNull(classification);
+
+        var response = await client.PostAsJsonAsync(
+            customersUrl,
+            new
+            {
+                name,
+                identificationType = "NIT",
+                identificationNumber = "900.123.456-1",
+                phone,
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false,
+            },
+            ct);
+        response.EnsureSuccessStatusCode();
+        var customer = await response.Content.ReadFromJsonAsync<IdDto>(ct);
+        Assert.NotNull(customer);
+        return customer.Id;
+    }
+
+    private sealed record GeographyItemDto(Guid Id);
+
+    private sealed record IdDto(Guid Id);
+
     /// <summary>La firma que Meta pone en <c>X-Hub-Signature-256</c>: HMAC-SHA256 del cuerpo con el AppSecret.</summary>
     public static string Sign(byte[] body) =>
         "sha256=" + Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(TestAppSecret), body));

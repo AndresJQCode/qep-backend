@@ -524,6 +524,11 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
         services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
         services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();
+        // Messaging (spec 2026-10-09 §8.7): lista, detalle e hilo. Cada handler a mano: sin registro, 500.
+        services.AddValidatorsFromAssemblyContaining<ListConversationsValidator>();
+        services.AddScoped<IQueryHandler<ListConversationsQuery, ConversationPageDto>, ListConversationsHandler>();
+        services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
+        services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -579,6 +584,9 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09 §6.4): conexiones de WhatsApp por Integrations. El único punto donde
         // los dos módulos se tocan.
         services.AddScoped<IMessagingConnectionDirectory, MessagingConnectionDirectory>();
+        // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
+        services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
+        services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
