@@ -3,8 +3,17 @@ using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
 
+/// <summary>La prueba de carga corre sola: con las demás clases en paralelo, la medición se contamina y
+/// el contenedor compartido se queda sin conexiones.</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class MessagingLoadGroup
+{
+    public const string Name = "messaging-load";
+}
+
 /// <summary>Spec 2026-10-09 §12, «Carga»: N POSTs firmados concurrentes con wamids repetidos → cero 429,
 /// un mensaje por wamid, unreadCount exacto, una conversación por waId.</summary>
+[Collection(MessagingLoadGroup.Name)]
 public sealed class WebhookLoadTests
 {
     [Fact]

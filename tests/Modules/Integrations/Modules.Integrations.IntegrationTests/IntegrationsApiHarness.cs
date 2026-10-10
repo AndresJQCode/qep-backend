@@ -99,6 +99,8 @@ internal static class IntegrationsApiHarness
             .WithDatabase("qep")
             .WithUsername("qep")
             .WithPassword("qep-integration")
+            // Clases en paralelo, cada una con su host y su pool: el límite por defecto (100) se agota (53300).
+            .WithCommand("-c", "max_connections=400")
             .Build();
         await server.StartAsync(CancellationToken.None);
         await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
@@ -154,7 +156,8 @@ internal static class IntegrationsApiHarness
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
-            builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pool acotado sólo en pruebas: un host no puede acaparar las conexiones del contenedor compartido.
+            builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 80 }.ConnectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
