@@ -5,23 +5,29 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
 
 ## Lista de pasos
 
-1. **App en Live**, con verificación del negocio y App Review aprobados.
-2. **Permisos con Advanced Access:** `whatsapp_business_management` y `whatsapp_business_messaging`.
-   `business_management` **no** se pide (D-M19): sólo lo exige Meta a un Solution Partner que comparte línea
-   de crédito.
-3. **Dominios:** `qep.qcode.co` en «Allowed Domains for the JavaScript SDK» y en «Valid OAuth Redirect URIs».
-4. **Configuración de Facebook Login for Business** para **WhatsApp Embedded Signup v4** (con los eventos
-   `FINISH` y los de coexistencia); su id va a la variable `META_CONFIG_ID` (ConfigMap `Meta__App__ConfigId`).
-   El id de la app va a `META_APP_ID` (`Meta__App__AppId`). La versión de Graph queda en
-   `Meta__App__GraphApiVersion: "v24.0"`.
-5. **Webhook:** URL `https://<host de la API>/api/webhooks/whatsapp`, token de verificación = el mismo valor
-   que la variable secreta `META_WEBHOOK_VERIFY_TOKEN`, y **sólo** los campos `messages` y `account_update`.
-6. **Secretos en `Backend-prod`:** variables secretas `META_APP_SECRET` y `META_WEBHOOK_VERIFY_TOKEN` (token
-   aleatorio de 32+ caracteres), y variables normales `META_APP_ID` y `META_CONFIG_ID`. Van **antes** del
-   deploy: sin las cinco claves el pod no arranca (`MetaAppOptionsValidator`, a propósito).
-7. **Orden:** desplegar el backend **antes** de guardar el webhook en Meta (hace el `GET` de verificación al
+1. **App en Live.** *App Dashboard → App settings → Basic*: cambia el interruptor a «Live» (exige política de
+   privacidad y verificación del negocio) y copia el **App ID** y el **App Secret** (botón «Show»).
+   Valores: App ID → variable normal `META_APP_ID`; App Secret → variable **secreta** `META_APP_SECRET`.
+2. **Permisos con Advanced Access.** *App Review → Permissions and Features*: solicita `whatsapp_business_management`
+   y `whatsapp_business_messaging`. `business_management` **no** se pide (D-M19): sólo lo exige Meta a un
+   Solution Partner que comparte línea de crédito.
+3. **Dominios.** *App Dashboard → App settings → Basic → App Domains*, y en *Facebook Login for Business →
+   Settings*: `qep.qcode.co` en «Allowed Domains for the JavaScript SDK» y en «Valid OAuth Redirect URIs»
+   (valor: `https://qep.qcode.co/`).
+4. **Configuración de Embedded Signup.** *Facebook Login for Business → Configurations → Create configuration*:
+   plantilla **WhatsApp Embedded Signup v4**, con los eventos `FINISH` y los de coexistencia. Copia el
+   **Configuration ID** → variable normal `META_CONFIG_ID` (ConfigMap `Meta__App__ConfigId`). El App ID del paso
+   1 va en `Meta__App__AppId`; la versión de Graph queda en `Meta__App__GraphApiVersion: "v24.0"`.
+5. **Webhook.** *WhatsApp → Configuration → Webhook → Edit*: «Callback URL» =
+   `https://<host de la API>/api/webhooks/whatsapp`; «Verify token» = el mismo valor que la variable secreta
+   `META_WEBHOOK_VERIFY_TOKEN` (aleatorio, 32+ caracteres). Luego «Manage» y suscribe **sólo** `messages` y
+   `account_update`.
+6. **Secretos en `Backend-prod`** (Azure DevOps → Pipelines → Library): variables secretas `META_APP_SECRET` y
+   `META_WEBHOOK_VERIFY_TOKEN`; variables normales `META_APP_ID` y `META_CONFIG_ID`. Van **antes** del deploy:
+   sin las cinco claves el pod no arranca (`MetaAppOptionsValidator`, a propósito).
+7. **Orden.** Despliega el backend **antes** de guardar el webhook en Meta (hace el `GET` de verificación al
    guardarlo), y el frontend después.
-8. **Prender `messaging` por tenant:** desde la consola de operador, o con el SQL de respaldo del README
+8. **Prender `messaging` por tenant.** Desde la consola de operador, o con el SQL de respaldo del README
    («Módulos por tenant»). No viene con el signup.
 9. **Coexistencia (D-M13, D-M15):** lo que alguien responda desde la app de WhatsApp Business en el teléfono
    **no aparece en QEP** en esta versión: no se suscriben `history`, `smb_app_state_sync` ni
@@ -42,9 +48,10 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
 - **Copia a R2 por stream.** Confirma con un medio real (imagen y un documento grande) que el `PUT` en
   streaming a R2 funciona y que el SHA-256 coincide; hasta hoy sólo se ejercitó con dobles de prueba.
 - **Redacción del query en OpenTelemetry.** El canje del `code` de Embedded Signup lleva `client_secret` y
-  `code` en el query de la URL. `AddHttpClientInstrumentation` depende de la redacción por defecto del query:
-  no la desactives nunca (`OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION`) y, si cambias de
-  versión de OpenTelemetry, verifica en Tempo que el atributo `url.full` siga mostrando `Redacted`.
+  `code` en el query de la URL. La instrumentación de `HttpClient` de OpenTelemetry .NET redacta por defecto
+  los valores del query en `url.full` (desde la 1.7; aparecen como `Redacted`). Nunca pongas
+  `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION` en `true`. Comprobación: abre en Tempo una
+  traza de un Embedded Signup y confirma que `url.full` muestra `client_secret=Redacted&code=Redacted`.
 - **Plantillas rechazadas.** Precedente de Zenvia: un rechazo con «An error occurred while sending the
   template for approval» lo produce el agregador, no Meta. En esta versión no se envían plantillas (sólo texto
   dentro de la ventana de 24 h), pero si se agregan, aplica lo mismo.

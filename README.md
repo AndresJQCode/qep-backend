@@ -139,7 +139,7 @@ local y por variable de entorno en k8s
 | `Integrations:SecretProtection:RekeyIntervalMinutes`   | `60`                                                                                          | Cada cuánto el worker re-cifra con la llave activa, además de al arrancar. Entre 1 y 1440 |
 | `Integrations:Zenvia:BaseUrl`                          | `https://api.zenvia.com`                                                                      | URL de la prueba de credenciales de Zenvia (`GET /v2/templates`). HTTPS absoluta. El sender global de cotizaciones sigue usando `Quotations:WhatsApp:BaseUrl` |
 | `Meta:App:AppId`, `Meta:App:ConfigId`                | ausentes (user-secrets en local)                                                              | La app de Meta de toda la plataforma (spec 2026-10-09). Públicos: viajan en el popup de Embedded Signup. **En `Production` son obligatorios** junto con los tres de abajo (`MetaAppOptionsValidator`); fuera, sin ellos `whatsapp-cloud` no sale en el catálogo y el webhook responde 403/401 |
-| `Meta:App:GraphApiVersion`                           | `v24.0`                                                                                       | Versión de Graph; patrón `^v\d+\.\d+$` |
+| `Meta:App:GraphApiVersion`                           | `v24.0` (sólo fuera de `Production`)                                                          | Versión de Graph; patrón `^v\d+\.\d+$`. **También es obligatoria en `Production`** (`MetaAppOptionsValidator` exige las cinco claves: AppId, ConfigId, GraphApiVersion, AppSecret, WebhookVerifyToken); el ConfigMap de k8s la fija en `v24.0` |
 | `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`  | user-secrets                                                                                  | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret |
 | `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
@@ -372,7 +372,7 @@ catálogo de diecinueve productos con la tasa `IVA 19%`, y le deja configurados 
 número de pedido (`PW…`) y las columnas del Excel de pedidos de su ERP (ver
 [homologación](#columnas-del-excel-de-pedidos-por-tenant-homologación)). Después crea el
 [tenant operador](#tenant-operador) **QCode** (`qcode`, id `01900000-0000-7000-8000-000000000006`)
-con los siete módulos y una membresía `admin` para `Seed:OperatorOwnerEmail`. Pensada para el ambiente
+con todos los módulos del catálogo y una membresía `admin` para `Seed:OperatorOwnerEmail`. Pensada para el ambiente
 desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
 de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
 
@@ -650,7 +650,7 @@ permiso), que siempre devuelve los ocho con `enabled`, `contracted` y `missingDe
 entera en hasta 5 minutos.
 
 Un tenant del signup nace con los seis sin `pos` mientras `Entitlements:GrantDefaultModulesOnSignup`
-esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con los siete. Ni el
+esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con todos los del catálogo. Ni el
 signup ni la semilla escriben historial: el origen queda en `source`.
 
 ### Consola de operador
@@ -1912,8 +1912,10 @@ configuración `messaging.es_unaccent` (español sin acentos ni flexiones, prefi
 2 s con 422 en `q`.
 
 **Redacción del query en la traza.** El canje del `code` de Embedded Signup lleva `client_secret` y
-`code` en el query de la URL de Graph. `AddHttpClientInstrumentation` (OpenTelemetry) los oculta con su
-redacción por defecto: esa redacción **nunca se desactiva**.
+`code` en el query de la URL de Graph. La instrumentación de `HttpClient` de OpenTelemetry .NET
+(`AddHttpClientInstrumentation`) redacta por defecto los **valores** del query en `url.full` (desde la 1.7;
+aparecen como `Redacted`). Nunca se pone `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION`
+en `true`.
 
 #### Secretos en local
 
@@ -1929,17 +1931,18 @@ El último comando tiene que dar `Count 4`. Nunca `list` sin el filtro y el cont
 
 #### Probar el webhook en local
 
-El cuerpo va a archivo (PowerShell rompe las comillas) y la firma se calcula sobre esos bytes exactos:
+El cuerpo va a archivo (PowerShell rompe las comillas). La firma se calcula sobre los bytes exactos del
+archivo y `curl.exe` los manda tal cual con `--data-binary` (`-d "@archivo"` quita los saltos de línea y la
+firma dejaría de coincidir, con un 401):
 
 ```powershell
-$body = Get-Content -Raw -Encoding UTF8 .\webhook.json
-$bytes = [Text.Encoding]::UTF8.GetBytes($body)
+$bytes = [IO.File]::ReadAllBytes("$PWD\webhook.json")
 $secret = Read-Host -AsSecureString "AppSecret"
 $plain = [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($secret))
-$hmac = New-Object Security.Cryptography.HMACSHA256 ([Text.Encoding]::UTF8.GetBytes($plain))
+$hmac = New-Object Security.Cryptography.HMACSHA256 (,[Text.Encoding]::UTF8.GetBytes($plain))
 $signature = "sha256=" + (($hmac.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
 Remove-Variable plain, secret, hmac
-curl.exe -s -o NUL -w "%{http_code}" -X POST "http://localhost:5000/api/webhooks/whatsapp" -H "Content-Type: application/json" -H "X-Hub-Signature-256: $signature" -d "@webhook.json"
+curl.exe -s -o NUL -w "%{http_code}" -X POST "http://localhost:5000/api/webhooks/whatsapp" -H "Content-Type: application/json" -H "X-Hub-Signature-256: $signature" --data-binary "@webhook.json"
 ```
 
 Esperado: `200`. Sin el header: `401`. La entrega se procesa en los 3 s siguientes
