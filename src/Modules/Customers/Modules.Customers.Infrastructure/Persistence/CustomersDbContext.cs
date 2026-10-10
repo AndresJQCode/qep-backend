@@ -138,7 +138,12 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .IsConcurrencyToken();
         customer.Property(value => value.CreatedAt).HasColumnName("created_at");
         customer.Property(value => value.UpdatedAt).HasColumnName("updated_at");
-        customer.Property(value => value.Completeness).HasColumnName("completeness").HasConversion<string>().HasMaxLength(16);
+        // El DEFAULT existe sólo para el binario viejo durante el despliegue (spec 2026-10-10 D-A11). El centinela
+        // inválido hace que EF nunca omita la columna en el INSERT: el código nuevo siempre la escribe, también
+        // cuando vale Complete (el valor por defecto del enum).
+        customer.Property(value => value.Completeness).HasColumnName("completeness").HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(CustomerCompleteness.Complete)
+            .HasSentinel((CustomerCompleteness)(-1));
         customer.Ignore(value => value.IsComplete);
         customer.Property(value => value.WhatsAppUserId).HasColumnName("whatsapp_user_id").HasMaxLength(Customer.WhatsAppUserIdMaxLength);
         // Spec 2026-10-10 §7.2: la identidad de WhatsApp y el árbitro de la carrera de §9.4. CustomersUnitOfWork la

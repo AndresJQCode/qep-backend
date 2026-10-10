@@ -531,7 +531,6 @@ ALTER TABLE customers.customers
         completeness = 'Incomplete' OR (
             cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL
             AND address IS NOT NULL AND country IS NOT NULL AND classification_id IS NOT NULL));
-ALTER TABLE customers.customers ALTER COLUMN completeness DROP DEFAULT;
 
 CREATE UNIQUE INDEX "IX_customers_tenant_whatsapp_user_id"
     ON customers.customers (tenant_id, whatsapp_user_id) WHERE whatsapp_user_id IS NOT NULL;
@@ -539,9 +538,13 @@ CREATE INDEX "IX_customers_tenant_incomplete"
     ON customers.customers (tenant_id) WHERE completeness = 'Incomplete';
 ```
 
-- `DEFAULT 'Complete'` sólo para llenar las filas existentes en el `ADD COLUMN` (en PostgreSQL ≥ 11
-  es un cambio de catálogo, sin reescribir la tabla) y se quita enseguida: el código siempre
-  escribe el valor.
+- `DEFAULT 'Complete'` llena las filas existentes en el `ADD COLUMN` (en PostgreSQL ≥ 11 es un
+  cambio de catálogo, sin reescribir la tabla) y **se queda durante el despliegue**: producción
+  corre una réplica con `maxSurge 1`, así que el pod viejo sigue atendiendo después de que el nuevo
+  migró, y su `INSERT` no nombra `completeness`; sin el `DEFAULT`, crear o importar un cliente
+  moriría con `23502`. El modelo de EF lo declara (`HasDefaultValue`) con un centinela inválido,
+  para que el código nuevo siempre escriba el valor, también `Complete`. Se quita en una migración
+  posterior, cuando ya no pueda correr ningún binario anterior a esta (D-A11).
 - `CK_customers_complete_fields` cubre exactamente las columnas que hoy son `NOT NULL` (§3,
   corrección 5). Todas las filas existentes lo cumplen por construcción.
 - `IX_customers_tenant_identification` y `IX_customers_tenant_cuc` **no cambian**: un índice único
@@ -867,7 +870,7 @@ al final, comparada por nombre contra `develop` (base §12).
 | D-A8 | `customer.isComplete` en `ConversationSummary` y `MessageHit` | Un campo |
 | D-A9 | Auditoría `customers.customer.created_from_messaging` con actor `Guid.Empty`; `customers.customer.completed` al completar | Agregar metadatos a `ICustomersAuditPublisher` |
 | D-A10 | `counts.mine` y `counts.unassigned` sólo cuentan abiertas | Quitar un filtro |
-| D-A11 | `CK_customers_complete_fields` sólo sobre columnas hoy `NOT NULL`; teléfono, correo y ciudad siguen en el validador | Un backfill y ampliar el `CHECK` |
+| D-A11 | `CK_customers_complete_fields` sólo sobre columnas hoy `NOT NULL`; teléfono, correo y ciudad siguen en el validador. El `DEFAULT 'Complete'` de `completeness` se queda para el despliegue con el pod viejo vivo (§7.2) y se quita en una migración posterior, cuando ya no pueda correr ningún binario anterior | Un backfill y ampliar el `CHECK` |
 | D-A12 | `customer_id` en la conversación reemplaza la decisión 10 del spec base (emparejar al leer); el teléfono queda sólo para filas viejas | — (es lo que el owner pidió; se anota porque contradice el spec base) |
 | D-A13 | `assignedTo.isMe` calculado en el servidor, porque la SPA no conoce su `memberId` | Un campo; sin él, el frontend no sabe si la conversación es suya |
 

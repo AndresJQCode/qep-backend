@@ -20,7 +20,7 @@ public sealed class CustomerCompletenessMigrationTests
     private const string SecondIncompleteCustomerId = "01900000-0000-7000-8000-00000000e004";
 
     // Un cliente de afuera (sin ciudad DIVIPOLA) sin teléfono ni correo: lo que el CHECK no puede tumbar.
-    // Después de la migración, completeness no tiene DEFAULT: hay que nombrarla (afterCompleteness).
+    // Así inserta el binario de antes de la migración: sin completeness. afterCompleteness la nombra, como el código nuevo.
     private static string OldCustomerSql(bool afterCompleteness = false) => $"""
         INSERT INTO customers.client_classifications (id, tenant_id, name, prefix, is_active, version, created_at, updated_at)
         VALUES ('{ClassificationId}', '{TenantId}', 'Mediano', 'CLI', true, 1, '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z');
@@ -55,9 +55,6 @@ public sealed class CustomerCompletenessMigrationTests
 
         Assert.Equal("Complete|", await ScalarAsync<string>(connectionString,
             $"SELECT completeness || '|' || coalesce(whatsapp_user_id, '') FROM customers.customers WHERE id = '{OldCustomerId}'"));
-        // El DEFAULT sólo sirvió para llenar las filas viejas.
-        Assert.True(await ScalarAsync<bool>(connectionString,
-            "SELECT column_default IS NULL FROM information_schema.columns WHERE table_schema = 'customers' AND table_name = 'customers' AND column_name = 'completeness'"));
         // Sin classification_id en el INSERT: si quedara el DEFAULT Guid.Empty de AddCustomerCityAndClassification,
         // moriría por FK en vez de entrar como incompleto.
         await ExecuteAsync(connectionString, IncompleteCustomerSql(IncompleteCustomerId));
@@ -71,6 +68,25 @@ public sealed class CustomerCompletenessMigrationTests
         var duplicate = await Assert.ThrowsAsync<PostgresException>(() =>
             ExecuteAsync(connectionString, IncompleteCustomerSql(SecondIncompleteCustomerId)));
         Assert.Equal("IX_customers_tenant_whatsapp_user_id", duplicate.ConstraintName);
+    }
+
+    // Spec 2026-10-10 D-A11: producción corre una réplica con maxSurge 1, así que el pod viejo sigue atendiendo
+    // después de que el nuevo migró. El binario viejo no conoce completeness y su INSERT no la nombra: sin el
+    // DEFAULT, crear o importar un cliente moriría con 23502 durante el despliegue.
+    [Fact]
+    public async Task AnOldBinaryInsertWithoutCompletenessStillLandsComplete()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateGeographyToLatestAsync(connectionString);
+        await using var context = NewCustomersContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync(MigrationId(context, "_AddCustomerCompleteness"), TestContext.Current.CancellationToken);
+
+        await ExecuteAsync(connectionString, OldCustomerSql());
+
+        Assert.Equal("Complete", await ScalarAsync<string>(connectionString,
+            $"SELECT completeness FROM customers.customers WHERE id = '{OldCustomerId}'"));
     }
 
     [Fact]

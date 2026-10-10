@@ -108,9 +108,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                 unique: true,
                 filter: "whatsapp_user_id IS NOT NULL");
 
-            // El DEFAULT sólo sirvió para llenar las filas viejas: el código siempre escribe la columna, y un
-            // INSERT que la olvide tiene que fallar en vez de crear una ficha "completa" sin datos.
-            migrationBuilder.Sql("ALTER TABLE customers.customers ALTER COLUMN completeness DROP DEFAULT;");
+            // El DEFAULT 'Complete' se queda mientras dure el despliegue (spec 2026-10-10 D-A11): producción corre una
+            // réplica con maxSurge 1, así que el pod viejo sigue atendiendo después de que el nuevo migró, y su INSERT
+            // no nombra completeness. Sin el DEFAULT, crear o importar un cliente moriría con 23502. El código nuevo
+            // siempre escribe la columna (el modelo usa un centinela que nunca coincide). Cuando ya no pueda correr
+            // ningún binario anterior a esta migración, quítalo en una migración posterior.
             // AddCustomerCityAndClassification dejó un DEFAULT Guid.Empty en classification_id que el modelo
             // no conoce. Con la columna anulable, un INSERT que no la nombre caería en una clasificación
             // inexistente (23503) en vez de quedar en NULL como un incompleto.

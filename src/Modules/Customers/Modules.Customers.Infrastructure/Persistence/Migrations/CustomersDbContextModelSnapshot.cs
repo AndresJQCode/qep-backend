@@ -111,8 +111,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Completeness")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Complete")
                         .HasColumnName("completeness");
 
                     b.Property<string>("Country")
