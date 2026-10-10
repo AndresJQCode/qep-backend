@@ -266,9 +266,10 @@ internal sealed class CustomerReportSource(
         CustomerReportCriteria criteria,
         CancellationToken cancellationToken)
     {
+        // Spec 2026-10-10 §6.4: un incompleto no tiene clasificación ni ciudad; contarlo distorsionaría los cortes por esos campos.
         var query = customers.Customers
             .AsNoTracking()
-            .Where(customer => customer.TenantId == criteria.TenantId);
+            .Where(customer => customer.TenantId == criteria.TenantId && customer.Completeness == CustomerCompleteness.Complete);
 
         // El rango corta por fecha de alta, la unica fecha que tiene un cliente.
         if (criteria.Period.Start is { } start)
