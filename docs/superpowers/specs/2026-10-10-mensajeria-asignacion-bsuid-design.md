@@ -769,6 +769,7 @@ responder: intentar responder es tomar.
 | `messaging.conversation.assigned_to_other` | 422 | Enviar a una conversación asignada a otra membresía |
 | `messaging.conversation.assignee_cannot_reply` | 422 | `transfer` a una membresía que no es activa del tenant o cuyos roles no conceden `manage` |
 | `quotation.quotation.client_incomplete` | 422 | Crear, cambiar cliente, enviar o convertir en pedido con un cliente incompleto |
+| `customers.customer.incomplete` | 422 | Agregar una dirección a la libreta de un cliente incompleto (`Customer.AddAddress`); no hay edición parcial, la libreta nace al completarlo (§5.2) |
 | `validation.failed` | 422 | `errors["replyTo"]`, `errors["memberId"]`, `errors["assigned"]` (Messaging); `errors["isComplete"]` (Customers) |
 | `concurrency.conflict` / precondición | 412 / 428 | `If-Match` en `take`, `transfer`, `release` |
 | `authorization.denied` | 403 | Quien llama no tiene membresía activa (take/transfer/release/envío) |
