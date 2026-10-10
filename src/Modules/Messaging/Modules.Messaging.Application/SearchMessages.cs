@@ -32,6 +32,7 @@ public sealed class SearchMessagesValidator : AbstractValidator<SearchMessagesQu
 /// decide <c>hasMore</c>; conversación, cliente, conexión y miembros se resuelven una vez por página.</summary>
 public sealed class SearchMessagesHandler(
     IMessageSearch search,
+    IMessageQueries messages,
     IConversationQueries conversations,
     ConversationSummaryBuilder summaries,
     IMessagingMemberNames memberNames,
@@ -88,8 +89,8 @@ public sealed class SearchMessagesHandler(
 
         var conversationRows = await conversations.FindManyAsync(query.TenantId, page.Select(row => row.ConversationId).Distinct().ToArray(), cancellationToken);
         var summaryById = (await summaries.BuildAsync(query.TenantId, conversationRows, cancellationToken)).ToDictionary(summary => summary.Id);
-        var names = await memberNames.FindAsync(
-            query.TenantId, page.Where(row => row.SentByMemberId is not null).Select(row => row.SentByMemberId!.Value).Distinct().ToArray(), cancellationToken);
+        var names = await memberNames.FindAsync(query.TenantId, MessageMapping.MemberIdsOf(page), cancellationToken);
+        var targets = await messages.FindReplyTargetsAsync(query.TenantId, MessageMapping.ReplyTargetIdsOf(page), cancellationToken);
 
         var hits = new List<MessageHitDto>(page.Length);
         foreach (var row in page)
@@ -100,10 +101,11 @@ public sealed class SearchMessagesHandler(
                 continue;
             }
 
-            var message = MessageMapping.ToDto(row, query.TenantId, names);
+            var message = MessageMapping.ToDto(row, query.TenantId, names, targets);
             hits.Add(new MessageHitDto(
                 message.Id, message.Direction, message.Kind, message.Text, message.Media, message.Location, message.Status, message.FailureReason,
-                message.At, message.SentBy, message.ClientId, row.ConversationId, summary.Contact, summary.Customer, summary.ConnectionName));
+                message.At, message.SentBy, message.ClientId, row.ConversationId, summary.Contact, summary.Customer, summary.ConnectionName,
+                message.ReplyTo, message.Event));
         }
 
         return new SearchPageDto(hits, hasMore);

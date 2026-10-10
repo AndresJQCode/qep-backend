@@ -116,8 +116,17 @@ internal static class MessageMapping
 
     public static string MediaUrl(Guid tenantId, Guid messageId) => $"/api/v1/tenants/{tenantId}/messaging/media/{messageId}";
 
-    public static MessageDto ToDto(MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames) =>
-        new(
+    /// <summary>Spec 2026-10-10 §5.1: largo máximo de <c>replyTo.preview</c>.</summary>
+    public const int ReplyPreviewMaxLength = 200;
+
+    public static MessageDto ToDto(
+        MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        ArgumentNullException.ThrowIfNull(memberNames);
+        ArgumentNullException.ThrowIfNull(replyTargets);
+        var conversationEvent = row.Kind == MessageKind.Event ? ConversationEventJson.Parse(row.DetailsJson) : null;
+        return new(
             row.Id,
             row.Direction.ToString(),
             row.Kind.ToString(),
@@ -127,8 +136,66 @@ internal static class MessageMapping
             row.Status.ToString(),
             MessageFailureReasons.For(row.FailureCode),
             row.OccurredAt,
-            row.SentByMemberId is { } member ? new MemberRefDto(member, memberNames.GetValueOrDefault(member) ?? DeletedMemberName) : null,
-            row.ClientId);
+            Member(row.SentByMemberId, memberNames),
+            row.ClientId,
+            row.ReplyToMessageId is { } quoted && replyTargets.TryGetValue(quoted, out var target) ? ToReplyTo(target) : null,
+            conversationEvent is null
+                ? null
+                : new MessageEventDto(
+                    conversationEvent.Type.ToString(),
+                    Member(conversationEvent.Actor, memberNames),
+                    Member(conversationEvent.Target, memberNames),
+                    Member(conversationEvent.Previous, memberNames)));
+    }
+
+    /// <summary>§5.1: el <c>preview</c> es el texto o la leyenda del citado, recortado a <see cref="ReplyPreviewMaxLength"/>.</summary>
+    public static ReplyToDto ToReplyTo(ReplyTargetRow target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var source = target.Text ?? target.Caption;
+        return new ReplyToDto(
+            target.Id,
+            target.Direction.ToString(),
+            target.Kind.ToString(),
+            source is null ? null : source.Length <= ReplyPreviewMaxLength ? source : source[..ReplyPreviewMaxLength]);
+    }
+
+    /// <summary>Los ids de membresía que una página necesita con nombre: <c>sentBy</c> y los de cada evento.</summary>
+    public static IReadOnlyCollection<Guid> MemberIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var ids = new HashSet<Guid>();
+        foreach (var row in rows)
+        {
+            if (row.SentByMemberId is { } sender)
+            {
+                ids.Add(sender);
+            }
+
+            if (row.Kind == MessageKind.Event && ConversationEventJson.Parse(row.DetailsJson) is { } value)
+            {
+                foreach (var id in new[] { value.Actor, value.Target, value.Previous })
+                {
+                    if (id is { } member)
+                    {
+                        ids.Add(member);
+                    }
+                }
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>§8.6 (P10): los citados que una página necesita resolver, sin repetir.</summary>
+    public static IReadOnlyCollection<Guid> ReplyTargetIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Where(row => row.ReplyToMessageId is not null).Select(row => row.ReplyToMessageId!.Value).Distinct().ToArray();
+    }
+
+    private static MemberRefDto? Member(Guid? memberId, IReadOnlyDictionary<Guid, string> memberNames) =>
+        memberId is { } id ? new MemberRefDto(id, memberNames.GetValueOrDefault(id) ?? DeletedMemberName) : null;
 
     /// <summary><c>details</c> de un <c>location</c> es el objeto de Meta tal cual (§8.7). Si no trae
     /// coordenadas numéricas, el mensaje sale sin <c>location</c> en vez de romper la página.</summary>

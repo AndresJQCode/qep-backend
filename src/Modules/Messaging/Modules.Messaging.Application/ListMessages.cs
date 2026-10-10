@@ -52,8 +52,8 @@ public sealed class ListMessagesHandler(
         var rows = await messages.ListThreadAsync(query.ConversationId, cursor, limit + 1, cancellationToken);
         var hasMore = rows.Count > limit;
         var page = rows.Take(limit).Reverse().ToArray();
-        var names = await memberNames.FindAsync(
-            query.TenantId, page.Where(row => row.SentByMemberId is not null).Select(row => row.SentByMemberId!.Value).Distinct().ToArray(), cancellationToken);
-        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names)).ToArray(), hasMore);
+        var names = await memberNames.FindAsync(query.TenantId, MessageMapping.MemberIdsOf(page), cancellationToken);
+        var targets = await messages.FindReplyTargetsAsync(query.TenantId, MessageMapping.ReplyTargetIdsOf(page), cancellationToken);
+        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets)).ToArray(), hasMore);
     }
 }

@@ -152,6 +152,6 @@ public sealed class SendMessageHandler(
         var names = row.SentByMemberId is { } member
             ? await memberNames.FindAsync(command.TenantId, [member], cancellationToken)
             : new Dictionary<Guid, string>();
-        return MessageMapping.ToDto(row, command.TenantId, names);
+        return MessageMapping.ToDto(row, command.TenantId, names, new Dictionary<Guid, ReplyTargetRow>());
     }
 }

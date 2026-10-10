@@ -56,6 +56,13 @@ public sealed record MemberRefDto(Guid MemberId, string DisplayName);
 /// si mostrar el compositor o «La tiene X — Tomar».</summary>
 public sealed record AssignedToDto(Guid MemberId, string DisplayName, bool IsMe);
 
+/// <summary>Spec 2026-10-10 §5.1: lo que la burbuja dibuja del citado. Sin nombre de quien lo envió: la pantalla dice
+/// «Cliente» o «Equipo» por <c>direction</c> (P21).</summary>
+public sealed record ReplyToDto(Guid Id, string Direction, string Kind, string? Preview);
+
+/// <summary>§5.1 y §6.1.5: <c>actor</c> es null cuando lo hizo el sistema.</summary>
+public sealed record MessageEventDto(string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous);
+
 public sealed record MessageDto(
     Guid Id,
     string Direction,
@@ -67,7 +74,9 @@ public sealed record MessageDto(
     string? FailureReason,
     DateTimeOffset At,
     MemberRefDto? SentBy,
-    Guid? ClientId);
+    Guid? ClientId,
+    ReplyToDto? ReplyTo,
+    MessageEventDto? Event);
 
 public sealed record MessagePageDto(IReadOnlyList<MessageDto> Items, bool HasMore);
 
@@ -90,7 +99,9 @@ public sealed record MessageHitDto(
     Guid ConversationId,
     ContactDto Contact,
     CustomerRefDto? Customer,
-    string ConnectionName);
+    string ConnectionName,
+    ReplyToDto? ReplyTo,
+    MessageEventDto? Event);
 
 public sealed record SearchPageDto(IReadOnlyList<MessageHitDto> Items, bool HasMore);
 
