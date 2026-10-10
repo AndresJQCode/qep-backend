@@ -29,8 +29,12 @@ public sealed class InboundRaceTests
         Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.conversations"));
         Assert.Equal((long)Deliveries, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
         Assert.Equal((long)Deliveries, await CountAsync(connectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NOT NULL AND last_error IS NULL"));
-        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE details->>'type' = 'CustomerCreated'"));
+        // Un solo evento de cliente. Su etiqueta puede ser CustomerLinked si la entrega que encontró el cliente ya creado
+        // gana el INSERT de la conversación (decisión del controlador: cosmético, aceptado).
+        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE details->>'type' IN ('CustomerCreated', 'CustomerLinked')"));
+        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM customers.customers"));
     }
+
     // Spec 2026-10-10 §9.5 (P5): una fila vieja (sin BSUID) con el teléfono, y entregas del mismo BSUID nuevo que llegan
     // unas con teléfono (adoptan la vieja) y otras sin él (crean por BSUID). Si la creación gana, la adopción choca con
     // IX_conversations_connection_user y se reintenta una vez: la segunda vuelta encuentra la nueva por BSUID.

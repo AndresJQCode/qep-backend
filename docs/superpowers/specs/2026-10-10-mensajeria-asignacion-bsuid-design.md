@@ -599,8 +599,10 @@ RETURNING id;
 La sentencia 3 (contadores y foto) suma:
 `wa_id = COALESCE(@waId, wa_id), username = COALESCE(@username, username), parent_user_id =
 COALESCE(@parentUserId, parent_user_id), customer_id = COALESCE(customer_id, @customerId)`, y lee
-el `status` anterior con un CTE (`WITH old AS (SELECT status FROM … WHERE id = @c FOR UPDATE)`)
-para saber si reabrió. Después, en la misma transacción, los eventos que correspondan (§8.7).
+el `status` anterior con un CTE (`WITH old AS (SELECT status FROM … WHERE id = @c FOR NO KEY UPDATE)`)
+para saber si reabrió. Es `FOR NO KEY UPDATE` y no `FOR UPDATE` porque el INSERT del mensaje (sentencia 2) ya
+tiene un `FOR KEY SHARE` sobre la conversación por la FK, y `FOR UPDATE` choca con ese candado: dos entregas de la
+misma conversación quedan en deadlock. Después, en la misma transacción, los eventos que correspondan (§8.7).
 `reply_to_message_id` se resuelve en la sentencia 2 con
 `(SELECT id FROM messaging.messages WHERE connection_id = @c AND wamid = @quotedWamid)` por
 `IX_messages_connection_wamid`.
@@ -711,9 +713,11 @@ responder: intentar responder es tomar.
 - Los de asignación, resolver y reabrir (por persona) se insertan en la transacción de su handler,
   con `occurred_at = now`.
 - Los de la ingesta (`Reopened` por un entrante, `CustomerCreated`, `CustomerLinked`, `Inherited`)
-  se insertan en la transacción de la ingesta con `occurred_at` = el del mensaje **menos 1 ms**:
-  así quedan justo antes del mensaje que los causó en el orden del hilo (`IX_messages_thread`),
-  sin depender del orden de dos UUID v7 generados en el mismo milisegundo.
+  se insertan en la transacción de la ingesta justo antes del mensaje, cada uno con su propio
+  milisegundo y en orden fijo: `Reopened` **menos 3 ms**, `CustomerCreated`/`CustomerLinked` **menos
+  2 ms** e `Inherited` **menos 1 ms** (la conversación se reabre, queda atada a su cliente y hereda el
+  asignado de ese cliente). Así quedan justo antes del mensaje que los causó en el orden del hilo
+  (`IX_messages_thread`), sin depender del orden de dos UUID v7 generados en el mismo milisegundo.
 - `ContactChangedNumber`: `occurred_at = now` del procesamiento (§8.3).
 - Un evento no se repite si Meta reenvía el mensaje: sólo se inserta cuando la sentencia 2 insertó
   el mensaje (base §7.5).

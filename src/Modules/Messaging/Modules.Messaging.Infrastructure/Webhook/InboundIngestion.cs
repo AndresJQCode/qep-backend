@@ -105,13 +105,17 @@ internal static class InboundIngestion
                 """, cancellationToken);
         }
 
-        // Spec 2026-10-10 §8.7: 1 ms antes del mensaje que los causó, para que el hilo (IX_messages_thread) los ponga justo
-        // antes. Sólo se llega acá si la sentencia 2 insertó: un reenvío no repite eventos.
-        var eventAt = message.OccurredAt.AddMilliseconds(-1);
-        if (conversation.Created && context.InheritedMemberId is { } heir)
+        // Spec 2026-10-10 §8.7: justo antes del mensaje que los causó, cada uno con su propio milisegundo para que el
+        // orden del hilo (IX_messages_thread) no dependa de dos UUID v7 del mismo milisegundo. Orden fijo: la
+        // conversación se reabre (-3 ms), queda atada a su cliente (-2 ms) y hereda el asignado de ese cliente (-1 ms).
+        // Sólo se llega acá si la sentencia 2 insertó: un reenvío no repite eventos.
+        var reopenedAt = message.OccurredAt.AddMilliseconds(-3);
+        var customerEventAt = message.OccurredAt.AddMilliseconds(-2);
+        var inheritedAt = message.OccurredAt.AddMilliseconds(-1);
+        if (before.OldStatus == nameof(ConversationStatus.Resolved))
         {
             await ConversationEventRows.InsertAsync(dbContext, tenantId, connectionId, conversationId,
-                new ConversationEvent(ConversationEventType.Inherited, Target: heir), eventAt, now, cancellationToken);
+                new ConversationEvent(ConversationEventType.Reopened), reopenedAt, now, cancellationToken);
         }
 
         // §8.2: el evento lo decide la transición de customer_id de NULL a un valor. En una conversación recién creada el
@@ -121,13 +125,13 @@ internal static class InboundIngestion
         {
             await ConversationEventRows.InsertAsync(dbContext, tenantId, connectionId, conversationId,
                 new ConversationEvent(context.CustomerCreated ? ConversationEventType.CustomerCreated : ConversationEventType.CustomerLinked, CustomerId: context.CustomerId),
-                eventAt, now, cancellationToken);
+                customerEventAt, now, cancellationToken);
         }
 
-        if (before.OldStatus == nameof(ConversationStatus.Resolved))
+        if (conversation.Created && context.InheritedMemberId is { } heir)
         {
             await ConversationEventRows.InsertAsync(dbContext, tenantId, connectionId, conversationId,
-                new ConversationEvent(ConversationEventType.Reopened), eventAt, now, cancellationToken);
+                new ConversationEvent(ConversationEventType.Inherited, Target: heir), inheritedAt, now, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);

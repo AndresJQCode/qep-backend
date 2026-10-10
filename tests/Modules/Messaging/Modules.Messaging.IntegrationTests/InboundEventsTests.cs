@@ -42,8 +42,9 @@ public sealed class InboundEventsTests
             "SELECT completeness || '|' || name || '|' || whatsapp_user_id FROM customers.customers WHERE id = @id", ("id", customerId)));
         Assert.Equal("CustomerCreated", await EventsAsync(f));
         Assert.Equal(customerId.ToString(), await ScalarAsync<string>(f.ConnectionString, "SELECT details->>'customerId' FROM messaging.messages WHERE direction = 3"));
+        // §8.7: el evento del cliente va 2 ms antes del mensaje (Reopened -3, cliente -2, Inherited -1).
         Assert.True(await ScalarAsync<bool>(f.ConnectionString,
-            "SELECT (SELECT occurred_at FROM messaging.messages WHERE direction = 1) - occurred_at = interval '1 millisecond' FROM messaging.messages WHERE direction = 3"));
+            "SELECT (SELECT occurred_at FROM messaging.messages WHERE direction = 1) - occurred_at = interval '2 milliseconds' FROM messaging.messages WHERE direction = 3"));
     }
 
     [Fact]
@@ -118,8 +119,18 @@ public sealed class InboundEventsTests
         Assert.Equal(inherits ? member.ToString() : string.Empty, assigned);
         Assert.Equal(inherits ? 1L : 0L, await CountAsync(f.ConnectionString,
             "SELECT count(*) FROM messaging.messages WHERE details->>'type' = 'Inherited' AND details->>'target' = @m", ("m", member.ToString())));
-        // Mismo cliente en las dos: se encontró por BSUID (Existing), no hay CustomerLinked en la segunda.
+        // Mismo cliente en las dos: se encontró por BSUID (Existing, sin crear otro). La segunda conversación nace con
+        // customer_id, así que lleva CustomerLinked (§8.2: la transición de NULL a un valor).
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(DISTINCT customer_id) FROM messaging.conversations"));
+        // Spec 2026-10-10 §8.7: orden fijo, cada evento con su propio occurred_at (no depende de dos UUID v7 del mismo
+        // milisegundo): primero el cliente y después el asignado que se heredó de ese cliente.
+        var secondThread = await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(m.details->>'type', ',' ORDER BY m.occurred_at) || '|' || count(DISTINCT m.occurred_at)
+            FROM messaging.messages m JOIN messaging.messages w ON w.conversation_id = m.conversation_id AND w.wamid = 'wamid.2'
+            WHERE m.direction = 3
+            """);
+        Assert.Equal(inherits ? "CustomerLinked,Inherited|2" : "CustomerLinked|1", secondThread);
     }
 
     [Fact]
