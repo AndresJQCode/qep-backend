@@ -352,6 +352,33 @@ internal static class MessagingApiHarness
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Un saliente ya guardado, como lo deja el envío (§8.3): Sent con wamid, o Failed -1 sin wamid.</summary>
+    public static async Task<Guid> SeedOutboundAsync(
+        string connectionString, Guid conversationId, Guid tenantId, Guid connectionId, string? wamid, short status = 1, int? failureCode = null, long occurredAtUnix = 1760000000)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, wamid, client_id, failure_code, created_at)
+            VALUES (@id, @conversationId, @tenantId, @connectionId, to_timestamp(@occurredAt), 2, 1, @status, 'respuesta', @wamid, @clientId, @failureCode, now())
+            """,
+            ("id", id), ("conversationId", conversationId), ("tenantId", tenantId), ("connectionId", connectionId),
+            ("occurredAt", occurredAtUnix), ("status", status), ("wamid", (object?)wamid ?? DBNull.Value), ("clientId", Guid.CreateVersion7()),
+            ("failureCode", (object?)failureCode ?? DBNull.Value));
+        await ExecuteAsync(connectionString,
+            "UPDATE messaging.conversations SET last_message_id = @id, last_message_direction = 2, last_message_kind = 1, last_message_status = @status, last_message_at = to_timestamp(@occurredAt), last_activity_at = to_timestamp(@occurredAt) WHERE id = @conversationId",
+            ("id", id), ("status", status), ("occurredAt", occurredAtUnix), ("conversationId", conversationId));
+        return id;
+    }
+
+    /// <summary>Corre una pasada de la purga de entregas (P10).</summary>
+    public static async Task DrainPurgeAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Webhook.WebhookPurgeWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
     public static Task<long> CountAsync(string connectionString, string sql, params (string Name, object Value)[] parameters) =>
         ScalarAsync<long>(connectionString, sql, parameters);
 

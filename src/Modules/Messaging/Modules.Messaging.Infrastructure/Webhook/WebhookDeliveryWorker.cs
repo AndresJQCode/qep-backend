@@ -33,7 +33,7 @@ internal sealed partial class WebhookDeliveryWorker(
     /// 1000 cambios, §3) puede tardar más de los 10 s del primero; entonces otra réplica la reclama mientras
     /// la primera sigue, y <c>attempts</c> sube sin que haya fallado nada (la idempotencia evita duplicados).
     /// Por eso <c>attempts</c> de la entrega no prueba por sí solo que un status esperó 8 veces: la regla de
-    /// rendirse de la Task 13b tiene que mirar las filas de status pendientes, no sólo <c>attempts &gt;= 8</c>.
+    /// rendirse de la Task 13b mira además el tiempo desde <c>received_at</c> (<see cref="MinimumWaitBeforeGivingUp"/>).
     /// </remarks>
     internal static readonly IReadOnlyList<TimeSpan> Leases =
     [
@@ -43,6 +43,17 @@ internal sealed partial class WebhookDeliveryWorker(
 
     // Un solo arreglo para el parámetro del reclamo (CA1861: no armarlo en cada llamada).
     private static readonly TimeSpan[] LeaseArray = [.. Leases];
+
+    /// <summary>
+    /// Regla de rendirse de un status sin fila (Task 13b): <see cref="MaxAttempts"/> intentos <b>y</b> que desde
+    /// <c>received_at</c> haya pasado la curva que esos intentos suponen (los <c>MaxAttempts - 1</c> leases
+    /// previos al último reclamo, ≈ 34 min). Sin el tiempo, una entrega grande cuyo lease venció a mitad de
+    /// pasada inflaría <c>attempts</c> (ver <see cref="Leases"/>) y se rendiría antes de esperar de verdad;
+    /// mientras no se cumpla, sigue reintentando con el último lease. Sin columna nueva: la entrega ya trae
+    /// <c>received_at</c>.
+    /// </summary>
+    internal static readonly TimeSpan MinimumWaitBeforeGivingUp =
+        Leases.Take(MaxAttempts - 1).Aggregate(TimeSpan.Zero, (total, lease) => total + lease);
 
     public static TimeSpan LeaseFor(int attempt) => Leases[Math.Min(attempt, Leases.Count) - 1];
 
@@ -104,7 +115,7 @@ internal sealed partial class WebhookDeliveryWorker(
                 continue; // Otra réplica lo tiene, o ya terminó desde que se armó el lote.
             }
 
-            var (attempts, payload) = claimed.Value;
+            var (attempts, payload, receivedAt) = claimed.Value;
             try
             {
                 var outcome = await services.GetRequiredService<WebhookDeliveryProcessor>().ProcessAsync(id, payload, attempts, cancellationToken);
@@ -112,10 +123,10 @@ internal sealed partial class WebhookDeliveryWorker(
                 {
                     await MarkProcessedAsync(dbContext, id, clock.UtcNow, null, cancellationToken);
                 }
-                else if (attempts >= MaxAttempts)
+                else if (attempts >= MaxAttempts && clock.UtcNow - receivedAt >= MinimumWaitBeforeGivingUp)
                 {
                     LogGaveUp(logger, id, attempts, "status-before-wamid");
-                    await MarkProcessedAsync(dbContext, id, clock.UtcNow, $"status-before-wamid: gave up after {MaxAttempts} attempts", cancellationToken);
+                    await MarkProcessedAsync(dbContext, id, clock.UtcNow, $"status-before-wamid: gave up after {attempts} attempts", cancellationToken);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -136,7 +147,7 @@ internal sealed partial class WebhookDeliveryWorker(
     }
 
     /// <summary>P9: la regla de IdentityInboxClaims sobre webhook_deliveries, con leases por intento.</summary>
-    private static async Task<(int Attempts, string Payload)?> TryClaimAsync(MessagingDbContext dbContext, long id, DateTimeOffset now, CancellationToken cancellationToken)
+    private static async Task<(int Attempts, string Payload, DateTimeOffset ReceivedAt)?> TryClaimAsync(MessagingDbContext dbContext, long id, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var leases = LeaseArray;
         var rows = await dbContext.Database.SqlQuery<ClaimRow>(
@@ -145,9 +156,9 @@ internal sealed partial class WebhookDeliveryWorker(
                SET claimed_until = {now} + ({leases})[LEAST(attempts + 1, cardinality({leases}))],
                    attempts = attempts + 1
              WHERE id = {id} AND processed_at IS NULL AND (claimed_until IS NULL OR claimed_until < {now})
-            RETURNING attempts AS "Attempts", payload::text AS "Payload"
+            RETURNING attempts AS "Attempts", payload::text AS "Payload", received_at AS "ReceivedAt"
             """).ToListAsync(cancellationToken);
-        return rows.Count == 1 ? (rows[0].Attempts, rows[0].Payload) : null;
+        return rows.Count == 1 ? (rows[0].Attempts, rows[0].Payload, rows[0].ReceivedAt) : null;
     }
 
     private static Task<int> MarkProcessedAsync(MessagingDbContext dbContext, long id, DateTimeOffset now, string? lastError, CancellationToken cancellationToken) =>
@@ -156,5 +167,5 @@ internal sealed partial class WebhookDeliveryWorker(
 
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
 
-    private sealed record ClaimRow(int Attempts, string Payload);
+    private sealed record ClaimRow(int Attempts, string Payload, DateTimeOffset ReceivedAt);
 }

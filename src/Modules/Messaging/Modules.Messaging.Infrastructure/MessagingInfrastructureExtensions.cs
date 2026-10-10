@@ -29,6 +29,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<WebhookRouting>();
         services.AddScoped<WebhookDeliveryProcessor>();
         services.AddHostedService<WebhookDeliveryWorker>();
+        // §8.2: purga diaria de las entregas procesadas.
+        services.AddHostedService<WebhookPurgeWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
