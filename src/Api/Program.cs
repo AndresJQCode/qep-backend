@@ -21,6 +21,7 @@ using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
+using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
@@ -193,6 +194,12 @@ await app.Services.InitializePosDatabaseAsync(
 // Integrations (spec 2026-10-08): sin FKs a otros esquemas. Va después de Audit porque escribe en
 // audit.entries, que crea la migración de Audit.
 await app.Services.InitializeIntegrationsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Messaging (spec 2026-10-09): después de Audit (escribe en audit.entries); no tiene FKs a otros
+// esquemas: Integrations y Customers entran por puertos. Las extensiones (pg_trgm, unaccent,
+// btree_gin) van en public, como las de Customers y Catalog.
+await app.Services.InitializeMessagingDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

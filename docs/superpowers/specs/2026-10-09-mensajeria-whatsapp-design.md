@@ -768,7 +768,7 @@ END $$;
 ```
 
   Sólo las palabras pasan por `unaccent` y el *stemmer* español («Droguería» → `drogueri`,
-  «pedidos» → `pedid`). Números, correos, URLs y partes con dígitos **conservan el mapeo por
+  «pedidos» → `ped`, igual que «pedido» y «pedir»: el *stemmer* Snowball quita la terminación verbal `-idos`). Números, correos, URLs y partes con dígitos **conservan el mapeo por
   defecto** de `spanish`: un número de pedido o un documento siguen siendo un token exacto. El
   `DO … IF NOT EXISTS` la hace idempotente: `CREATE TEXT SEARCH CONFIGURATION` no tiene `IF NOT
   EXISTS`, y la migración corre en bases locales que pueden tenerla a medias.

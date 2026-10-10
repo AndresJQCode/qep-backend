@@ -1,13 +1,30 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Options;
+using Modules.Messaging.Infrastructure.Persistence;
 
 namespace Modules.Messaging.Infrastructure;
 
 public static class MessagingInfrastructureExtensions
 {
-    /// <summary>Se llena en la Task 10 (DbContext, opciones) y siguientes (workers, clientes).</summary>
-    public static IServiceCollection AddMessagingInfrastructure(
-        this IServiceCollection services,
-        IConfiguration configuration) =>
-        services;
+    public static IServiceCollection AddMessagingInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration.GetConnectionString("QepDatabase")
+            ?? throw new InvalidOperationException("Connection string 'QepDatabase' is required.");
+
+        services.AddDbContext<MessagingDbContext>(options =>
+            options.UseNpgsql(connectionString, npgsql => npgsql.MigrationsHistoryTable("__ef_migrations_history", MessagingDbContext.Schema)));
+
+        services.AddScoped<IConversationRepository, ConversationRepository>();
+        services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
+
+        // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
+        services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
+        services.AddOptions<MessagingWebhookOptions>().Bind(configuration.GetSection(MessagingWebhookOptions.SectionName));
+        services.AddOptions<MessagingWorkerOptions>().Bind(configuration.GetSection(MessagingWorkerOptions.SectionName));
+
+        return services;
+    }
 }
