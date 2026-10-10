@@ -379,4 +379,46 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     }
 
     public void Add(Customer customer) => dbContext.Customers.Add(customer);
+
+    public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .Include(customer => customer.Addresses)
+            .SingleOrDefaultAsync(customer => customer.TenantId == tenantId && customer.WhatsAppUserId == whatsAppUserId, cancellationToken);
+
+    public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .Include(customer => customer.Addresses)
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == phoneE164)
+            .OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<CustomerWhatsAppRef>> FindWhatsAppRefsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var wanted = ids.Select(id => new CustomerId(id)).ToArray();
+        // El id viaja con su conversión: se arma el ref en memoria y no en la proyección SQL.
+        var rows = await dbContext.Customers.AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && wanted.Contains(customer.Id))
+            .Select(customer => new { customer.Id, customer.Name, customer.Completeness })
+            .ToListAsync(cancellationToken);
+        return rows.Select(row => new CustomerWhatsAppRef(row.Id.Value, row.Name, row.Completeness == CustomerCompleteness.Complete)).ToArray();
+    }
+
+    public async Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+        var pattern = "%" + EscapeLikeWildcards(term) + "%";
+        var ids = await dbContext.Customers.AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && EF.Functions.ILike(customer.Name, pattern, LikeEscapeCharacter))
+            .OrderBy(customer => customer.Id)
+            .Select(customer => customer.Id)
+            .Take(cap)
+            .ToListAsync(cancellationToken);
+        return ids.Select(id => id.Value).ToArray();
+    }
 }

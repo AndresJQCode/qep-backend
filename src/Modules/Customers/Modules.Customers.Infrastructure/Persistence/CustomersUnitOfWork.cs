@@ -16,6 +16,8 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
 
     private const string CucIndex = "IX_customers_tenant_cuc";
 
+    private const string WhatsAppUserIdIndex = "IX_customers_tenant_whatsapp_user_id";
+
     private const string ClassificationNameIndex = "IX_client_classifications_tenant_name";
 
     private const string ClassificationPrefixIndex = "IX_client_classifications_tenant_prefix";
@@ -64,6 +66,14 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
             throw new CustomersDomainException(
                 "customers.customer.cuc_taken",
                 "The generated CUC is already in use for this tenant.");
+        }
+        catch (DbUpdateException exception) when (IsUniqueViolationOf(exception, WhatsAppUserIdIndex))
+        {
+            // Spec 2026-10-10 §9.4 (P3): dos entregas del mismo BSUID nuevo. CustomerWhatsAppDirectory relee. El tracker
+            // se limpia: la fila que no entró quedaría Added y el siguiente SaveChanges del scope (la ingesta procesa
+            // varios mensajes por entrega) la volvería a intentar.
+            dbContext.ChangeTracker.Clear();
+            throw new WhatsAppUserIdTakenException(exception);
         }
         catch (DbUpdateException exception)
             when (IsUniqueViolationOf(exception, ClassificationNameIndex))

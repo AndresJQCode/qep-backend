@@ -148,5 +148,15 @@ public interface ICustomerRepository
         IReadOnlyCollection<CustomerId> customerIds,
         CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-10 §8.2: el cliente con ese BSUID, con tracking (el llamador puede cambiarle el BSUID).</summary>
+    Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken);
+
+    /// <summary>§8.2 con la regla de D-M7: el más viejo con ese <c>phone_e164</c>, luego el id menor. Con tracking.</summary>
+    Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<CustomerWhatsAppRef>> FindWhatsAppRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }
