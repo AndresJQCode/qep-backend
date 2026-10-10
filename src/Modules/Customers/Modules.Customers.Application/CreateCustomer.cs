@@ -36,7 +36,8 @@ public sealed class CreateCustomerHandler(
     ICucGenerator cucGenerator,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<CreateCustomerCommand> validator)
+    IValidator<CreateCustomerCommand> validator,
+    IPhoneNumberNormalizer phoneNormalizer)
     : ICommandHandler<CreateCustomerCommand, CustomerDto>
 {
     public async Task<CustomerDto> HandleAsync(
@@ -124,7 +125,8 @@ public sealed class CreateCustomerHandler(
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),
-            now);
+            now,
+            phoneNormalizer);
 
         repository.Add(customer);
         auditPublisher.Publish(

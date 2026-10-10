@@ -887,4 +887,34 @@ public sealed class CustomerTests
         Assert.True(customer.IsActive);
         Assert.Equal("Otro", customer.Name);
     }
+
+    private sealed class StubPhoneNormalizer : IPhoneNumberNormalizer
+    {
+        public string? ToE164(string? phone, string country) =>
+            phone is null ? null : "+57" + new string(phone.Where(char.IsDigit).ToArray());
+    }
+
+    // Spec 2026-10-09 §6.5: se calcula al crear y al editar; sin normalizador queda null (P7 del plan).
+    [Fact]
+    public void PhoneE164IsComputedOnCreateAndUpdateWithTheNormalizer()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "MED-0001", "Verde", null, null, Identification(), ValidContact(), Commercial(), Now,
+            phoneNormalizer: new StubPhoneNormalizer());
+
+        Assert.Equal("+573109352187", customer.PhoneE164);
+
+        customer.Update(
+            "Verde", null, Identification(), ValidContact() with { Phone = "301 000 0000" }, Commercial(), ClassificationPrefix, Now,
+            phoneNormalizer: new StubPhoneNormalizer());
+        Assert.Equal("+573010000000", customer.PhoneE164);
+
+        var without = Customer.Create(
+            CustomerId.New(), TenantId, "MED-0002", "Sin", null, null, Identification(number: "1"), ValidContact(), Commercial(), Now);
+        Assert.Null(without.PhoneE164);
+        Assert.True(without.RecomputePhoneE164(new StubPhoneNormalizer()));
+        Assert.Equal("+573109352187", without.PhoneE164);
+        Assert.False(without.RecomputePhoneE164(new StubPhoneNormalizer()));
+        Assert.Equal(1, without.Version);
+    }
 }

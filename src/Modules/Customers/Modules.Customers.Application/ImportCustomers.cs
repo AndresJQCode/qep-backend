@@ -188,7 +188,8 @@ public sealed class ImportCustomersHandler(
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<ExcelCustomerRow> rowValidator)
+    IValidator<ExcelCustomerRow> rowValidator,
+    IPhoneNumberNormalizer phoneNormalizer)
     : ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>
 {
     /// <summary>
@@ -560,7 +561,8 @@ public sealed class ImportCustomersHandler(
                         VatSurplus = candidate.VatSurplus
                     },
                     candidate.Classification.Prefix,
-                    now);
+                    now,
+                    phoneNormalizer);
 
                 imported.Add(new ImportedCustomerRow(
                     candidate.RowNumber, customer.Cuc, candidate.Name, "updated"));
@@ -601,7 +603,8 @@ public sealed class ImportCustomersHandler(
                     WithRetention = candidate.WithRetention,
                     VatSurplus = candidate.VatSurplus
                 },
-                now);
+                now,
+                phoneNormalizer);
 
             customerRepository.Add(newCustomer);
             imported.Add(new ImportedCustomerRow(candidate.RowNumber, cuc, candidate.Name, "created"));

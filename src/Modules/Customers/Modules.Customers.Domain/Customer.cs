@@ -52,7 +52,8 @@ public sealed class Customer
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer)
     {
         Id = id;
         TenantId = tenantId;
@@ -81,6 +82,7 @@ public sealed class Customer
         Address = string.Empty;
         Country = string.Empty;
         Assign(contact);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country);
         Assign(commercial);
         IsActive = true;
         Version = 1;
@@ -170,6 +172,10 @@ public sealed class Customer
 
     public string? Phone { get; private set; }
 
+    /// <summary>Spec 2026-10-09 §6.5: <see cref="Phone"/> en E.164 con «+», o <c>null</c> si no parsea. Lo
+    /// lee Messaging por sus dígitos para emparejar con el <c>wa_id</c> de Meta.</summary>
+    public string? PhoneE164 { get; private set; }
+
     public string? Email { get; private set; }
 
     /// <summary>
@@ -247,7 +253,8 @@ public sealed class Customer
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
-        DateTimeOffset occurredAt) =>
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer = null) =>
         new(
             id,
             tenantId,
@@ -258,7 +265,8 @@ public sealed class Customer
             identification.Normalized(),
             contact,
             commercial,
-            occurredAt);
+            occurredAt,
+            phoneNormalizer);
 
     /// <summary>Agrega una direccion. La primera de un cliente —o una marcada como principal—
     /// desplaza a la que lo era: el agregado no admite dos.</summary>
@@ -371,7 +379,8 @@ public sealed class Customer
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         string classificationPrefix,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer = null)
     {
         EnsureActive();
 
@@ -396,6 +405,7 @@ public sealed class Customer
         BusinessName = normalizedBusinessName;
         Assign(normalizedIdentification);
         Assign(normalizedContact);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country);
 
         if (normalizedClassificationId != ClassificationId)
         {
@@ -405,6 +415,22 @@ public sealed class Customer
         Assign(commercial);
         Version++;
         UpdatedAt = occurredAt;
+    }
+
+    /// <summary>El backfill (spec §6.5): recalcula sin subir la versión ni <c>UpdatedAt</c>, porque nadie
+    /// editó al cliente. <c>true</c> si cambió.</summary>
+    public bool RecomputePhoneE164(IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+
+        var next = phoneNormalizer.ToE164(Phone, Country);
+        if (string.Equals(next, PhoneE164, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        PhoneE164 = next;
+        return true;
     }
 
     // Desarma el value object en las dos columnas. Ver Customer.Identification para el porque del

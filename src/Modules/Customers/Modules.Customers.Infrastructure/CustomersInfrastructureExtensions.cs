@@ -2,8 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Excel;
 using Modules.Customers.Infrastructure.Persistence;
+using Modules.Customers.Infrastructure.Phones;
 
 namespace Modules.Customers.Infrastructure;
 
@@ -39,6 +41,11 @@ public static class CustomersInfrastructureExtensions
         // El adaptador que sube a R2 no vive aca sino en el composition root: necesita
         // Modules.Storage, y este modulo no lo referencia.
         services.AddScoped<ICustomerExportEventPublisher, CustomerExportEventPublisher>();
+
+        // Spec 2026-10-09 §6.5: phone_e164 para que Messaging empareje por teléfono.
+        services.AddSingleton<IPhoneNumberNormalizer, LibPhoneNumberNormalizer>();
+        services.AddScoped<ICustomerPhoneDirectory, CustomerPhoneDirectory>();
+        services.AddHostedService<CustomerPhoneBackfillWorker>();
 
         return services;
     }
