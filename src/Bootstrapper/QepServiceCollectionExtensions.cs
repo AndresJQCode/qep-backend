@@ -521,6 +521,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CompleteWhatsAppSignupCommand, ConnectionResponse>,
             CompleteWhatsAppSignupHandler>();
+        // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
+        services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
+        services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();

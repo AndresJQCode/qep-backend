@@ -41,10 +41,16 @@ internal sealed class RequireCsrfHeaderMiddleware(
     private static readonly HashSet<string> SafeMethods =
         new(StringComparer.OrdinalIgnoreCase) { "GET", "HEAD", "OPTIONS" };
 
+    /// <summary>Spec 2026-10-09 §6.7: la excepción explícita por ruta que este comentario pedía. Ordinal
+    /// y con la barra: /api/webhooksx no entra. El webhook no acepta la cookie de sesión; se autentica con
+    /// la firma HMAC de Meta.</summary>
+    private const string WebhookPrefix = "/api/webhooks/";
+
     public async Task InvokeAsync(HttpContext context)
     {
-        if (SafeMethods.Contains(context.Request.Method) ||
-            string.Equals(context.Request.Headers[HeaderName], ExpectedValue, StringComparison.Ordinal))
+        if (SafeMethods.Contains(context.Request.Method)
+            || context.Request.Path.Value?.StartsWith(WebhookPrefix, StringComparison.Ordinal) == true
+            || string.Equals(context.Request.Headers[HeaderName], ExpectedValue, StringComparison.Ordinal))
         {
             await next(context);
             return;

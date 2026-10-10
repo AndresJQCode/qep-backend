@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
+using Modules.Messaging.Infrastructure.Webhook;
 
 namespace Modules.Messaging.Infrastructure;
 
@@ -19,6 +20,9 @@ public static class MessagingInfrastructureExtensions
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
+        // Spec 2026-10-09 §8.2: la firma del webhook y la cola deduplicada de entregas.
+        services.AddSingleton<IWebhookSignatureVerifier, HmacWebhookSignatureVerifier>();
+        services.AddScoped<IWebhookDeliveries, WebhookDeliveries>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));

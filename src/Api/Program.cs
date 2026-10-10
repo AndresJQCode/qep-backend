@@ -21,6 +21,7 @@ using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
+using Modules.Messaging.Api;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Platform.Api;
@@ -68,6 +69,19 @@ builder.Services.AddRateLimiter(options =>
         httpContext => RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: FixedWindow));
+
+    // Spec 2026-10-09 §6.7 y §8.2: Meta manda desde pocas IPs compartidas y en ráfagas; con Public un
+    // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod.
+    var webhook = builder.Configuration.GetSection("Messaging:Webhook");
+    var webhookLimiter = new ConcurrencyLimiterOptions
+    {
+        PermitLimit = webhook.GetValue("ConcurrencyLimit", 64),
+        QueueLimit = webhook.GetValue("QueueLimit", 256),
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+    };
+    options.AddPolicy(
+        RateLimiterPolicies.Webhook,
+        _ => RateLimitPartition.GetConcurrencyLimiter(partitionKey: "webhook", factory: _ => webhookLimiter));
 });
 
 var app = builder.Build();
@@ -148,6 +162,7 @@ app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
 app.MapPosEndpoints();
 app.MapIntegrationsEndpoints();
+app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
