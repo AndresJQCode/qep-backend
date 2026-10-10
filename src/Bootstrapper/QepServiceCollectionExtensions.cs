@@ -539,6 +539,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ReopenConversationCommand, ConversationSummary>, ReopenConversationHandler>();
         // Messaging (spec 2026-10-09 §8.6): servir el medio ya copiado con la sesión de QEP.
         services.AddScoped<IQueryHandler<GetMediaQuery, MediaStreamDto?>, GetMediaHandler>();
+        // Messaging (spec 2026-10-10 §5.1, D-A1): el selector de transferir.
+        services.AddScoped<IQueryHandler<ListAssigneesQuery, AssigneesDto>, ListAssigneesHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -597,6 +599,8 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Spec 2026-10-10 §6.1.3: quién puede responder, por Tenancy, Identity y Authorization.
+        services.AddScoped<IMessagingAssignees, MessagingAssignees>();
         // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
         services.AddScoped<IMessagingMediaStore, MessagingMediaStore>();
 

@@ -67,6 +67,8 @@ internal static class MessagingApiHarness
 
     public static string MediaUrl(Guid tenantId, Guid messageId) => $"/api/v1/tenants/{tenantId}/messaging/media/{messageId}";
 
+    public static string AssigneesUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/assignees";
+
     private const string TemplateDatabase = "qep_template_messaging";
 
     // Un solo contenedor por ensamblado, con una plantilla ya migrada: cada prueba clona la plantilla
@@ -246,6 +248,22 @@ internal static class MessagingApiHarness
             "SELECT id FROM tenancy.memberships WHERE tenant_id = @tenantId AND user_id = @userId",
             ("tenantId", tenant.TenantId),
             ("userId", tenant.OwnerUserId));
+
+    /// <summary>Spec 2026-10-10 §12 («Fixtures»): una membresía del tenant con un rol, escrita directo (sin invitación).
+    /// <c>admin</c> y <c>advisor</c> conceden <c>messaging.conversation.manage</c>; <c>billing</c> no (P19).</summary>
+    public static async Task<(Guid MembershipId, Guid UserId)> SeedMemberAsync(
+        string connectionString, Guid tenantId, string displayName, string role, string state = "Active")
+    {
+        var membershipId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO tenancy.memberships (id, user_id, tenant_id, state, roles, origin, invited_at, accepted_at, expires_at, version, created_at, updated_at, display_name)
+            VALUES (@id, @userId, @tenantId, @state, ARRAY[@role]::text[], 'invitation', now(), now(), now() + interval '3 days', 1, now(), now(), @name)
+            """,
+            ("id", membershipId), ("userId", userId), ("tenantId", tenantId), ("state", state), ("role", role), ("name", displayName));
+        return (membershipId, userId);
+    }
 
     /// <summary><c>messaging</c> no viene con el signup (spec §6.2): se prende con su fila, como
     /// <c>PosApiHarness.EnablePosAsync</c>.</summary>
