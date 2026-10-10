@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
@@ -38,20 +40,40 @@ internal sealed partial class WhatsAppCloudClient(
 
     private string Version => string.IsNullOrWhiteSpace(options.Value.GraphApiVersion) ? DefaultGraphApiVersion : options.Value.GraphApiVersion.Trim();
 
-    public async Task<SendTextResult> SendTextAsync(MessagingSender sender, string waId, string body, string callbackData, CancellationToken cancellationToken)
+    public async Task<SendTextResult> SendTextAsync(
+        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sender);
+        ArgumentNullException.ThrowIfNull(target);
+        // Spec 2026-10-10 §6.1.4: con JsonObject la clave ausente no viaja (ni "to" con BSUID ni "recipient" sin él).
+        var payload = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["recipient_type"] = "individual",
+            ["type"] = "text",
+            ["text"] = new JsonObject { ["body"] = body },
+            ["biz_opaque_callback_data"] = callbackData,
+        };
+        switch (target)
+        {
+            case SendToUserId byUserId:
+                payload["recipient"] = byUserId.UserId;
+                break;
+            case SendToPhone byPhone:
+                payload["to"] = byPhone.WaId;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(target), target, "Unknown send target.");
+        }
+
+        if (contextWamid is not null)
+        {
+            payload["context"] = new JsonObject { ["message_id"] = contextWamid };
+        }
+
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/messages")
         {
-            Content = JsonContent.Create(new
-            {
-                messaging_product = "whatsapp",
-                recipient_type = "individual",
-                to = waId,
-                type = "text",
-                text = new { body },
-                biz_opaque_callback_data = callbackData,
-            }),
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
         };
         var answer = await SendAsync("send", request, sender.AccessToken, null, cancellationToken);
         using var response = answer.Response;

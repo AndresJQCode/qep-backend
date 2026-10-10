@@ -36,8 +36,8 @@ internal sealed class MessagingTestBed
     public ConversationRow OpenConversation(int? lastInboundHoursAgo, bool resolved = false)
     {
         var row = new ConversationRow(
-            Guid.CreateVersion7(), TenantId, ConnectionId, "573001234567", "Laura",
-            resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
+            Guid.CreateVersion7(), TenantId, ConnectionId, UserId: null, WaId: "573001234567", Username: null, "Laura",
+            CustomerId: null, AssignedMemberId: null, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
             null, null, null, null, null, null, Now, 1);
         Conversations.Rows.Add(row);
@@ -158,7 +158,7 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
     }
 }
 
-internal sealed record SentText(MessagingSender Sender, string To, string Body, string CallbackData);
+internal sealed record SentText(MessagingSender Sender, SendTarget Target, string Body, string CallbackData, string? ContextWamid);
 
 internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 {
@@ -170,9 +170,10 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     public Action? DuringSend { get; set; }
 
     /// <summary>Como HttpClient: Meta ya recibió el mensaje, pero un token cancelado a mitad de la llamada lanza.</summary>
-    public Task<SendTextResult> SendTextAsync(MessagingSender sender, string waId, string body, string callbackData, CancellationToken cancellationToken)
+    public Task<SendTextResult> SendTextAsync(
+        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
-        Sends.Add(new SentText(sender, waId, body, callbackData));
+        Sends.Add(new SentText(sender, target, body, callbackData, contextWamid));
         DuringSend?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(NextSend);

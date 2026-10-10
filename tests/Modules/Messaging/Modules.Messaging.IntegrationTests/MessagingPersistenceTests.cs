@@ -24,7 +24,9 @@ public sealed class MessagingPersistenceTests
             "SELECT string_agg(indexname, ',' ORDER BY indexname) FROM pg_indexes WHERE schemaname = 'messaging'");
         foreach (var expected in new[]
         {
-            "IX_conversations_connection_wa", "IX_conversations_tenant_status_activity", "IX_conversations_tenant_open",
+            "IX_conversations_connection_user", "IX_conversations_connection_wa_legacy", "IX_conversations_tenant_status_activity",
+            "IX_conversations_tenant_assignee_status_activity", "IX_conversations_tenant_unassigned_status_activity",
+            "IX_conversations_tenant_customer_activity", "IX_conversations_username_trgm", "IX_conversations_tenant_open",
             "IX_conversations_tenant_unread", "IX_conversations_profile_name_trgm", "IX_conversations_wa_id_trgm",
             "IX_messages_thread", "IX_messages_connection_wamid", "IX_messages_conversation_client", "IX_messages_tenant_search",
             "IX_message_media_pending", "IX_webhook_deliveries_body_sha256", "IX_webhook_deliveries_pending",
@@ -32,6 +34,9 @@ public sealed class MessagingPersistenceTests
         {
             Assert.Contains(expected, indexes, StringComparison.Ordinal);
         }
+
+        // Spec 2026-10-10 §7.1: el único viejo sobre (connection_id, wa_id) ya no existe; lo reemplaza el parcial «_legacy».
+        Assert.DoesNotContain("IX_conversations_connection_wa,", indexes + ",", StringComparison.Ordinal);
 
         Assert.Equal(3L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM pg_extension WHERE extname IN ('pg_trgm','unaccent','btree_gin')"));
         Assert.Equal(1L, await ScalarAsync<long>(connectionString,
@@ -57,7 +62,12 @@ public sealed class MessagingPersistenceTests
 
         foreach (var (name, expected) in new[]
         {
-            ("IX_conversations_connection_wa", "CREATE UNIQUE INDEX \"IX_conversations_connection_wa\" ON messaging.conversations USING btree (connection_id, wa_id)"),
+            ("IX_conversations_connection_user", "CREATE UNIQUE INDEX \"IX_conversations_connection_user\" ON messaging.conversations USING btree (connection_id, user_id) WHERE (user_id IS NOT NULL)"),
+            ("IX_conversations_connection_wa_legacy", "CREATE UNIQUE INDEX \"IX_conversations_connection_wa_legacy\" ON messaging.conversations USING btree (connection_id, wa_id) WHERE (user_id IS NULL)"),
+            ("IX_conversations_tenant_assignee_status_activity", "USING btree (tenant_id, assigned_member_id, status, last_activity_at DESC, id DESC) WHERE (assigned_member_id IS NOT NULL)"),
+            ("IX_conversations_tenant_unassigned_status_activity", "USING btree (tenant_id, status, last_activity_at DESC, id DESC) WHERE (assigned_member_id IS NULL)"),
+            ("IX_conversations_tenant_customer_activity", "USING btree (tenant_id, customer_id, last_activity_at DESC) WHERE (customer_id IS NOT NULL)"),
+            ("IX_conversations_username_trgm", "USING gin (username gin_trgm_ops)"),
             ("IX_conversations_tenant_status_activity", "USING btree (tenant_id, status, last_activity_at DESC, id DESC)"),
             ("IX_conversations_tenant_open", "USING btree (tenant_id) WHERE ((status)::text = 'Open'::text)"),
             ("IX_conversations_tenant_unread", "USING btree (tenant_id) INCLUDE (unread_count) WHERE (unread_count > 0)"),
@@ -115,8 +125,45 @@ public sealed class MessagingPersistenceTests
 
         var inboundFailed = await Assert.ThrowsAsync<PostgresException>(() => InsertMessageAsync(connectionString, conversationId, tenantId, connectionId, direction: 1, kind: 1, status: 4));
         Assert.Equal("CK_messages_inbound_not_failed", inboundFailed.ConstraintName);
-        var unknownKind = await Assert.ThrowsAsync<PostgresException>(() => InsertMessageAsync(connectionString, conversationId, tenantId, connectionId, direction: 1, kind: 13, status: 2));
+        var unknownKind = await Assert.ThrowsAsync<PostgresException>(() => InsertMessageAsync(connectionString, conversationId, tenantId, connectionId, direction: 1, kind: 14, status: 2));
         Assert.Equal("CK_messages_kind", unknownKind.ConstraintName);
+    }
+
+    // Spec 2026-10-10 §7.1: lo que sólo la base hace cumplir de la identidad, la asignación y los eventos.
+    [Fact]
+    public async Task TheNewChecksHoldIdentityAssignmentAndEventShape()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = await SeedBsuidConversationAsync(factory, connectionString, tenantId, connectionId, "CO.1", null);
+
+        var noIdentity = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            "UPDATE messaging.conversations SET user_id = NULL WHERE id = @id", ("id", conversationId)));
+        Assert.Equal("CK_conversations_identity", noIdentity.ConstraintName);
+        var halfAssigned = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            "UPDATE messaging.conversations SET assigned_member_id = gen_random_uuid() WHERE id = @id", ("id", conversationId)));
+        Assert.Equal("CK_conversations_assignment", halfAssigned.ConstraintName);
+        // Con details para que cumpla CK_messages_event_shape: PostgreSQL evalúa los CHECK por nombre y, sin él,
+        // reportaría ese primero en vez del que esta fila prueba.
+        var systemText = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            """INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, details, created_at) VALUES (gen_random_uuid(), @c, @t, @n, now(), 3, 1, 2, '{"type":"Taken"}', now())""",
+            ("c", conversationId), ("t", tenantId), ("n", connectionId)));
+        Assert.Equal("CK_messages_system_is_event", systemText.ConstraintName);
+        var eventWithoutDetails = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            "INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, created_at) VALUES (gen_random_uuid(), @c, @t, @n, now(), 3, 13, 2, now())",
+            ("c", conversationId), ("t", tenantId), ("n", connectionId)));
+        Assert.Equal("CK_messages_event_shape", eventWithoutDetails.ConstraintName);
+        Assert.Equal(1, await ExecuteAsync(connectionString,
+            """INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, details, created_at) VALUES (gen_random_uuid(), @c, @t, @n, now(), 3, 13, 2, '{"type":"Taken"}', now())""",
+            ("c", conversationId), ("t", tenantId), ("n", connectionId)));
+        // Dos conversaciones con BSUID pueden compartir teléfono (número reciclado); dos viejas no.
+        await SeedBsuidConversationAsync(factory, connectionString, tenantId, connectionId, "CO.2", "573001234567");
+        await SeedBsuidConversationAsync(factory, connectionString, tenantId, connectionId, "CO.3", "573001234567");
+        await SeedConversationAsync(factory, tenantId, connectionId, "573001234567");
+        await Assert.ThrowsAnyAsync<Exception>(() => SeedConversationAsync(factory, tenantId, connectionId, "573001234567"));
     }
 
     [Fact]

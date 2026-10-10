@@ -20,6 +20,13 @@ internal sealed class MessageRecord
     public string? Wamid { get; set; }
     public Guid? ClientId { get; set; }
     public Guid? SentByMemberId { get; set; }
+
+    /// <summary>Spec 2026-10-10 §7.1: el mensaje citado, si QEP lo tiene. Sin FK (§7.1).</summary>
+    public Guid? ReplyToMessageId { get; set; }
+
+    /// <summary>El <c>wamid</c> citado tal como llegó (o el que se citó al enviar), aunque no se haya resuelto.</summary>
+    public string? ReplyToWamid { get; set; }
+
     public int? FailureCode { get; set; }
     public string? FailureTitle { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

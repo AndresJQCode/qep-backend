@@ -90,6 +90,7 @@ public sealed class ConversationTests
     [InlineData("CO.", false)]
     [InlineData("CO.13-49", false)]
     [InlineData("573001234567", false)]
+    [InlineData("CO.1349\n", false)]
     [InlineData("", false)]
     [InlineData(null, false)]
     public void ABsuidHasTheShapeMetaDocuments(string? value, bool expected) =>
@@ -101,4 +102,23 @@ public sealed class ConversationTests
         Assert.True(Conversation.IsValidUserId("CO." + new string('9', 128)));
         Assert.False(Conversation.IsValidUserId("CO." + new string('9', 129)));
     }
+
+    [Fact]
+    public void ABsuidConversationMayHaveNoPhone()
+    {
+        var conversation = Conversation.StartWithUserId(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "CO.1349120865530274", null, "Laura", Now);
+
+        Assert.Equal("CO.1349120865530274", conversation.UserId);
+        Assert.Null(conversation.WaId);
+        Assert.Null(conversation.AssignedMemberId);
+        Assert.Null(conversation.CustomerId);
+        Assert.Equal(1, conversation.Version);
+    }
+
+    [Theory]
+    [InlineData("573001234567", "57300123456X")]
+    [InlineData("co.1349", null)]
+    public void AStartWithAMalformedIdentityIsRejected(string userId, string? waId) =>
+        Assert.Throws<ArgumentException>(() =>
+            Conversation.StartWithUserId(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), userId, waId, null, Now));
 }

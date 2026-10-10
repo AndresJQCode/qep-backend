@@ -22,14 +22,16 @@ internal static class InboundIngestion
             $"""
             INSERT INTO messaging.conversations (id, tenant_id, connection_id, wa_id, profile_name, status, unread_count, last_activity_at, created_at, updated_at, version)
             VALUES ({newConversationId}, {tenantId}, {connectionId}, {message.WaId}, {message.ProfileName}, 'Open', 0, {message.OccurredAt}, {now}, {now}, 1)
-            ON CONFLICT (connection_id, wa_id) DO NOTHING
+            ON CONFLICT (connection_id, wa_id) WHERE user_id IS NULL DO NOTHING
             RETURNING id AS "Value"
             """).ToListAsync(cancellationToken);
+        // Puente hasta la T7 (spec 2026-10-10 §7.1): la clave sigue siendo el teléfono, contra el índice viejo ahora
+        // parcial (IX_conversations_connection_wa_legacy, sólo filas sin BSUID).
         // En una sentencia aparte: así ve la fila que otro pod acaba de commitear.
         var conversationId = inserted.Count == 1
             ? inserted[0]
             : await dbContext.Database.SqlQuery<Guid>(
-                $"""SELECT id AS "Value" FROM messaging.conversations WHERE connection_id = {connectionId} AND wa_id = {message.WaId}""").SingleAsync(cancellationToken);
+                $"""SELECT id AS "Value" FROM messaging.conversations WHERE connection_id = {connectionId} AND wa_id = {message.WaId} AND user_id IS NULL""").SingleAsync(cancellationToken);
 
         // 2. El mensaje; un reenvío no inserta nada.
         var messageId = Guid.CreateVersion7();

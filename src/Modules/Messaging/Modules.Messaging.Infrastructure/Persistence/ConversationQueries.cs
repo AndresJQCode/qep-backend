@@ -10,7 +10,8 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConversationQueries
 {
     private static readonly Expression<Func<Conversation, ConversationRow>> Projection = conversation => new ConversationRow(
-        conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.WaId, conversation.ProfileName, conversation.Status,
+        conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.UserId, conversation.WaId, conversation.Username,
+        conversation.ProfileName, conversation.CustomerId, conversation.AssignedMemberId, conversation.Status,
         conversation.UnreadCount, conversation.LastInboundAt, conversation.LastMessageId, conversation.LastMessageDirection, conversation.LastMessageKind,
         conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version);
 
@@ -26,8 +27,8 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
             var phones = customerWaIds.ToArray();
             query = query.Where(conversation =>
                 (conversation.ProfileName != null && EF.Functions.ILike(conversation.ProfileName, pattern, "\\"))
-                || (digitsPattern != null && EF.Functions.Like(conversation.WaId, digitsPattern))
-                || phones.Contains(conversation.WaId));
+                || (digitsPattern != null && conversation.WaId != null && EF.Functions.Like(conversation.WaId, digitsPattern))
+                || (conversation.WaId != null && phones.Contains(conversation.WaId)));
         }
 
         var total = await query.CountAsync(cancellationToken);

@@ -303,6 +303,31 @@ internal static class MessagingApiHarness
         return conversation.Id;
     }
 
+    /// <summary>Spec 2026-10-10: una conversación con BSUID (y teléfono si se pasa), con la ventana abierta si se pasa
+    /// <paramref name="lastInboundAt"/>, como la dejaría la ingesta.</summary>
+    public static async Task<Guid> SeedBsuidConversationAsync(
+        WebApplicationFactory<Program> host, string connectionString, Guid tenantId, Guid connectionId, string userId, string? waId, DateTimeOffset? lastInboundAt = null)
+    {
+        Guid id;
+        using (var scope = host.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            var conversation = Conversation.StartWithUserId(Guid.CreateVersion7(), tenantId, connectionId, userId, waId, "Laura", DateTimeOffset.UtcNow);
+            dbContext.Conversations.Add(conversation);
+            await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+            id = conversation.Id;
+        }
+
+        if (lastInboundAt is { } at)
+        {
+            await ExecuteAsync(connectionString,
+                "UPDATE messaging.conversations SET last_inbound_at = @at, last_inbound_wamid = 'wamid.seed' WHERE id = @id",
+                ("at", at.ToUniversalTime()), ("id", id));
+        }
+
+        return id;
+    }
+
     /// <summary>Un cliente de QEP creado por HTTP, con el cuerpo mínimo de <c>CustomersApiHarness.NewCustomerBody</c>
     /// (colombiano, ciudad DIVIPOLA real y una clasificación nueva). Customers calcula <c>phone_e164</c> al
     /// crear, que es lo que Messaging empareja (spec 2026-10-09 §6.5). Devuelve el <c>id</c>.</summary>

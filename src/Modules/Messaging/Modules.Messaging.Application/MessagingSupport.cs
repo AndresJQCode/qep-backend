@@ -46,7 +46,9 @@ public sealed class ConversationSummaryBuilder(IMessagingConnectionDirectory con
         }
 
         var names = await connections.ListNamesAsync(tenantId, cancellationToken);
-        var matches = await customers.MatchAsync(tenantId, rows.Select(row => row.WaId).Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
+        // El cliente por customer_id llega en la T11; mientras tanto se empareja por teléfono, sólo filas que lo tienen.
+        var matches = await customers.MatchAsync(
+            tenantId, rows.Where(row => row.WaId is not null).Select(row => row.WaId!).Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
         return rows.Select(row => ToSummary(row, names, matches)).ToArray();
     }
 
@@ -60,8 +62,8 @@ public sealed class ConversationSummaryBuilder(IMessagingConnectionDirectory con
             row.Id,
             row.ConnectionId,
             names.GetValueOrDefault(row.ConnectionId) ?? DeletedConnectionName,
-            new ContactDto(row.WaId, row.ProfileName),
-            matches.GetValueOrDefault(row.WaId),
+            new ContactDto(row.UserId, row.WaId, row.Username, row.ProfileName),
+            row.WaId is { } waId ? matches.GetValueOrDefault(waId) : null,
             row.Status.ToString(),
             row.UnreadCount,
             LastMessageFrom(row),

@@ -69,6 +69,28 @@ public sealed class SendMessageApiTests
         Assert.Equal("Outbound", list.GetProperty("items")[0].GetProperty("lastMessage").GetProperty("direction").GetString());
     }
 
+    // Spec 2026-10-10 §6.1.4 (RF1): una conversación con BSUID y sin teléfono se responde por recipient.
+    [Fact]
+    public async Task ABsuidConversationIsAnsweredByRecipientWithoutTo()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        var conversationId = await SeedBsuidConversationAsync(factory, connectionString, tenant.TenantId, connectionId, "CO.1349120865530274", null, DateTimeOffset.UtcNow.AddMinutes(-5));
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        ScriptSendOk(factory.MetaHandler);
+
+        var response = await SendAsync(client, HttpMethod.Post, MessagesUrl(tenant.TenantId, conversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var send = Assert.Single(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        Assert.Contains("\"recipient\":\"CO.1349120865530274\"", send.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"to\"", send.Body, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ARepeatedClientIdAnswersTheSameMessageAndMetaSeesOneCall()
     {

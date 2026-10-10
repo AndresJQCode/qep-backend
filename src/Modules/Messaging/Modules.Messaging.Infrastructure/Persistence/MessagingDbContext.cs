@@ -16,9 +16,18 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 {
     public const string Schema = "messaging";
 
-    public const string DirectionCheck = "direction IN (1, 2)";
-    public const string KindCheck = "kind BETWEEN 1 AND 12";
+    public const string DirectionCheck = "direction IN (1, 2, 3)";
+    public const string KindCheck = "kind BETWEEN 1 AND 13";
     public const string StatusCheck = "status BETWEEN 1 AND 4";
+
+    /// <summary>Spec 2026-10-10 §7.1: un evento es System y Event a la vez, nunca uno sin el otro.</summary>
+    public const string SystemIsEventCheck = "(direction = 3) = (kind = 13)";
+
+    /// <summary>§7.1: un evento no fue a WhatsApp (sin wamid), no tiene clientId, está Delivered (D-A5) y lleva su detalle.</summary>
+    public const string EventShapeCheck = "direction <> 3 OR (wamid IS NULL AND client_id IS NULL AND status = 2 AND details IS NOT NULL)";
+
+    public const string IdentityCheck = "user_id IS NOT NULL OR wa_id IS NOT NULL";
+    public const string AssignmentCheck = "(assigned_member_id IS NULL) = (assigned_at IS NULL)";
 
     /// <summary>§7.3: calificada con esquema para no depender del search_path de quien inserte.</summary>
     public const string SearchVectorSql = "to_tsvector('messaging.es_unaccent', coalesce(text, '') || ' ' || coalesce(caption, ''))";
@@ -49,12 +58,20 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         {
             table.HasCheckConstraint("CK_conversations_status", "status IN ('Open','Resolved')");
             table.HasCheckConstraint("CK_conversations_unread", "unread_count >= 0");
+            table.HasCheckConstraint("CK_conversations_identity", IdentityCheck);
+            table.HasCheckConstraint("CK_conversations_assignment", AssignmentCheck);
         });
         conversation.HasKey(value => value.Id);
         conversation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         conversation.Property(value => value.TenantId).HasColumnName("tenant_id");
         conversation.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        conversation.Property(value => value.UserId).HasColumnName("user_id").HasMaxLength(Conversation.UserIdMaxLength);
         conversation.Property(value => value.WaId).HasColumnName("wa_id").HasMaxLength(Conversation.WaIdMaxLength);
+        conversation.Property(value => value.Username).HasColumnName("username").HasMaxLength(Conversation.UsernameMaxLength);
+        conversation.Property(value => value.ParentUserId).HasColumnName("parent_user_id").HasMaxLength(Conversation.UserIdMaxLength);
+        conversation.Property(value => value.CustomerId).HasColumnName("customer_id");
+        conversation.Property(value => value.AssignedMemberId).HasColumnName("assigned_member_id");
+        conversation.Property(value => value.AssignedAt).HasColumnName("assigned_at");
         conversation.Property(value => value.ProfileName).HasColumnName("profile_name").HasMaxLength(Conversation.ProfileNameMaxLength);
         conversation.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
         conversation.Property(value => value.UnreadCount).HasColumnName("unread_count").HasDefaultValue(0);
@@ -75,19 +92,31 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
-        conversation.HasIndex(value => new { value.ConnectionId, value.WaId }).IsUnique().HasDatabaseName("IX_conversations_connection_wa");
-        conversation.HasIndex(value => new { value.TenantId, value.Status, value.LastActivityAt, value.Id })
-            .IsDescending(false, false, true, true)
-            .HasDatabaseName("IX_conversations_tenant_status_activity");
-        // Dos índices sobre la misma columna: sin nombre en HasIndex, EF los funde en uno y el segundo
-        // pisa el filtro del primero.
+        // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
+        // y el segundo pisa el filtro del primero.
+        // Spec 2026-10-10 §7.1: la clave nueva (blanco del ON CONFLICT de la ingesta) y la vieja, sólo entre filas sin BSUID.
+        conversation.HasIndex(value => new { value.ConnectionId, value.UserId }, "IX_conversations_connection_user")
+            .IsUnique().HasFilter("user_id IS NOT NULL");
+        conversation.HasIndex(value => new { value.ConnectionId, value.WaId }, "IX_conversations_connection_wa_legacy")
+            .IsUnique().HasFilter("user_id IS NULL");
+        conversation.HasIndex(value => new { value.TenantId, value.Status, value.LastActivityAt, value.Id }, "IX_conversations_tenant_status_activity")
+            .IsDescending(false, false, true, true);
+        // Pestaña «Mías» y counts.mine; pestaña «Sin asignar» y counts.unassigned.
+        conversation.HasIndex(value => new { value.TenantId, value.AssignedMemberId, value.Status, value.LastActivityAt, value.Id }, "IX_conversations_tenant_assignee_status_activity")
+            .IsDescending(false, false, false, true, true).HasFilter("assigned_member_id IS NOT NULL");
+        conversation.HasIndex(value => new { value.TenantId, value.Status, value.LastActivityAt, value.Id }, "IX_conversations_tenant_unassigned_status_activity")
+            .IsDescending(false, false, true, true).HasFilter("assigned_member_id IS NULL");
+        // §8.2: la herencia del asignado — la conversación más reciente del cliente.
+        conversation.HasIndex(value => new { value.TenantId, value.CustomerId, value.LastActivityAt }, "IX_conversations_tenant_customer_activity")
+            .IsDescending(false, false, true).HasFilter("customer_id IS NOT NULL");
         conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_open").HasFilter("status = 'Open'");
         conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_unread")
             .HasFilter("unread_count > 0").IncludeProperties(value => value.UnreadCount);
-        conversation.HasIndex(value => value.ProfileName).HasDatabaseName("IX_conversations_profile_name_trgm")
+        conversation.HasIndex(value => value.ProfileName, "IX_conversations_profile_name_trgm")
             .HasMethod("gin").HasOperators("gin_trgm_ops");
-        conversation.HasIndex(value => value.WaId).HasDatabaseName("IX_conversations_wa_id_trgm")
+        conversation.HasIndex(value => value.WaId, "IX_conversations_wa_id_trgm")
             .HasMethod("gin").HasOperators("gin_trgm_ops");
+        conversation.HasIndex(value => value.Username, "IX_conversations_username_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
     }
 
     private static void ConfigureMessage(ModelBuilder modelBuilder)
@@ -99,6 +128,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_messages_kind", KindCheck);
             table.HasCheckConstraint("CK_messages_status", StatusCheck);
             table.HasCheckConstraint("CK_messages_inbound_not_failed", "direction = 2 OR status <> 4");
+            table.HasCheckConstraint("CK_messages_system_is_event", SystemIsEventCheck);
+            table.HasCheckConstraint("CK_messages_event_shape", EventShapeCheck);
         });
         message.HasKey(value => value.Id);
         message.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -118,6 +149,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         message.Property(value => value.Wamid).HasColumnName("wamid");
         message.Property(value => value.ClientId).HasColumnName("client_id");
         message.Property(value => value.SentByMemberId).HasColumnName("sent_by_member_id");
+        message.Property(value => value.ReplyToMessageId).HasColumnName("reply_to_message_id");
+        message.Property(value => value.ReplyToWamid).HasColumnName("reply_to_wamid");
         message.Property(value => value.FailureCode).HasColumnName("failure_code");
         message.Property(value => value.FailureTitle).HasColumnName("failure_title");
         message.Property(value => value.CreatedAt).HasColumnName("created_at");

@@ -26,7 +26,10 @@ public sealed class SendMessageHandlerTests
         Assert.Equal(bed.MemberId, message.SentBy!.MemberId);
         Assert.Equal("Andrés", message.SentBy.DisplayName);
         var send = Assert.Single(bed.Meta.Sends);
-        Assert.Equal(("111", conversation.WaId, "Sí, tenemos 12 unidades.", $"qep:{message.Id}"), (send.Sender.PhoneNumberId, send.To, send.Body, send.CallbackData));
+        // El «!»: la fila del banco de pruebas siempre tiene teléfono (OpenConversation).
+        Assert.Equal(
+            ("111", (SendTarget)new SendToPhone(conversation.WaId!), "Sí, tenemos 12 unidades.", $"qep:{message.Id}"),
+            (send.Sender.PhoneNumberId, send.Target, send.Body, send.CallbackData));
         var claim = Assert.Single(bed.Outbound.Claims);
         Assert.Equal("committed-sent:wamid.out", claim.Outcome);
     }

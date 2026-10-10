@@ -5,7 +5,9 @@ namespace Modules.Messaging.Application;
 // de las 24 h; connectionName y customer vienen resueltos por página para que la lista no pida nada
 // aparte; MessageHit lleva conversationId, contact, customer y connectionName por lo mismo.
 
-public sealed record ContactDto(string WaId, string? ProfileName);
+/// <summary>Spec 2026-10-10 §5.1: <c>userId</c> es <c>null</c> sólo en una conversación vieja sin entrante con BSUID;
+/// <c>waId</c> es <c>null</c> cuando Meta no mandó el teléfono. Al menos uno viene (CK_conversations_identity).</summary>
+public sealed record ContactDto(string? UserId, string? WaId, string? Username, string? ProfileName);
 
 public sealed record CustomerRefDto(Guid Id, string Name);
 

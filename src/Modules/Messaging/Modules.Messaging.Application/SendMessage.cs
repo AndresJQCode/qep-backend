@@ -97,7 +97,7 @@ public sealed class SendMessageHandler(
             throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
         }
 
-        var result = await meta.SendTextAsync(sender, conversation.WaId, text, CallbackPrefix + claim.MessageId.ToString("D"), CancellationToken.None);
+        var result = await meta.SendTextAsync(sender, SendTarget.For(conversation.UserId, conversation.WaId), text, CallbackPrefix + claim.MessageId.ToString("D"), null, CancellationToken.None);
         // §8.3: occurred_at del saliente = hora del servidor al recibir la respuesta de Meta.
         var answeredAt = clock.UtcNow;
         switch (result.Outcome)

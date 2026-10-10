@@ -30,13 +30,11 @@ public sealed partial class Conversation
     /// <summary>§6.1.1: código ISO 3166 alfa-2 + «.» + 1 a 128 alfanuméricos.</summary>
     public static bool IsValidUserId(string? value) => value is not null && UserIdShape().IsMatch(value);
 
-    [GeneratedRegex("^[A-Z]{2}\\.[A-Za-z0-9]{1,128}$", RegexOptions.CultureInvariant)]
+    // «\z» y no «$»: en .NET «$» también acepta un «\n» final, y "CO.1\n" llegaría a la columna.
+    [GeneratedRegex("^[A-Z]{2}\\.[A-Za-z0-9]{1,128}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex UserIdShape();
 
-    private Conversation()
-    {
-        WaId = string.Empty;
-    }
+    private Conversation() { }
 
     public Guid Id { get; private set; }
 
@@ -44,8 +42,25 @@ public sealed partial class Conversation
 
     public Guid ConnectionId { get; private set; }
 
-    /// <summary>Dígitos, sin «+», como lo manda Meta.</summary>
-    public string WaId { get; private set; }
+    /// <summary>Spec 2026-10-10 §6.1.1: el BSUID, la clave de la conversación. <c>null</c> sólo en una fila vieja que
+    /// todavía no recibió un entrante con BSUID (§8.1, adopción).</summary>
+    public string? UserId { get; private set; }
+
+    /// <summary>Dígitos, sin «+», como lo manda Meta. <c>null</c> cuando Meta no mandó el teléfono (§3).</summary>
+    public string? WaId { get; private set; }
+
+    public string? Username { get; private set; }
+
+    /// <summary>Se guarda, no se usa en este slice (§1, fuera de alcance).</summary>
+    public string? ParentUserId { get; private set; }
+
+    /// <summary>§6.1.2: lo fija la ingesta; reemplaza el emparejamiento por teléfono al leer (D-A12).</summary>
+    public Guid? CustomerId { get; private set; }
+
+    /// <summary>§6.1.3: referencia blanda a la membresía (sin FK, como <c>sent_by_member_id</c>).</summary>
+    public Guid? AssignedMemberId { get; private set; }
+
+    public DateTimeOffset? AssignedAt { get; private set; }
 
     public string? ProfileName { get; private set; }
 
@@ -86,8 +101,8 @@ public sealed partial class Conversation
     public static bool CanAcknowledgeReading(string? lastInboundWamid, DateTimeOffset? lastInboundAt, DateTimeOffset now) =>
         lastInboundWamid is not null && lastInboundAt is { } at && now - at < ReadReceiptWindow;
 
-    /// <summary>Una conversación nueva, abierta y sin mensajes. En producción la crea la ingesta por SQL;
-    /// esto lo usan las pruebas y el harness.</summary>
+    /// <summary>P12: una fila <b>vieja</b>, sólo teléfono. La usan el harness y las pruebas de adopción; producción
+    /// crea por SQL con BSUID.</summary>
     public static Conversation Start(Guid id, Guid tenantId, Guid connectionId, string waId, string? profileName, DateTimeOffset now)
     {
         if (string.IsNullOrEmpty(waId) || waId.Length > WaIdMaxLength || !waId.All(char.IsAsciiDigit))
@@ -100,6 +115,38 @@ public sealed partial class Conversation
             Id = id,
             TenantId = tenantId,
             ConnectionId = connectionId,
+            WaId = waId,
+            ProfileName = Truncate(profileName, ProfileNameMaxLength),
+            Status = ConversationStatus.Open,
+            UnreadCount = 0,
+            LastActivityAt = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Version = 1,
+        };
+    }
+
+    /// <summary>Spec 2026-10-10 §6.1.1: una conversación nueva por BSUID, con teléfono si Meta lo mandó. En producción la
+    /// crea la ingesta por SQL; esto lo usan las pruebas y el harness.</summary>
+    public static Conversation StartWithUserId(
+        Guid id, Guid tenantId, Guid connectionId, string userId, string? waId, string? profileName, DateTimeOffset now)
+    {
+        if (!IsValidUserId(userId))
+        {
+            throw new ArgumentException("A user id is a business-scoped user id (CC.alphanumerics).", nameof(userId));
+        }
+
+        if (waId is not null && (waId.Length is 0 or > WaIdMaxLength || !waId.All(char.IsAsciiDigit)))
+        {
+            throw new ArgumentException("A wa_id is 1 to 20 digits.", nameof(waId));
+        }
+
+        return new Conversation
+        {
+            Id = id,
+            TenantId = tenantId,
+            ConnectionId = connectionId,
+            UserId = userId,
             WaId = waId,
             ProfileName = Truncate(profileName, ProfileNameMaxLength),
             Status = ConversationStatus.Open,
