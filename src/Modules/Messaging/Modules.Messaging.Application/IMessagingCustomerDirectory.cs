@@ -21,4 +21,8 @@ public interface IMessagingCustomerDirectory
     /// <summary>Spec 2026-10-10 §8.2: el cliente de QEP de esta persona, creándolo incompleto si no existe. Corre antes
     /// y fuera de la transacción de la ingesta; es idempotente por BSUID.</summary>
     Task<MessagingEnsuredCustomer> EnsureAsync(Guid tenantId, MessagingContact contact, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-10 §8.3: el cliente con el BSUID anterior pasa al nuevo. Si el nuevo ya es de otro cliente no
+    /// se toca (lo registra el adaptador). El teléfono del cliente no cambia: es dato maestro.</summary>
+    Task ReplaceUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken);
 }

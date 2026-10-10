@@ -199,6 +199,39 @@ internal static class MetaPayloads
         return Change("messages", value.ToJsonString());
     }
 
+    /// <summary>Spec 2026-10-10 §3: la forma de <c>user_id_update</c> no está documentada con un ejemplo; ésta es la que
+    /// lee el parser (riesgo de §13).</summary>
+    public static string UserIdUpdate(string previous, string current, string? phoneNumberId = "111", string wabaId = DefaultWabaId)
+    {
+        var value = new JsonObject { ["user_id"] = new JsonObject { ["previous"] = previous, ["current"] = current } };
+        if (phoneNumberId is not null)
+        {
+            value["metadata"] = Metadata(phoneNumberId, "15550000000");
+        }
+
+        return Change("user_id_update", value.ToJsonString(), wabaId);
+    }
+
+    public static string UserChangedUserId(string phoneNumberId, string fromUserId, string newUserId, string body, string wamid, long timestamp)
+    {
+        var message = new JsonObject
+        {
+            ["from_user_id"] = fromUserId,
+            ["id"] = wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "system",
+            ["system"] = new JsonObject { ["body"] = body, ["type"] = "user_changed_user_id", ["user_id"] = newUserId },
+        };
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550000000"),
+            ["contacts"] = new JsonArray(new JsonObject { ["profile"] = new JsonObject { ["name"] = "Laura" }, ["user_id"] = newUserId }),
+            ["messages"] = new JsonArray(message),
+        };
+        return Change("messages", value.ToJsonString());
+    }
+
     public static string AccountUpdate(string wabaId, string @event, string? banState = null)
     {
         var value = new JsonObject { ["event"] = @event };

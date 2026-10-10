@@ -62,9 +62,8 @@ internal sealed partial class WebhookDeliveryProcessor(
                 case UnknownChange unknown:
                     LogIgnoredField(logger, deliveryId, unknown.Field);
                     break;
-                case UserIdUpdateChange:
-                    // Spec 2026-10-10 §8.3: se parsea desde ya; aplicarlo llega con la T10. Hasta entonces, al log.
-                    LogIgnoredField(logger, deliveryId, "user_id_update");
+                case UserIdUpdateChange update:
+                    await ProcessUserIdUpdateAsync(deliveryId, update, cancellationToken);
                     break;
                 default:
                     break;
@@ -105,8 +104,44 @@ internal sealed partial class WebhookDeliveryProcessor(
             }
         }
 
+        // Spec 2026-10-10 §8.3, P7: el cambio de número se aplica siempre, también con Paused o el módulo apagado.
+        foreach (var numberChange in change.NumberChanges)
+        {
+            await ApplyNumberChangeAsync([route], numberChange, cancellationToken);
+        }
+
         // Los statuses se aplican siempre, también con Paused o módulo apagado (decisión 7, D-M18). Task 13b.
         return await ProcessStatusesAsync(deliveryId, route, change, attempts, cancellationToken);
+    }
+
+    /// <summary>Spec 2026-10-10 §8.3: por phone_number_id si viene; si no, por la WABA (el BSUID es por portafolio y
+    /// aplica a todas sus conexiones). P7: también con Paused o el módulo apagado.</summary>
+    private async Task ProcessUserIdUpdateAsync(long deliveryId, UserIdUpdateChange update, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<MessagingRoute> routes = update.PhoneNumberId is { } phoneNumberId
+            ? (await routing.FindRouteAsync(phoneNumberId, cancellationToken)) is { } route ? [route] : []
+            : await directory.FindByAccountAsync(update.WabaId, cancellationToken);
+        if (routes.Count == 0)
+        {
+            LogIgnoredField(logger, deliveryId, "user_id_update");
+            return;
+        }
+
+        await ApplyNumberChangeAsync(routes, update.Change, cancellationToken);
+    }
+
+    private async Task ApplyNumberChangeAsync(IReadOnlyList<MessagingRoute> routes, UserIdChange change, CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
+        foreach (var route in routes)
+        {
+            await ContactNumberChange.ApplyAsync(dbContext, route.TenantId, route.ConnectionId, change, now, cancellationToken);
+        }
+
+        foreach (var tenantId in routes.Select(route => route.TenantId).Distinct())
+        {
+            await customers.ReplaceUserIdAsync(tenantId, change.Previous, change.Current, cancellationToken);
+        }
     }
 
     /// <summary>Spec 2026-10-10 §8.1, «Antes de la transacción»: con conversación y cliente no se llama a Customers. Si
