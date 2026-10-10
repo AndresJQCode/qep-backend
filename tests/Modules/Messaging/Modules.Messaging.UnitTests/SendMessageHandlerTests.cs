@@ -39,15 +39,177 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 30); // ventana cerrada: no importa, ya salió.
-        bed.Outbound.Existing = new ExistingOutbound(Guid.CreateVersion7(), MessageStatus.Delivered, bed.Now.AddMinutes(-5), bed.MemberId, "la primera vez");
+        bed.Outbound.Committed = new ExistingOutbound(Guid.CreateVersion7(), MessageStatus.Delivered, bed.Now.AddMinutes(-5), bed.MemberId, "la primera vez");
 
         var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "otra vez"), Ct);
 
-        Assert.Equal(bed.Outbound.Existing.Id, message.Id);
+        Assert.Equal(bed.Outbound.Committed.Id, message.Id);
         Assert.Equal("Delivered", message.Status);
         Assert.Equal("la primera vez", message.Text);
         Assert.Empty(bed.Meta.Sends);
+        Assert.Empty(bed.Outbound.Claims);
+        Assert.Empty(bed.Repository.AutoAssigned);
+    }
+
+    // Dos requests en vuelo con el mismo clientId: al segundo lo resuelve el reclamo (FOR UPDATE), no el paso 2.
+    [Fact]
+    public async Task AnInFlightClientIdIsResolvedByTheClaimWithoutCallingMeta()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Outbound.Existing = new ExistingOutbound(Guid.CreateVersion7(), MessageStatus.Sent, bed.Now.AddMinutes(-1), bed.MemberId, "la primera vez");
+
+        var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "otra vez"), Ct);
+
+        Assert.Equal((bed.Outbound.Existing.Id, "la primera vez"), (message.Id, message.Text));
+        Assert.Empty(bed.Meta.Sends);
         Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
+    }
+
+    // RF6: asignada a otra persona → 422 sin reclamo y sin Meta.
+    [Fact]
+    public async Task AnswerToSomeoneElsesConversationIs422WithoutClaimNorMeta()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: Guid.CreateVersion7());
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() =>
+            bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "hola"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.AssignedToOther, error.Code);
+        Assert.Empty(bed.Outbound.Claims);
+        Assert.Empty(bed.Meta.Sends);
+        Assert.Empty(bed.Repository.AutoAssigned);
+    }
+
+    [Fact]
+    public async Task AnUnassignedConversationIsTakenBeforeTheClaim()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+
+        await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "hola"), Ct);
+
+        Assert.Equal([conversation.Id], bed.Repository.AutoAssigned);
+        Assert.Single(bed.Meta.Sends);
+    }
+
+    [Fact]
+    public async Task MyOwnConversationIsNotTakenAgain()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: bed.MemberId);
+
+        await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "hola"), Ct);
+
+        Assert.Empty(bed.Repository.AutoAssigned);
+        Assert.Single(bed.Meta.Sends);
+    }
+
+    // §9.3: el take ganó entre la lectura y el UPDATE condicional.
+    [Fact]
+    public async Task LosingTheAutoTakeRaceIs422WithoutMeta()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Repository.NextAutoAssign = AutoAssignOutcome.AssignedToOther;
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() =>
+            bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "hola"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.AssignedToOther, error.Code);
+        Assert.Empty(bed.Meta.Sends);
+        Assert.Empty(bed.Outbound.Claims);
+    }
+
+    // Un reintento que leyó la conversación sin dueño justo antes de que su primera vuelta la tomara: el UPDATE
+    // condicional responde AlreadyMine y el envío sigue, sin otro AutoTaken.
+    [Fact]
+    public async Task ARetryThatFindsItAlreadyMineSends()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Repository.NextAutoAssign = AutoAssignOutcome.AlreadyMine;
+
+        await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "hola"), Ct);
+
+        Assert.Single(bed.Meta.Sends);
+    }
+
+    // §8.5 paso 2: lo que ya salió, ya salió, aunque ahora la tenga otra persona o la ventana esté cerrada.
+    [Fact]
+    public async Task AnAlreadySentClientIdIsReturnedEvenIfSomeoneElseTookTheConversation()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 30, assignedTo: Guid.CreateVersion7());
+        bed.Outbound.Committed = new ExistingOutbound(Guid.CreateVersion7(), MessageStatus.Sent, bed.Now.AddMinutes(-5), bed.MemberId, "ya salió");
+
+        var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "otra vez"), Ct);
+
+        Assert.Equal((bed.Outbound.Committed.Id, "ya salió"), (message.Id, message.Text));
+        Assert.Empty(bed.Outbound.Claims);
+    }
+
+    [Fact]
+    public async Task AQuotedReplySendsTheContextAndReturnsTheReplyTo()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: bed.MemberId);
+        var quoted = Guid.CreateVersion7();
+        bed.Messages.Targets[quoted] = new ReplyTargetRow(quoted, conversation.Id, MessageDirection.Inbound, MessageKind.Text, "¿Tienen?", null, "wamid.q");
+
+        var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "Sí", quoted), Ct);
+
+        Assert.Equal("wamid.q", Assert.Single(bed.Meta.Sends).ContextWamid);
+        Assert.Equal(new ReplyToDto(quoted, "Inbound", "Text", "¿Tienen?"), message.ReplyTo);
+        Assert.Equal((quoted, "wamid.q"), (Assert.Single(bed.Outbound.Claims).Draft.ReplyToMessageId!.Value, bed.Outbound.Claims[0].Draft.ReplyToWamid));
+    }
+
+    // §5.1: repetir un clientId devuelve la cita guardada, aunque el cuerpo traiga otra.
+    [Fact]
+    public async Task ARepeatedClientIdReturnsTheStoredReplyTo()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: bed.MemberId);
+        var stored = Guid.CreateVersion7();
+        bed.Messages.Targets[stored] = new ReplyTargetRow(stored, conversation.Id, MessageDirection.Inbound, MessageKind.Text, "¿Tienen?", null, "wamid.q");
+        bed.Outbound.Committed = new ExistingOutbound(Guid.CreateVersion7(), MessageStatus.Sent, bed.Now.AddMinutes(-5), bed.MemberId, "Sí", stored);
+
+        var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "Sí", Guid.CreateVersion7()), Ct);
+
+        Assert.Equal(stored, message.ReplyTo!.Id);
+        Assert.Empty(bed.Meta.Sends);
+    }
+
+    [Theory]
+    [InlineData("other-conversation")]
+    [InlineData("no-wamid")]
+    [InlineData("reaction")]
+    [InlineData("event")]
+    [InlineData("unknown")]
+    public async Task AReplyToThatCannotBeQuotedIsAValidationErrorOnReplyTo(string shape)
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: bed.MemberId);
+        var quoted = Guid.CreateVersion7();
+        if (shape != "unknown")
+        {
+            bed.Messages.Targets[quoted] = new ReplyTargetRow(
+                quoted,
+                shape == "other-conversation" ? Guid.CreateVersion7() : conversation.Id,
+                shape == "event" ? MessageDirection.System : MessageDirection.Inbound,
+                shape switch { "reaction" => MessageKind.Reaction, "event" => MessageKind.Event, _ => MessageKind.Text },
+                "x",
+                null,
+                shape is "no-wamid" or "event" ? null : "wamid.q");
+        }
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "Sí", quoted), Ct));
+
+        Assert.Equal("replyTo", Assert.Single(error.Errors).PropertyName);
+        Assert.Empty(bed.Meta.Sends);
+        Assert.Empty(bed.Outbound.Claims);
     }
 
     [Fact]
@@ -196,7 +358,8 @@ public sealed class SendMessageHandlerTests
 
         Assert.Equal(expected, error.Code);
         Assert.Empty(bed.Meta.Sends);
-        Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
+        // Spec 2026-10-10 §8.5: status y ventana se miran antes del reclamo; la conexión, ya con el reclamo tomado.
+        Assert.Equal(scenario == "connection-paused" ? ["rolled-back"] : [], bed.Outbound.Claims.Select(claim => claim.Outcome));
     }
 
     [Theory]

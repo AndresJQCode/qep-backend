@@ -17,6 +17,24 @@ public interface IConversationRepository
     /// <summary>Para distinguir «ya estaba leída» (204) de «no existe en el tenant» (404) cuando
     /// <see cref="MarkReadAsync"/> no tocó nada.</summary>
     Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-10 §8.5 y §3 (corrección 7): un UPDATE condicional (<c>assigned_member_id IS NULL</c>) en su
+    /// propia transacción corta, antes del reclamo largo del envío: así la ingesta de esta conversación nunca espera a
+    /// Meta, y sin token de concurrencia un entrante que subió la versión no lo convierte en 412 (RF7).</summary>
+    Task<AutoAssignOutcome> TryAutoAssignAsync(Guid tenantId, Guid conversationId, Guid memberId, Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-10 §8.5 paso 4.</summary>
+public enum AutoAssignOutcome
+{
+    /// <summary>Estaba sin asignar y ahora es de quien envía (evento AutoTaken y auditoría ya commiteados).</summary>
+    Assigned,
+
+    /// <summary>Ya era de quien envía.</summary>
+    AlreadyMine,
+
+    /// <summary>Otra persona la tomó primero (§9.3).</summary>
+    AssignedToOther,
 }
 
 /// <summary>Lo que el read devuelve de la fila que marcó: lo justo para el acuse a Meta (§8.4).</summary>

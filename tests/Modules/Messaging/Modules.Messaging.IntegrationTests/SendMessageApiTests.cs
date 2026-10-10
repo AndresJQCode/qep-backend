@@ -44,6 +44,9 @@ public sealed class SendMessageApiTests
         ScriptSendOk(f.Factory.MetaHandler);
         var clientId = Guid.CreateVersion7();
         // Fix 1, hallazgo 1: el envío no sube version ni updated_at (un resolver con la versión de antes no da 412).
+        // Ya asignada a quien envía: la autoasignación (spec 2026-10-10 §8.5) sí sube version, y es otra cosa.
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET assigned_member_id = @m, assigned_at = now()",
+            ("m", await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant)));
         var before = await ScalarAsync<string>(f.ConnectionString, "SELECT version || '|' || updated_at::text FROM messaging.conversations");
 
         var response = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId, text = " Sí, tenemos 12 unidades. " });

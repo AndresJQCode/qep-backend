@@ -182,7 +182,7 @@ public static class MessagingEndpoints
     private static async Task<IResult> SendMessageAsync(
         Guid tenantId, Guid conversationId, SendMessageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
-        var message = await dispatcher.SendAsync(new SendMessageCommand(tenantId, conversationId, request.ClientId, request.Text), cancellationToken);
+        var message = await dispatcher.SendAsync(new SendMessageCommand(tenantId, conversationId, request.ClientId, request.Text, request.ReplyTo), cancellationToken);
         // Sin Location: no hay GET de un mensaje suelto, y apuntar a la colección del hilo confundiría.
         return Results.Created((string?)null, message);
     }
@@ -238,7 +238,7 @@ public static class MessagingEndpoints
 }
 
 /// <summary>§5.3: <c>clientId</c> lo genera la pantalla por intento de envío; un reintento con el mismo no duplica.</summary>
-public sealed record SendMessageRequest(Guid? ClientId, string? Text);
+public sealed record SendMessageRequest(Guid? ClientId, string? Text, Guid? ReplyTo = null);
 
 /// <summary>Spec 2026-10-10 §5.1.</summary>
 public sealed record TransferConversationRequest(Guid? MemberId);

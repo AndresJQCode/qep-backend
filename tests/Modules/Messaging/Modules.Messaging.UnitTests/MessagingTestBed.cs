@@ -33,11 +33,15 @@ internal sealed class MessagingTestBed
 
     public FakeTenantModules TenantModules { get; } = new();
 
-    public ConversationRow OpenConversation(int? lastInboundHoursAgo, bool resolved = false)
+    public FakeConversationRepository Repository { get; } = new();
+
+    public FakeMessageQueries Messages { get; } = new();
+
+    public ConversationRow OpenConversation(int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null)
     {
         var row = new ConversationRow(
             Guid.CreateVersion7(), TenantId, ConnectionId, UserId: null, WaId: "573001234567", Username: null, "Laura",
-            CustomerId: null, AssignedMemberId: null, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
+            CustomerId: null, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
             null, null, null, null, null, null, Now, 1);
         Conversations.Rows.Add(row);
@@ -50,6 +54,8 @@ internal sealed class MessagingTestBed
         membership.Active[(SubjectId, TenantId)] = MemberId;
         return new SendMessageHandler(
             Conversations,
+            Repository,
+            Messages,
             Outbound,
             Meta,
             Connections,
@@ -217,7 +223,14 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 /// <c>committed-failed:código</c> o <c>rolled-back</c>.</summary>
 internal sealed class FakeOutboundMessages : IOutboundMessages
 {
+    /// <summary>Lo que el reclamo encuentra con <c>FOR UPDATE</c> (un request en vuelo con el mismo clientId).</summary>
     public ExistingOutbound? Existing { get; set; }
+
+    /// <summary>Lo ya commiteado con ese clientId (§8.5 paso 2, sin candado).</summary>
+    public ExistingOutbound? Committed { get; set; }
+
+    public Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
+        Task.FromResult(Committed);
 
     public List<FakeClaim> Claims { get; } = [];
 
@@ -267,6 +280,37 @@ internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing)
         Outcome = outcome;
         return Task.CompletedTask;
     }
+}
+
+internal sealed class FakeConversationRepository : IConversationRepository
+{
+    public AutoAssignOutcome NextAutoAssign { get; set; } = AutoAssignOutcome.Assigned;
+
+    public List<Guid> AutoAssigned { get; } = [];
+
+    public Task<AutoAssignOutcome> TryAutoAssignAsync(Guid tenantId, Guid conversationId, Guid memberId, Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        AutoAssigned.Add(conversationId);
+        return Task.FromResult(NextAutoAssign);
+    }
+
+    public Task<Conversation?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+internal sealed class FakeMessageQueries : IMessageQueries
+{
+    public Dictionary<Guid, ReplyTargetRow> Targets { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, ReplyTargetRow>> FindReplyTargetsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, ReplyTargetRow>>(Targets.Where(pair => ids.Contains(pair.Key)).ToDictionary());
+
+    public Task<MessageCursor?> FindCursorAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyList<MessageRow>> ListThreadAsync(Guid conversationId, MessageCursor? before, int take, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames

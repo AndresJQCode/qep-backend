@@ -3,12 +3,13 @@ using Modules.Messaging.Domain;
 namespace Modules.Messaging.Application;
 
 /// <summary>§8.3: la fila que se intenta insertar. <c>Text</c> ya viene recortado; <c>Now</c> es la hora del
-/// servidor al reclamar.</summary>
+/// servidor al reclamar. <c>ReplyToMessageId</c>/<c>ReplyToWamid</c>: el citado ya validado (spec 2026-10-10 §8.6).</summary>
 public sealed record OutboundDraft(
-    Guid MessageId, Guid ConversationId, Guid TenantId, Guid ConnectionId, Guid ClientId, string Text, Guid SentByMemberId, DateTimeOffset Now);
+    Guid MessageId, Guid ConversationId, Guid TenantId, Guid ConnectionId, Guid ClientId, string Text, Guid SentByMemberId,
+    DateTimeOffset Now, Guid? ReplyToMessageId = null, string? ReplyToWamid = null);
 
-/// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación, leída con <c>FOR UPDATE</c>.</summary>
-public sealed record ExistingOutbound(Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text);
+/// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación (con <c>FOR UPDATE</c> en el reclamo).</summary>
+public sealed record ExistingOutbound(Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text, Guid? ReplyToMessageId = null);
 
 /// <summary>
 /// §8.3, «Idempotencia sin que la fila a medio enviar se vea»: una transacción abierta con la fila del
@@ -37,4 +38,7 @@ public interface IOutboundClaim : IAsyncDisposable
 public interface IOutboundMessages
 {
     Task<IOutboundClaim> ClaimAsync(OutboundDraft draft, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-10 §8.5 paso 2: el mensaje ya commiteado con ese clientId, sin candado; <c>null</c> si no hay.</summary>
+    Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken);
 }

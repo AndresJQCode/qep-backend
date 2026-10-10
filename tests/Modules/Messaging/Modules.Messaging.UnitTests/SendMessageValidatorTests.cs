@@ -44,4 +44,17 @@ public sealed class SendMessageValidatorTests
         Assert.Equal(["clientId"], validator.Validate(new SendMessageCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), null, "x")).Errors.Select(failure => failure.PropertyName).Distinct());
         Assert.Equal(["clientId"], validator.Validate(new SendMessageCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.Empty, "x")).Errors.Select(failure => failure.PropertyName).Distinct());
     }
+
+    [Fact]
+    public void AnEmptyReplyToFailsOnReplyTo() =>
+        Assert.Equal(["replyTo"], new SendMessageValidator().Validate(new SendMessageCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), ClientId, "x", Guid.Empty)).Errors.Select(failure => failure.PropertyName));
+
+    [Fact]
+    public void ANullOrAGuidReplyToIsValid()
+    {
+        var validator = new SendMessageValidator();
+
+        Assert.True(validator.Validate(new SendMessageCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), ClientId, "x", null)).IsValid);
+        Assert.True(validator.Validate(new SendMessageCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), ClientId, "x", Guid.CreateVersion7())).IsValid);
+    }
 }
