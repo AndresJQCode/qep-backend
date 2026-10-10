@@ -40,6 +40,17 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
 10. **PIN de dos pasos:** el registro fija un PIN aleatorio que no se guarda. Si el número ya tenía
     verificación en dos pasos con otro PIN, `/register` falla (`registration_failed`): quita ese PIN en
     WhatsApp Manager y reintenta.
+11. **Orden del despliegue de la asignación y el BSUID** (spec 2026-10-10 §7, §13). Tres pasos, en este orden:
+    1. **Backend**, con sus dos migraciones: `AddCustomerCompleteness` (Customers) y
+       `AddBsuidAssignmentAndEvents` (Messaging).
+    2. **Frontend de este slice.** El SPA viejo que sigue vivo espera `classification` y `cuc` no nulos en el
+       cliente, trata `direction: "System"` como error de contrato y dibuja `+{waId}` aunque venga `null`. No
+       se rompe de inmediato: los clientes incompletos y los eventos sólo aparecen cuando la ingesta corre.
+    3. **Sólo entonces** prende una conexión de WhatsApp en producción (paso 8 y la conexión desde la SPA).
+       Prenderla antes deja entrar incompletos que el frontend viejo no sabe dibujar.
+
+    `AddBsuidAssignmentAndEvents` tiene que salir **antes o junto con** el primer despliegue de Messaging a
+    producción: sus `CHECK` recorren `messaging.messages`, y eso sólo es barato mientras la tabla está vacía.
 
 ## Notas a confirmar en producción
 
@@ -75,5 +86,3 @@ Si alguna está mal, el costo de cambiarla está en la tabla del spec.
 - **D-M19:** `business_management` no se pide en App Review.
 - **D-M20:** `sentBy.displayName` nunca es `null`; si la membresía ya no está o no tiene nombre ni correo,
   viaja `"Miembro eliminado"`.
-11. **Desplegar backend y frontend juntos** (spec 2026-10-10 §13): el SPA viejo trata `direction: "System"` como
-    error de contrato y dibuja `+{waId}` aunque venga `null`.

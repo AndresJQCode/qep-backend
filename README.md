@@ -1975,9 +1975,17 @@ Esperado: `200`. Sin el header: `401`. La entrega se procesa en los 3 s siguient
    `META_APP_ID` y `META_CONFIG_ID` como variables normales. Sin las cinco claves,
    `MetaAppOptionsValidator` deja el pod en crash-loop: es a propósito.
 2. Backend primero (migraciones `AddWhatsAppCloudProvider`, `AddConnectionRoutes`,
-   `AddMessagingModuleKey`, `AddCustomerPhoneE164`, `InitialMessaging`), después se verifica el webhook
-   en Meta (hace el `GET` al guardarlo), después el frontend.
-3. Prender `messaging` al tenant (consola de operador o el SQL de respaldo de «Módulos por tenant»).
+   `AddMessagingModuleKey`, `AddCustomerPhoneE164`, `InitialMessaging`, `AddCustomerCompleteness` y
+   `AddBsuidAssignmentAndEvents`), después se verifica el webhook en Meta (hace el `GET` al guardarlo),
+   después el frontend **de este slice**. `AddBsuidAssignmentAndEvents` va antes o junto con el primer
+   despliegue de Messaging a producción: sus `CHECK` recorren `messaging.messages`, y eso sólo es barato
+   mientras la tabla está vacía.
+3. **Sólo con ese frontend arriba** se prende una conexión de WhatsApp en producción. El SPA viejo espera
+   `classification` y `cuc` no nulos en el cliente; los clientes incompletos sólo aparecen cuando la
+   ingesta corre, así que prender la conexión antes los deja entrar sin una pantalla que sepa dibujarlos.
+   `AddCustomerCompleteness` deja `completeness` con `DEFAULT 'Complete'` para que el pod viejo, que sigue
+   atendiendo mientras el nuevo arranca, pueda crear clientes; se quita en una migración posterior.
+4. Prender `messaging` al tenant (consola de operador o el SQL de respaldo de «Módulos por tenant»).
    Lo que hace el owner del lado de Meta está en
    `docs/superpowers/plans/2026-10-09-mensajeria-whatsapp-handoff-meta.md`.
 
