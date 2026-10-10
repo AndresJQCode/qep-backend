@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Modules.Messaging.Domain;
 
 /// <summary>
@@ -7,17 +9,29 @@ namespace Modules.Messaging.Domain;
 /// este agregado sólo resuelve y reabre, con <see cref="Version"/> como token de concurrencia.
 /// La «foto» del último mensaje la escribe la ingesta; acá es de sólo lectura.
 /// </summary>
-public sealed class Conversation
+public sealed partial class Conversation
 {
     public const int WaIdMaxLength = 20;
     public const int ProfileNameMaxLength = 256;
     public const int PreviewMaxLength = 200;
+
+    /// <summary>Spec 2026-10-10 §6.1.1: el BSUID mide hasta 131 (2 + 1 + 128); 150 deja margen.</summary>
+    public const int UserIdMaxLength = 150;
+
+    /// <summary>Meta: hasta 35; la columna deja margen sin costo.</summary>
+    public const int UsernameMaxLength = 64;
 
     /// <summary>§8.3: 24 h desde el último mensaje de la persona.</summary>
     public static readonly TimeSpan WindowLength = TimeSpan.FromHours(24);
 
     /// <summary>§8.4: Meta sólo marca leído dentro de 30 días desde la recepción.</summary>
     public static readonly TimeSpan ReadReceiptWindow = TimeSpan.FromDays(30);
+
+    /// <summary>§6.1.1: código ISO 3166 alfa-2 + «.» + 1 a 128 alfanuméricos.</summary>
+    public static bool IsValidUserId(string? value) => value is not null && UserIdShape().IsMatch(value);
+
+    [GeneratedRegex("^[A-Z]{2}\\.[A-Za-z0-9]{1,128}$", RegexOptions.CultureInvariant)]
+    private static partial Regex UserIdShape();
 
     private Conversation()
     {

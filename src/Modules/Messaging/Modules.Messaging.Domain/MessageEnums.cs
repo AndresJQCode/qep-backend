@@ -12,6 +12,9 @@ public enum MessageDirection
 {
     Inbound = 1,
     Outbound = 2,
+
+    /// <summary>Spec 2026-10-10 §6.1.5: un evento del sistema en el hilo; nunca va a WhatsApp.</summary>
+    System = 3,
 }
 
 public enum MessageKind
@@ -28,6 +31,9 @@ public enum MessageKind
     Interactive = 10,
     Template = 11,
     Unsupported = 12,
+
+    /// <summary>Spec 2026-10-10 §6.1.5: un evento del sistema en el hilo; nunca va a WhatsApp.</summary>
+    Event = 13,
 }
 
 /// <summary>El orden numérico <b>es</b> el de avance (§7.5): un acuse nunca retrocede.</summary>

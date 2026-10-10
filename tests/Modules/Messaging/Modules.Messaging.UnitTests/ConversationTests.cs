@@ -79,4 +79,26 @@ public sealed class ConversationTests
     [InlineData("+573001234567")]
     public void TheWaIdIsDigitsOnly(string? waId) =>
         Assert.Throws<ArgumentException>(() => Conversation.Start(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), waId!, null, Now));
+
+    // Spec 2026-10-10 §6.1.1: ISO alfa-2 en mayúsculas + «.» + 1 a 128 alfanuméricos.
+    [Theory]
+    [InlineData("CO.1349120865530274", true)]
+    [InlineData("US.13491208655302741918", true)]
+    [InlineData("US.abcXYZ09", true)]
+    [InlineData("co.1349", false)]
+    [InlineData("COL.1349", false)]
+    [InlineData("CO.", false)]
+    [InlineData("CO.13-49", false)]
+    [InlineData("573001234567", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ABsuidHasTheShapeMetaDocuments(string? value, bool expected) =>
+        Assert.Equal(expected, Conversation.IsValidUserId(value));
+
+    [Fact]
+    public void ABsuidOfMoreThan128AlphanumericsIsRejected()
+    {
+        Assert.True(Conversation.IsValidUserId("CO." + new string('9', 128)));
+        Assert.False(Conversation.IsValidUserId("CO." + new string('9', 129)));
+    }
 }

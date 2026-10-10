@@ -12,4 +12,10 @@ public static class MessagingErrorCodes
     public const string ConversationNotFound = "messaging.conversation.not_found";
     public const string MessageNotFound = "messaging.message.not_found";
     public const string WebhookSignatureInvalid = "messaging.webhook.signature_invalid";
+
+    /// <summary>Spec 2026-10-10 §10: enviar a una conversación asignada a otra membresía.</summary>
+    public const string AssignedToOther = "messaging.conversation.assigned_to_other";
+
+    /// <summary>Spec 2026-10-10 §10: transferir a una membresía que no es activa del tenant o no tiene manage.</summary>
+    public const string AssigneeCannotReply = "messaging.conversation.assignee_cannot_reply";
 }

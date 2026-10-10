@@ -31,7 +31,9 @@ public sealed class MessageColumnCodesTests
     {
         Assert.Equal((short)1, MessageColumnCodes.ToCode(MessageDirection.Inbound));
         Assert.Equal((short)2, MessageColumnCodes.ToCode(MessageDirection.Outbound));
+        Assert.Equal((short)3, MessageColumnCodes.ToCode(MessageDirection.System));
         Assert.Equal((short)12, MessageColumnCodes.ToCode(MessageKind.Unsupported));
+        Assert.Equal((short)13, MessageColumnCodes.ToCode(MessageKind.Event));
         Assert.Equal((short)4, MessageColumnCodes.ToCode(MessageStatus.Failed));
         Assert.Equal("direction IN (1, 2)", MessagingDbContext.DirectionCheck);
         Assert.Equal("kind BETWEEN 1 AND 12", MessagingDbContext.KindCheck);
@@ -40,7 +42,7 @@ public sealed class MessageColumnCodesTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(13)]
+    [InlineData(14)]
     public void AnUnknownCodeIsLoudNotSilent(short code) =>
         Assert.Throws<ArgumentOutOfRangeException>(() => MessageColumnCodes.ToKind(code));
 }
