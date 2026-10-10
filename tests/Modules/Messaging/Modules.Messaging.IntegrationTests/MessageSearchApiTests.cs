@@ -100,7 +100,8 @@ public sealed class MessageSearchApiTests
         Assert.Equal(f.ConversationA, hit.GetProperty("conversationId").GetGuid());
         Assert.Equal("573001234567", hit.GetProperty("contact").GetProperty("waId").GetString());
         Assert.Equal("Ventas", hit.GetProperty("connectionName").GetString());
-        Assert.Equal(JsonValueKind.Null, hit.GetProperty("customer").ValueKind);
+        // Spec 2026-10-10 §8.2: todo el que escribe es cliente; Laura nace incompleta con su nombre de perfil.
+        Assert.Equal("Laura", hit.GetProperty("customer").GetProperty("name").GetString());
         Assert.Equal("Text", hit.GetProperty("kind").GetString());
     }
 

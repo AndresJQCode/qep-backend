@@ -263,7 +263,7 @@ public sealed class WebhookPayloadParserTests
         Assert.Null(message.ProfileName);
     }
 
-    // Un elemento roto en el arreglo no se lleva a sus hermanos: un from vacío o un timestamp ilegible se
+    // Un elemento roto en el arreglo no se lleva a sus hermanos: un from_user_id vacío o un timestamp ilegible se
     // salta y el válido de al lado entra.
     [Fact]
     public void ABadEntryIsSkippedAndItsValidSiblingSurvives()
@@ -303,7 +303,26 @@ public sealed class WebhookPayloadParserTests
     {
         var json = Envelope("messages", BsuidOnly("CO.1", new { from_user_id = fromUserId, from = "573001234567", id = "wamid.x", timestamp = "1760000000", type = "text", text = new { body = "hola" } }));
 
-        Assert.Empty(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages);
+        var change = Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json)));
+        Assert.Empty(change.Messages);
+        // §8.1: «se salta y se registra». El parser cuenta; el procesador lo registra con el id de la entrega.
+        Assert.Equal(1, change.SkippedWithoutUserId);
+    }
+
+    // §8.1: sin from, el teléfono sale del wa_id del contacto con el mismo BSUID.
+    [Fact]
+    public void WithoutFromThePhoneComesFromTheContactWaId()
+    {
+        var json = Envelope("messages", new
+        {
+            metadata = new { phone_number_id = "111" },
+            contacts = new[] { new { profile = new { name = "Laura" }, user_id = "CO.1", wa_id = "573001234567" } },
+            messages = new[] { new { from_user_id = "CO.1", id = "wamid.c", timestamp = "1760000000", type = "text", text = new { body = "hola" } } },
+        });
+
+        var message = Assert.Single(Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Messages);
+
+        Assert.Equal(("CO.1", "573001234567"), (message.UserId, message.WaId));
     }
 
     // §8.1: un from inválido se descarta como dato; el mensaje entra igual.

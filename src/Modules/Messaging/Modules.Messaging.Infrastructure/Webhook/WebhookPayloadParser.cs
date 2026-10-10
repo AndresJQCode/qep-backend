@@ -89,6 +89,7 @@ internal static partial class WebhookPayloadParser
 
         var messages = new List<InboundMessage>();
         var numberChanges = new List<UserIdChange>();
+        var skippedWithoutUserId = 0;
         if (TryArray(value, "messages", out var items))
         {
             foreach (var item in items.EnumerateArray())
@@ -99,6 +100,10 @@ internal static partial class WebhookPayloadParser
                     {
                         numberChanges.Add(numberChange);
                     }
+                }
+                else if (item.ValueKind == JsonValueKind.Object && !Conversation.IsValidUserId(ReadString(item, "from_user_id")))
+                {
+                    skippedWithoutUserId++;
                 }
                 else if (ParseMessage(item, contactsByUserId) is { } message)
                 {
@@ -119,7 +124,7 @@ internal static partial class WebhookPayloadParser
             }
         }
 
-        return new MessagesChange(phoneNumberId, messages, statuses, numberChanges);
+        return new MessagesChange(phoneNumberId, messages, statuses, numberChanges, skippedWithoutUserId);
     }
 
     private static bool IsUserChangedUserId(JsonElement item) =>
@@ -130,7 +135,7 @@ internal static partial class WebhookPayloadParser
         var wamid = ReadString(item, "id");
         var userId = ReadString(item, "from_user_id");
         // Spec 2026-10-10 §8.1: el BSUID es la clave y Meta lo manda siempre. Sin él, el mensaje se salta (tolerancia
-        // de base: nunca lanza). El teléfono es un dato opcional: si from no tiene la forma, se descarta y el
+        // de base: nunca lanza) y ParseMessages lo cuenta para que el procesador lo registre. El teléfono es un dato opcional: si from no tiene la forma, se descarta y el
         // mensaje entra igual; si falta, se toma el wa_id del contacto.
         if (wamid is null || !Conversation.IsValidUserId(userId) || ReadTimestamp(item) is not { } occurredAt)
         {

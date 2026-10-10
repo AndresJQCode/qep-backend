@@ -6,12 +6,14 @@ namespace Modules.Messaging.Infrastructure.Webhook;
 internal abstract record WebhookChange;
 
 /// <summary><paramref name="NumberChanges"/>: los mensajes <c>system</c> de tipo <c>user_changed_user_id</c>
-/// (spec 2026-10-10 §8.3); no son mensajes del hilo.</summary>
+/// (spec 2026-10-10 §8.3); no son mensajes del hilo. <paramref name="SkippedWithoutUserId"/>: los mensajes que se
+/// saltaron por no traer un <c>from_user_id</c> válido (§8.1, «se salta y se registra»); el procesador los registra.</summary>
 internal sealed record MessagesChange(
     string PhoneNumberId,
     IReadOnlyList<InboundMessage> Messages,
     IReadOnlyList<StatusUpdate> Statuses,
-    IReadOnlyList<UserIdChange> NumberChanges) : WebhookChange;
+    IReadOnlyList<UserIdChange> NumberChanges,
+    int SkippedWithoutUserId = 0) : WebhookChange;
 
 /// <summary>Spec 2026-10-10 §8.3: la persona pasó de un BSUID a otro; el teléfono nuevo, si Meta lo manda.</summary>
 internal sealed record UserIdChange(string Previous, string Current, string? WaId);

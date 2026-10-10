@@ -40,12 +40,14 @@ public sealed class InboundIngestionTests
         await DrainDeliveriesAsync(f.Factory);
 
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
-        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages"));
+        // Spec 2026-10-10 §8.7: además del mensaje está su evento CustomerCreated (direction = 3); el reenvío no repite ninguno.
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 3"));
         Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NOT NULL"));
         var row = await ScalarAsync<string>(f.ConnectionString,
             "SELECT tenant_id::text || '|' || wa_id || '|' || profile_name || '|' || status || '|' || unread_count || '|' || last_message_preview || '|' || last_message_direction || '|' || last_message_status || '|' || version || '|' || extract(epoch from last_inbound_at)::bigint || '|' || last_inbound_wamid FROM messaging.conversations");
         Assert.Equal($"{f.TenantId}|573001234567|Laura|Open|1|¿Tienen disponible?|1|2|2|1760000000|wamid.1", row);
-        Assert.Equal($"{f.TenantId}|1|1|2", await ScalarAsync<string>(f.ConnectionString, "SELECT tenant_id::text || '|' || direction || '|' || kind || '|' || status FROM messaging.messages"));
+        Assert.Equal($"{f.TenantId}|1|1|2", await ScalarAsync<string>(f.ConnectionString, "SELECT tenant_id::text || '|' || direction || '|' || kind || '|' || status FROM messaging.messages WHERE direction = 1"));
     }
 
     [Fact]

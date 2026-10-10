@@ -99,10 +99,17 @@ public sealed class InboundBsuidTests
         var json = MetaPayloads.Inbound("111", "CO.1", "573001234567", "wamid.1", 1760000000, "hola");
         Assert.Contains("\"from_user_id\":\"CO.1\",", json, StringComparison.Ordinal);
         var withoutBsuid = json.Replace("\"from_user_id\":\"CO.1\",", string.Empty, StringComparison.Ordinal);
+        var logs = new CapturedLogs();
+        using var host = f.Factory.WithCapturedLogs(logs);
 
-        await IngestAsync(f, withoutBsuid);
+        await PostWebhookAsync(f.Anonymous, withoutBsuid);
+        await DrainDeliveriesAsync(host);
 
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NOT NULL AND last_error IS NULL"));
+        // §8.1: «se salta y se registra», sin el texto ni el teléfono.
+        Assert.Contains("1 inbound message(s) without a valid from_user_id were skipped", logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain("hola", logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain("573001234567", logs.AllText, StringComparison.Ordinal);
     }
 }
