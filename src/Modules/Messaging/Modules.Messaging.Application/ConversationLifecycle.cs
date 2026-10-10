@@ -11,11 +11,11 @@ public sealed record ResolveConversationCommand(Guid TenantId, Guid Conversation
 
 public sealed record ReopenConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
-/// <summary>§8.4: commit primero; después el acuse a Meta, best effort (5 s), sólo si había no leídos, hay
-/// último entrante de menos de 30 días y la conexión está Active. Siempre 204.</summary>
+/// <summary>§8.4: commit primero, por un UPDATE atómico sin token de concurrencia (un entrante que sube
+/// <c>version</c> en medio no lo convierte en 412); después el acuse a Meta, best effort (5 s), sólo si había
+/// no leídos, hay último entrante de menos de 30 días y la conexión está Active. Siempre 204.</summary>
 public sealed partial class MarkConversationReadHandler(
     IConversationRepository repository,
-    IMessagingUnitOfWork unitOfWork,
     IMessagingConnectionDirectory connections,
     IWhatsAppCloudClient meta,
     ITenantModules tenantModules,
@@ -30,33 +30,32 @@ public sealed partial class MarkConversationReadHandler(
     public async Task<bool> HandleAsync(MarkConversationReadCommand command, CancellationToken cancellationToken)
     {
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
-        var conversation = await repository.FindAsync(command.TenantId, command.ConversationId, cancellationToken)
-            ?? throw MessagingNotFound.Conversation(command.ConversationId);
-
         var now = clock.UtcNow;
-        if (!conversation.MarkRead(now))
+        var target = await repository.MarkReadAsync(command.TenantId, command.ConversationId, now, cancellationToken);
+        if (target is null)
         {
-            return false;
+            // Nada que marcar: ya estaba en 0 (204 sin acuse) o no es de este tenant (404).
+            return await repository.ExistsAsync(command.TenantId, command.ConversationId, cancellationToken)
+                ? false
+                : throw MessagingNotFound.Conversation(command.ConversationId);
         }
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        if (!conversation.CanAcknowledgeReading(now))
+        if (target.LastInboundWamid is not { } wamid || !Conversation.CanAcknowledgeReading(wamid, target.LastInboundAt, now))
         {
             return true;
         }
 
         try
         {
-            var sender = await connections.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, cancellationToken);
-            if (sender is not null && !await meta.MarkReadAsync(sender, conversation.LastInboundWamid!, cancellationToken))
+            var sender = await connections.ResolveSenderAsync(command.TenantId, target.ConnectionId, cancellationToken);
+            if (sender is not null && !await meta.MarkReadAsync(sender, wamid, cancellationToken))
             {
-                LogReceiptFailed(logger, conversation.Id, null);
+                LogReceiptFailed(logger, command.ConversationId, null);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            LogReceiptFailed(logger, conversation.Id, exception);
+            LogReceiptFailed(logger, command.ConversationId, exception);
         }
 
         return true;

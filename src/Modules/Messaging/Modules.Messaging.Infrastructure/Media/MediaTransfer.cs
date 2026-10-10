@@ -53,8 +53,9 @@ internal sealed class MediaTransfer(
     /// <summary>§8.6: Meta guarda el medio 7 días; pasado eso no hay qué bajar.</summary>
     public static readonly TimeSpan MetaRetention = TimeSpan.FromDays(7);
 
-    /// <summary>Lo que dura una URL firmada de Meta y el primer lease: una copia trabada más que esto no
-    /// congela la cola de la réplica; falla como <c>copy:timeout</c> y se reintenta.</summary>
+    /// <summary>Lo que dura una URL firmada de Meta y el tope de una copia: una copia trabada más que esto no
+    /// congela la cola de la réplica; falla como <c>copy:timeout</c> y se reintenta. Todo lease de
+    /// <see cref="MediaCopyWorker.Leases"/> es más largo, para que otra réplica no la retome a mitad de camino.</summary>
     public static readonly TimeSpan DefaultCopyTimeout = TimeSpan.FromMinutes(5);
 
     /// <summary>Configurable sólo para las pruebas.</summary>

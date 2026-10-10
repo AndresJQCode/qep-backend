@@ -10,7 +10,7 @@ using Modules.Messaging.Infrastructure.Persistence;
 namespace Modules.Messaging.Infrastructure.Media;
 
 /// <summary>§8.6: reclama pendientes con FOR UPDATE SKIP LOCKED y next_attempt_at = now + lease[n] (P15:
-/// 1 min, 5 min, 30 min, 2 h, 6 h, 6 h…), y copia cada uno en su scope. Varias réplicas pueden correrlo a
+/// 6 min, 10 min, 30 min, 2 h, 6 h, 6 h…), y copia cada uno en su scope. Varias réplicas pueden correrlo a
 /// la vez: el reclamo da un solo ganador por fila.</summary>
 internal sealed partial class MediaCopyWorker(
     IServiceScopeFactory scopeFactory,
@@ -20,9 +20,11 @@ internal sealed partial class MediaCopyWorker(
     internal const int BatchSize = 20;
 
     /// <summary>P15: la espera después del intento n es <c>Leases[n - 1]</c>; desde el último, el último.
-    /// El lease es también el tiempo que tiene una copia para terminar antes de que otra réplica la retome.</summary>
+    /// El lease es también el tiempo que tiene una copia para terminar antes de que otra réplica la retome, y
+    /// una copia puede durar hasta <see cref="MediaTransfer.DefaultCopyTimeout"/> (5 min): por eso el primero es
+    /// de 6 min y no de 1. Se conserva la forma de la curva de P15; sólo los dos primeros suben.</summary>
     internal static readonly IReadOnlyList<TimeSpan> Leases =
-        [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(30), TimeSpan.FromHours(2), TimeSpan.FromHours(6)];
+        [TimeSpan.FromMinutes(6), TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(30), TimeSpan.FromHours(2), TimeSpan.FromHours(6)];
 
     // Un solo arreglo para el parámetro del reclamo (CA1861: no armarlo en cada llamada).
     private static readonly TimeSpan[] LeaseArray = [.. Leases];

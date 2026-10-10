@@ -162,6 +162,43 @@ public sealed class MessagingPersistenceTests
         Assert.Null(await repository.FindAsync(Guid.CreateVersion7(), conversationId, Ct));
     }
 
+    // §8.4: marcar leído es un solo UPDATE sin token de concurrencia. Sube version una vez, devuelve lo que
+    // necesita el acuse a Meta y, con el contador ya en 0, no toca la fila. Una ingesta que sube version por
+    // SQL (§7.5) en medio ya no puede convertir un read en 412.
+    [Fact]
+    public async Task MarkReadIsOneAtomicUpdateThatBumpsTheVersionOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, connectionId, "573001234567");
+        var inboundAt = new DateTimeOffset(2026, 10, 9, 11, 0, 0, TimeSpan.Zero);
+        var now = inboundAt.AddMinutes(5);
+        // La ingesta ya pasó (y subió version) antes de que llegue el read.
+        await ExecuteAsync(connectionString,
+            "UPDATE messaging.conversations SET unread_count = 3, last_inbound_wamid = 'wamid.in', last_inbound_at = @at, version = version + 1 WHERE id = @id",
+            ("at", inboundAt), ("id", conversationId));
+        var versionBefore = await ScalarAsync<long>(connectionString, "SELECT version FROM messaging.conversations WHERE id = @id", ("id", conversationId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IConversationRepository>();
+        var target = await repository.MarkReadAsync(tenantId, conversationId, now, Ct);
+        var again = await repository.MarkReadAsync(tenantId, conversationId, now.AddMinutes(1), Ct);
+        var otherTenant = await repository.MarkReadAsync(Guid.CreateVersion7(), conversationId, now, Ct);
+
+        Assert.Equal(new ReadReceiptTarget(connectionId, "wamid.in", inboundAt), target);
+        Assert.Null(again);
+        Assert.Null(otherTenant);
+        Assert.Equal($"0|{versionBefore + 1}", await ScalarAsync<string>(connectionString,
+            "SELECT unread_count || '|' || version FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
+        Assert.Equal(now.UtcDateTime, await ScalarAsync<DateTime>(connectionString,
+            "SELECT updated_at FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
+        Assert.True(await repository.ExistsAsync(tenantId, conversationId, Ct));
+        Assert.False(await repository.ExistsAsync(Guid.CreateVersion7(), conversationId, Ct));
+    }
+
     private static Task<int> InsertMessageAsync(
         string connectionString, Guid conversationId, Guid tenantId, Guid connectionId, int direction, int kind, int status, string? wamid = "wamid.x")
         => ExecuteAsync(

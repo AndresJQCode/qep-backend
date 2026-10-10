@@ -8,7 +8,7 @@ namespace Bootstrapper;
 /// <summary>
 /// <c>sentBy.displayName</c> (spec 2026-10-09 §8.7): copia de <see cref="IntegrationsConnectionAuthorNames"/>,
 /// <c>Membership.DisplayName ?? correo</c>. Sólo membresías del tenant; la que ya no está no aparece en el
-/// diccionario y la pantalla recibe <c>null</c>.
+/// diccionario, y Messaging la muestra como «Miembro eliminado» (D-M20): la pantalla nunca recibe <c>null</c>.
 /// </summary>
 internal sealed class MessagingMemberNames(IMembershipRepository memberships, IUserDirectory users)
     : IMessagingMemberNames

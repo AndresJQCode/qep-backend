@@ -2,7 +2,7 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.UnitTests;
 
-/// <summary>Spec 2026-10-09 §8.4–§8.5 y §8.7: resolver/reabrir con sus 422, marcar leído, y la ventana
+/// <summary>Spec 2026-10-09 §8.4–§8.5 y §8.7: resolver/reabrir con sus 422, cuándo procede el acuse de leído, y la ventana
 /// de 24 h desde el último mensaje de la persona.</summary>
 public sealed class ConversationTests
 {
@@ -46,17 +46,19 @@ public sealed class ConversationTests
         Assert.Equal(MessagingErrorCodes.AlreadyOpen, open.Code);
     }
 
-    [Fact]
-    public void MarkReadZeroesTheCounterOnlyWhenThereWasSomething()
-    {
-        var conversation = Conversation.ForTests(Open(), unreadCount: 3, lastInboundAt: Now.AddHours(-1));
+    // §8.4: marcar leído es un UPDATE atómico en Infrastructure; el dominio sólo decide si el acuse a Meta
+    // procede con lo que ese UPDATE devuelve (wamid presente y último entrante de menos de 30 días).
+    [Theory]
+    [InlineData("wamid.in", -1.0, true)]
+    [InlineData("wamid.in", -29.9, true)]
+    [InlineData("wamid.in", -30.0, false)]
+    [InlineData(null, -1.0, false)]
+    public void TheReadReceiptNeedsAWamidAndAnInboundYoungerThanThirtyDays(string? wamid, double daysAgo, bool expected) =>
+        Assert.Equal(expected, Conversation.CanAcknowledgeReading(wamid, Now.AddDays(daysAgo), Now));
 
-        Assert.True(conversation.MarkRead(Now));
-        Assert.Equal(0, conversation.UnreadCount);
-        Assert.Equal(2, conversation.Version);
-        Assert.False(conversation.MarkRead(Now.AddMinutes(1)));
-        Assert.Equal(2, conversation.Version);
-    }
+    [Fact]
+    public void TheReadReceiptNeedsAnInboundDate() =>
+        Assert.False(Conversation.CanAcknowledgeReading("wamid.in", null, Now));
 
     [Theory]
     [InlineData(-23, true)]

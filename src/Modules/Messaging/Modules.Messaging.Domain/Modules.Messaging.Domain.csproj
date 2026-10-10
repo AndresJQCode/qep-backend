@@ -6,4 +6,8 @@
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Domain\Modules.Tenancy.Domain.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Conversation.ForTests es internal: sólo las pruebas arman una conversación como la deja la ingesta. -->
+    <InternalsVisibleTo Include="Modules.Messaging.UnitTests" />
+  </ItemGroup>
 </Project>

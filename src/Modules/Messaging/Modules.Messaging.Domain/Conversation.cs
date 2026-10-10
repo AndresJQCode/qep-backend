@@ -2,8 +2,9 @@ namespace Modules.Messaging.Domain;
 
 /// <summary>
 /// Spec 2026-10-09 §7.2: una persona (<c>wa_id</c>) hablando con un número de la organización
-/// (<c>connection_id</c>). La ingesta de entrantes <b>no</b> pasa por acá (SQL atómico, §7.5): este
-/// agregado sólo resuelve, reabre y marca leído, con <see cref="Version"/> como token de concurrencia.
+/// (<c>connection_id</c>). La ingesta de entrantes <b>no</b> pasa por acá (SQL atómico, §7.5), y marcar
+/// leído tampoco (un UPDATE atómico, §8.4: con el token de concurrencia, un entrante en medio daría 412):
+/// este agregado sólo resuelve y reabre, con <see cref="Version"/> como token de concurrencia.
 /// La «foto» del último mensaje la escribe la ingesta; acá es de sólo lectura.
 /// </summary>
 public sealed class Conversation
@@ -66,9 +67,10 @@ public sealed class Conversation
 
     public bool IsWindowOpen(DateTimeOffset now) => CustomerWindowExpiresAt is { } expiresAt && expiresAt > now;
 
-    /// <summary>Para Meta: hay un último entrante y tiene menos de 30 días (§8.4).</summary>
-    public bool CanAcknowledgeReading(DateTimeOffset now) =>
-        LastInboundWamid is not null && LastInboundAt is { } at && now - at < ReadReceiptWindow;
+    /// <summary>Para Meta: hay un último entrante y tiene menos de 30 días (§8.4). Estático porque marcar
+    /// leído no carga el agregado: recibe lo que devuelve el UPDATE atómico.</summary>
+    public static bool CanAcknowledgeReading(string? lastInboundWamid, DateTimeOffset? lastInboundAt, DateTimeOffset now) =>
+        lastInboundWamid is not null && lastInboundAt is { } at && now - at < ReadReceiptWindow;
 
     /// <summary>Una conversación nueva, abierta y sin mensajes. En producción la crea la ingesta por SQL;
     /// esto lo usan las pruebas y el harness.</summary>
@@ -95,8 +97,9 @@ public sealed class Conversation
         };
     }
 
-    /// <summary>Sólo pruebas: una conversación con contadores y ventana ya puestos, como los dejaría la ingesta.</summary>
-    public static Conversation ForTests(Conversation source, int unreadCount, DateTimeOffset? lastInboundAt, string? lastInboundWamid = "wamid.test")
+    /// <summary>Sólo pruebas: una conversación con contadores y ventana ya puestos, como los dejaría la ingesta.
+    /// Internal (visible sólo para las pruebas): ningún código de producción puede saltarse las reglas.</summary>
+    internal static Conversation ForTests(Conversation source, int unreadCount, DateTimeOffset? lastInboundAt, string? lastInboundWamid = "wamid.test")
     {
         source.UnreadCount = unreadCount;
         source.LastInboundAt = lastInboundAt;
@@ -124,19 +127,6 @@ public sealed class Conversation
 
         Status = ConversationStatus.Open;
         Touch(now);
-    }
-
-    /// <summary>§8.4: <c>true</c> si había algo que marcar; con cero no hay versión nueva ni acuse a Meta.</summary>
-    public bool MarkRead(DateTimeOffset now)
-    {
-        if (UnreadCount == 0)
-        {
-            return false;
-        }
-
-        UnreadCount = 0;
-        Touch(now);
-        return true;
     }
 
     private void Touch(DateTimeOffset now)

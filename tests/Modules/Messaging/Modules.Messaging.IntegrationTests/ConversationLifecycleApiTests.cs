@@ -49,6 +49,29 @@ public sealed class ConversationLifecycleApiTests
         Assert.Contains("\"message_id\":\"wamid.in\"", ack.Body, StringComparison.Ordinal);
     }
 
+    // §8.4: read no lleva token de concurrencia. Con la ingesta subiendo version por SQL (§7.5) entre dos
+    // reads, el segundo sigue siendo 204, deja el contador en 0 y acusa el entrante nuevo.
+    [Fact]
+    public async Task ReadAfterAnInboundThatBumpedTheVersionIsStill204()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+        var url = $"{ConversationUrl(f.Tenant.TenantId, f.ConversationId)}/read";
+        Assert.Equal(HttpStatusCode.NoContent, (await SendAsync(f.Client, HttpMethod.Post, url)).StatusCode);
+        using var anonymous = f.Factory.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001234567", "wamid.2", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "otra"));
+        await DrainDeliveriesAsync(f.Factory);
+        var versionAfterInbound = await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations");
+
+        var read = await SendAsync(f.Client, HttpMethod.Post, url);
+
+        Assert.Equal(HttpStatusCode.NoContent, read.StatusCode);
+        Assert.Equal($"0|{versionAfterInbound + 1}", await ScalarAsync<string>(f.ConnectionString, "SELECT unread_count || '|' || version FROM messaging.conversations"));
+        Assert.Contains(f.Factory.MetaHandler.Requests, request => request.Body?.Contains("\"message_id\":\"wamid.2\"", StringComparison.Ordinal) == true);
+    }
+
     [Fact]
     public async Task ReadIsStill204WhenMetaFailsOrTheConnectionIsPaused()
     {

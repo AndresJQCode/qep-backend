@@ -53,24 +53,33 @@ internal sealed partial class CustomerPhoneBackfillWorker(
     {
         var updated = 0;
         var unparseable = 0;
-        // Los ids ya mirados que siguen sin E.164 se saltan en el mismo arranque: si no, el lote
-        // siguiente los volvería a traer para siempre.
-        var skipped = new HashSet<Guid>();
+        // Keyset por id: cada lote empieza después del último id mirado. Las que no parsean quedan atrás
+        // (siguen con phone_e164 NULL) sin volver a traerse en el mismo arranque, y cada lote cuesta lo
+        // mismo: con un Take que creciera con las saltadas, el costo sería cuadrático.
+        var lastId = Guid.Empty;
         while (true)
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<CustomersDbContext>();
-            var batch = await dbContext.Customers
-                .Where(customer => customer.Phone != null && customer.PhoneE164 == null)
-                .OrderBy(customer => customer.Id)
-                .Take(BatchSize + skipped.Count)
-                .ToListAsync(cancellationToken);
-            var pending = batch.Where(customer => !skipped.Contains(customer.Id.Value)).Take(BatchSize).ToList();
-            if (pending.Count == 0)
+            // El id se compara en SQL: CustomerId no tiene operador de orden, y el orden de uuid en Postgres
+            // es el mismo que usa el ORDER BY, así que el cursor no se salta ni repite filas.
+            var ids = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                SELECT id AS "Value" FROM customers.customers
+                 WHERE phone IS NOT NULL AND phone_e164 IS NULL AND id > {lastId}
+                 ORDER BY id
+                 LIMIT {BatchSize}
+                """).ToListAsync(cancellationToken);
+            if (ids.Count == 0)
             {
                 break;
             }
 
+            lastId = ids[^1];
+            var keys = ids.Select(id => new CustomerId(id)).ToList();
+            var pending = await dbContext.Customers
+                .Where(customer => keys.Contains(customer.Id))
+                .ToListAsync(cancellationToken);
             foreach (var customer in pending)
             {
                 if (customer.RecomputePhoneE164(normalizer))
@@ -80,11 +89,14 @@ internal sealed partial class CustomerPhoneBackfillWorker(
                 else
                 {
                     unparseable++;
-                    skipped.Add(customer.Id.Value);
                 }
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
+            if (ids.Count < BatchSize)
+            {
+                break;
+            }
         }
 
         LogFinished(logger, updated, unparseable);

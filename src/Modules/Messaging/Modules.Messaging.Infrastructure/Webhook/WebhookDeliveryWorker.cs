@@ -87,8 +87,26 @@ internal sealed partial class WebhookDeliveryWorker(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    /// <summary>Una pasada: internal para las pruebas (P10).</summary>
+    /// <summary>Tope de lotes llenos seguidos en una pasada: con 50 por lote son 1000 entregas por tick. Sin
+    /// él, una cola que nunca baja de un lote acapararía la pasada; con él, el resto espera al tick siguiente.</summary>
+    internal const int MaxFullBatchesPerTick = 20;
+
+    /// <summary>Una pasada: internal para las pruebas (P10). Mientras el lote vuelve lleno hay más esperando, y
+    /// se sigue en el acto: con un lote por tick, una ráfaga de 1000 entregas iría a ≈ 16 por segundo.
+    /// Lo reclamado y no procesado queda con su lease vivo y no vuelve a salir en la misma pasada.</summary>
     internal async Task DrainAsync(CancellationToken cancellationToken)
+    {
+        for (var batch = 0; batch < MaxFullBatchesPerTick; batch++)
+        {
+            if (await DrainBatchAsync(cancellationToken) < BatchSize)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>Un lote: devuelve cuántas entregas trajo, para saber si quedan más.</summary>
+    private async Task<int> DrainBatchAsync(CancellationToken cancellationToken)
     {
         List<long> pending;
         await using (var scope = scopeFactory.CreateAsyncScope())
@@ -144,6 +162,8 @@ internal sealed partial class WebhookDeliveryWorker(
                 }
             }
         }
+
+        return pending.Count;
     }
 
     /// <summary>P9: la regla de IdentityInboxClaims sobre webhook_deliveries, con leases por intento.</summary>

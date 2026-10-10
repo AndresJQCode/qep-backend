@@ -306,7 +306,8 @@ public sealed class UpdateConnectionHandlerTests
         Assert.Equal(
             ["fields.displayPhoneNumber", "fields.phoneNumberId", "secrets.accessToken"],
             error.Errors.Select(failure => failure.PropertyName).Order(StringComparer.Ordinal));
-        Assert.All(error.Errors, failure => Assert.Equal(ConnectionInputRules.ReadOnlyFieldMessage, failure.ErrorMessage));
+        // El texto lo lee la persona: dice de dónde sale el dato, no cómo está hecho el sistema.
+        Assert.All(error.Errors, failure => Assert.Equal("Este dato viene de Meta; no se edita aquí.", failure.ErrorMessage));
         Assert.Equal("1234567890", connection.Fields[WhatsAppCloudFieldKeys.PhoneNumberId]);
         Assert.Equal(0, bed.UnitOfWork.Saves);
     }

@@ -57,6 +57,23 @@ public sealed class WebhookPayloadParserTests
         Assert.Empty(change.Statuses);
     }
 
+    // conversations.wa_id es varchar(20): un from más largo haría fallar el INSERT de la ingesta en cada
+    // reintento. Se salta como cualquier otra forma rota; uno de 20 dígitos sí entra.
+    [Fact]
+    public void AFromLongerThanTheWaIdColumnIsSkipped()
+    {
+        var tooLong = new string('5', Conversation.WaIdMaxLength + 1);
+        var longest = new string('5', Conversation.WaIdMaxLength);
+
+        var skipped = Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(
+            Envelope("messages", Messages(new { from = tooLong, id = "wamid.long", timestamp = "1760000000", type = "text", text = new { body = "hola" } })))));
+        var kept = Assert.IsType<MessagesChange>(Assert.Single(WebhookPayloadParser.Parse(
+            Envelope("messages", Messages(new { from = longest, id = "wamid.max", timestamp = "1760000000", type = "text", text = new { body = "hola" } })))));
+
+        Assert.Empty(skipped.Messages);
+        Assert.Equal(longest, Assert.Single(kept.Messages).WaId);
+    }
+
     // Un valor más largo que su columna de message_media haría fallar el INSERT en cada intento.
     [Fact]
     public void OverlongMediaFieldsAreTruncatedToTheirColumns()

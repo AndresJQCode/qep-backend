@@ -110,8 +110,12 @@ internal static class WebhookPayloadParser
     {
         var wamid = ReadString(item, "id");
         var from = ReadString(item, "from");
-        // Un from vacío pasaría el All: sin wa_id no hay conversación a la que atarlo.
-        if (wamid is null || from is not { Length: > 0 } || !from.All(char.IsAsciiDigit) || ReadTimestamp(item) is not { } occurredAt)
+        // Un from vacío pasaría el All: sin wa_id no hay conversación a la que atarlo. Uno más largo que
+        // conversations.wa_id (varchar(20)) haría fallar el INSERT de la ingesta en cada reintento.
+        if (wamid is null
+            || from is not { Length: > 0 and <= Conversation.WaIdMaxLength }
+            || !from.All(char.IsAsciiDigit)
+            || ReadTimestamp(item) is not { } occurredAt)
         {
             return null;
         }
