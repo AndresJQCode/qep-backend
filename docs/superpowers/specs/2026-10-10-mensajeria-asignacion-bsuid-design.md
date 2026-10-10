@@ -747,8 +747,11 @@ responder: intentar responder es tomar.
    relee (§8.2).
 5. **Adopción contra creación:** si un pod adopta la conversación vieja por teléfono mientras otro
    (con un mensaje sin teléfono) crea una nueva con el mismo BSUID, la adopción choca con
-   `IX_conversations_connection_user`. `MessagingUnitOfWork` lo traduce por nombre de índice y el
-   `change` se reintenta: encuentra la nueva por BSUID. La vieja queda sin adoptar.
+   `IX_conversations_connection_user`. No pasa por `MessagingUnitOfWork`: la ingesta y el cambio de
+   número escriben con SQL directo, así que `InboundIngestion.IngestAsync` y
+   `ContactNumberChange.ApplyAsync` atrapan la `PostgresException` (`23505` con ese nombre de
+   índice) y reintentan una vez: la segunda vuelta encuentra la nueva por BSUID. La vieja queda sin
+   adoptar.
 6. **La ingesta no pisa la asignación:** su `UPDATE` no toca `assigned_*`; la herencia sólo escribe
    en el `INSERT` de una conversación nueva.
 7. **Envío y candados:** sigue habiendo un solo candado largo, sobre la fila del mensaje; la
