@@ -1,3 +1,4 @@
+using Npgsql;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -165,5 +166,34 @@ public sealed class ContactNumberChangeTests
             "SELECT count(DISTINCT conversation_id) FROM messaging.messages WHERE details->>'type' = 'ContactChangedNumber' AND details ? 'linkedConversationId'"));
         // El BSUID nuevo ya era de otro cliente (el incompleto del segundo mensaje): el viejo no se toca.
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM customers.customers WHERE whatsapp_user_id = 'CO.OLD'"));
+    }
+
+    // Revisión final (M1): la ingesta que inserta un mensaje deja FOR KEY SHARE sobre su conversación (la FK de
+    // messages). El cambio de número sólo toca user_id, que no es columna de llave (está en un índice único parcial),
+    // así que tiene que tomar FOR NO KEY UPDATE y no esperar a que esa transacción termine.
+    [Fact]
+    public async Task TheNumberChangeDoesNotWaitForAnIngestionHoldingKeyShareOnTheConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SendAsync(f, MetaPayloads.Inbound("111", "CO.OLD", null, "wamid.1", 1760000000, "antes"));
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+
+        await using var holder = new NpgsqlConnection(f.ConnectionString);
+        await holder.OpenAsync(TestContext.Current.CancellationToken);
+        await using var holding = await holder.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using (var keyShare = new NpgsqlCommand($"SELECT 1 FROM messaging.conversations WHERE id = '{conversationId}' FOR KEY SHARE", holder, holding))
+        {
+            await keyShare.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var change = SendAsync(f, MetaPayloads.UserIdUpdate("CO.OLD", "CO.NEW"));
+        var finished = await Task.WhenAny(change, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        await holding.RollbackAsync(TestContext.Current.CancellationToken);
+        await change;
+
+        Assert.Same(change, finished);
+        Assert.Equal("CO.NEW", await ScalarAsync<string>(f.ConnectionString, "SELECT user_id FROM messaging.conversations"));
     }
 }

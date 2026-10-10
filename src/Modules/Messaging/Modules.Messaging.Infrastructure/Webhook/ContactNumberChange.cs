@@ -30,14 +30,13 @@ internal static class ContactNumberChange
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, UserIdChange change, DateTimeOffset occurredAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        var source = await IdByUserAsync(dbContext, connectionId, change.Previous, cancellationToken);
+        var (source, target) = await LockByUserAsync(dbContext, connectionId, change, cancellationToken);
         if (source is null)
         {
             await transaction.CommitAsync(cancellationToken);
             return [];
         }
 
-        var target = await IdByUserAsync(dbContext, connectionId, change.Current, cancellationToken);
         if (target is null)
         {
             await dbContext.Database.ExecuteSqlAsync(
@@ -70,11 +69,24 @@ internal static class ContactNumberChange
         return already.Count == 0 ? [source.Value, target.Value] : [];
     }
 
-    private static async Task<Guid?> IdByUserAsync(MessagingDbContext dbContext, Guid connectionId, string userId, CancellationToken cancellationToken)
+    /// <summary>Bloquea las dos conversaciones (la del BSUID anterior y la del nuevo) en una sola sentencia y en orden de
+    /// id, para que dos cambios cruzados (A→B y B→A) no se esperen en orden inverso. FOR NO KEY UPDATE y no FOR UPDATE:
+    /// la ingesta deja FOR KEY SHARE sobre la conversación al insertar un mensaje (la FK de messages), y user_id no es
+    /// columna de llave (sólo está en un índice único parcial), así que el UPDATE de abajo no necesita más.</summary>
+    private static async Task<(Guid? Source, Guid? Target)> LockByUserAsync(
+        MessagingDbContext dbContext, Guid connectionId, UserIdChange change, CancellationToken cancellationToken)
     {
-        var rows = await dbContext.Database.SqlQuery<Guid>(
-            $"""SELECT id AS "Value" FROM messaging.conversations WHERE connection_id = {connectionId} AND user_id = {userId} FOR UPDATE""")
-            .ToListAsync(cancellationToken);
-        return rows.Count == 1 ? rows[0] : null;
+        var rows = await dbContext.Database.SqlQuery<UserRow>(
+            $"""
+            SELECT id AS "Id", user_id AS "UserId" FROM messaging.conversations
+            WHERE connection_id = {connectionId} AND user_id IN ({change.Previous}, {change.Current})
+            ORDER BY id
+            FOR NO KEY UPDATE
+            """).ToListAsync(cancellationToken);
+        Guid? source = rows.SingleOrDefault(row => row.UserId == change.Previous)?.Id;
+        Guid? target = rows.SingleOrDefault(row => row.UserId == change.Current)?.Id;
+        return (source, target);
     }
+
+    private sealed record UserRow(Guid Id, string UserId);
 }
