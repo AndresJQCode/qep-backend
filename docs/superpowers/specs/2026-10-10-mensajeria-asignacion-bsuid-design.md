@@ -747,6 +747,11 @@ responder: intentar responder es tomar.
    en el `INSERT` de una conversación nueva.
 7. **Envío y candados:** sigue habiendo un solo candado largo, sobre la fila del mensaje; la
    autoasignación commitea antes (§8.5).
+8. **Dueño que cambia durante el envío:** la verificación del dueño en el envío lee la conversación una sola
+   vez; si otro asesor la toma o la transfiere entre esa lectura y la llamada a Meta (unos pocos viajes a la
+   base), el mensaje del dueño anterior igual sale. Es una ventana residual aceptada, de la misma naturaleza
+   que las verificaciones de estado y de ventana del spec base, porque §9.7 prohíbe bloquear la conversación
+   durante la llamada a Meta.
 
 ## 10. Errores nuevos
 

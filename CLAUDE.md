@@ -258,6 +258,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`. Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
   `IMessagingCustomerDirectory` e `IMessagingMediaStore`, con adaptadores en Bootstrapper.
+- **La clave de una conversación es el BSUID, no el teléfono** (spec 2026-10-10). `wa_id` puede venir
+  `null` y dos conversaciones con BSUID pueden compartir número (reciclado). Un cuerpo de webhook de prueba
+  sin `from_user_id` se descarta en silencio —la entrega queda procesada y no aparece nada—: es el síntoma,
+  no un bug de la ingesta.
+- **Un cliente puede ser `Incomplete`** (sin CUC, documento, dirección ni clasificación): lo crea la ingesta
+  de Messaging, nunca un endpoint. Todo código nuevo que lea `Cuc`, `IdentificationType`, `Address`,
+  `Country` o `ClassificationId` de un `Customer` tiene que tratar el `null`; Quotations lo rechaza con
+  `client_incomplete` **antes** que `client_cuc_missing`, y un reporte que agrupe por clasificación o ciudad
+  filtra `Completeness == Complete`.
 - **El webhook de Meta (`/api/webhooks/whatsapp`) no se prueba con el stub de auth.** En modo stub el
   middleware de CSRF ni se registra, así que la exención por ruta sólo se ve con
   `Authentication__UseDevelopmentStub=false`. Y su limitador `webhook` no es el `Public`: es concurrencia

@@ -1917,6 +1917,23 @@ configuración `messaging.es_unaccent` (español sin acentos ni flexiones, prefi
 aparecen como `Redacted`). Nunca se pone `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION`
 en `true`.
 
+#### Identidad, clientes y asignación (spec 2026-10-10)
+
+- **Identidad.** La conversación se identifica por `(connection_id, user_id)` (BSUID); el teléfono (`wa_id`)
+  puede faltar. Las filas viejas sin BSUID se adoptan con el primer entrante que traiga BSUID y teléfono. Se
+  envía con `recipient` (BSUID); sólo una fila vieja sin BSUID sale con `to`.
+- **Clientes.** Todo el que escribe queda atado a un cliente de QEP: si no existe, se crea con la ficha
+  **incompleta** (sin CUC). El `PUT /customers/{id}` con todos los datos la completa y le emite el CUC.
+  Quotations rechaza a un incompleto con `quotation.quotation.client_incomplete`; el reporte de clientes no
+  lo cuenta.
+- **Asignación.** `POST …/conversations/{id}/take|transfer|release` con `If-Match`. Sólo el asignado
+  responde (`messaging.conversation.assigned_to_other`); responder una conversación sin asignar la toma;
+  resolver no libera. Una conversación nueva de un cliente con dueño hereda el asignado si todavía puede
+  responder. `GET /messaging/assignees` lista a quién transferir. `assignedTo.isMe` lo calcula el servidor.
+- **Eventos del sistema** (`direction: System`, `kind: Event`) en el hilo; no suben `unreadCount` ni cambian
+  la foto de la lista.
+- **Respuestas citadas.** `replyTo` al enviar (el `id` de **nuestro** mensaje) y `Message.replyTo` al leer.
+
 #### Secretos en local
 
 ```powershell
@@ -1944,6 +1961,10 @@ $signature = "sha256=" + (($hmac.ComputeHash($bytes) | ForEach-Object { $_.ToStr
 Remove-Variable plain, secret, hmac
 curl.exe -s -o NUL -w "%{http_code}" -X POST "http://localhost:5000/api/webhooks/whatsapp" -H "Content-Type: application/json" -H "X-Hub-Signature-256: $signature" --data-binary "@webhook.json"
 ```
+
+El `webhook.json` de ejemplo lleva `"from_user_id": "CO.573001234567"` en el mensaje y
+`"user_id": "CO.573001234567"` en el contacto. Sin `from_user_id` la ingesta salta el mensaje (spec
+2026-10-10 §8.1); el teléfono es opcional.
 
 Esperado: `200`. Sin el header: `401`. La entrega se procesa en los 3 s siguientes
 (`Messaging:Workers:DeliveryPollSeconds`).

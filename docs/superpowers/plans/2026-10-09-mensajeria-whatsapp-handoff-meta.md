@@ -20,8 +20,10 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
    1 va en `Meta__App__AppId`; la versión de Graph queda en `Meta__App__GraphApiVersion: "v24.0"`.
 5. **Webhook.** *WhatsApp → Configuration → Webhook → Edit*: «Callback URL» =
    `https://<host de la API>/api/webhooks/whatsapp`; «Verify token» = el mismo valor que la variable secreta
-   `META_WEBHOOK_VERIFY_TOKEN` (aleatorio, 32+ caracteres). Luego «Manage» y suscribe **sólo** `messages` y
-   `account_update`.
+   `META_WEBHOOK_VERIFY_TOKEN` (aleatorio, 32+ caracteres). Luego «Manage» y suscribe `messages`, `account_update` y, si
+   la app lo ofrece en la lista de campos, `user_id_update` (spec 2026-10-10 §13: la documentación no muestra
+   si es un campo aparte). Después del primer cambio de número real, revisa en el log que llegó y que la
+   conversación siguió siendo la misma; hasta entonces el cambio de número se considera no verificado.
 6. **Secretos en `Backend-prod`** (Azure DevOps → Pipelines → Library): variables secretas `META_APP_SECRET` y
    `META_WEBHOOK_VERIFY_TOKEN`; variables normales `META_APP_ID` y `META_CONFIG_ID`. Van **antes** del deploy:
    sin las cinco claves el pod no arranca (`MetaAppOptionsValidator`, a propósito).
@@ -73,3 +75,5 @@ Si alguna está mal, el costo de cambiarla está en la tabla del spec.
 - **D-M19:** `business_management` no se pide en App Review.
 - **D-M20:** `sentBy.displayName` nunca es `null`; si la membresía ya no está o no tiene nombre ni correo,
   viaja `"Miembro eliminado"`.
+11. **Desplegar backend y frontend juntos** (spec 2026-10-10 §13): el SPA viejo trata `direction: "System"` como
+    error de contrato y dibuja `+{waId}` aunque venga `null`.
