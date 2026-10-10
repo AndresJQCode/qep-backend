@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Npgsql;
 
 namespace Modules.Customers.Infrastructure.Persistence;
 
@@ -382,15 +383,54 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
     public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
         dbContext.Customers
-            .Include(customer => customer.Addresses)
+            .AsNoTracking()
             .SingleOrDefaultAsync(customer => customer.TenantId == tenantId && customer.WhatsAppUserId == whatsAppUserId, cancellationToken);
 
     public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
         dbContext.Customers
-            .Include(customer => customer.Addresses)
+            .AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == phoneE164)
             .OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
             .FirstOrDefaultAsync(cancellationToken);
+
+    // Un UPDATE condicional y no el agregado + SaveChanges: el BSUID no sube la versión (P4), así que el chequeo de
+    // concurrencia de EF no protege nada y dos vinculaciones simultáneas terminarían en «gana la última» (D-A6).
+    public async Task<bool> TryAttachWhatsAppUserIdAsync(
+        Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken)
+    {
+        var normalized = Customer.NormalizeWhatsAppUserId(whatsAppUserId);
+        return await TranslateTakenAsync(() => dbContext.Customers
+            .Where(customer => customer.TenantId == tenantId && customer.Id == customerId && customer.WhatsAppUserId == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.WhatsAppUserId, normalized), cancellationToken)) == 1;
+    }
+
+    public async Task<bool> TryReplaceWhatsAppUserIdAsync(
+        Guid tenantId, string previous, string current, CancellationToken cancellationToken)
+    {
+        var normalized = Customer.NormalizeWhatsAppUserId(current);
+        return await TranslateTakenAsync(() => dbContext.Customers
+            .Where(customer => customer.TenantId == tenantId && customer.WhatsAppUserId == previous)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.WhatsAppUserId, normalized), cancellationToken)) == 1;
+    }
+
+    // ExecuteUpdate no pasa por SaveChanges, así que la traducción de CustomersUnitOfWork no lo cubre: se repite acá
+    // por el mismo nombre de índice. La excepción puede llegar cruda o envuelta, según el camino del proveedor.
+    private static async Task<int> TranslateTakenAsync(Func<Task<int>> update)
+    {
+        try
+        {
+            return await update();
+        }
+        catch (Exception exception) when (IsWhatsAppUserIdTaken(exception))
+        {
+            throw new WhatsAppUserIdTakenException(exception);
+        }
+    }
+
+    private static bool IsWhatsAppUserIdTaken(Exception exception) =>
+        (exception as PostgresException ?? exception.InnerException as PostgresException) is { } postgres &&
+        postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+        string.Equals(postgres.ConstraintName, CustomersUnitOfWork.WhatsAppUserIdIndex, StringComparison.Ordinal);
 
     public async Task<IReadOnlyList<CustomerWhatsAppRef>> FindWhatsAppRefsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)

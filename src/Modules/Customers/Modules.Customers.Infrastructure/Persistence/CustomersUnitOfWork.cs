@@ -16,7 +16,8 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
 
     private const string CucIndex = "IX_customers_tenant_cuc";
 
-    private const string WhatsAppUserIdIndex = "IX_customers_tenant_whatsapp_user_id";
+    // Interna: CustomerRepository la usa para traducir sus UPDATE condicionales, que no pasan por SaveChanges.
+    internal const string WhatsAppUserIdIndex = "IX_customers_tenant_whatsapp_user_id";
 
     private const string ClassificationNameIndex = "IX_client_classifications_tenant_name";
 
@@ -71,7 +72,9 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
         {
             // Spec 2026-10-10 §9.4 (P3): dos entregas del mismo BSUID nuevo. CustomerWhatsAppDirectory relee. El tracker
             // se limpia: la fila que no entró quedaría Added y el siguiente SaveChanges del scope (la ingesta procesa
-            // varios mensajes por entrega) la volvería a intentar.
+            // varios mensajes por entrega) la volvería a intentar. Ojo: Clear descarta también cualquier otro cambio
+            // pendiente del scope, no sólo esa fila. Hoy el único que escribe un BSUID nuevo con SaveChanges es
+            // CustomerWhatsAppDirectory, en un scope sin más cambios; quien lo reutilice tiene que saberlo.
             dbContext.ChangeTracker.Clear();
             throw new WhatsAppUserIdTakenException(exception);
         }

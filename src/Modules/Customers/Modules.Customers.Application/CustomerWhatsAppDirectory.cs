@@ -22,18 +22,19 @@ public sealed class CustomerWhatsAppDirectory(
             return new EnsuredCustomer(known.Id.Value, EnsureOutcome.Existing);
         }
 
+        // Ningún camino de acá puede dar RequestConcurrencyException: vincular es un UPDATE condicional sin chequeo de
+        // versión, así que una edición humana entre la lectura y el UPDATE no choca (y el UPDATE no pisa lo que la
+        // persona cambió: sólo toca whatsapp_user_id), y crear es un INSERT.
         if (contact.PhoneE164 is { } phone && await repository.FindOldestByPhoneE164Async(tenantId, phone, cancellationToken) is { } byPhone)
         {
-            if (byPhone.AttachWhatsAppUserId(contact.UserId))
+            try
             {
-                try
-                {
-                    await unitOfWork.SaveChangesAsync(cancellationToken);
-                }
-                catch (WhatsAppUserIdTakenException)
-                {
-                    return await WinnerAsync(tenantId, contact.UserId, cancellationToken);
-                }
+                // D-A6: false si ya tenía otro BSUID; el cliente igual es el del teléfono y queda con el suyo.
+                _ = await repository.TryAttachWhatsAppUserIdAsync(tenantId, byPhone.Id, contact.UserId, cancellationToken);
+            }
+            catch (WhatsAppUserIdTakenException)
+            {
+                return await WinnerAsync(tenantId, contact.UserId, cancellationToken);
             }
 
             return new EnsuredCustomer(byPhone.Id.Value, EnsureOutcome.Linked);
@@ -66,21 +67,11 @@ public sealed class CustomerWhatsAppDirectory(
 
     public async Task<bool> ReplaceWhatsAppUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken)
     {
-        if (await repository.FindByWhatsAppUserIdAsync(tenantId, current, cancellationToken) is not null)
-        {
-            return false;
-        }
-
-        var customer = await repository.FindByWhatsAppUserIdAsync(tenantId, previous, cancellationToken);
-        if (customer is null || !customer.ReplaceWhatsAppUserId(previous, current))
-        {
-            return false;
-        }
-
+        // Un solo UPDATE condicional (WHERE whatsapp_user_id = @previous): dos reemplazos simultáneos no se pisan, y
+        // si el nuevo ya es de otro cliente lo dice el índice, no una lectura previa que la carrera dejaría vieja.
         try
         {
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            return true;
+            return await repository.TryReplaceWhatsAppUserIdAsync(tenantId, previous, current, cancellationToken);
         }
         catch (WhatsAppUserIdTakenException)
         {
@@ -92,8 +83,10 @@ public sealed class CustomerWhatsAppDirectory(
         Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         (await repository.FindWhatsAppRefsAsync(tenantId, ids, cancellationToken)).ToDictionary(item => item.Id);
 
-    public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
-        repository.FindIdsByNameAsync(tenantId, term, cap, cancellationToken);
+    /// <summary>Un término en blanco no busca nada: con <c>ILIKE '%%'</c> devolvería los primeros
+    /// <paramref name="cap"/> clientes del tenant, que no es «ninguno coincide».</summary>
+    public async Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
+        string.IsNullOrWhiteSpace(term) ? [] : await repository.FindIdsByNameAsync(tenantId, term.Trim(), cap, cancellationToken);
 
     private async Task<EnsuredCustomer> WinnerAsync(Guid tenantId, string userId, CancellationToken cancellationToken)
     {

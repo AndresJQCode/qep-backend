@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Domain;
 using Npgsql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
@@ -82,6 +83,59 @@ public sealed class CustomerWhatsAppDirectoryTests
         Assert.Single(results.Select(result => result.CustomerId).Distinct());
         Assert.Single(results, result => result.Outcome == EnsureOutcome.Created);
         Assert.Equal("1", await ScalarAsync(database.GetConnectionString(), "SELECT count(*) FROM customers.customers WHERE whatsapp_user_id = 'CO.RACE'"));
+    }
+
+    // §9.4 (P3) contra la migración real: el nombre del índice se traduce y el tracker queda limpio, así que el
+    // siguiente SaveChanges del mismo scope no reintenta la fila que perdió.
+    [Fact]
+    public async Task ALosingInsertIsTranslatedAndLeavesTheScopeClean()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        _ = await InScopeAsync(factory, d => d.EnsureAsync(Tenant, new WhatsAppContact("CO.X", null, "Laura", null), TestContext.Current.CancellationToken));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var repository = scope.ServiceProvider.GetRequiredService<ICustomerRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ICustomersUnitOfWork>();
+        repository.Add(Customer.CreateIncomplete(
+            CustomerId.New(), Tenant, "Otra", null, null, "CO.X", DateTimeOffset.UtcNow,
+            scope.ServiceProvider.GetRequiredService<IPhoneNumberNormalizer>()));
+
+        await Assert.ThrowsAsync<WhatsAppUserIdTakenException>(() => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));
+    }
+
+    // D-A6 y §8.3 con UPDATE condicional: el primer BSUID se queda (sin subir la versión, P4), el reemplazo exige
+    // el anterior, y chocar con el índice se traduce igual que en SaveChanges.
+    [Fact]
+    public async Task AttachAndReplaceAreConditionalAndTranslated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var first = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var second = await CreateCustomerAsync(client, city.CityId, classification.Id, name: "Otra S.A.S.", identificationNumber: "900.555.444-1");
+        _ = await InScopeAsync(factory, d => d.EnsureAsync(Tenant, new WhatsAppContact("CO.X", null, "Laura", null), TestContext.Current.CancellationToken));
+        var versionBefore = await ScalarAsync(database.GetConnectionString(), $"SELECT version FROM customers.customers WHERE id = '{first.Id}'");
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var repository = scope.ServiceProvider.GetRequiredService<ICustomerRepository>();
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.True(await repository.TryAttachWhatsAppUserIdAsync(Tenant, new CustomerId(first.Id), "CO.A", ct));
+        Assert.False(await repository.TryAttachWhatsAppUserIdAsync(Tenant, new CustomerId(first.Id), "CO.B", ct));
+        await Assert.ThrowsAsync<WhatsAppUserIdTakenException>(() => repository.TryAttachWhatsAppUserIdAsync(Tenant, new CustomerId(second.Id), "CO.X", ct));
+        Assert.Equal($"CO.A|{versionBefore}", await ScalarAsync(database.GetConnectionString(),
+            $"SELECT whatsapp_user_id || '|' || version FROM customers.customers WHERE id = '{first.Id}'"));
+
+        Assert.False(await repository.TryReplaceWhatsAppUserIdAsync(Tenant, "CO.NOPE", "CO.Z", ct));
+        await Assert.ThrowsAsync<WhatsAppUserIdTakenException>(() => repository.TryReplaceWhatsAppUserIdAsync(Tenant, "CO.A", "CO.X", ct));
+        Assert.True(await repository.TryReplaceWhatsAppUserIdAsync(Tenant, "CO.A", "CO.C", ct));
+        Assert.Equal("CO.C", await ScalarAsync(database.GetConnectionString(), $"SELECT whatsapp_user_id FROM customers.customers WHERE id = '{first.Id}'"));
     }
 
     [Fact]

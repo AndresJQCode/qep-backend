@@ -148,11 +148,26 @@ public interface ICustomerRepository
         IReadOnlyCollection<CustomerId> customerIds,
         CancellationToken cancellationToken);
 
-    /// <summary>Spec 2026-10-10 §8.2: el cliente con ese BSUID, con tracking (el llamador puede cambiarle el BSUID).</summary>
+    /// <summary>Spec 2026-10-10 §8.2: el cliente con ese BSUID. Sin tracking: el BSUID se escribe con los
+    /// <c>UPDATE</c> condicionales de abajo, y una instancia rastreada quedaría vieja después de ellos.</summary>
     Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken);
 
-    /// <summary>§8.2 con la regla de D-M7: el más viejo con ese <c>phone_e164</c>, luego el id menor. Con tracking.</summary>
+    /// <summary>§8.2 con la regla de D-M7: el más viejo con ese <c>phone_e164</c>, luego el id menor. Sin tracking,
+    /// por lo mismo.</summary>
     Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// D-A6 atómico: <c>UPDATE … SET whatsapp_user_id = @id WHERE … AND whatsapp_user_id IS NULL</c>. <c>true</c> si
+    /// lo puso; <c>false</c> si ya tenía uno (dos vinculaciones concurrentes: gana la primera, no la última). No
+    /// sube la versión (P4). Lanza <see cref="WhatsAppUserIdTakenException"/> si el BSUID ya es de otro cliente.
+    /// </summary>
+    Task<bool> TryAttachWhatsAppUserIdAsync(Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// §8.3 atómico: <c>UPDATE … WHERE whatsapp_user_id = @previous</c>. <c>false</c> si nadie lo tenía. Lanza
+    /// <see cref="WhatsAppUserIdTakenException"/> si <paramref name="current"/> ya es de otro cliente.
+    /// </summary>
+    Task<bool> TryReplaceWhatsAppUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<CustomerWhatsAppRef>> FindWhatsAppRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 

@@ -408,7 +408,9 @@ public sealed class Customer
         return true;
     }
 
-    private static string NormalizeWhatsAppUserId(string value)
+    /// <summary>La regla del BSUID (recortado, 1 a <see cref="WhatsAppUserIdMaxLength"/> caracteres). Pública porque
+    /// <c>CustomerWhatsAppDirectory</c> lo escribe con un <c>UPDATE</c> condicional, sin pasar por el agregado.</summary>
+    public static string NormalizeWhatsAppUserId(string value)
     {
         var trimmed = value?.Trim();
         return string.IsNullOrEmpty(trimmed) || trimmed.Length > WhatsAppUserIdMaxLength
