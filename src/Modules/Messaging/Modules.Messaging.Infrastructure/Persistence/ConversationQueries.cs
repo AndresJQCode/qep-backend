@@ -16,19 +16,32 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version);
 
     public async Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
-        Guid tenantId, ConversationStatus status, string? search, IReadOnlyCollection<string> customerWaIds, int page, int pageSize, CancellationToken cancellationToken)
+        Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken)
     {
-        var query = dbContext.Conversations.AsNoTracking().Where(conversation => conversation.TenantId == tenantId && conversation.Status == status);
-        if (search is not null)
+        ArgumentNullException.ThrowIfNull(filter);
+        var query = dbContext.Conversations.AsNoTracking().Where(conversation => conversation.TenantId == tenantId && conversation.Status == filter.Status);
+        query = filter.Assigned switch
+        {
+            // P15: sin membresía activa, «mías» no encuentra nada.
+            AssignedFilter.Mine => filter.MemberId is { } me
+                ? query.Where(conversation => conversation.AssignedMemberId == me)
+                : query.Where(_ => false),
+            AssignedFilter.Unassigned => query.Where(conversation => conversation.AssignedMemberId == null),
+            _ => query,
+        };
+        if (filter.Search is { } search)
         {
             var pattern = "%" + Escape(search) + "%";
             var digits = ConversationSearchTerms.NumberDigits(search);
             var digitsPattern = digits is null ? null : "%" + digits + "%";
-            var phones = customerWaIds.ToArray();
+            var phones = filter.CustomerWaIds.ToArray();
+            var customerIds = filter.CustomerIds.ToArray();
             query = query.Where(conversation =>
                 (conversation.ProfileName != null && EF.Functions.ILike(conversation.ProfileName, pattern, "\\"))
+                || (conversation.Username != null && EF.Functions.ILike(conversation.Username, pattern, "\\"))
                 || (digitsPattern != null && conversation.WaId != null && EF.Functions.Like(conversation.WaId, digitsPattern))
-                || (conversation.WaId != null && phones.Contains(conversation.WaId)));
+                || (conversation.CustomerId != null && customerIds.Contains(conversation.CustomerId.Value))
+                || (conversation.CustomerId == null && conversation.WaId != null && phones.Contains(conversation.WaId)));
         }
 
         var total = await query.CountAsync(cancellationToken);
@@ -40,7 +53,7 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         return (items, total);
     }
 
-    public async Task<ConversationCountsDto> CountsAsync(Guid tenantId, CancellationToken cancellationToken)
+    public async Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)
     {
         // Las dos condiciones son literalmente las de los parciales IX_conversations_tenant_open e
         // IX_conversations_tenant_unread: así el planner puede usarlos (index-only scan).
@@ -49,7 +62,14 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         var unread = await dbContext.Conversations.AsNoTracking()
             .Where(conversation => conversation.TenantId == tenantId && conversation.UnreadCount > 0)
             .SumAsync(conversation => conversation.UnreadCount, cancellationToken);
-        return new ConversationCountsDto(open, unread);
+        // D-A10: sólo abiertas, por los parciales de asignado (IX_conversations_tenant_assignee/unassigned_status_activity).
+        var mine = memberId is { } me
+            ? await dbContext.Conversations.AsNoTracking().CountAsync(
+                conversation => conversation.TenantId == tenantId && conversation.AssignedMemberId == me && conversation.Status == ConversationStatus.Open, cancellationToken)
+            : 0;
+        var unassigned = await dbContext.Conversations.AsNoTracking().CountAsync(
+            conversation => conversation.TenantId == tenantId && conversation.AssignedMemberId == null && conversation.Status == ConversationStatus.Open, cancellationToken);
+        return new ConversationCountsDto(open, unread, mine, unassigned);
     }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>

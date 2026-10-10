@@ -24,6 +24,18 @@ public sealed class MessagingValidatorsTests
     public void ListConversationsRejectsASearchOver100Characters() =>
         Assert.Equal(["search"], Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), "Open", new string('x', 101), 1, 30)));
 
+    // Spec 2026-10-10 §5.1: assigned ∈ me|none|all (default all); otro valor, con la clave «assigned».
+    [Theory]
+    [InlineData(null, new string[0])]
+    [InlineData("me", new string[0])]
+    [InlineData("none", new string[0])]
+    [InlineData("all", new string[0])]
+    [InlineData("mine", new[] { "assigned" })]
+    [InlineData("ME", new[] { "assigned" })]
+    [InlineData("", new[] { "assigned" })]
+    public void ListConversationsNamesTheAssigned(string? assigned, string[] expected) =>
+        Assert.Equal(expected, Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), null, null, null, null, assigned)));
+
     [Theory]
     [InlineData(null, new string[0])]
     [InlineData(1, new string[0])]

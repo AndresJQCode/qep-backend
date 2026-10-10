@@ -14,8 +14,16 @@ internal sealed partial class MessagingCustomerDirectory(
     public async Task<IReadOnlyDictionary<string, CustomerRefDto>> MatchAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken)
     {
         var matches = await phones.MatchAsync(tenantId, waIds.Select(waId => "+" + waId).ToArray(), cancellationToken);
-        return matches.ToDictionary(pair => pair.Key.TrimStart('+'), pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name), StringComparer.Ordinal);
+        return matches.ToDictionary(pair => pair.Key.TrimStart('+'), pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete), StringComparer.Ordinal);
     }
+
+    public async Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+        ids.Count == 0
+            ? new Dictionary<Guid, CustomerRefDto>()
+            : (await whatsApp.FindRefsAsync(tenantId, ids, cancellationToken)).ToDictionary(pair => pair.Key, pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete));
+
+    public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
+        whatsApp.FindIdsByNameAsync(tenantId, term, NameCap, cancellationToken);
 
     public async Task<IReadOnlyList<string>> FindWaIdsByNameAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
         (await phones.FindPhonesByNameAsync(tenantId, term, NameCap, cancellationToken)).Select(phone => phone.TrimStart('+')).ToArray();

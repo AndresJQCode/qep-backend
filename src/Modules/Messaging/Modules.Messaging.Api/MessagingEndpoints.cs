@@ -134,8 +134,8 @@ public static class MessagingEndpoints
         || contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IResult> ListConversationsAsync(
-        Guid tenantId, string? status, string? search, int? page, int? pageSize, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new ListConversationsQuery(tenantId, status, search, page, pageSize), cancellationToken));
+        Guid tenantId, string? status, string? search, int? page, int? pageSize, string? assigned, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListConversationsQuery(tenantId, status, search, page, pageSize, assigned), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAssigneesQuery(tenantId), cancellationToken));

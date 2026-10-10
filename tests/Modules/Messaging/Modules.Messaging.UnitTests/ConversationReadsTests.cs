@@ -30,7 +30,8 @@ public sealed class ConversationReadsTests
             null, Guid.CreateVersion7(), LastMessageDirection: null, MessageKind.Text, "hola", MessageStatus.Delivered,
             DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, 1);
 
-        var summary = ConversationSummaryBuilder.ToSummary(row, new Dictionary<Guid, string>(), new Dictionary<string, CustomerRefDto>());
+        var summary = ConversationSummaryBuilder.ToSummary(
+            row, new Dictionary<Guid, string>(), new Dictionary<Guid, CustomerRefDto>(), new Dictionary<string, CustomerRefDto>(), new Dictionary<Guid, string>(), null);
 
         Assert.Null(summary.LastMessage);
     }

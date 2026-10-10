@@ -33,7 +33,11 @@ internal static class MessagingNotFound
 
 /// <summary>§8.7: arma los <c>ConversationSummary</c> de una página con una llamada a cada directorio.
 /// Público sólo para que Infrastructure lo registre; no es API para otros módulos.</summary>
-public sealed class ConversationSummaryBuilder(IMessagingConnectionDirectory connections, IMessagingCustomerDirectory customers)
+public sealed class ConversationSummaryBuilder(
+    IMessagingConnectionDirectory connections,
+    IMessagingCustomerDirectory customers,
+    IMessagingMemberNames memberNames,
+    CallerMembership caller)
 {
     public const string DeletedConnectionName = "Conexión eliminada";
 
@@ -46,24 +50,47 @@ public sealed class ConversationSummaryBuilder(IMessagingConnectionDirectory con
         }
 
         var names = await connections.ListNamesAsync(tenantId, cancellationToken);
-        // El cliente por customer_id llega en la T11; mientras tanto se empareja por teléfono, sólo filas que lo tienen.
-        var matches = await customers.MatchAsync(
-            tenantId, rows.Where(row => row.WaId is not null).Select(row => row.WaId!).Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
-        return rows.Select(row => ToSummary(row, names, matches)).ToArray();
+        // §6.1.2: el cliente sale de customer_id; el teléfono sólo para las filas viejas que no lo tienen.
+        var byId = await customers.FindRefsAsync(
+            tenantId, rows.Where(row => row.CustomerId is not null).Select(row => row.CustomerId!.Value).Distinct().ToArray(), cancellationToken);
+        var legacyPhones = rows.Where(row => row.CustomerId is null && row.WaId is not null).Select(row => row.WaId!).Distinct(StringComparer.Ordinal).ToArray();
+        var byPhone = legacyPhones.Length == 0
+            ? new Dictionary<string, CustomerRefDto>()
+            : await customers.MatchAsync(tenantId, legacyPhones, cancellationToken);
+        var assignees = rows.Where(row => row.AssignedMemberId is not null).Select(row => row.AssignedMemberId!.Value).Distinct().ToArray();
+        var assigneeNames = assignees.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await memberNames.FindAsync(tenantId, assignees, cancellationToken);
+        var me = assignees.Length == 0 ? null : await caller.FindAsync(tenantId, cancellationToken);
+        return rows.Select(row => ToSummary(row, names, byId, byPhone, assigneeNames, me)).ToArray();
     }
 
     public static ConversationSummary ToSummary(
-        ConversationRow row, IReadOnlyDictionary<Guid, string> names, IReadOnlyDictionary<string, CustomerRefDto> matches)
+        ConversationRow row,
+        IReadOnlyDictionary<Guid, string> connectionNames,
+        IReadOnlyDictionary<Guid, CustomerRefDto> customersById,
+        IReadOnlyDictionary<string, CustomerRefDto> customersByWaId,
+        IReadOnlyDictionary<Guid, string> memberNames,
+        Guid? callerMemberId)
     {
         ArgumentNullException.ThrowIfNull(row);
-        ArgumentNullException.ThrowIfNull(names);
-        ArgumentNullException.ThrowIfNull(matches);
+        ArgumentNullException.ThrowIfNull(connectionNames);
+        ArgumentNullException.ThrowIfNull(customersById);
+        ArgumentNullException.ThrowIfNull(customersByWaId);
+        ArgumentNullException.ThrowIfNull(memberNames);
+        var customer = row.CustomerId is { } customerId
+            ? customersById.GetValueOrDefault(customerId)
+            : row.WaId is { } waId ? customersByWaId.GetValueOrDefault(waId) : null;
+        var assignedTo = row.AssignedMemberId is { } assignee
+            ? new AssignedToDto(assignee, memberNames.GetValueOrDefault(assignee) ?? MessageMapping.DeletedMemberName, assignee == callerMemberId)
+            : null;
         return new(
             row.Id,
             row.ConnectionId,
-            names.GetValueOrDefault(row.ConnectionId) ?? DeletedConnectionName,
+            connectionNames.GetValueOrDefault(row.ConnectionId) ?? DeletedConnectionName,
             new ContactDto(row.UserId, row.WaId, row.Username, row.ProfileName),
-            row.WaId is { } waId ? matches.GetValueOrDefault(waId) : null,
+            customer,
+            assignedTo,
             row.Status.ToString(),
             row.UnreadCount,
             LastMessageFrom(row),
@@ -100,7 +127,7 @@ internal static class MessageMapping
             row.Status.ToString(),
             MessageFailureReasons.For(row.FailureCode),
             row.OccurredAt,
-            row.SentByMemberId is { } member ? new SentByDto(member, memberNames.GetValueOrDefault(member) ?? DeletedMemberName) : null,
+            row.SentByMemberId is { } member ? new MemberRefDto(member, memberNames.GetValueOrDefault(member) ?? DeletedMemberName) : null,
             row.ClientId);
 
     /// <summary><c>details</c> de un <c>location</c> es el objeto de Meta tal cual (§8.7). Si no trae

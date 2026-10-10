@@ -9,7 +9,9 @@ namespace Modules.Messaging.Application;
 /// <c>waId</c> es <c>null</c> cuando Meta no mandó el teléfono. Al menos uno viene (CK_conversations_identity).</summary>
 public sealed record ContactDto(string? UserId, string? WaId, string? Username, string? ProfileName);
 
-public sealed record CustomerRefDto(Guid Id, string Name);
+/// <summary>Spec 2026-10-10 §5.1 (D-A8): <c>isComplete</c> viaja para que el encabezado del hilo ofrezca «Completar
+/// ficha» sin otra llamada.</summary>
+public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete);
 
 public sealed record LastMessageDto(string Direction, string Kind, string? Preview, string Status, DateTimeOffset At);
 
@@ -23,6 +25,7 @@ public sealed record ConversationSummary(
     string ConnectionName,
     ContactDto Contact,
     CustomerRefDto? Customer,
+    AssignedToDto? AssignedTo,
     string Status,
     int UnreadCount,
     LastMessageDto? LastMessage,
@@ -32,8 +35,9 @@ public sealed record ConversationSummary(
 
 /// <summary><c>Open</c> = conversaciones abiertas del tenant; <c>Unread</c> = la suma de
 /// <c>unread_count</c> del tenant (§5.4: la pantalla lo dibuja como «N sin leer»). Ninguno respeta la
-/// búsqueda: son los números de las pestañas, no de la página.</summary>
-public sealed record ConversationCountsDto(int Open, int Unread);
+/// búsqueda: son los números de las pestañas, no de la página. <c>Mine</c> y <c>Unassigned</c> cuentan sólo
+/// abiertas (D-A10): son las pestañas de la cola de trabajo.</summary>
+public sealed record ConversationCountsDto(int Open, int Unread, int Mine, int Unassigned);
 
 /// <summary><c>Total</c> es exacto: la consulta infinita del frontend se detiene en
 /// <c>page * pageSize &gt;= total</c>.</summary>
@@ -43,9 +47,14 @@ public sealed record MediaDto(string Url, string MimeType, string? FileName, str
 
 public sealed record LocationDto(double Latitude, double Longitude, string? Name, string? Address);
 
-/// <summary><c>DisplayName</c> nunca es <c>null</c> (contrato <c>MessageActor.displayName: string</c>):
-/// la membresía que ya no está viaja como «Miembro eliminado» (D-M20).</summary>
-public sealed record SentByDto(Guid MemberId, string DisplayName);
+/// <summary>Una membresía con nombre: <c>sentBy</c> y los <c>actor</c>/<c>target</c>/<c>previous</c> de un evento (P11).
+/// <c>DisplayName</c> nunca es <c>null</c>: la que ya no está viaja como «Miembro eliminado» (D-M20).</summary>
+public sealed record MemberRefDto(Guid MemberId, string DisplayName);
+
+/// <summary>Spec 2026-10-10 §5.1 y D-A13. BFF: <c>isMe</c> lo calcula el servidor porque la SPA no conoce su
+/// <c>memberId</c> (<c>/auth/me</c> y <c>/authorization/me</c> sólo dan el <c>userId</c>); sin él, la pantalla no sabe
+/// si mostrar el compositor o «La tiene X — Tomar».</summary>
+public sealed record AssignedToDto(Guid MemberId, string DisplayName, bool IsMe);
 
 public sealed record MessageDto(
     Guid Id,
@@ -57,7 +66,7 @@ public sealed record MessageDto(
     string Status,
     string? FailureReason,
     DateTimeOffset At,
-    SentByDto? SentBy,
+    MemberRefDto? SentBy,
     Guid? ClientId);
 
 public sealed record MessagePageDto(IReadOnlyList<MessageDto> Items, bool HasMore);
@@ -76,7 +85,7 @@ public sealed record MessageHitDto(
     string Status,
     string? FailureReason,
     DateTimeOffset At,
-    SentByDto? SentBy,
+    MemberRefDto? SentBy,
     Guid? ClientId,
     Guid ConversationId,
     ContactDto Contact,

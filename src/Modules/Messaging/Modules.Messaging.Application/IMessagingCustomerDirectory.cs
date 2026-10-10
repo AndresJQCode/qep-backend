@@ -11,8 +11,15 @@ public sealed record MessagingEnsuredCustomer(Guid CustomerId, bool Created);
 /// dígitos del E.164; el adaptador traduce. «Nombres y clientes» de §7.6: una consulta por página.</summary>
 public interface IMessagingCustomerDirectory
 {
-    /// <summary>Un cliente por <c>waId</c> (D-M7); los que no tienen cliente no aparecen.</summary>
+    /// <summary>Un cliente por <c>waId</c> (D-M7); los que no tienen cliente no aparecen. Sólo para conversaciones viejas
+    /// sin <c>customer_id</c> (spec 2026-10-10 §6.1.2).</summary>
     Task<IReadOnlyDictionary<string, CustomerRefDto>> MatchAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-10 §6.1.2: nombre e isComplete de los clientes de una página, por id.</summary>
+    Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+
+    /// <summary>§6.1.6: los clientes cuyo nombre contiene el término (con tope), para <c>customer_id = ANY(@customerIds)</c>.</summary>
+    Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, CancellationToken cancellationToken);
 
     /// <summary>Los <c>waId</c> de los clientes cuyo nombre contiene <paramref name="term"/>, para el
     /// <c>wa_id = ANY(@phones)</c> de la búsqueda de la lista (§8.7). Con tope.</summary>

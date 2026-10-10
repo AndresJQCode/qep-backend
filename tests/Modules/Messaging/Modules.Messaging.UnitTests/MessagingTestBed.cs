@@ -104,16 +104,29 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
     public List<ConversationRow> Rows { get; } = [];
 
     public Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
-        Guid tenantId, ConversationStatus status, string? search, IReadOnlyCollection<string> customerWaIds, int page, int pageSize, CancellationToken cancellationToken)
+        Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken)
     {
-        var items = Rows.Where(row => row.TenantId == tenantId && row.Status == status).ToList();
+        var items = Rows
+            .Where(row => row.TenantId == tenantId && row.Status == filter.Status)
+            .Where(row => filter.Assigned switch
+            {
+                AssignedFilter.Mine => filter.MemberId is { } me && row.AssignedMemberId == me,
+                AssignedFilter.Unassigned => row.AssignedMemberId is null,
+                _ => true,
+            })
+            .ToList();
         return Task.FromResult<(IReadOnlyList<ConversationRow>, int)>((items, items.Count));
     }
 
-    public Task<ConversationCountsDto> CountsAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult(new ConversationCountsDto(
-            Rows.Count(row => row.TenantId == tenantId && row.Status == ConversationStatus.Open),
-            Rows.Where(row => row.TenantId == tenantId).Sum(row => row.UnreadCount)));
+    public Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)
+    {
+        var open = Rows.Where(row => row.TenantId == tenantId && row.Status == ConversationStatus.Open).ToList();
+        return Task.FromResult(new ConversationCountsDto(
+            open.Count,
+            Rows.Where(row => row.TenantId == tenantId).Sum(row => row.UnreadCount),
+            memberId is { } me ? open.Count(row => row.AssignedMemberId == me) : 0,
+            open.Count(row => row.AssignedMemberId is null)));
+    }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         Task.FromResult(Rows.SingleOrDefault(row => row.TenantId == tenantId && row.Id == conversationId));
