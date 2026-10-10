@@ -14,23 +14,28 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// Infrastructure, porque Application no conoce Npgsql).</summary>
 internal sealed class MessageSearch(MessagingDbContext dbContext, IOptions<MessagingSearchOptions> options) : IMessageSearch
 {
-    public async Task<IReadOnlyList<string?>> LexemizeAsync(IReadOnlyList<string> tokens, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<IReadOnlyList<string>>> LexemizeAsync(IReadOnlyList<string> tokens, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(tokens);
         var array = tokens.ToArray();
-        // Cada token por to_tsvector; se queda con el lexema de la primera posición. Una stop word deja
-        // el tsvector vacío y su fila sale con Lexeme NULL.
+        // Cada token por to_tsvector, con todos sus lexemas por posición («covid-19» deja covid-19, covid y
+        // 19). Una stop word deja el tsvector vacío y no aporta filas.
         var rows = await dbContext.Database.SqlQuery<LexemeRow>(
             $"""
-            SELECT t.ordinality AS "Ordinal",
-                   (SELECT v.lexeme FROM unnest(to_tsvector('messaging.es_unaccent', t.token)) AS v
-                    ORDER BY v.positions[1] LIMIT 1) AS "Lexeme"
+            SELECT t.ordinality AS "Ordinal", v.lexeme AS "Lexeme"
             FROM unnest({array}::text[]) WITH ORDINALITY AS t(token, ordinality)
+            CROSS JOIN LATERAL unnest(to_tsvector('messaging.es_unaccent', t.token)) AS v
+            ORDER BY t.ordinality, v.positions[1], v.lexeme
             """).ToListAsync(cancellationToken);
-        var result = new string?[array.Length];
+        var result = new List<string>[array.Length];
+        for (var index = 0; index < result.Length; index++)
+        {
+            result[index] = [];
+        }
+
         foreach (var row in rows)
         {
-            result[row.Ordinal - 1] = row.Lexeme;
+            result[row.Ordinal - 1].Add(row.Lexeme);
         }
 
         return result;
@@ -107,6 +112,6 @@ internal sealed class MessageSearch(MessagingDbContext dbContext, IOptions<Messa
     {
         public long Ordinal { get; set; }
 
-        public string? Lexeme { get; set; }
+        public string Lexeme { get; set; } = string.Empty;
     }
 }

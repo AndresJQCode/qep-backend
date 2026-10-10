@@ -66,7 +66,7 @@ public sealed class SearchMessagesHandler(
         }
 
         var tokens = SearchTerms.Tokenize(query.Q!);
-        IReadOnlyList<string?> lexemes = tokens.Count == 0 ? [] : await search.LexemizeAsync(tokens, cancellationToken);
+        IReadOnlyList<IReadOnlyList<string>> lexemes = tokens.Count == 0 ? [] : await search.LexemizeAsync(tokens, cancellationToken);
         var tsQuery = SearchTerms.Compose(tokens.Select((token, index) => (token, lexemes[index])).ToArray());
         if (tsQuery is null)
         {
@@ -74,7 +74,11 @@ public sealed class SearchMessagesHandler(
         }
 
         var limit = query.Limit ?? DefaultLimit;
-        var rows = await search.SearchAsync(query.TenantId, tsQuery, query.ConversationId, query.From, query.To, cursor, limit + 1, cancellationToken);
+        // Npgsql sólo escribe en timestamptz un DateTimeOffset con offset cero: un from=…-05:00 sería un 500.
+        // El cursor no se toca: sale de la base, ya en UTC.
+        var since = query.From?.ToUniversalTime();
+        var until = query.To?.ToUniversalTime();
+        var rows = await search.SearchAsync(query.TenantId, tsQuery, query.ConversationId, since, until, cursor, limit + 1, cancellationToken);
         var hasMore = rows.Count > limit;
         var page = rows.Take(limit).ToArray();
         if (page.Length == 0)
@@ -87,13 +91,21 @@ public sealed class SearchMessagesHandler(
         var names = await memberNames.FindAsync(
             query.TenantId, page.Where(row => row.SentByMemberId is not null).Select(row => row.SentByMemberId!.Value).Distinct().ToArray(), cancellationToken);
 
-        return new SearchPageDto(page.Select(row =>
+        var hits = new List<MessageHitDto>(page.Length);
+        foreach (var row in page)
         {
+            // Una conversación que desapareció entre las dos consultas deja fuera su mensaje, nunca un 500.
+            if (!summaryById.TryGetValue(row.ConversationId, out var summary))
+            {
+                continue;
+            }
+
             var message = MessageMapping.ToDto(row, query.TenantId, names);
-            var summary = summaryById[row.ConversationId];
-            return new MessageHitDto(
+            hits.Add(new MessageHitDto(
                 message.Id, message.Direction, message.Kind, message.Text, message.Media, message.Location, message.Status, message.FailureReason,
-                message.At, message.SentBy, message.ClientId, row.ConversationId, summary.Contact, summary.Customer, summary.ConnectionName);
-        }).ToArray(), hasMore);
+                message.At, message.SentBy, message.ClientId, row.ConversationId, summary.Contact, summary.Customer, summary.ConnectionName));
+        }
+
+        return new SearchPageDto(hits, hasMore);
     }
 }

@@ -17,19 +17,33 @@ public sealed class SearchTermsTests
     }
 
     [Fact]
-    public void ComposeUsesPrefixOnlyFromThreeCharactersAndSkipsTokensWithoutLexeme()
+    public void ComposeQuotesEveryLexemeUsesPrefixOnlyFromThreeCharactersAndSkipsTokensWithoutLexeme()
     {
-        var query = SearchTerms.Compose([("drogueria", "drogueri"), ("de", null), ("pedidos", "pedid"), ("ab", "ab")]);
+        var query = SearchTerms.Compose([("drogueria", ["drogueri"]), ("de", []), ("pedidos", ["ped"]), ("ab", ["ab"])]);
 
-        Assert.Equal("drogueri:* & pedid:* & ab", query);
-        Assert.Null(SearchTerms.Compose([("de", null), ("la", null)]));
+        Assert.Equal("'drogueri':* & 'ped':* & 'ab'", query);
+        Assert.Null(SearchTerms.Compose([("de", []), ("la", [])]));
         Assert.Null(SearchTerms.Compose([]));
     }
 
     [Fact]
-    public void ALexemeWithStrangeCharactersIsQuotedNeverInjected()
+    public void EveryLexemeOfATokenIsKeptSoNumbersEmailsAndHyphenatedWordsStaySearchable()
     {
-        // Un lexema sólo tiene letras y dígitos; cualquier otra cosa se descarta por seguridad.
-        Assert.Null(SearchTerms.Compose([("x", "a b"), ("y", "a'b")]));
+        var query = SearchTerms.Compose([("covid-19", ["covid-19", "covid", "19"]), ("laura@acme.co", ["laura@acme.co"])]);
+
+        Assert.Equal("'covid-19':* & 'covid':* & '19':* & 'laura@acme.co':*", query);
+    }
+
+    [Fact]
+    public void ALexemeWithQuotesOrBackslashesIsEscapedInsideItsLiteral()
+    {
+        // Comillas dobladas y barra escapada: el lexema nunca sale de su literal de tsquery.
+        Assert.Equal(@"'a''b' & 'c\\d':*", SearchTerms.Compose([("x", ["a'b"]), ("yyy", [@"c\d"])]));
+    }
+
+    [Fact]
+    public void ASqlLikeInputLeavesOnlyPlainTokens()
+    {
+        Assert.Equal([";", "drop", "table"], SearchTerms.Tokenize("'); drop table"));
     }
 }

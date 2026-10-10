@@ -11,6 +11,7 @@ public sealed class MessageSearchApiTests
 {
     private static readonly string[] OnQ = ["q"];
     private static readonly string[] OnTo = ["to"];
+    private static readonly string[] OnLimit = ["limit"];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -124,8 +125,59 @@ public sealed class MessageSearchApiTests
     }
 
     [Theory]
+    [InlineData("q=covid-19", "w11")]
+    [InlineData("q=900.123.456-1", "w12")]
+    [InlineData("q=laura%40acme.co", "w13")]
+    public async Task NumbersEmailsAndHyphenatedWordsAreSearchableAsExactTokens(string query, string expectedWamid)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var anonymous = f.Factory.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001234567", "w11", 1760000011, "Resultado covid-19 listo"));
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001234567", "w12", 1760000012, "Factura al NIT 900.123.456-1 por favor"));
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001234567", "w13", 1760000013, "Escríbeme a laura@acme.co gracias"));
+        await DrainDeliveriesAsync(f.Factory);
+
+        var items = (await SearchAsync(f, query)).GetProperty("items").EnumerateArray().ToArray();
+
+        var hit = Assert.Single(items);
+        Assert.Equal(expectedWamid, await ScalarAsync<string>(f.ConnectionString, "SELECT wamid FROM messaging.messages WHERE id = @id", ("id", hit.GetProperty("id").GetGuid())));
+    }
+
+    [Fact]
+    public async Task DatesWithAnOffsetOtherThanUtcAreAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var bogota = DateTimeOffset.FromUnixTimeSeconds(1760000003).ToOffset(TimeSpan.FromHours(-5)).ToString("O");
+
+        var response = await f.Client.GetAsync($"{SearchUrl(f.Tenant.TenantId)}?q=pedido&from={Uri.EscapeDataString(bogota)}&to={Uri.EscapeDataString(bogota)}", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var page = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Single(page.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task OutOfRangeLimitsALongQAndANullByteAreValidationErrors()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var url = SearchUrl(f.Tenant.TenantId);
+
+        AssertValidationOn(await ProblemAsync(await f.Client.GetAsync($"{url}?q=pedido&limit=0", Ct)), OnLimit);
+        AssertValidationOn(await ProblemAsync(await f.Client.GetAsync($"{url}?q=pedido&limit=101", Ct)), OnLimit);
+        AssertValidationOn(await ProblemAsync(await f.Client.GetAsync($"{url}?q={new string('a', 101)}", Ct)), OnQ);
+        AssertValidationOn(await ProblemAsync(await f.Client.GetAsync($"{url}?q=pedido%00", Ct)), OnQ);
+    }
+
+    [Theory]
     [InlineData("q=%26%7C%21%3A%2A%28%29%27")]
     [InlineData("q=de%20la")]
+    [InlineData("q=%27%29%3B%20drop%20table")]
     public async Task OperatorsAndStopWordsAnswer200Empty(string query)
     {
         await using var database = await StartDatabaseAsync();

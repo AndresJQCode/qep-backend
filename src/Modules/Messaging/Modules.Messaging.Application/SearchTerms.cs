@@ -49,21 +49,29 @@ public static class SearchTerms
         return tokens.Count == MaxTokens;
     }
 
-    /// <summary>Cada token con su lexema (<c>null</c> = stop word o sólo símbolos). Prefijo con 3+ caracteres
-    /// del <b>token</b>. <c>null</c> si no queda nada que buscar.</summary>
-    public static string? Compose(IReadOnlyList<(string Token, string? Lexeme)> terms)
+    /// <summary>Cada token con <b>todos</b> sus lexemas (vacío = stop word o sólo símbolos): §7.3 promete que
+    /// números de documento, correos, URLs y palabras con guion (<c>covid-19</c> → <c>covid-19</c>,
+    /// <c>covid</c>, <c>19</c>) se buscan como tokens exactos, y esos lexemas llevan <c>-</c>, <c>.</c>,
+    /// <c>@</c> o <c>/</c>. Prefijo con 3+ caracteres del <b>token</b>. <c>null</c> si no queda nada que buscar.
+    /// <para>Sigue sin inyección: cada lexema lo produce Postgres (<c>to_tsvector</c> sobre un parámetro), va
+    /// como literal de <c>tsquery</c> entre comillas simples con <c>'</c> → <c>''</c> y <c>\</c> → <c>\\</c>, y
+    /// la <c>tsquery</c> entera viaja como parámetro, nunca concatenada al SQL.</para></summary>
+    public static string? Compose(IReadOnlyList<(string Token, IReadOnlyList<string> Lexemes)> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
         var parts = new List<string>();
-        foreach (var (token, lexeme) in terms)
+        foreach (var (token, lexemes) in terms)
         {
-            // Un lexema sólo tiene letras y dígitos; cualquier otra cosa se descarta en vez de escaparla.
-            if (string.IsNullOrEmpty(lexeme) || !lexeme.All(char.IsLetterOrDigit))
+            foreach (var lexeme in lexemes)
             {
-                continue;
-            }
+                if (string.IsNullOrEmpty(lexeme))
+                {
+                    continue;
+                }
 
-            parts.Add(token.Length >= PrefixMinLength ? lexeme + ":*" : lexeme);
+                var literal = "'" + lexeme.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("'", "''", StringComparison.Ordinal) + "'";
+                parts.Add(token.Length >= PrefixMinLength ? literal + ":*" : literal);
+            }
         }
 
         return parts.Count == 0 ? null : string.Join(" & ", parts);
