@@ -6,7 +6,8 @@ namespace Modules.Messaging.Domain;
 /// Spec 2026-10-09 §7.2: una persona (<c>wa_id</c>) hablando con un número de la organización
 /// (<c>connection_id</c>). La ingesta de entrantes <b>no</b> pasa por acá (SQL atómico, §7.5), y marcar
 /// leído tampoco (un UPDATE atómico, §8.4: con el token de concurrencia, un entrante en medio daría 412):
-/// este agregado sólo resuelve y reabre, con <see cref="Version"/> como token de concurrencia.
+/// este agregado sólo resuelve, reabre y asigna (spec 2026-10-10 §6.1.3), con <see cref="Version"/> como token de
+/// concurrencia.
 /// La «foto» del último mensaje la escribe la ingesta; acá es de sólo lectura.
 /// </summary>
 public sealed partial class Conversation
@@ -187,6 +188,58 @@ public sealed partial class Conversation
         }
 
         Status = ConversationStatus.Open;
+        Touch(now);
+    }
+
+    /// <summary>Spec 2026-10-10 §6.1.3: quien llama la toma, la tenga quien la tenga. Si ya era suya, nada (D-A2).</summary>
+    public ConversationEvent? Take(Guid memberId, DateTimeOffset now)
+    {
+        if (AssignedMemberId == memberId)
+        {
+            return null;
+        }
+
+        var previous = AssignedMemberId;
+        Assign(memberId, now);
+        return new ConversationEvent(ConversationEventType.Taken, Actor: memberId, Previous: previous);
+    }
+
+    /// <summary>§8.4: transferirse a uno mismo es tomar; transferir a quien ya la tiene, nada (P8).</summary>
+    public ConversationEvent? TransferTo(Guid actorMemberId, Guid targetMemberId, DateTimeOffset now)
+    {
+        if (targetMemberId == actorMemberId)
+        {
+            return Take(actorMemberId, now);
+        }
+
+        if (AssignedMemberId == targetMemberId)
+        {
+            return null;
+        }
+
+        var previous = AssignedMemberId;
+        Assign(targetMemberId, now);
+        return new ConversationEvent(ConversationEventType.Transferred, Actor: actorMemberId, Target: targetMemberId, Previous: previous);
+    }
+
+    /// <summary>§6.1.3: sin asignar ya, nada (D-A2).</summary>
+    public ConversationEvent? Release(Guid actorMemberId, DateTimeOffset now)
+    {
+        if (AssignedMemberId is not { } previous)
+        {
+            return null;
+        }
+
+        AssignedMemberId = null;
+        AssignedAt = null;
+        Touch(now);
+        return new ConversationEvent(ConversationEventType.Released, Actor: actorMemberId, Previous: previous);
+    }
+
+    private void Assign(Guid memberId, DateTimeOffset now)
+    {
+        AssignedMemberId = memberId;
+        AssignedAt = now;
         Touch(now);
     }
 

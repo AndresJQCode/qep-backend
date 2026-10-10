@@ -48,4 +48,13 @@ public sealed class MessagingValidatorsTests
     [Fact]
     public void ListMessagesRejectsAnEmptyBefore() =>
         Assert.Equal(["before"], Keys(new ListMessagesValidator(), new ListMessagesQuery(Guid.CreateVersion7(), Guid.CreateVersion7(), 50, Guid.Empty)));
+
+    // Spec 2026-10-10 §5.1: transferir exige a quién, con la clave «memberId».
+    [Fact]
+    public void TransferNamesAMissingOrEmptyMemberId()
+    {
+        Assert.Equal(["memberId"], Keys(new TransferConversationValidator(), new TransferConversationCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), null, 1)));
+        Assert.Equal(["memberId"], Keys(new TransferConversationValidator(), new TransferConversationCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.Empty, 1)));
+        Assert.Empty(Keys(new TransferConversationValidator(), new TransferConversationCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1)));
+    }
 }

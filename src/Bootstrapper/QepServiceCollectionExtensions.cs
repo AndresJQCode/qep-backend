@@ -537,6 +537,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
         services.AddScoped<ICommandHandler<ReopenConversationCommand, ConversationSummary>, ReopenConversationHandler>();
+        // Messaging (spec 2026-10-10 §8.4): tomar, transferir y liberar. Cada handler a mano: sin registro, 500.
+        services.AddScoped<ConversationAssignmentSteps>();
+        services.AddScoped<ICommandHandler<TakeConversationCommand, ConversationSummary>, TakeConversationHandler>();
+        services.AddScoped<ICommandHandler<TransferConversationCommand, ConversationSummary>, TransferConversationHandler>();
+        services.AddScoped<ICommandHandler<ReleaseConversationCommand, ConversationSummary>, ReleaseConversationHandler>();
         // Messaging (spec 2026-10-09 §8.6): servir el medio ya copiado con la sesión de QEP.
         services.AddScoped<IQueryHandler<GetMediaQuery, MediaStreamDto?>, GetMediaHandler>();
         // Messaging (spec 2026-10-10 §5.1, D-A1): el selector de transferir.

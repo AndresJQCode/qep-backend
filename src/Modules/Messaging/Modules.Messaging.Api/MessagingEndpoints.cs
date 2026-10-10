@@ -71,6 +71,33 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-10-10 §5.1 y §8.4: asignación con If-Match (428 sin él, 412 con versión vieja); 200 ConversationSummary.
+        group.MapPost("/conversations/{conversationId:guid}/take", TakeAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/conversations/{conversationId:guid}/transfer", TransferAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<TransferConversationRequest>("application/json")
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/conversations/{conversationId:guid}/release", ReleaseAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         group.MapGet("/messages/search", SearchMessagesAsync)
             .RequireAuthorization(MessagingPermissions.ConversationRead)
             .Produces<SearchPageDto>()
@@ -172,6 +199,16 @@ public static class MessagingEndpoints
     private static async Task<IResult> ReopenAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ReopenConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
 
+    private static async Task<IResult> TakeAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new TakeConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> TransferAsync(
+        Guid tenantId, Guid conversationId, TransferConversationRequest request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new TransferConversationCommand(tenantId, conversationId, request.MemberId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ReleaseAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ReleaseConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
     // Copia de IntegrationsEndpoints: mismo contrato que /pos y /orders-export-layout; sin If-Match 428,
     // vieja 412 (en el handler).
     private static long RequireVersion(HttpContext httpContext) =>
@@ -202,3 +239,6 @@ public static class MessagingEndpoints
 
 /// <summary>§5.3: <c>clientId</c> lo genera la pantalla por intento de envío; un reintento con el mismo no duplica.</summary>
 public sealed record SendMessageRequest(Guid? ClientId, string? Text);
+
+/// <summary>Spec 2026-10-10 §5.1.</summary>
+public sealed record TransferConversationRequest(Guid? MemberId);

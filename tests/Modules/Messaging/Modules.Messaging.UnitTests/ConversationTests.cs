@@ -11,6 +11,9 @@ public sealed class ConversationTests
     private static Conversation Open() =>
         Conversation.Start(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "573001234567", "Laura", Now);
 
+    private static readonly Guid Andres = Guid.Parse("01900000-0000-7000-8000-0000000000b1");
+    private static readonly Guid Beatriz = Guid.Parse("01900000-0000-7000-8000-0000000000b2");
+
     [Fact]
     public void StartIsOpenWithoutUnreadNorWindow()
     {
@@ -121,4 +124,58 @@ public sealed class ConversationTests
     public void AStartWithAMalformedIdentityIsRejected(string userId, string? waId) =>
         Assert.Throws<ArgumentException>(() =>
             Conversation.StartWithUserId(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), userId, waId, null, Now));
+
+    [Fact]
+    public void TakingAssignsBumpsTheVersionAndReturnsTheEventWithThePrevious()
+    {
+        var conversation = Open();
+
+        var first = conversation.Take(Andres, Now.AddMinutes(1));
+        var second = conversation.Take(Beatriz, Now.AddMinutes(2));
+
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Andres), first);
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), second);
+        Assert.Equal((Beatriz, Now.AddMinutes(2), 3L), (conversation.AssignedMemberId!.Value, conversation.AssignedAt!.Value, conversation.Version));
+    }
+
+    // D-A2: tomar la propia o liberar una sin asignar no cambia nada, ni la versión.
+    [Fact]
+    public void NoOpsReturnNoEventAndKeepTheVersion()
+    {
+        var conversation = Open();
+
+        Assert.Null(conversation.Release(Andres, Now));
+        conversation.Take(Andres, Now);
+        Assert.Null(conversation.Take(Andres, Now.AddMinutes(1)));
+        Assert.Null(conversation.TransferTo(Beatriz, Andres, Now.AddMinutes(1)));   // P8: ya es de Andrés
+        Assert.Equal(2, conversation.Version);
+    }
+
+    [Fact]
+    public void TransferringToYourselfIsATakeAndTransferringCarriesTargetAndPrevious()
+    {
+        var conversation = Open();
+        conversation.Take(Andres, Now);
+
+        var toSelf = conversation.TransferTo(Beatriz, Beatriz, Now.AddMinutes(1));
+        var back = conversation.TransferTo(Beatriz, Andres, Now.AddMinutes(2));
+
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), toSelf);
+        Assert.Equal(new ConversationEvent(ConversationEventType.Transferred, Actor: Beatriz, Target: Andres, Previous: Beatriz), back);
+    }
+
+    [Fact]
+    public void ReleasingClearsTheAssignmentAndAResolvedOneCanStillBeTaken()
+    {
+        var conversation = Open();
+        conversation.Resolve(Now);
+        conversation.Take(Andres, Now.AddMinutes(1));
+
+        var released = conversation.Release(Beatriz, Now.AddMinutes(2));
+
+        Assert.Equal(new ConversationEvent(ConversationEventType.Released, Actor: Beatriz, Previous: Andres), released);
+        Assert.Null(conversation.AssignedMemberId);
+        Assert.Null(conversation.AssignedAt);
+        Assert.Equal(ConversationStatus.Resolved, conversation.Status);
+    }
 }
