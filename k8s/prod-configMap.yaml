@@ -91,6 +91,12 @@ data:
   # de las conexiones de cada tenant. Rotar = dos despliegues: declarar Keys__k2 con ésta todavía en
   # k1, y después cambiar ésta a k2 (README § Integraciones). La llave vive en prod-secret.yaml.
   Integrations__SecretProtection__ActiveKeyId: "k1"
+  # Spec 2026-10-09 (Mensajería): la app de Meta de toda la plataforma. Públicos: viajan en la URL del
+  # popup de Embedded Signup. El AppSecret y el token del webhook viven en prod-secret.yaml. Sin las cinco
+  # claves MetaAppOptionsValidator deja el pod en crash-loop, a propósito.
+  Meta__App__AppId: "#{META_APP_ID}#"
+  Meta__App__ConfigId: "#{META_CONFIG_ID}#"
+  Meta__App__GraphApiVersion: "v24.0"
   # Copia pública de cada comprobante de pago nuevo, para que el Excel de pedidos lo enlace (spec
   # 2026-09-15). Literal y no token: no es un secreto ni cambia por despliegue. Exige
   # Storage__R2__PublicBucket y Storage__R2__PublicBaseUrl, de arriba: sin ellos

@@ -252,10 +252,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
-- **`Conversations` no existe**, aunque los requisitos la supongan. Los catorce módulos
-  construidos son Audit, Authorization, Catalog, Companies, Customers, Geography, Identity,
-  Integrations, Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada uno con su
-  `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`.
+- **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
+  Los quince módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Messaging, Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada
+  uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`. Messaging no referencia
+  Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
+  `IMessagingCustomerDirectory` e `IMessagingMediaStore`, con adaptadores en Bootstrapper.
+- **El webhook de Meta está exento de CSRF por ruta y no usa el limitador `Public`.** `/api/webhooks/`
+  pasa `RequireCsrfHeaderMiddleware` sin `X-Qep-Client` porque se autentica con la firma HMAC, y usa el
+  limitador `webhook` (concurrencia global con cola): Meta manda ráfagas desde pocas IPs y un 429 la
+  hace reintentar hasta 7 días. Sin `Meta:App` configurado (sólo fuera de `Production`) el GET responde
+  403 y el POST 401, y `whatsapp-cloud` no sale en el catálogo.
 - **Integrations no usa el `IAuditRecorder` ni el `IOutboxWriter` compartidos:** los dos están
   ligados a `TenancyDbContext`, y una segunda ligadura le robaría en silencio la auditoría o el outbox a
   Tenancy. Un módulo nuevo con auditoría atómica declara su propio puerto (`IIntegrationsAuditRecorder`,
