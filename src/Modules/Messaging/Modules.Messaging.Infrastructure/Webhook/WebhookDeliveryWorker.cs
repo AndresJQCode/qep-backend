@@ -28,6 +28,13 @@ internal sealed partial class WebhookDeliveryWorker(
     internal const int LastErrorMaxLength = 512;
 
     /// <summary>P15: la espera después del intento n es <c>Leases[n - 1]</c>; desde el último, el último.</summary>
+    /// <remarks>
+    /// Ojo: el lease es también el tiempo que tiene una pasada para terminar. Una entrega muy grande (hasta
+    /// 1000 cambios, §3) puede tardar más de los 10 s del primero; entonces otra réplica la reclama mientras
+    /// la primera sigue, y <c>attempts</c> sube sin que haya fallado nada (la idempotencia evita duplicados).
+    /// Por eso <c>attempts</c> de la entrega no prueba por sí solo que un status esperó 8 veces: la regla de
+    /// rendirse de la Task 13b tiene que mirar las filas de status pendientes, no sólo <c>attempts &gt;= 8</c>.
+    /// </remarks>
     internal static readonly IReadOnlyList<TimeSpan> Leases =
     [
         TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2),

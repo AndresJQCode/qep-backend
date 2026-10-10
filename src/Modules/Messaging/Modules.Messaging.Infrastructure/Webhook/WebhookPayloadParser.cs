@@ -130,7 +130,12 @@ internal static class WebhookPayloadParser
             var mediaId = ReadString(mediaElement, "id");
             if (mediaId is not null)
             {
-                media = new InboundMedia(mediaId, ReadString(mediaElement, "mime_type") ?? "application/octet-stream", ReadString(mediaElement, "sha256"), ReadString(mediaElement, "filename"));
+                // Al ancho de cada columna de message_media: un valor más largo haría fallar el INSERT en cada intento.
+                media = new InboundMedia(
+                    mediaId,
+                    Truncate(ReadString(mediaElement, "mime_type"), 128) ?? "application/octet-stream",
+                    Truncate(ReadString(mediaElement, "sha256"), 64),
+                    Truncate(ReadString(mediaElement, "filename"), 256));
             }
         }
         else

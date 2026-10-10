@@ -39,16 +39,25 @@ public sealed class WebhookLoadTests
         Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
         Assert.DoesNotContain(responses, response => response.StatusCode == HttpStatusCode.TooManyRequests);
 
-        // Varias pasadas del worker en paralelo (dos pods o más): el reclamo deja un solo ganador por entrega.
-        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => DrainDeliveriesAsync(factory)));
-        while (await CountAsync(connectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NULL") > 0)
+        // Rondas de cuatro pasadas en paralelo (cuatro pods): cada ronda compite por el mismo lote y el
+        // reclamo deja un solo ganador por entrega. Con tope: una entrega que falle no cuelga la prueba.
+        const string PendingSql = "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NULL";
+        const int MaxRounds = 10;
+        var pending = await CountAsync(connectionString, PendingSql);
+        for (var round = 0; round < MaxRounds && pending > 0; round++)
         {
-            await DrainDeliveriesAsync(factory);
+            await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => DrainDeliveriesAsync(factory)));
+            pending = await CountAsync(connectionString, PendingSql);
         }
 
+        Assert.Equal(0L, pending);
         Assert.Equal((long)Persons, await CountAsync(connectionString, "SELECT count(*) FROM messaging.conversations"));
         Assert.Equal((long)(Persons * MessagesPerPerson), await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages"));
+        // Exactamente una fila por wamid.
+        Assert.Equal((long)(Persons * MessagesPerPerson), await CountAsync(connectionString, "SELECT count(DISTINCT wamid) FROM messaging.messages"));
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM (SELECT wamid FROM messaging.messages GROUP BY wamid HAVING count(*) > 1) AS repeated"));
         Assert.Equal((long)(Persons * MessagesPerPerson), await CountAsync(connectionString, "SELECT sum(unread_count) FROM messaging.conversations"));
         Assert.Equal((long)MessagesPerPerson, await CountAsync(connectionString, "SELECT min(unread_count)::bigint FROM messaging.conversations"));
+        Assert.Equal((long)MessagesPerPerson, await CountAsync(connectionString, "SELECT max(unread_count)::bigint FROM messaging.conversations"));
     }
 }

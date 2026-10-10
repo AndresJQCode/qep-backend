@@ -57,6 +57,24 @@ public sealed class WebhookPayloadParserTests
         Assert.Empty(change.Statuses);
     }
 
+    // Un valor más largo que su columna de message_media haría fallar el INSERT en cada intento.
+    [Fact]
+    public void OverlongMediaFieldsAreTruncatedToTheirColumns()
+    {
+        var json = Envelope("messages", Messages(new
+        {
+            from = "573001234567",
+            id = "wamid.doc",
+            timestamp = "1760000000",
+            type = "document",
+            document = new { id = "media-1", mime_type = new string('m', 300), sha256 = new string('s', 300), filename = new string('f', 300) },
+        }));
+
+        var media = Assert.Single(Assert.IsType<MessagesChange>(WebhookPayloadParser.Parse(json)[0]).Messages).Media!;
+
+        Assert.Equal((128, 64, 256), (media.MimeType.Length, media.Sha256!.Length, media.FileName!.Length));
+    }
+
     [Fact]
     public void AnImageWithCaptionGoesToCaptionAndMedia()
     {

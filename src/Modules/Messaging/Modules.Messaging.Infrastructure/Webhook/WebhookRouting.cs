@@ -11,12 +11,24 @@ internal sealed class WebhookRouting(IMessagingConnectionDirectory directory, IT
 {
     public static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
 
-    public Task<MessagingRoute?> FindRouteAsync(string phoneNumberId, CancellationToken cancellationToken) =>
-        cache.GetOrCreateAsync($"messaging:route:{phoneNumberId}", entry =>
+    /// <summary>Sólo se cachea lo encontrado: un <c>null</c> cacheado descartaría por un minuto los mensajes
+    /// de un número recién conectado, y el descarte no tiene vuelta atrás.</summary>
+    public async Task<MessagingRoute?> FindRouteAsync(string phoneNumberId, CancellationToken cancellationToken)
+    {
+        var key = $"messaging:route:{phoneNumberId}";
+        if (cache.TryGetValue(key, out MessagingRoute? cached) && cached is not null)
         {
-            entry.AbsoluteExpirationRelativeToNow = Ttl;
-            return directory.FindRouteAsync(phoneNumberId, cancellationToken);
-        });
+            return cached;
+        }
+
+        var route = await directory.FindRouteAsync(phoneNumberId, cancellationToken);
+        if (route is not null)
+        {
+            cache.Set(key, route, Ttl);
+        }
+
+        return route;
+    }
 
     public Task<bool> IsModuleEnabledAsync(Guid tenantId, CancellationToken cancellationToken) =>
         cache.GetOrCreateAsync($"messaging:module:{tenantId}", async entry =>
