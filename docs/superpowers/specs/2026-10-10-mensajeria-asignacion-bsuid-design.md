@@ -379,8 +379,11 @@ ser **mayor que los 10 s** del cliente `messaging.meta-graph` (base decisión 3)
   Recibe los mismos datos que `Update` más el CUC, que el handler genera con `ICucGenerator` +
   `CucFormatter` exactamente como `CreateCustomerHandler`. Siembra la libreta como `Create`. Deja
   `Complete`. `Update` sobre un completo no cambia.
-- **`WhatsAppUserId`** (`string?`, ≤ 150) único por tenant. `AttachWhatsAppUserId(bsuid)` y
-  `ReplaceWhatsAppUserId(previous, current)`.
+- **`WhatsAppUserId`** (`string?`, ≤ 150) único por tenant. El agregado no tiene métodos para
+  ponerlo ni cambiarlo: lo escriben `UPDATE` condicionales del repositorio
+  (`TryAttachWhatsAppUserIdAsync`, sólo si no tenía uno, D-A6; `TryReplaceWhatsAppUserIdAsync`,
+  sólo si tenía el anterior, §8.3), sin pasar por el agregado ni subir la versión. La regla del valor vive en
+  `Customer.NormalizeWhatsAppUserId`.
 - **Nombre del incompleto** (decisión del owner, en este orden): nombre de perfil de WhatsApp →
   `username` → teléfono (`+` y dígitos) → `"Contacto de WhatsApp"`. Recortado a
   `Customer.NameMaxLength`.
@@ -796,7 +799,8 @@ Los dos de Messaging van a `MessagingErrorCodes` (`MessagingErrorCodes.cs`) como
   `MessageMapping`.
 - `Customer.CreateIncomplete` (nombre por orden de respaldo, país por prefijo del BSUID, prefijo
   desconocido → región del teléfono → `null`), `Complete` (CUC, libreta, `Complete`),
-  `AttachWhatsAppUserId` sin pisar otro.
+  `NormalizeWhatsAppUserId`. Poner el BSUID sin pisar otro se prueba en integración, contra el
+  `UPDATE` condicional del repositorio.
 - `QuotationCustomerEligibility`: incompleto → `client_incomplete` antes que `client_cuc_missing`.
 - Validadores: `replyTo`, `memberId`, `assigned`, `isComplete`.
 

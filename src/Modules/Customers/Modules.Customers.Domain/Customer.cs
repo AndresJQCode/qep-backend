@@ -382,32 +382,6 @@ public sealed class Customer
         Touch(occurredAt);
     }
 
-    /// <summary>D-A6: pone el BSUID sólo si no tenía uno (otro portafolio o un número reciclado no lo pisan).
-    /// P4: no sube la versión, como <see cref="RecomputePhoneE164"/>: no lo editó una persona.</summary>
-    public bool AttachWhatsAppUserId(string whatsAppUserId)
-    {
-        var normalized = NormalizeWhatsAppUserId(whatsAppUserId);
-        if (WhatsAppUserId is not null)
-        {
-            return false;
-        }
-
-        WhatsAppUserId = normalized;
-        return true;
-    }
-
-    /// <summary>Spec 2026-10-10 §8.3: la persona cambió de número y Meta le dio otro BSUID.</summary>
-    public bool ReplaceWhatsAppUserId(string previous, string current)
-    {
-        if (!string.Equals(WhatsAppUserId, previous, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        WhatsAppUserId = NormalizeWhatsAppUserId(current);
-        return true;
-    }
-
     /// <summary>La regla del BSUID (recortado, 1 a <see cref="WhatsAppUserIdMaxLength"/> caracteres). Pública porque
     /// <c>CustomerWhatsAppDirectory</c> lo escribe con un <c>UPDATE</c> condicional, sin pasar por el agregado.</summary>
     public static string NormalizeWhatsAppUserId(string value)

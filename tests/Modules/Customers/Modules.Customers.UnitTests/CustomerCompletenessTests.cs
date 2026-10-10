@@ -156,27 +156,4 @@ public sealed class CustomerCompletenessTests
             "CLI",
             Now));
     }
-
-    // D-A6 y P4: un BSUID ya puesto no se pisa, y poner uno no sube la versión.
-    [Fact]
-    public void AttachingABsuidOnlyWorksWhenThereIsNone()
-    {
-        var customer = Incomplete();
-
-        Assert.False(customer.AttachWhatsAppUserId("US.999"));
-        Assert.Equal(Bsuid, customer.WhatsAppUserId);
-        Assert.Equal(1, customer.Version);
-    }
-
-    [Fact]
-    public void ReplacingTheBsuidNeedsThePreviousOne()
-    {
-        var customer = Incomplete();
-
-        Assert.False(customer.ReplaceWhatsAppUserId("CO.otro", "CO.nuevo"));
-        Assert.Equal(Bsuid, customer.WhatsAppUserId);
-        Assert.True(customer.ReplaceWhatsAppUserId(Bsuid, "CO.nuevo"));
-        Assert.Equal("CO.nuevo", customer.WhatsAppUserId);
-        Assert.Equal(1, customer.Version);
-    }
 }
