@@ -183,7 +183,7 @@ public static class ExportLoadSeeder
         INSERT INTO customers.customers (
             id, tenant_id, cuc, name, business_name, identification_type, identification_number, is_active,
             phone, email, address, country, city_id, classification_id, with_retention, vat_surplus, version,
-            created_at, updated_at)
+            created_at, updated_at, completeness)
         SELECT gen_random_uuid(), @tenant,
                'CLI' || city.department || lpad(n::text, greatest(6, length(n::text)), '0'),
                'Cliente de carga ' || n, NULL, 'Nit', (800000000 + n)::text, true,
@@ -191,7 +191,11 @@ public static class ExportLoadSeeder
                -- El pais es obligatorio y sin DEFAULT a proposito (AddCustomerCountry): un alta tiene
                -- que decir de donde es. CO porque la ciudad sale de geography.cities, que es DIVIPOLA.
                'CO', city.id,
-               @classification, false, false, 1, @now, @now
+               @classification, false, false, 1, @now, @now,
+               -- Sin DEFAULT a propósito (AddCustomerCompleteness): la carga trae todos los datos de una
+               -- ficha completa, y CK_customers_complete_fields lo verifica. Es el nombre del enum
+               -- CustomerCompleteness, que EF guarda como texto.
+               'Complete'
         FROM generate_series(1, @customers) AS n
         CROSS JOIN city
         """;
