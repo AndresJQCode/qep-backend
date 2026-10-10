@@ -1,6 +1,6 @@
 namespace Modules.Customers.Application;
 
-public sealed record CustomerPhoneMatch(Guid Id, string Name);
+public sealed record CustomerPhoneMatch(Guid Id, string Name, bool IsComplete);
 
 /// <summary>
 /// Spec 2026-10-09 §6.5: lo que Messaging necesita de Customers, por un puerto de este módulo con

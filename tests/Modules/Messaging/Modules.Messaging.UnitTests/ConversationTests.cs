@@ -11,6 +11,9 @@ public sealed class ConversationTests
     private static Conversation Open() =>
         Conversation.Start(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "573001234567", "Laura", Now);
 
+    private static readonly Guid Andres = Guid.Parse("01900000-0000-7000-8000-0000000000b1");
+    private static readonly Guid Beatriz = Guid.Parse("01900000-0000-7000-8000-0000000000b2");
+
     [Fact]
     public void StartIsOpenWithoutUnreadNorWindow()
     {
@@ -79,4 +82,100 @@ public sealed class ConversationTests
     [InlineData("+573001234567")]
     public void TheWaIdIsDigitsOnly(string? waId) =>
         Assert.Throws<ArgumentException>(() => Conversation.Start(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), waId!, null, Now));
+
+    // Spec 2026-10-10 §6.1.1: ISO alfa-2 en mayúsculas + «.» + 1 a 128 alfanuméricos.
+    [Theory]
+    [InlineData("CO.1349120865530274", true)]
+    [InlineData("US.13491208655302741918", true)]
+    [InlineData("US.abcXYZ09", true)]
+    [InlineData("co.1349", false)]
+    [InlineData("COL.1349", false)]
+    [InlineData("CO.", false)]
+    [InlineData("CO.13-49", false)]
+    [InlineData("573001234567", false)]
+    [InlineData("CO.1349\n", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ABsuidHasTheShapeMetaDocuments(string? value, bool expected) =>
+        Assert.Equal(expected, Conversation.IsValidUserId(value));
+
+    [Fact]
+    public void ABsuidOfMoreThan128AlphanumericsIsRejected()
+    {
+        Assert.True(Conversation.IsValidUserId("CO." + new string('9', 128)));
+        Assert.False(Conversation.IsValidUserId("CO." + new string('9', 129)));
+    }
+
+    [Fact]
+    public void ABsuidConversationMayHaveNoPhone()
+    {
+        var conversation = Conversation.StartWithUserId(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "CO.1349120865530274", null, "Laura", Now);
+
+        Assert.Equal("CO.1349120865530274", conversation.UserId);
+        Assert.Null(conversation.WaId);
+        Assert.Null(conversation.AssignedMemberId);
+        Assert.Null(conversation.CustomerId);
+        Assert.Equal(1, conversation.Version);
+    }
+
+    [Theory]
+    [InlineData("573001234567", "57300123456X")]
+    [InlineData("co.1349", null)]
+    public void AStartWithAMalformedIdentityIsRejected(string userId, string? waId) =>
+        Assert.Throws<ArgumentException>(() =>
+            Conversation.StartWithUserId(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), userId, waId, null, Now));
+
+    [Fact]
+    public void TakingAssignsBumpsTheVersionAndReturnsTheEventWithThePrevious()
+    {
+        var conversation = Open();
+
+        var first = conversation.Take(Andres, Now.AddMinutes(1));
+        var second = conversation.Take(Beatriz, Now.AddMinutes(2));
+
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Andres), first);
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), second);
+        Assert.Equal((Beatriz, Now.AddMinutes(2), 3L), (conversation.AssignedMemberId!.Value, conversation.AssignedAt!.Value, conversation.Version));
+    }
+
+    // D-A2: tomar la propia o liberar una sin asignar no cambia nada, ni la versión.
+    [Fact]
+    public void NoOpsReturnNoEventAndKeepTheVersion()
+    {
+        var conversation = Open();
+
+        Assert.Null(conversation.Release(Andres, Now));
+        conversation.Take(Andres, Now);
+        Assert.Null(conversation.Take(Andres, Now.AddMinutes(1)));
+        Assert.Null(conversation.TransferTo(Beatriz, Andres, Now.AddMinutes(1)));   // P8: ya es de Andrés
+        Assert.Equal(2, conversation.Version);
+    }
+
+    [Fact]
+    public void TransferringToYourselfIsATakeAndTransferringCarriesTargetAndPrevious()
+    {
+        var conversation = Open();
+        conversation.Take(Andres, Now);
+
+        var toSelf = conversation.TransferTo(Beatriz, Beatriz, Now.AddMinutes(1));
+        var back = conversation.TransferTo(Beatriz, Andres, Now.AddMinutes(2));
+
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), toSelf);
+        Assert.Equal(new ConversationEvent(ConversationEventType.Transferred, Actor: Beatriz, Target: Andres, Previous: Beatriz), back);
+    }
+
+    [Fact]
+    public void ReleasingClearsTheAssignmentAndAResolvedOneCanStillBeTaken()
+    {
+        var conversation = Open();
+        conversation.Resolve(Now);
+        conversation.Take(Andres, Now.AddMinutes(1));
+
+        var released = conversation.Release(Beatriz, Now.AddMinutes(2));
+
+        Assert.Equal(new ConversationEvent(ConversationEventType.Released, Actor: Beatriz, Previous: Andres), released);
+        Assert.Null(conversation.AssignedMemberId);
+        Assert.Null(conversation.AssignedAt);
+        Assert.Equal(ConversationStatus.Resolved, conversation.Status);
+    }
 }

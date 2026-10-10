@@ -25,10 +25,14 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).
         services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
+        // Spec 2026-10-10 §8.7: los eventos que escriben los handlers, en el mismo SaveChanges que el agregado.
+        services.AddScoped<IConversationEvents, ConversationEvents>();
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();
         services.AddScoped<IMessageQueries, MessageQueries>();
         services.AddScoped<ConversationSummaryBuilder>();
+        // Spec 2026-10-10 P20: la membresía de quien llama, una vez por request.
+        services.AddScoped<CallerMembership>();
         // §7.3 y §8.8: la búsqueda full-text con statement_timeout acotado.
         services.AddScoped<IMessageSearch, MessageSearch>();
         // Spec 2026-10-09 §8.2: la firma del webhook y la cola deduplicada de entregas.

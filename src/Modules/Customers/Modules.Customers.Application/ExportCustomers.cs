@@ -156,8 +156,10 @@ public sealed class ExportCustomersHandler(
                 .Concat(CustomerCityIds.OfDomicile(customer)))
             .Distinct()
             .ToArray();
+        // Spec 2026-10-10 §6.2: un incompleto no tiene clasificación; el Where garantiza el valor.
         var classificationIds = customers
-            .Select(customer => customer.ClassificationId)
+            .Where(customer => customer.ClassificationId is not null)
+            .Select(customer => customer.ClassificationId!.Value)
             .Distinct()
             .ToArray();
 
@@ -171,12 +173,15 @@ public sealed class ExportCustomersHandler(
         foreach (var customer in customers)
         {
             var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
-            var classification = classificationsById.TryGetValue(
-                customer.ClassificationId, out var classificationValue)
-                ? classificationValue
-                : throw new InvalidOperationException(
-                    $"Classification '{customer.ClassificationId}' referenced by customer " +
-                    $"'{customer.Id}' was not found.");
+            ClientClassification? classification = null;
+            if (customer.ClassificationId is { } classificationId)
+            {
+                classification = classificationsById.TryGetValue(classificationId, out var classificationValue)
+                    ? classificationValue
+                    : throw new InvalidOperationException(
+                        $"Classification '{classificationId}' referenced by customer " +
+                        $"'{customer.Id}' was not found.");
+            }
 
             items.Add(customer.ToDto(city, classification, citiesById));
         }

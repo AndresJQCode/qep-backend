@@ -11,7 +11,7 @@ internal sealed class MessageQueries(MessagingDbContext dbContext) : IMessageQue
     internal static readonly Expression<Func<MessageRecord, MessageRow>> RowProjection = message => new MessageRow(
         message.Id, message.ConversationId, message.Direction, message.Kind, message.Text, message.Caption, message.Details, message.Status,
         message.FailureCode, message.OccurredAt, message.SentByMemberId, message.ClientId,
-        message.Media == null ? null : new MessageMediaRow(message.Media.MimeType, message.Media.FileName));
+        message.Media == null ? null : new MessageMediaRow(message.Media.MimeType, message.Media.FileName), message.ReplyToMessageId);
 
     public Task<MessageCursor?> FindCursorAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken) =>
         dbContext.Messages.AsNoTracking()
@@ -34,5 +34,20 @@ internal sealed class MessageQueries(MessagingDbContext dbContext) : IMessageQue
             .Take(take)
             .Select(RowProjection)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, ReplyTargetRow>> FindReplyTargetsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, ReplyTargetRow>();
+        }
+
+        var wanted = ids.ToArray();
+        return await dbContext.Messages.AsNoTracking()
+            .Where(message => message.TenantId == tenantId && wanted.Contains(message.Id))
+            .Select(message => new ReplyTargetRow(message.Id, message.ConversationId, message.Direction, message.Kind, message.Text, message.Caption, message.Wamid))
+            .ToDictionaryAsync(target => target.Id, cancellationToken);
     }
 }

@@ -64,7 +64,8 @@ public sealed class MediaApiTests
         await DrainDeliveriesAsync(host);
         var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
         var conversationId = (await client.GetFromJsonAsync<JsonElement>(ConversationsUrl(tenant.TenantId), Ct)).GetProperty("items")[0].GetProperty("id").GetGuid();
-        var messageId = (await client.GetFromJsonAsync<JsonElement>(MessagesUrl(tenant.TenantId, conversationId), Ct)).GetProperty("items")[0].GetProperty("id").GetGuid();
+        // Spec 2026-10-10 §8.7: el hilo abre con el evento CustomerCreated; el medio es el último ítem.
+        var messageId = (await client.GetFromJsonAsync<JsonElement>(MessagesUrl(tenant.TenantId, conversationId), Ct)).GetProperty("items").EnumerateArray().Last().GetProperty("id").GetGuid();
         return new Fixture(factory, host, store, connectionString, tenant, messageId, client);
     }
 

@@ -21,8 +21,10 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             // Un segundo request con el mismo clientId espera acá hasta que el primero cierre su transacción.
             var inserted = await dbContext.Database.SqlQuery<Guid>(
                 $"""
-                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, client_id, sent_by_member_id, created_at)
-                VALUES ({draft.MessageId}, {draft.ConversationId}, {draft.TenantId}, {draft.ConnectionId}, {draft.Now}, 2, 1, 1, {draft.Text}, {draft.ClientId}, {draft.SentByMemberId}, {draft.Now})
+                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, client_id, sent_by_member_id, created_at,
+                                                reply_to_message_id, reply_to_wamid)
+                VALUES ({draft.MessageId}, {draft.ConversationId}, {draft.TenantId}, {draft.ConnectionId}, {draft.Now}, 2, 1, 1, {draft.Text}, {draft.ClientId}, {draft.SentByMemberId}, {draft.Now},
+                        {draft.ReplyToMessageId}, {draft.ReplyToWamid})
                 ON CONFLICT (conversation_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
                 RETURNING id AS "Value"
                 """).ToListAsync(cancellationToken);
@@ -34,12 +36,11 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             // En una sentencia aparte: así ve la fila que el otro request acaba de commitear.
             var rows = await dbContext.Database.SqlQuery<ExistingRow>(
                 $"""
-                SELECT id AS "Id", status AS "Status", occurred_at AS "OccurredAt", sent_by_member_id AS "SentByMemberId", coalesce(text, '') AS "Text"
+                SELECT id AS "Id", status AS "Status", occurred_at AS "OccurredAt", sent_by_member_id AS "SentByMemberId", coalesce(text, '') AS "Text",
+                       reply_to_message_id AS "ReplyToMessageId"
                 FROM messaging.messages WHERE conversation_id = {draft.ConversationId} AND client_id = {draft.ClientId} FOR UPDATE
                 """).ToListAsync(cancellationToken);
-            var existing = rows.Single();
-            return new Claim(dbContext, transaction, draft,
-                new ExistingOutbound(existing.Id, MessageColumnCodes.ToStatus(existing.Status), existing.OccurredAt, existing.SentByMemberId, existing.Text));
+            return new Claim(dbContext, transaction, draft, ToExisting(rows.Single()));
         }
         catch
         {
@@ -47,6 +48,20 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             throw;
         }
     }
+
+    public async Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.Database.SqlQuery<ExistingRow>(
+            $"""
+            SELECT id AS "Id", status AS "Status", occurred_at AS "OccurredAt", sent_by_member_id AS "SentByMemberId",
+                   coalesce(text, '') AS "Text", reply_to_message_id AS "ReplyToMessageId"
+            FROM messaging.messages WHERE conversation_id = {conversationId} AND client_id = {clientId}
+            """).ToListAsync(cancellationToken);
+        return rows.Count == 1 ? ToExisting(rows[0]) : null;
+    }
+
+    private static ExistingOutbound ToExisting(ExistingRow row) =>
+        new(row.Id, MessageColumnCodes.ToStatus(row.Status), row.OccurredAt, row.SentByMemberId, row.Text, row.ReplyToMessageId);
 
     private sealed class ExistingRow
     {
@@ -59,6 +74,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         public Guid? SentByMemberId { get; set; }
 
         public string Text { get; set; } = string.Empty;
+
+        public Guid? ReplyToMessageId { get; set; }
     }
 
     private sealed class Claim(MessagingDbContext dbContext, IDbContextTransaction transaction, OutboundDraft draft, ExistingOutbound? existing) : IOutboundClaim
@@ -77,7 +94,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.messages SET status = 1, wamid = {wamid}, occurred_at = {occurredAt}, text = {draft.Text},
-                    failure_code = NULL, failure_title = NULL, sent_by_member_id = {draft.SentByMemberId}
+                    failure_code = NULL, failure_title = NULL, sent_by_member_id = {draft.SentByMemberId},
+                    reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}
                 WHERE id = {MessageId}
                 """, cancellationToken);
             // La foto de la conversación, como la ingesta de §7.5: CASE por fecha para no pisar un entrante más
@@ -104,7 +122,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         {
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                UPDATE messaging.messages SET status = 4, failure_code = {failureCode}, failure_title = {failureTitle}, occurred_at = {occurredAt}, text = {draft.Text}
+                UPDATE messaging.messages SET status = 4, failure_code = {failureCode}, failure_title = {failureTitle}, occurred_at = {occurredAt}, text = {draft.Text},
+                    reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}
                 WHERE id = {MessageId}
                 """, cancellationToken);
             // Cerrado antes del commit: si el commit falla, DisposeAsync no intenta un rollback que taparía esa falla.

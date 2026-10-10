@@ -125,7 +125,8 @@ internal sealed class ReportingClientLookup(CustomersDbContext customers)
 
         return rows.ToDictionary(
             row => row.Id.Value,
-            row => new ReportingClientRef(row.Name, row.Cuc));
+            // Un incompleto no tiene cotizaciones ni pedidos: Quotations lo rechaza (T4).
+            row => new ReportingClientRef(row.Name, row.Cuc ?? string.Empty));
     }
 }
 

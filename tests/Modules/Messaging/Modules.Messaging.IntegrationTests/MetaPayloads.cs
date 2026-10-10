@@ -13,6 +13,63 @@ internal static class MetaPayloads
     /// <summary>La WABA de las pruebas, la misma del <c>SignupBody</c> de Integrations.</summary>
     public const string DefaultWabaId = "222";
 
+    /// <summary>Spec 2026-10-10 §8.1: Meta manda siempre el BSUID. Las pruebas derivan uno válido y estable del
+    /// teléfono, así siguen teniendo «una conversación por número».</summary>
+    public const string DefaultUserIdPrefix = "CO.";
+
+    public static string UserIdFor(string waId) => DefaultUserIdPrefix + waId;
+
+    /// <summary>Spec 2026-10-10 §3: un texto entrante con BSUID (siempre), teléfono si <paramref name="waId"/> no es
+    /// <c>null</c> (en <c>from</c> y en el contacto), usuario si lo hay y la cita si <paramref name="quotedWamid"/>.</summary>
+    public static string Inbound(
+        string phoneNumberId, string userId, string? waId, string wamid, long timestamp, string text,
+        string? profileName = "Laura", string? username = null, string? quotedWamid = null)
+    {
+        var message = new JsonObject
+        {
+            ["from_user_id"] = userId,
+            ["id"] = wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "text",
+            ["text"] = new JsonObject { ["body"] = text },
+        };
+        if (waId is not null)
+        {
+            message["from"] = waId;
+        }
+
+        if (quotedWamid is not null)
+        {
+            message["context"] = new JsonObject { ["id"] = quotedWamid, ["from"] = "15550000000" };
+        }
+
+        var profile = new JsonObject();
+        if (profileName is not null)
+        {
+            profile["name"] = profileName;
+        }
+
+        if (username is not null)
+        {
+            profile["username"] = username;
+        }
+
+        var contact = new JsonObject { ["profile"] = profile, ["user_id"] = userId };
+        if (waId is not null)
+        {
+            contact["wa_id"] = waId;
+        }
+
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550000000"),
+            ["contacts"] = new JsonArray(contact),
+            ["messages"] = new JsonArray(message),
+        };
+        return Change("messages", value.ToJsonString());
+    }
+
     public static string InboundText(
         string phoneNumberId,
         string waId,
@@ -24,6 +81,7 @@ internal static class MetaPayloads
         Messages(
             phoneNumberId,
             displayPhoneNumber,
+            UserIdFor(waId),
             waId,
             profileName,
             new { from = waId, id = wamid, timestamp = Seconds(timestamp), type = "text", text = new { body = text } });
@@ -58,7 +116,7 @@ internal static class MetaPayloads
             ["type"] = type,
             [type] = media,
         };
-        return Messages(phoneNumberId, "15550000000", waId, "Laura", message);
+        return Messages(phoneNumberId, "15550000000", UserIdFor(waId), waId, "Laura", message);
     }
 
     /// <summary>El <c>value</c> de un <c>messages</c> con un mensaje <c>location</c>, para pasarlo a
@@ -89,11 +147,12 @@ internal static class MetaPayloads
         {
             messaging_product = "whatsapp",
             metadata = Metadata(phoneNumberId, "15550000000"),
-            contacts = new[] { new { profile = new { name = profileName }, wa_id = waId } },
+            contacts = new[] { new { profile = new { name = profileName }, user_id = UserIdFor(waId), wa_id = waId } },
             messages = new[]
             {
                 new JsonObject
                 {
+                    ["from_user_id"] = UserIdFor(waId),
                     ["from"] = waId,
                     ["id"] = wamid,
                     ["timestamp"] = Seconds(timestamp),
@@ -140,6 +199,61 @@ internal static class MetaPayloads
         return Change("messages", value.ToJsonString());
     }
 
+    /// <summary>Spec 2026-10-10 §3: la forma de <c>user_id_update</c> no está documentada con un ejemplo; ésta es la que
+    /// lee el parser (riesgo de §13).</summary>
+    public static string UserIdUpdate(string previous, string current, string? phoneNumberId = "111", string wabaId = DefaultWabaId)
+    {
+        var value = new JsonObject { ["user_id"] = new JsonObject { ["previous"] = previous, ["current"] = current } };
+        if (phoneNumberId is not null)
+        {
+            value["metadata"] = Metadata(phoneNumberId, "15550000000");
+        }
+
+        return Change("user_id_update", value.ToJsonString(), wabaId);
+    }
+
+    public static string UserChangedUserId(string phoneNumberId, string fromUserId, string newUserId, string body, string wamid, long timestamp)
+    {
+        var message = new JsonObject
+        {
+            ["from_user_id"] = fromUserId,
+            ["id"] = wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "system",
+            ["system"] = new JsonObject { ["body"] = body, ["type"] = "user_changed_user_id", ["user_id"] = newUserId },
+        };
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550000000"),
+            ["contacts"] = new JsonArray(new JsonObject { ["profile"] = new JsonObject { ["name"] = "Laura" }, ["user_id"] = newUserId }),
+            ["messages"] = new JsonArray(message),
+        };
+        return Change("messages", value.ToJsonString());
+    }
+
+    private static readonly string[] MergedKeys = ["contacts", "messages"];
+
+    /// <summary>Un solo change <c>messages</c> con los mensajes y contactos de <paramref name="first"/> y luego los de
+    /// <paramref name="second"/>, en ese orden: como cuando Meta junta varios en la misma entrega.</summary>
+    public static string SameChange(string first, string second)
+    {
+        var root = JsonNode.Parse(first)!;
+        var value = root["entry"]![0]!["changes"]![0]!["value"]!.AsObject();
+        var other = JsonNode.Parse(second)!["entry"]![0]!["changes"]![0]!["value"]!;
+        foreach (var key in MergedKeys)
+        {
+            var target = value[key]?.AsArray() ?? [];
+            value[key] = target;
+            foreach (var item in other[key]?.AsArray() ?? [])
+            {
+                target.Add(item!.DeepClone());
+            }
+        }
+
+        return root.ToJsonString();
+    }
+
     public static string AccountUpdate(string wabaId, string @event, string? banState = null)
     {
         var value = new JsonObject { ["event"] = @event };
@@ -167,16 +281,31 @@ internal static class MetaPayloads
             },
         });
 
-    private static string Messages(string phoneNumberId, string displayPhoneNumber, string waId, string profileName, object message)
+    private static string Messages(string phoneNumberId, string displayPhoneNumber, string userId, string? waId, string profileName, object message)
     {
-        var value = new
+        // Spec 2026-10-10 §8.1: el mensaje lleva su from_user_id (y pierde from si no hay teléfono); el contacto,
+        // su user_id y el wa_id sólo si lo hay.
+        var node = JsonSerializer.SerializeToNode(message)!.AsObject();
+        node["from_user_id"] = userId;
+        if (waId is null)
         {
-            messaging_product = "whatsapp",
-            metadata = Metadata(phoneNumberId, displayPhoneNumber),
-            contacts = new[] { new { profile = new { name = profileName }, wa_id = waId } },
-            messages = new[] { message },
+            node.Remove("from");
+        }
+
+        var contact = new JsonObject { ["profile"] = new JsonObject { ["name"] = profileName }, ["user_id"] = userId };
+        if (waId is not null)
+        {
+            contact["wa_id"] = waId;
+        }
+
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, displayPhoneNumber),
+            ["contacts"] = new JsonArray(contact),
+            ["messages"] = new JsonArray(node),
         };
-        return Change("messages", JsonSerializer.Serialize(value));
+        return Change("messages", value.ToJsonString());
     }
 
     private static JsonObject Metadata(string phoneNumberId, string displayPhoneNumber) =>

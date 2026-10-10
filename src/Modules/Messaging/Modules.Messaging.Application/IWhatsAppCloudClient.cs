@@ -24,7 +24,9 @@ public sealed record MediaInfo(Uri Url, string MimeType, string? Sha256, long Fi
 /// <summary>Decisión 3: el cliente de Graph de Messaging (<c>messaging.meta-graph</c>). Nunca registra el token ni la URL firmada.</summary>
 public interface IWhatsAppCloudClient
 {
-    Task<SendTextResult> SendTextAsync(MessagingSender sender, string waId, string body, string callbackData, CancellationToken cancellationToken);
+    /// <summary>§8.3 y spec 2026-10-10 §6.1.4: <paramref name="contextWamid"/> = el <c>wamid</c> citado, o <c>null</c>.</summary>
+    Task<SendTextResult> SendTextAsync(
+        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
     /// <summary>§8.4: best effort, 5 s. <c>true</c> si Meta respondió 2xx.</summary>
     Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken);

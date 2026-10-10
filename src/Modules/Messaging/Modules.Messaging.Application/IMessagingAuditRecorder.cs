@@ -12,4 +12,8 @@ public static class MessagingAuditActions
     public const string ResourceType = "conversation";
     public const string Resolved = "messaging.conversation.resolved";
     public const string Reopened = "messaging.conversation.reopened";
+    public const string Taken = "messaging.conversation.taken";
+    public const string Transferred = "messaging.conversation.transferred";
+    public const string Released = "messaging.conversation.released";
+    public const string AutoTaken = "messaging.conversation.auto_taken";
 }

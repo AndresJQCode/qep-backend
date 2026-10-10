@@ -68,7 +68,9 @@ public sealed class ResolveConversationHandler(
     IConversationQueries queries,
     IMessagingUnitOfWork unitOfWork,
     IMessagingAuditRecorder audit,
+    IConversationEvents events,
     ConversationSummaryBuilder summaries,
+    CallerMembership caller,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock)
@@ -83,6 +85,9 @@ public sealed class ResolveConversationHandler(
 
         var now = clock.UtcNow;
         conversation.Resolve(now);
+        // Spec 2026-10-10 §6.1.5 (P9): el evento lleva quién; sin membresía activa, actor null (sin 403 nuevo).
+        var actor = await caller.FindAsync(command.TenantId, cancellationToken);
+        events.Record(command.TenantId, conversation.ConnectionId, conversation.Id, new ConversationEvent(ConversationEventType.Resolved, Actor: actor), now);
         audit.Record(command.TenantId, executionContext.SubjectId, MessagingAuditActions.Resolved, conversation.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];
@@ -94,7 +99,9 @@ public sealed class ReopenConversationHandler(
     IConversationQueries queries,
     IMessagingUnitOfWork unitOfWork,
     IMessagingAuditRecorder audit,
+    IConversationEvents events,
     ConversationSummaryBuilder summaries,
+    CallerMembership caller,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock)
@@ -109,6 +116,9 @@ public sealed class ReopenConversationHandler(
 
         var now = clock.UtcNow;
         conversation.Reopen(now);
+        // Spec 2026-10-10 §6.1.5 (P9): el evento lleva quién; sin membresía activa, actor null (sin 403 nuevo).
+        var actor = await caller.FindAsync(command.TenantId, cancellationToken);
+        events.Record(command.TenantId, conversation.ConnectionId, conversation.Id, new ConversationEvent(ConversationEventType.Reopened, Actor: actor), now);
         audit.Record(command.TenantId, executionContext.SubjectId, MessagingAuditActions.Reopened, conversation.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];

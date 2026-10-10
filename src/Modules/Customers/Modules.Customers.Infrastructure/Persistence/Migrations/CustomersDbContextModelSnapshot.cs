@@ -87,7 +87,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnName("id");
 
                     b.Property<string>("Address")
-                        .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("address");
@@ -106,12 +105,19 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("city_name");
 
-                    b.Property<Guid>("ClassificationId")
+                    b.Property<Guid?>("ClassificationId")
                         .HasColumnType("uuid")
                         .HasColumnName("classification_id");
 
-                    b.Property<string>("Country")
+                    b.Property<string>("Completeness")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Complete")
+                        .HasColumnName("completeness");
+
+                    b.Property<string>("Country")
                         .HasMaxLength(2)
                         .HasColumnType("character varying(2)")
                         .HasColumnName("country");
@@ -121,7 +127,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnName("created_at");
 
                     b.Property<string>("Cuc")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("cuc");
@@ -132,13 +137,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnName("email");
 
                     b.Property<string>("IdentificationNumber")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_number");
 
                     b.Property<string>("IdentificationType")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_type");
@@ -180,6 +183,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<string>("WhatsAppUserId")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("whatsapp_user_id");
+
                     b.Property<bool>("WithRetention")
                         .HasColumnType("boolean")
                         .HasColumnName("with_retention");
@@ -198,9 +206,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Name"), "gin");
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Name"), new[] { "gin_trgm_ops" });
 
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("IX_customers_tenant");
-
                     b.HasIndex("TenantId", "ClassificationId");
 
                     b.HasIndex("TenantId", "Cuc")
@@ -215,7 +220,21 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_customers_tenant_identification");
 
-                    b.ToTable("customers", "customers");
+                    b.HasIndex(new[] { "TenantId" }, "IX_customers_tenant");
+
+                    b.HasIndex(new[] { "TenantId" }, "IX_customers_tenant_incomplete")
+                        .HasFilter("completeness = 'Incomplete'");
+
+                    b.HasIndex(new[] { "TenantId", "WhatsAppUserId" }, "IX_customers_tenant_whatsapp_user_id")
+                        .IsUnique()
+                        .HasFilter("whatsapp_user_id IS NOT NULL");
+
+                    b.ToTable("customers", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_customers_complete_fields", "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL AND address IS NOT NULL AND country IS NOT NULL AND classification_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerAddress", b =>
@@ -346,7 +365,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TenantId", "ClassificationId")
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("FK_customers_client_classifications_classification_id");
                 });
 

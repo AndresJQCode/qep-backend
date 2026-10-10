@@ -565,7 +565,8 @@ public sealed class ImportCustomersHandler(
                     phoneNormalizer);
 
                 imported.Add(new ImportedCustomerRow(
-                    candidate.RowNumber, customer.Cuc, candidate.Name, "updated"));
+                    // Update exige una ficha completa (EnsureComplete), y una completa siempre tiene CUC.
+                    candidate.RowNumber, customer.Cuc!, candidate.Name, "updated"));
                 continue;
             }
 

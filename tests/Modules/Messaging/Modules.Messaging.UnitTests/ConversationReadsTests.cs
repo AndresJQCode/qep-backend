@@ -25,11 +25,13 @@ public sealed class ConversationReadsTests
     public void APartialLastMessageSnapshotIsNullNotAnError()
     {
         var row = new ConversationRow(
-            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "573001234567", "Laura", ConversationStatus.Open, 1,
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), UserId: null, WaId: "573001234567", Username: null, "Laura",
+            CustomerId: null, AssignedMemberId: null, ConversationStatus.Open, 1,
             null, Guid.CreateVersion7(), LastMessageDirection: null, MessageKind.Text, "hola", MessageStatus.Delivered,
             DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, 1);
 
-        var summary = ConversationSummaryBuilder.ToSummary(row, new Dictionary<Guid, string>(), new Dictionary<string, CustomerRefDto>());
+        var summary = ConversationSummaryBuilder.ToSummary(
+            row, new Dictionary<Guid, string>(), new Dictionary<Guid, CustomerRefDto>(), new Dictionary<string, CustomerRefDto>(), new Dictionary<Guid, string>(), null);
 
         Assert.Null(summary.LastMessage);
     }

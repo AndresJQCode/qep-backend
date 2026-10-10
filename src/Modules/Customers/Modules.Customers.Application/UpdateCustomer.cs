@@ -34,6 +34,7 @@ public sealed class UpdateCustomerHandler(
     ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
+    ICucGenerator cucGenerator,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateCustomerCommand> validator,
@@ -65,23 +66,76 @@ public sealed class UpdateCustomerHandler(
                 "customers.customer.classification_not_found",
                 "The client classification was not found in this tenant.");
         // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver; uno de afuera escribe la
-        // suya. El validador ya exigio la que corresponde al pais. A diferencia del alta, aca el
-        // resultado no se usa para nada mas: el CUC no se reconstruye en un Update (el
-        // departamento de su codigo es el del alta, no el vigente), asi que esto es puro chequeo
-        // de existencia antes de guardar.
+        // suya. El validador ya exigio la que corresponde al pais. Sobre una ficha completa es puro
+        // chequeo de existencia: el CUC no se reconstruye en un Update (el departamento de su
+        // codigo es el del alta, no el vigente). Sobre una incompleta, la ciudad da el departamento
+        // del CUC que se emite al completarla, como en el alta.
         // Sin `?.`: el validador ya exigio el pais NotEmpty. Ver la misma nota en CreateCustomer.
-        if (string.Equals(
-                command.Country.Trim(),
-                Customer.ColombiaCountryCode,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            _ = await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+        var isColombian = string.Equals(
+            command.Country.Trim(),
+            Customer.ColombiaCountryCode,
+            StringComparison.OrdinalIgnoreCase);
+        var city = isColombian
+            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
                 ?? throw new CustomersDomainException(
                     "customers.customer.city_not_found",
-                    "The city was not found.");
-        }
+                    "The city was not found.")
+            : null;
 
         var now = clock.UtcNow;
+
+        if (!customer.IsComplete)
+        {
+            // Spec 2026-10-10 §6.2: completar emite el CUC exactamente como el alta (CreateCustomer.cs) y
+            // siembra la libreta como Create. Mismas reglas de validacion: el validador ya corrio arriba. El
+            // normalizador va siempre: sin el, PhoneE164 quedaria en null y la bandeja dejaria de encontrar
+            // al cliente por su numero.
+            var sequence = await cucGenerator.NextAsync(command.TenantId, cancellationToken);
+            var cuc = CucFormatter.Build(
+                classification.Prefix,
+                city?.DepartmentDivipolaCode ?? CucFormatter.ForeignDepartmentCode,
+                sequence);
+            customer.Complete(
+                cuc,
+                command.Name,
+                command.BusinessName,
+                city is null
+                    ? null
+                    : new CustomerAddressDetails
+                    {
+                        Name = command.Name,
+                        Address = command.Address ?? string.Empty,
+                        CityId = city.CityId,
+                        Phone = command.Phone
+                    },
+                CustomerMapping.ToIdentification(
+                    command.IdentificationType, command.IdentificationNumber),
+                new CustomerContactInfo
+                {
+                    Phone = command.Phone,
+                    Email = command.Email,
+                    Address = command.Address ?? string.Empty,
+                    Country = command.Country,
+                    CityId = command.CityId,
+                    CityName = command.CityName
+                },
+                CustomerMapping.ToCommercialInfo(
+                    command.ClassificationId, command.WithRetention, command.VatSurplus),
+                now,
+                phoneNormalizer);
+            // D-A9: completar se audita aparte de una edicion.
+            auditPublisher.Publish(
+                command.TenantId,
+                executionContext.SubjectId,
+                CustomerAuditActions.Completed,
+                customer.Id.ToString(),
+                "success",
+                now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+
+            return await customer.ToDtoAsync(
+                geographyLookup, classificationRepository, cancellationToken);
+        }
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
         // entero, asi que un campo ausente se limpia. El CUC no esta en la firma porque no viaja

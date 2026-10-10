@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Customers.Domain;
 
 namespace Modules.Customers.Infrastructure.Persistence;
@@ -16,6 +17,12 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 
     internal DbSet<CustomersOutboxMessage> Outbox => Set<CustomersOutboxMessage>();
 
+    /// <summary>Spec 2026-10-10 §7.2 (D-A11): exactamente las columnas que antes eran NOT NULL. Teléfono, correo y
+    /// ciudad siguen exigidos por CustomerWriteRules, como antes.</summary>
+    public const string CompleteFieldsCheck =
+        "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL "
+        + "AND address IS NOT NULL AND country IS NOT NULL AND classification_id IS NOT NULL)";
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureCustomer(modelBuilder);
@@ -28,7 +35,11 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     private static void ConfigureCustomer(ModelBuilder modelBuilder)
     {
         var customer = modelBuilder.Entity<Customer>();
-        customer.ToTable("customers", "customers");
+        customer.ToTable("customers", "customers", table =>
+        {
+            table.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
+            table.HasCheckConstraint("CK_customers_complete_fields", CompleteFieldsCheck);
+        });
         customer.HasKey(value => value.Id);
         customer.Property(value => value.Id)
             .HasColumnName("id")
@@ -85,12 +96,12 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.Address)
             .HasColumnName("address")
             .HasMaxLength(CustomerContactInfo.AddressMaxLength);
-        // El pais, ISO-3166-1 alpha-2. Obligatorio: todo cliente esta en algun lado, y es el
-        // discriminante de cual de los dos carriles de ciudad de abajo viene lleno.
+        // El pais, ISO-3166-1 alpha-2, discriminante de cual de los dos carriles de ciudad de abajo
+        // viene lleno. Obligatorio en una ficha completa (CK_customers_complete_fields); un
+        // incompleto puede no tenerlo (spec 2026-10-10 §6.2).
         customer.Property(value => value.Country)
             .HasColumnName("country")
-            .HasMaxLength(CustomerContactInfo.CountryLength)
-            .IsRequired();
+            .HasMaxLength(CustomerContactInfo.CountryLength);
         // city_id es nulo para un cliente que no es de Colombia: DIVIPOLA no describe ninguna
         // ciudad de afuera. La FK real sigue valiendo — Postgres admite NULL bajo una FK.
         customer.Property(value => value.CityId).HasColumnName("city_id");
@@ -107,7 +118,10 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // modela con HasOne/HasForeignKey normal y EF genera la migracion completa.
         customer.Property(value => value.ClassificationId)
             .HasColumnName("classification_id")
-            .HasConversion(id => id.Value, value => new ClientClassificationId(value));
+            // Conversor del tipo no anulable: EF lo aplica a la propiedad anulable sin pasarle
+            // nunca un null (un incompleto no tiene clasificación, spec 2026-10-10 §6.2).
+            .HasConversion(new ValueConverter<ClientClassificationId, Guid>(
+                id => id.Value, value => new ClientClassificationId(value)));
         customer.HasIndex(value => value.ClassificationId)
             .HasDatabaseName("IX_customers_classification");
         customer.HasOne<ClientClassification>()
@@ -124,13 +138,28 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .IsConcurrencyToken();
         customer.Property(value => value.CreatedAt).HasColumnName("created_at");
         customer.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // El DEFAULT existe sólo para el binario viejo durante el despliegue (spec 2026-10-10 D-A11). El centinela
+        // inválido hace que EF nunca omita la columna en el INSERT: el código nuevo siempre la escribe, también
+        // cuando vale Complete (el valor por defecto del enum).
+        customer.Property(value => value.Completeness).HasColumnName("completeness").HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(CustomerCompleteness.Complete)
+            .HasSentinel((CustomerCompleteness)(-1));
+        customer.Ignore(value => value.IsComplete);
+        customer.Property(value => value.WhatsAppUserId).HasColumnName("whatsapp_user_id").HasMaxLength(Customer.WhatsAppUserIdMaxLength);
+        // Spec 2026-10-10 §7.2: la identidad de WhatsApp y el árbitro de la carrera de §9.4. CustomersUnitOfWork la
+        // traduce por este nombre (T2).
+        customer.HasIndex(value => new { value.TenantId, value.WhatsAppUserId }, "IX_customers_tenant_whatsapp_user_id")
+            .IsUnique().HasFilter("whatsapp_user_id IS NOT NULL");
+        customer.HasIndex(value => value.TenantId, "IX_customers_tenant_incomplete").HasFilter("completeness = 'Incomplete'");
 
         // La coleccion se lee por el campo de respaldo: el agregado la expone como
         // IReadOnlyCollection y EF no puede escribir en ella.
         customer.Navigation(value => value.Addresses)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        customer.HasIndex(value => value.TenantId).HasDatabaseName("IX_customers_tenant");
+        // Con nombre: sin él, EF funde este índice con IX_customers_tenant_incomplete (misma columna) y
+        // el segundo pisa el filtro del primero.
+        customer.HasIndex(value => value.TenantId, "IX_customers_tenant");
 
         // La unicidad que promete la identificacion. Nombrado a proposito: la capa de
         // infraestructura discrimina la violacion de unicidad por nombre de indice y no solo por

@@ -37,11 +37,12 @@ public sealed class ConversationsApiTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
+        // Un cliente de QEP con ese teléfono (Customers calcula phone_e164 = +573001234567); la ingesta lo vincula
+        // por teléfono (spec 2026-10-10 §8.2).
+        var customerId = await CreateCustomerAsync(f.Factory, f.Tenant, name: "Droguería Central", phone: "300 123 4567");
         await IngestAsync(f, "573001234567", "w1", 1760000100, "primero");
         await IngestAsync(f, "573009999999", "w2", 1760000200, "segundo", "Pedro");
         await IngestAsync(f, "573001234567", "w3", 1760000300, "tercero");
-        // Un cliente de QEP con ese teléfono (Customers calcula phone_e164 = +573001234567).
-        var customerId = await CreateCustomerAsync(f.Factory, f.Tenant, name: "Droguería Central", phone: "300 123 4567");
 
         var page = await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct);
 
@@ -65,7 +66,8 @@ public sealed class ConversationsApiTests
         Assert.Equal("tercero", first.GetProperty("lastMessage").GetProperty("preview").GetString());
         Assert.Equal("Delivered", first.GetProperty("lastMessage").GetProperty("status").GetString());
         Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1760000300).AddHours(24), first.GetProperty("customerWindowExpiresAt").GetDateTimeOffset());
-        Assert.Equal(JsonValueKind.Null, items[1].GetProperty("customer").ValueKind);
+        // Spec 2026-10-10 §8.2: todo el que escribe es cliente; Pedro nace incompleto con su nombre de perfil.
+        Assert.Equal("Pedro", items[1].GetProperty("customer").GetProperty("name").GetString());
         Assert.True(first.GetProperty("version").GetInt64() >= 1);
     }
 
@@ -82,9 +84,9 @@ public sealed class ConversationsApiTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
+        await CreateCustomerAsync(f.Factory, f.Tenant, name: "Droguería Central", phone: "300 123 4567");
         await IngestAsync(f, "573001234567", "w1", 1760000100, "a");
         await IngestAsync(f, "573009999999", "w2", 1760000200, "b", "Pedro");
-        await CreateCustomerAsync(f.Factory, f.Tenant, name: "Droguería Central", phone: "300 123 4567");
 
         var page = await f.Client.GetFromJsonAsync<JsonElement>($"{ConversationsUrl(f.Tenant.TenantId)}?search={Uri.EscapeDataString(search)}", Ct);
 

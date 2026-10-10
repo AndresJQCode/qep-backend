@@ -33,11 +33,15 @@ internal sealed class MessagingTestBed
 
     public FakeTenantModules TenantModules { get; } = new();
 
-    public ConversationRow OpenConversation(int? lastInboundHoursAgo, bool resolved = false)
+    public FakeConversationRepository Repository { get; } = new();
+
+    public FakeMessageQueries Messages { get; } = new();
+
+    public ConversationRow OpenConversation(int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null)
     {
         var row = new ConversationRow(
-            Guid.CreateVersion7(), TenantId, ConnectionId, "573001234567", "Laura",
-            resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
+            Guid.CreateVersion7(), TenantId, ConnectionId, UserId: null, WaId: "573001234567", Username: null, "Laura",
+            CustomerId: null, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
             null, null, null, null, null, null, Now, 1);
         Conversations.Rows.Add(row);
@@ -50,6 +54,8 @@ internal sealed class MessagingTestBed
         membership.Active[(SubjectId, TenantId)] = MemberId;
         return new SendMessageHandler(
             Conversations,
+            Repository,
+            Messages,
             Outbound,
             Meta,
             Connections,
@@ -104,16 +110,29 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
     public List<ConversationRow> Rows { get; } = [];
 
     public Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
-        Guid tenantId, ConversationStatus status, string? search, IReadOnlyCollection<string> customerWaIds, int page, int pageSize, CancellationToken cancellationToken)
+        Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken)
     {
-        var items = Rows.Where(row => row.TenantId == tenantId && row.Status == status).ToList();
+        var items = Rows
+            .Where(row => row.TenantId == tenantId && row.Status == filter.Status)
+            .Where(row => filter.Assigned switch
+            {
+                AssignedFilter.Mine => filter.MemberId is { } me && row.AssignedMemberId == me,
+                AssignedFilter.Unassigned => row.AssignedMemberId is null,
+                _ => true,
+            })
+            .ToList();
         return Task.FromResult<(IReadOnlyList<ConversationRow>, int)>((items, items.Count));
     }
 
-    public Task<ConversationCountsDto> CountsAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult(new ConversationCountsDto(
-            Rows.Count(row => row.TenantId == tenantId && row.Status == ConversationStatus.Open),
-            Rows.Where(row => row.TenantId == tenantId).Sum(row => row.UnreadCount)));
+    public Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)
+    {
+        var open = Rows.Where(row => row.TenantId == tenantId && row.Status == ConversationStatus.Open).ToList();
+        return Task.FromResult(new ConversationCountsDto(
+            open.Count,
+            Rows.Where(row => row.TenantId == tenantId).Sum(row => row.UnreadCount),
+            memberId is { } me ? open.Count(row => row.AssignedMemberId == me) : 0,
+            open.Count(row => row.AssignedMemberId is null)));
+    }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         Task.FromResult(Rows.SingleOrDefault(row => row.TenantId == tenantId && row.Id == conversationId));
@@ -158,7 +177,7 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
     }
 }
 
-internal sealed record SentText(MessagingSender Sender, string To, string Body, string CallbackData);
+internal sealed record SentText(MessagingSender Sender, SendTarget Target, string Body, string CallbackData, string? ContextWamid);
 
 internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 {
@@ -170,9 +189,10 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     public Action? DuringSend { get; set; }
 
     /// <summary>Como HttpClient: Meta ya recibió el mensaje, pero un token cancelado a mitad de la llamada lanza.</summary>
-    public Task<SendTextResult> SendTextAsync(MessagingSender sender, string waId, string body, string callbackData, CancellationToken cancellationToken)
+    public Task<SendTextResult> SendTextAsync(
+        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
-        Sends.Add(new SentText(sender, waId, body, callbackData));
+        Sends.Add(new SentText(sender, target, body, callbackData, contextWamid));
         DuringSend?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(NextSend);
@@ -203,7 +223,14 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 /// <c>committed-failed:código</c> o <c>rolled-back</c>.</summary>
 internal sealed class FakeOutboundMessages : IOutboundMessages
 {
+    /// <summary>Lo que el reclamo encuentra con <c>FOR UPDATE</c> (un request en vuelo con el mismo clientId).</summary>
     public ExistingOutbound? Existing { get; set; }
+
+    /// <summary>Lo ya commiteado con ese clientId (§8.5 paso 2, sin candado).</summary>
+    public ExistingOutbound? Committed { get; set; }
+
+    public Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
+        Task.FromResult(Committed);
 
     public List<FakeClaim> Claims { get; } = [];
 
@@ -253,6 +280,37 @@ internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing)
         Outcome = outcome;
         return Task.CompletedTask;
     }
+}
+
+internal sealed class FakeConversationRepository : IConversationRepository
+{
+    public AutoAssignOutcome NextAutoAssign { get; set; } = AutoAssignOutcome.Assigned;
+
+    public List<Guid> AutoAssigned { get; } = [];
+
+    public Task<AutoAssignOutcome> TryAutoAssignAsync(Guid tenantId, Guid conversationId, Guid memberId, Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        AutoAssigned.Add(conversationId);
+        return Task.FromResult(NextAutoAssign);
+    }
+
+    public Task<Conversation?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+internal sealed class FakeMessageQueries : IMessageQueries
+{
+    public Dictionary<Guid, ReplyTargetRow> Targets { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, ReplyTargetRow>> FindReplyTargetsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, ReplyTargetRow>>(Targets.Where(pair => ids.Contains(pair.Key)).ToDictionary());
+
+    public Task<MessageCursor?> FindCursorAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyList<MessageRow>> ListThreadAsync(Guid conversationId, MessageCursor? before, int take, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames

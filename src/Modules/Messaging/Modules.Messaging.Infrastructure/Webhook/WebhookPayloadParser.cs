@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Infrastructure.Webhook;
@@ -9,7 +10,7 @@ namespace Modules.Messaging.Infrastructure.Webhook;
 /// la forma documentada se salta y lo desconocido cae en <c>Unsupported</c>; nunca lanza. El cuerpo
 /// ya pasó la firma, pero eso no lo hace bien formado.
 /// </summary>
-internal static class WebhookPayloadParser
+internal static partial class WebhookPayloadParser
 {
     public const string CallbackPrefix = "qep:";
 
@@ -53,6 +54,7 @@ internal static class WebhookPayloadParser
                     {
                         "messages" => ParseMessages(value),
                         "account_update" => ParseAccountUpdate(wabaId ?? string.Empty, value),
+                        "user_id_update" => ParseUserIdUpdate(wabaId ?? string.Empty, value),
                         _ => new UnknownChange(field),
                     });
                 }
@@ -67,24 +69,43 @@ internal static class WebhookPayloadParser
         var phoneNumberId = TryObject(value, "metadata", out var metadata)
             ? ReadString(metadata, "phone_number_id") ?? string.Empty
             : string.Empty;
-        var names = new Dictionary<string, string?>(StringComparer.Ordinal);
+        // Spec 2026-10-10 §8.1: el contacto se indexa por BSUID, que es lo que trae cada mensaje en from_user_id.
+        var contactsByUserId = new Dictionary<string, ContactProfile>(StringComparer.Ordinal);
         if (TryArray(value, "contacts", out var contacts))
         {
             foreach (var contact in contacts.EnumerateArray())
             {
-                if (ReadString(contact, "wa_id") is { } waId)
+                if (ReadString(contact, "user_id") is { } userId && Conversation.IsValidUserId(userId))
                 {
-                    names[waId] = TryObject(contact, "profile", out var profile) ? ReadString(profile, "name") : null;
+                    var hasProfile = TryObject(contact, "profile", out var profile);
+                    contactsByUserId[userId] = new ContactProfile(
+                        Truncate(hasProfile ? ReadString(profile, "name") : null, Conversation.ProfileNameMaxLength),
+                        Truncate(hasProfile ? ReadString(profile, "username") : null, Conversation.UsernameMaxLength),
+                        Truncate(ReadString(contact, "parent_user_id"), Conversation.UserIdMaxLength),
+                        ValidWaId(ReadString(contact, "wa_id")));
                 }
             }
         }
 
         var messages = new List<InboundMessage>();
+        var numberChanges = new List<UserIdChange>();
+        var skippedWithoutUserId = 0;
         if (TryArray(value, "messages", out var items))
         {
             foreach (var item in items.EnumerateArray())
             {
-                if (ParseMessage(item, names) is { } message)
+                if (IsUserChangedUserId(item))
+                {
+                    if (ParseNumberChange(item) is { } numberChange)
+                    {
+                        numberChanges.Add(numberChange);
+                    }
+                }
+                else if (item.ValueKind == JsonValueKind.Object && !Conversation.IsValidUserId(ReadString(item, "from_user_id")))
+                {
+                    skippedWithoutUserId++;
+                }
+                else if (ParseMessage(item, contactsByUserId) is { } message)
                 {
                     messages.Add(message);
                 }
@@ -103,26 +124,30 @@ internal static class WebhookPayloadParser
             }
         }
 
-        return new MessagesChange(phoneNumberId, messages, statuses);
+        return new MessagesChange(phoneNumberId, messages, statuses, numberChanges, skippedWithoutUserId);
     }
 
-    private static InboundMessage? ParseMessage(JsonElement item, Dictionary<string, string?> names)
+    private static bool IsUserChangedUserId(JsonElement item) =>
+        ReadString(item, "type") == "system" && TryObject(item, "system", out var system) && ReadString(system, "type") == "user_changed_user_id";
+
+    private static InboundMessage? ParseMessage(JsonElement item, Dictionary<string, ContactProfile> contacts)
     {
         var wamid = ReadString(item, "id");
-        var from = ReadString(item, "from");
-        // Un from vacío pasaría el All: sin wa_id no hay conversación a la que atarlo. Uno más largo que
-        // conversations.wa_id (varchar(20)) haría fallar el INSERT de la ingesta en cada reintento.
-        if (wamid is null
-            || from is not { Length: > 0 and <= Conversation.WaIdMaxLength }
-            || !from.All(char.IsAsciiDigit)
-            || ReadTimestamp(item) is not { } occurredAt)
+        var userId = ReadString(item, "from_user_id");
+        // Spec 2026-10-10 §8.1: el BSUID es la clave y Meta lo manda siempre. Sin él, el mensaje se salta (tolerancia
+        // de base: nunca lanza) y ParseMessages lo cuenta para que el procesador lo registre. El teléfono es un dato opcional: si from no tiene la forma, se descarta y el
+        // mensaje entra igual; si falta, se toma el wa_id del contacto.
+        if (wamid is null || !Conversation.IsValidUserId(userId) || ReadTimestamp(item) is not { } occurredAt)
         {
             return null;
         }
 
+        // IsValidUserId ya descartó el null.
+        contacts.TryGetValue(userId!, out var contact);
+        var waId = ValidWaId(ReadString(item, "from")) ?? contact?.WaId;
+        var quotedWamid = TryObject(item, "context", out var context) ? ReadString(context, "id") : null;
         var type = ReadString(item, "type");
         var kind = MessageKindMap.FromMetaType(type);
-        var profileName = names.GetValueOrDefault(from);
         string? text = null;
         string? caption = null;
         string? details = null;
@@ -184,8 +209,55 @@ internal static class WebhookPayloadParser
             }
         }
 
-        return new InboundMessage(wamid, from, Truncate(profileName, 256), occurredAt, kind, text, caption, details, media);
+        // El ! va detrás de IsValidUserId, que descarta el null.
+        return new InboundMessage(
+            wamid, userId!, waId, contact?.Name, contact?.Username, contact?.ParentUserId, occurredAt, kind, text, caption, details, media, quotedWamid);
     }
+
+    private static string? ValidWaId(string? value) =>
+        value is { Length: > 0 and <= Conversation.WaIdMaxLength } && value.All(char.IsAsciiDigit) ? value : null;
+
+    [GeneratedRegex("changed from (\\S+) to (\\S+)", RegexOptions.CultureInvariant)]
+    private static partial Regex ChangedFrom();
+
+    /// <summary>Spec 2026-10-10 §8.3: el nuevo es <c>system.user_id</c>; el anterior, <c>from_user_id</c> si es distinto,
+    /// y si no, el del cuerpo («changed from &lt;OLD&gt; to &lt;NEW&gt;»).</summary>
+    private static UserIdChange? ParseNumberChange(JsonElement item)
+    {
+        if (!TryObject(item, "system", out var system) || ReadString(system, "user_id") is not { } current || !Conversation.IsValidUserId(current))
+        {
+            return null;
+        }
+
+        var previous = ReadString(item, "from_user_id");
+        if (previous is null || previous == current)
+        {
+            var match = ChangedFrom().Match(ReadString(system, "body") ?? string.Empty);
+            previous = match.Success ? match.Groups[1].Value : null;
+        }
+
+        return Conversation.IsValidUserId(previous) && previous != current
+            ? new UserIdChange(previous!, current, ValidWaId(ReadString(system, "wa_id")))
+            : null;
+    }
+
+    /// <summary>§8.3: la forma no está documentada con un ejemplo (riesgo de §13); se lee <c>user_id.{previous,current}</c>
+    /// y, si viene, <c>metadata.phone_number_id</c>. Lo que no tenga esa forma cae como campo ignorado, en el log.</summary>
+    private static WebhookChange ParseUserIdUpdate(string wabaId, JsonElement value)
+    {
+        if (!TryObject(value, "user_id", out var ids)
+            || ReadString(ids, "previous") is not { } previous || ReadString(ids, "current") is not { } current
+            || !Conversation.IsValidUserId(previous) || !Conversation.IsValidUserId(current) || previous == current)
+        {
+            return new UnknownChange("user_id_update");
+        }
+
+        var phoneNumberId = TryObject(value, "metadata", out var metadata) ? ReadString(metadata, "phone_number_id") : null;
+        return new UserIdUpdateChange(wabaId, phoneNumberId, new UserIdChange(previous, current, ValidWaId(ReadString(value, "wa_id"))));
+    }
+
+    /// <summary>El contacto de Meta, ya recortado al ancho de cada columna (spec 2026-10-10 §6.1.1).</summary>
+    private sealed record ContactProfile(string? Name, string? Username, string? ParentUserId, string? WaId);
 
     private static StatusUpdate? ParseStatus(JsonElement item)
     {

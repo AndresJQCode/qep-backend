@@ -44,6 +44,9 @@ public sealed class SendMessageApiTests
         ScriptSendOk(f.Factory.MetaHandler);
         var clientId = Guid.CreateVersion7();
         // Fix 1, hallazgo 1: el envío no sube version ni updated_at (un resolver con la versión de antes no da 412).
+        // Ya asignada a quien envía: la autoasignación (spec 2026-10-10 §8.5) sí sube version, y es otra cosa.
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET assigned_member_id = @m, assigned_at = now()",
+            ("m", await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant)));
         var before = await ScalarAsync<string>(f.ConnectionString, "SELECT version || '|' || updated_at::text FROM messaging.conversations");
 
         var response = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId, text = " Sí, tenemos 12 unidades. " });
@@ -61,12 +64,36 @@ public sealed class SendMessageApiTests
         Assert.Equal("/v24.0/111/messages", send.Uri!.AbsolutePath);
         Assert.Equal($"Bearer {SentinelMetaAccessToken}", send.Authorization);
         Assert.Contains($"\"biz_opaque_callback_data\":\"qep:{message.GetProperty("id").GetGuid()}\"", send.Body, StringComparison.Ordinal);
-        Assert.Contains("\"to\":\"573001234567\"", send.Body, StringComparison.Ordinal);
+        // Spec 2026-10-10 §8.1: la conversación nace con BSUID (MetaPayloads.UserIdFor), así que se le escribe por recipient.
+        Assert.Contains($"\"recipient\":\"{MetaPayloads.UserIdFor("573001234567")}\"", send.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"to\"", send.Body, StringComparison.Ordinal);
         Assert.Equal("1|wamid.out|2|1", await ScalarAsync<string>(f.ConnectionString, "SELECT m.status || '|' || m.wamid || '|' || c.last_message_direction || '|' || c.last_message_status FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.direction = 2"));
         Assert.Equal(before, await ScalarAsync<string>(f.ConnectionString, "SELECT version || '|' || updated_at::text FROM messaging.conversations"));
         Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT c.last_message_id = m.id AND c.last_activity_at = m.occurred_at AND c.last_message_preview = m.text FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.direction = 2"));
         var list = await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct);
         Assert.Equal("Outbound", list.GetProperty("items")[0].GetProperty("lastMessage").GetProperty("direction").GetString());
+    }
+
+    // Spec 2026-10-10 §6.1.4 (RF1): una conversación con BSUID y sin teléfono se responde por recipient.
+    [Fact]
+    public async Task ABsuidConversationIsAnsweredByRecipientWithoutTo()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        var conversationId = await SeedBsuidConversationAsync(factory, connectionString, tenant.TenantId, connectionId, "CO.1349120865530274", null, DateTimeOffset.UtcNow.AddMinutes(-5));
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        ScriptSendOk(factory.MetaHandler);
+
+        var response = await SendAsync(client, HttpMethod.Post, MessagesUrl(tenant.TenantId, conversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var send = Assert.Single(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        Assert.Contains("\"recipient\":\"CO.1349120865530274\"", send.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"to\"", send.Body, StringComparison.Ordinal);
     }
 
     [Fact]

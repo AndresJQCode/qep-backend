@@ -20,8 +20,10 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
    1 va en `Meta__App__AppId`; la versión de Graph queda en `Meta__App__GraphApiVersion: "v24.0"`.
 5. **Webhook.** *WhatsApp → Configuration → Webhook → Edit*: «Callback URL» =
    `https://<host de la API>/api/webhooks/whatsapp`; «Verify token» = el mismo valor que la variable secreta
-   `META_WEBHOOK_VERIFY_TOKEN` (aleatorio, 32+ caracteres). Luego «Manage» y suscribe **sólo** `messages` y
-   `account_update`.
+   `META_WEBHOOK_VERIFY_TOKEN` (aleatorio, 32+ caracteres). Luego «Manage» y suscribe `messages`, `account_update` y, si
+   la app lo ofrece en la lista de campos, `user_id_update` (spec 2026-10-10 §13: la documentación no muestra
+   si es un campo aparte). Después del primer cambio de número real, revisa en el log que llegó y que la
+   conversación siguió siendo la misma; hasta entonces el cambio de número se considera no verificado.
 6. **Secretos en `Backend-prod`** (Azure DevOps → Pipelines → Library): variables secretas `META_APP_SECRET` y
    `META_WEBHOOK_VERIFY_TOKEN`; variables normales `META_APP_ID` y `META_CONFIG_ID`. Van **antes** del deploy:
    sin las cinco claves el pod no arranca (`MetaAppOptionsValidator`, a propósito).
@@ -38,6 +40,17 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
 10. **PIN de dos pasos:** el registro fija un PIN aleatorio que no se guarda. Si el número ya tenía
     verificación en dos pasos con otro PIN, `/register` falla (`registration_failed`): quita ese PIN en
     WhatsApp Manager y reintenta.
+11. **Orden del despliegue de la asignación y el BSUID** (spec 2026-10-10 §7, §13). Tres pasos, en este orden:
+    1. **Backend**, con sus dos migraciones: `AddCustomerCompleteness` (Customers) y
+       `AddBsuidAssignmentAndEvents` (Messaging).
+    2. **Frontend de este slice.** El SPA viejo que sigue vivo espera `classification` y `cuc` no nulos en el
+       cliente, trata `direction: "System"` como error de contrato y dibuja `+{waId}` aunque venga `null`. No
+       se rompe de inmediato: los clientes incompletos y los eventos sólo aparecen cuando la ingesta corre.
+    3. **Sólo entonces** prende una conexión de WhatsApp en producción (paso 8 y la conexión desde la SPA).
+       Prenderla antes deja entrar incompletos que el frontend viejo no sabe dibujar.
+
+    `AddBsuidAssignmentAndEvents` tiene que salir **antes o junto con** el primer despliegue de Messaging a
+    producción: sus `CHECK` recorren `messaging.messages`, y eso sólo es barato mientras la tabla está vacía.
 
 ## Notas a confirmar en producción
 

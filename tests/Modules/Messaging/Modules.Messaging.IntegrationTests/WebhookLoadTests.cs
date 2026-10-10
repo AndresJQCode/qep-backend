@@ -61,10 +61,12 @@ public sealed class WebhookLoadTests
 
         Assert.Equal(0L, pending);
         Assert.Equal((long)Persons, await CountAsync(connectionString, "SELECT count(*) FROM messaging.conversations"));
-        Assert.Equal((long)(Persons * MessagesPerPerson), await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages"));
+        // Spec 2026-10-10 §8.7: los entrantes; aparte, un solo evento de cliente por persona pese a la carrera.
+        Assert.Equal((long)(Persons * MessagesPerPerson), await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
+        Assert.Equal((long)Persons, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 3"));
         // Exactamente una fila por wamid.
         Assert.Equal((long)(Persons * MessagesPerPerson), await CountAsync(connectionString, "SELECT count(DISTINCT wamid) FROM messaging.messages"));
-        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM (SELECT wamid FROM messaging.messages GROUP BY wamid HAVING count(*) > 1) AS repeated"));
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM (SELECT wamid FROM messaging.messages WHERE wamid IS NOT NULL GROUP BY wamid HAVING count(*) > 1) AS repeated"));
         Assert.Equal((long)(Persons * MessagesPerPerson), await CountAsync(connectionString, "SELECT sum(unread_count) FROM messaging.conversations"));
         Assert.Equal((long)MessagesPerPerson, await CountAsync(connectionString, "SELECT min(unread_count)::bigint FROM messaging.conversations"));
         Assert.Equal((long)MessagesPerPerson, await CountAsync(connectionString, "SELECT max(unread_count)::bigint FROM messaging.conversations"));

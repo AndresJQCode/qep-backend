@@ -146,7 +146,7 @@ public sealed class CustomerTests
 
         Assert.Equal("CLI08000142", customer.Cuc);
         Assert.Equal("Verde Esencial", customer.Name);
-        Assert.Equal("900-1", customer.Identification.Number);
+        Assert.Equal("900-1", customer.Identification?.Number);
     }
 
     [Theory]
@@ -892,6 +892,10 @@ public sealed class CustomerTests
     {
         public string? ToE164(string? phone, string country) =>
             phone is null ? null : "+57" + new string(phone.Where(char.IsDigit).ToArray());
+
+        public bool IsKnownRegion(string regionCode) => regionCode == "CO";
+
+        public string? RegionOf(string? e164) => null;
     }
 
     // Spec 2026-10-09 §6.5: se calcula al crear y al editar; sin normalizador queda null (P7 del plan).

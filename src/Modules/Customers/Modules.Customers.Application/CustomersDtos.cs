@@ -36,13 +36,13 @@ public sealed record CustomerAddressRequest(
 
 public sealed record CustomerDto(
     Guid Id,
-    string Cuc,
+    string? Cuc,
     /// <summary>El nombre de la persona de contacto.</summary>
     string Name,
     /// <summary>La razon social, cuando el cliente es una empresa. Null si no lo es.</summary>
     string? BusinessName,
-    string IdentificationType,
-    string IdentificationNumber,
+    string? IdentificationType,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     /// <summary>La calle del **domicilio del cliente**; su ciudad va en <c>City</c>. Se conserva
@@ -52,7 +52,7 @@ public sealed record CustomerDto(
     string? Address,
     /// <summary>El pais del cliente, ISO-3166-1 alpha-2 (<c>CO</c>, <c>ES</c>). Decide cual de los
     /// dos carriles de ciudad viene lleno.</summary>
-    string Country,
+    string? Country,
     /// <summary>La ciudad DIVIPOLA resuelta. **Null cuando el cliente no es de Colombia**: su
     /// ciudad viaja en <c>CityName</c>.</summary>
     CustomerCityDto? City,
@@ -61,35 +61,39 @@ public sealed record CustomerDto(
     /// <summary>La ciudad escrita a mano de un cliente de afuera. Null para uno colombiano, que
     /// usa <c>City</c>. Quien pinta la ficha usa <c>City?.Name ?? CityName</c>.</summary>
     string? CityName,
-    ClientClassificationDto Classification,
+    ClientClassificationDto? Classification,
     IReadOnlyCollection<CustomerAddressDto> Addresses,
     bool WithRetention,
     bool VatSurplus,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
+    bool IsComplete);
 
 public sealed record CustomerResponse(
     Guid Id,
-    string Cuc,
+    string? Cuc,
     string Name,
     string? BusinessName,
-    string IdentificationType,
-    string IdentificationNumber,
+    string? IdentificationType,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     string? Address,
-    string Country,
+    string? Country,
     CustomerCityDto? City,
     CustomerDepartmentDto? Department,
     string? CityName,
-    ClientClassificationDto Classification,
+    ClientClassificationDto? Classification,
     IReadOnlyCollection<CustomerAddressDto> Addresses,
     bool WithRetention,
     bool VatSurplus,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
+    bool IsComplete);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -106,17 +110,19 @@ public sealed record CustomerResponse(
 /// </summary>
 public sealed record CustomerListItemResponse(
     Guid Id,
-    string Cuc,
+    string? Cuc,
     string Name,
-    string IdentificationNumber,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
-    string Country,
+    string? Country,
     CustomerCityDto? City,
     CustomerDepartmentDto? Department,
     string? CityName,
-    ClientClassificationDto Classification,
-    bool IsActive);
+    ClientClassificationDto? Classification,
+    bool IsActive,
+    /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
+    bool IsComplete);
 
 /// <summary>
 /// El sobre del listado, con el total que la paginacion necesita.

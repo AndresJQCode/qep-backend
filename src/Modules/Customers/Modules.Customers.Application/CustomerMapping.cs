@@ -12,13 +12,13 @@ internal static class CustomerMapping
     public static CustomerDto ToDto(
         this Customer customer,
         CustomerCityRef? city,
-        ClientClassification classification,
+        ClientClassification? classification,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById) => new(
         customer.Id.Value,
         customer.Cuc,
         customer.Name,
         customer.BusinessName,
-        customer.IdentificationType.ToWireValue(),
+        customer.IdentificationType?.ToWireValue(),
         customer.IdentificationNumber,
         customer.Phone,
         customer.Email,
@@ -38,7 +38,8 @@ internal static class CustomerMapping
             : new CustomerDepartmentDto(
                 city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
         customer.CityName,
-        classification.ToDto(),
+        // Spec 2026-10-10 §5.2: un incompleto no tiene clasificación y viaja en null.
+        classification?.ToDto(),
         customer.Addresses
             .OrderByDescending(address => address.IsPrincipal)
             .ThenBy(address => address.Name)
@@ -48,7 +49,8 @@ internal static class CustomerMapping
         customer.VatSurplus,
         customer.IsActive,
         customer.CreatedAt,
-        customer.UpdatedAt);
+        customer.UpdatedAt,
+        customer.IsComplete);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo
@@ -98,11 +100,13 @@ internal static class CustomerMapping
                 .ToArray(),
             cancellationToken);
         var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
-        var classification = await classificationRepository.FindAsync(
-            customer.TenantId, customer.ClassificationId, cancellationToken)
-            ?? throw new InvalidOperationException(
-                $"Classification '{customer.ClassificationId}' referenced by customer " +
-                $"'{customer.Id}' was not found.");
+        // Spec 2026-10-10 §6.2: un incompleto no tiene clasificación que buscar.
+        var classification = customer.ClassificationId is { } classificationId
+            ? await classificationRepository.FindAsync(customer.TenantId, classificationId, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    $"Classification '{classificationId}' referenced by customer " +
+                    $"'{customer.Id}' was not found.")
+            : null;
 
         return customer.ToDto(city, classification, citiesById);
     }

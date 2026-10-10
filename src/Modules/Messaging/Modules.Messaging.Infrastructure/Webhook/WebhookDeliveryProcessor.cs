@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure.Persistence;
@@ -17,6 +18,8 @@ internal sealed partial class WebhookDeliveryProcessor(
     MessagingDbContext dbContext,
     WebhookRouting routing,
     IMessagingConnectionDirectory directory,
+    IMessagingCustomerDirectory customers,
+    IMessagingAssignees assignees,
     IClock clock,
     ILogger<WebhookDeliveryProcessor> logger)
 {
@@ -34,6 +37,10 @@ internal sealed partial class WebhookDeliveryProcessor(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: field '{Field}' is not handled and was ignored.")]
     private static partial void LogIgnoredField(ILogger logger, long deliveryId, string field);
+
+    // Spec 2026-10-10 §8.1: «se salta y se registra». Sin el texto, el teléfono ni el BSUID que no vino.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: {Count} inbound message(s) without a valid from_user_id were skipped for phone number id {PhoneNumberId}.")]
+    private static partial void LogSkippedWithoutUserId(ILogger logger, long deliveryId, int count, string phoneNumberId);
 
     public async Task<DeliveryOutcome> ProcessAsync(long deliveryId, string payload, int attempts, CancellationToken cancellationToken)
     {
@@ -55,6 +62,9 @@ internal sealed partial class WebhookDeliveryProcessor(
                 case UnknownChange unknown:
                     LogIgnoredField(logger, deliveryId, unknown.Field);
                     break;
+                case UserIdUpdateChange update:
+                    await ProcessUserIdUpdateAsync(deliveryId, update, cancellationToken);
+                    break;
                 default:
                     break;
             }
@@ -65,6 +75,11 @@ internal sealed partial class WebhookDeliveryProcessor(
 
     private async Task<DeliveryOutcome> ProcessMessagesAsync(long deliveryId, MessagesChange change, int attempts, CancellationToken cancellationToken)
     {
+        if (change.SkippedWithoutUserId > 0)
+        {
+            LogSkippedWithoutUserId(logger, deliveryId, change.SkippedWithoutUserId, change.PhoneNumberId);
+        }
+
         var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
         if (route is null)
         {
@@ -79,18 +94,112 @@ internal sealed partial class WebhookDeliveryProcessor(
             LogDiscarded(logger, deliveryId, change.Messages.Count, change.PhoneNumberId, route.IsPaused ? "paused" : "module-off");
         }
 
+        // Spec 2026-10-10 §8.3, P7: el cambio de número se aplica siempre, también con Paused o el módulo apagado, y
+        // **antes** que los entrantes del mismo change: así el primer mensaje con el BSUID nuevo cae en la conversación
+        // movida en vez de abrir otra (D-A7 queda para cuando el mensaje llegó en una entrega anterior).
+        if (change.NumberChanges.Count > 0)
+        {
+            var occurredAt = NumberChangeOccurredAt(change.Messages);
+            foreach (var numberChange in change.NumberChanges)
+            {
+                await ApplyNumberChangeAsync([route], numberChange, occurredAt, cancellationToken);
+            }
+        }
+
         if (accepting)
         {
             var now = clock.UtcNow;
             foreach (var message in change.Messages)
             {
-                await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, now, cancellationToken);
+                var context = await PrepareAsync(route.TenantId, route.ConnectionId, message, cancellationToken);
+                await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, cancellationToken);
             }
         }
 
         // Los statuses se aplican siempre, también con Paused o módulo apagado (decisión 7, D-M18). Task 13b.
         return await ProcessStatusesAsync(deliveryId, route, change, attempts, cancellationToken);
     }
+
+    /// <summary>Spec 2026-10-10 §8.3: por phone_number_id si viene; si no, por la WABA (el BSUID es por portafolio y
+    /// aplica a todas sus conexiones). P7: también con Paused o el módulo apagado.</summary>
+    private async Task ProcessUserIdUpdateAsync(long deliveryId, UserIdUpdateChange update, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<MessagingRoute> routes = update.PhoneNumberId is { } phoneNumberId
+            ? (await routing.FindRouteAsync(phoneNumberId, cancellationToken)) is { } route ? [route] : []
+            : await directory.FindByAccountAsync(update.WabaId, cancellationToken);
+        if (routes.Count == 0)
+        {
+            LogIgnoredField(logger, deliveryId, "user_id_update");
+            return;
+        }
+
+        await ApplyNumberChangeAsync(routes, update.Change, clock.UtcNow, cancellationToken);
+    }
+
+    /// <summary>El evento tiene que quedar antes, en el hilo, que los entrantes del mismo change: la hora de proceso los
+    /// dejaría después (Meta los fecha antes de entregarlos). Va 4 ms antes del más temprano, por debajo de los eventos
+    /// de la ingesta (−1 a −3 ms, <see cref="InboundIngestion"/>), para que nunca compartan milisegundo.</summary>
+    private DateTimeOffset NumberChangeOccurredAt(IReadOnlyList<InboundMessage> messages)
+    {
+        var now = clock.UtcNow;
+        if (messages.Count == 0)
+        {
+            return now;
+        }
+
+        var beforeFirst = messages.Min(message => message.OccurredAt).AddMilliseconds(-4);
+        return beforeFirst < now ? beforeFirst : now;
+    }
+
+    private async Task ApplyNumberChangeAsync(IReadOnlyList<MessagingRoute> routes, UserIdChange change, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
+        foreach (var route in routes)
+        {
+            await ContactNumberChange.ApplyAsync(dbContext, route.TenantId, route.ConnectionId, change, occurredAt, now, cancellationToken);
+        }
+
+        foreach (var tenantId in routes.Select(route => route.TenantId).Distinct())
+        {
+            await customers.ReplaceUserIdAsync(tenantId, change.Previous, change.Current, cancellationToken);
+        }
+    }
+
+    /// <summary>Spec 2026-10-10 §8.1, «Antes de la transacción»: con conversación y cliente no se llama a Customers. Si
+    /// no hay conversación, el asignado a heredar (§8.2, P16): la más reciente del cliente con asignado, si todavía puede
+    /// responder.</summary>
+    private async Task<InboundContext> PrepareAsync(Guid tenantId, Guid connectionId, InboundMessage message, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.Database.SqlQuery<ExistingConversation>(
+            $"""SELECT id AS "Id", customer_id AS "CustomerId" FROM messaging.conversations WHERE connection_id = {connectionId} AND user_id = {message.UserId}""")
+            .ToListAsync(cancellationToken);
+        if (existing is [{ CustomerId: not null }])
+        {
+            return InboundContext.None;
+        }
+
+        var customer = await customers.EnsureAsync(
+            tenantId, new MessagingContact(message.UserId, message.WaId, message.ProfileName, message.Username), cancellationToken);
+        Guid? heir = null;
+        if (existing.Count == 0)
+        {
+            var candidates = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                SELECT assigned_member_id AS "Value" FROM messaging.conversations
+                WHERE tenant_id = {tenantId} AND customer_id = {customer.CustomerId} AND assigned_member_id IS NOT NULL
+                ORDER BY last_activity_at DESC
+                LIMIT 1
+                """).ToListAsync(cancellationToken);
+            if (candidates is [var candidate] && await assignees.CanReplyAsync(tenantId, candidate, cancellationToken))
+            {
+                heir = candidate;
+            }
+        }
+
+        return new InboundContext(customer.CustomerId, customer.Created, heir);
+    }
+
+    private sealed record ExistingConversation(Guid Id, Guid? CustomerId);
 
     /// <summary>§8.2: un status con callback de QEP y sin fila queda pendiente (el envío puede no haber
     /// commiteado el wamid); sin callback y sin fila es ajeno (la app del teléfono) y se descarta.</summary>

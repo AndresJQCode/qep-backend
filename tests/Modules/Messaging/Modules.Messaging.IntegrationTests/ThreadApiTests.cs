@@ -46,7 +46,9 @@ public sealed class ThreadApiTests
         Assert.Equal(["m2", "m3"], older.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("text").GetString()));
         Assert.True(older.GetProperty("hasMore").GetBoolean());
         var oldest = await client.GetFromJsonAsync<JsonElement>($"{MessagesUrl(tenant.TenantId, conversationId)}?limit=5&before={older.GetProperty("items")[0].GetProperty("id").GetGuid()}", Ct);
-        Assert.Equal(["m1"], oldest.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("text").GetString()));
+        // Spec 2026-10-10 §8.7: el evento CustomerCreated también es del hilo, 1 ms antes de m1 (y hasMore lo cuenta).
+        Assert.Equal([null, "m1"], oldest.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("text").GetString()));
+        Assert.Equal("Event", oldest.GetProperty("items")[0].GetProperty("kind").GetString());
         Assert.False(oldest.GetProperty("hasMore").GetBoolean());
     }
 
@@ -70,9 +72,11 @@ public sealed class ThreadApiTests
         await ExecuteAsync(connectionString, "UPDATE messaging.messages SET sent_by_member_id = @m WHERE id = @id", ("m", memberId), ("id", failedId));
 
         var page = await client.GetFromJsonAsync<JsonElement>(MessagesUrl(tenant.TenantId, conversationId), Ct);
-        var items = page.GetProperty("items").EnumerateArray().ToArray();
+        var all = page.GetProperty("items").EnumerateArray().ToArray();
 
-        Assert.Equal(["Document", "Location", "Text"], items.Select(item => item.GetProperty("kind").GetString()));
+        // Spec 2026-10-10 §8.7: el evento CustomerCreated también es del hilo, justo antes del primer mensaje.
+        Assert.Equal(["Event", "Document", "Location", "Text"], all.Select(item => item.GetProperty("kind").GetString()));
+        var items = all[1..];
         var media = items[0].GetProperty("media");
         Assert.Equal(MediaUrl(tenant.TenantId, items[0].GetProperty("id").GetGuid()), media.GetProperty("url").GetString());
         Assert.Equal("application/pdf", media.GetProperty("mimeType").GetString());

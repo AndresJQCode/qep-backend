@@ -33,7 +33,11 @@ internal static class MessagingNotFound
 
 /// <summary>§8.7: arma los <c>ConversationSummary</c> de una página con una llamada a cada directorio.
 /// Público sólo para que Infrastructure lo registre; no es API para otros módulos.</summary>
-public sealed class ConversationSummaryBuilder(IMessagingConnectionDirectory connections, IMessagingCustomerDirectory customers)
+public sealed class ConversationSummaryBuilder(
+    IMessagingConnectionDirectory connections,
+    IMessagingCustomerDirectory customers,
+    IMessagingMemberNames memberNames,
+    CallerMembership caller)
 {
     public const string DeletedConnectionName = "Conexión eliminada";
 
@@ -46,22 +50,47 @@ public sealed class ConversationSummaryBuilder(IMessagingConnectionDirectory con
         }
 
         var names = await connections.ListNamesAsync(tenantId, cancellationToken);
-        var matches = await customers.MatchAsync(tenantId, rows.Select(row => row.WaId).Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
-        return rows.Select(row => ToSummary(row, names, matches)).ToArray();
+        // §6.1.2: el cliente sale de customer_id; el teléfono sólo para las filas viejas que no lo tienen.
+        var byId = await customers.FindRefsAsync(
+            tenantId, rows.Where(row => row.CustomerId is not null).Select(row => row.CustomerId!.Value).Distinct().ToArray(), cancellationToken);
+        var legacyPhones = rows.Where(row => row.CustomerId is null && row.WaId is not null).Select(row => row.WaId!).Distinct(StringComparer.Ordinal).ToArray();
+        var byPhone = legacyPhones.Length == 0
+            ? new Dictionary<string, CustomerRefDto>()
+            : await customers.MatchAsync(tenantId, legacyPhones, cancellationToken);
+        var assignees = rows.Where(row => row.AssignedMemberId is not null).Select(row => row.AssignedMemberId!.Value).Distinct().ToArray();
+        var assigneeNames = assignees.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await memberNames.FindAsync(tenantId, assignees, cancellationToken);
+        var me = assignees.Length == 0 ? null : await caller.FindAsync(tenantId, cancellationToken);
+        return rows.Select(row => ToSummary(row, names, byId, byPhone, assigneeNames, me)).ToArray();
     }
 
     public static ConversationSummary ToSummary(
-        ConversationRow row, IReadOnlyDictionary<Guid, string> names, IReadOnlyDictionary<string, CustomerRefDto> matches)
+        ConversationRow row,
+        IReadOnlyDictionary<Guid, string> connectionNames,
+        IReadOnlyDictionary<Guid, CustomerRefDto> customersById,
+        IReadOnlyDictionary<string, CustomerRefDto> customersByWaId,
+        IReadOnlyDictionary<Guid, string> memberNames,
+        Guid? callerMemberId)
     {
         ArgumentNullException.ThrowIfNull(row);
-        ArgumentNullException.ThrowIfNull(names);
-        ArgumentNullException.ThrowIfNull(matches);
+        ArgumentNullException.ThrowIfNull(connectionNames);
+        ArgumentNullException.ThrowIfNull(customersById);
+        ArgumentNullException.ThrowIfNull(customersByWaId);
+        ArgumentNullException.ThrowIfNull(memberNames);
+        var customer = row.CustomerId is { } customerId
+            ? customersById.GetValueOrDefault(customerId)
+            : row.WaId is { } waId ? customersByWaId.GetValueOrDefault(waId) : null;
+        var assignedTo = row.AssignedMemberId is { } assignee
+            ? new AssignedToDto(assignee, memberNames.GetValueOrDefault(assignee) ?? MessageMapping.DeletedMemberName, assignee == callerMemberId)
+            : null;
         return new(
             row.Id,
             row.ConnectionId,
-            names.GetValueOrDefault(row.ConnectionId) ?? DeletedConnectionName,
-            new ContactDto(row.WaId, row.ProfileName),
-            matches.GetValueOrDefault(row.WaId),
+            connectionNames.GetValueOrDefault(row.ConnectionId) ?? DeletedConnectionName,
+            new ContactDto(row.UserId, row.WaId, row.Username, row.ProfileName),
+            customer,
+            assignedTo,
             row.Status.ToString(),
             row.UnreadCount,
             LastMessageFrom(row),
@@ -87,8 +116,17 @@ internal static class MessageMapping
 
     public static string MediaUrl(Guid tenantId, Guid messageId) => $"/api/v1/tenants/{tenantId}/messaging/media/{messageId}";
 
-    public static MessageDto ToDto(MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames) =>
-        new(
+    /// <summary>Spec 2026-10-10 §5.1: largo máximo de <c>replyTo.preview</c>.</summary>
+    public const int ReplyPreviewMaxLength = 200;
+
+    public static MessageDto ToDto(
+        MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        ArgumentNullException.ThrowIfNull(memberNames);
+        ArgumentNullException.ThrowIfNull(replyTargets);
+        var conversationEvent = row.Kind == MessageKind.Event ? ConversationEventJson.Parse(row.DetailsJson) : null;
+        return new(
             row.Id,
             row.Direction.ToString(),
             row.Kind.ToString(),
@@ -98,8 +136,66 @@ internal static class MessageMapping
             row.Status.ToString(),
             MessageFailureReasons.For(row.FailureCode),
             row.OccurredAt,
-            row.SentByMemberId is { } member ? new SentByDto(member, memberNames.GetValueOrDefault(member) ?? DeletedMemberName) : null,
-            row.ClientId);
+            Member(row.SentByMemberId, memberNames),
+            row.ClientId,
+            row.ReplyToMessageId is { } quoted && replyTargets.TryGetValue(quoted, out var target) ? ToReplyTo(target) : null,
+            conversationEvent is null
+                ? null
+                : new MessageEventDto(
+                    conversationEvent.Type.ToString(),
+                    Member(conversationEvent.Actor, memberNames),
+                    Member(conversationEvent.Target, memberNames),
+                    Member(conversationEvent.Previous, memberNames)));
+    }
+
+    /// <summary>§5.1: el <c>preview</c> es el texto o la leyenda del citado, recortado a <see cref="ReplyPreviewMaxLength"/>.</summary>
+    public static ReplyToDto ToReplyTo(ReplyTargetRow target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var source = target.Text ?? target.Caption;
+        return new ReplyToDto(
+            target.Id,
+            target.Direction.ToString(),
+            target.Kind.ToString(),
+            source is null ? null : source.Length <= ReplyPreviewMaxLength ? source : source[..ReplyPreviewMaxLength]);
+    }
+
+    /// <summary>Los ids de membresía que una página necesita con nombre: <c>sentBy</c> y los de cada evento.</summary>
+    public static IReadOnlyCollection<Guid> MemberIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var ids = new HashSet<Guid>();
+        foreach (var row in rows)
+        {
+            if (row.SentByMemberId is { } sender)
+            {
+                ids.Add(sender);
+            }
+
+            if (row.Kind == MessageKind.Event && ConversationEventJson.Parse(row.DetailsJson) is { } value)
+            {
+                foreach (var id in new[] { value.Actor, value.Target, value.Previous })
+                {
+                    if (id is { } member)
+                    {
+                        ids.Add(member);
+                    }
+                }
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>§8.6 (P10): los citados que una página necesita resolver, sin repetir.</summary>
+    public static IReadOnlyCollection<Guid> ReplyTargetIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Where(row => row.ReplyToMessageId is not null).Select(row => row.ReplyToMessageId!.Value).Distinct().ToArray();
+    }
+
+    private static MemberRefDto? Member(Guid? memberId, IReadOnlyDictionary<Guid, string> memberNames) =>
+        memberId is { } id ? new MemberRefDto(id, memberNames.GetValueOrDefault(id) ?? DeletedMemberName) : null;
 
     /// <summary><c>details</c> de un <c>location</c> es el objeto de Meta tal cual (§8.7). Si no trae
     /// coordenadas numéricas, el mensaje sale sin <c>location</c> en vez de romper la página.</summary>

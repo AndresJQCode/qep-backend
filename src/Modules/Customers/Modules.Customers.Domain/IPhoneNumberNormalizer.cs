@@ -9,4 +9,11 @@ namespace Modules.Customers.Domain;
 public interface IPhoneNumberNormalizer
 {
     string? ToE164(string? phone, string country);
+
+    /// <summary>Spec 2026-10-10 §6.2: si <paramref name="regionCode"/> (ISO 3166 alfa-2) es una región que
+    /// la librería conoce. El prefijo del BSUID sólo da el país del incompleto si lo es.</summary>
+    bool IsKnownRegion(string regionCode);
+
+    /// <summary>La región de un número E.164 con «+», o <c>null</c> si no parsea o no tiene una sola.</summary>
+    string? RegionOf(string? e164);
 }

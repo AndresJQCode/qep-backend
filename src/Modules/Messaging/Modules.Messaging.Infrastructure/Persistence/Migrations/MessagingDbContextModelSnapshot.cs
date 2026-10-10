@@ -98,6 +98,14 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("AssignedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("assigned_at");
+
+                    b.Property<Guid?>("AssignedMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_member_id");
+
                     b.Property<Guid>("ConnectionId")
                         .HasColumnType("uuid")
                         .HasColumnName("connection_id");
@@ -105,6 +113,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
 
                     b.Property<DateTimeOffset>("LastActivityAt")
                         .HasColumnType("timestamp with time zone")
@@ -143,6 +155,11 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("smallint")
                         .HasColumnName("last_message_status");
 
+                    b.Property<string>("ParentUserId")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("parent_user_id");
+
                     b.Property<string>("ProfileName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
@@ -168,49 +185,80 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<string>("UserId")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Username")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("username");
+
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
                     b.Property<string>("WaId")
-                        .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)")
                         .HasColumnName("wa_id");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProfileName")
-                        .HasDatabaseName("IX_conversations_profile_name_trgm");
-
-                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("ProfileName"), "gin");
-                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("ProfileName"), new[] { "gin_trgm_ops" });
-
-                    b.HasIndex("WaId")
-                        .HasDatabaseName("IX_conversations_wa_id_trgm");
-
-                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("WaId"), "gin");
-                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("WaId"), new[] { "gin_trgm_ops" });
-
-                    b.HasIndex("ConnectionId", "WaId")
+                    b.HasIndex(new[] { "ConnectionId", "UserId" }, "IX_conversations_connection_user")
                         .IsUnique()
-                        .HasDatabaseName("IX_conversations_connection_wa");
+                        .HasFilter("user_id IS NOT NULL");
 
-                    b.HasIndex("TenantId", "Status", "LastActivityAt", "Id")
-                        .IsDescending(false, false, true, true)
-                        .HasDatabaseName("IX_conversations_tenant_status_activity");
+                    b.HasIndex(new[] { "ConnectionId", "WaId" }, "IX_conversations_connection_wa_legacy")
+                        .IsUnique()
+                        .HasFilter("user_id IS NULL");
+
+                    b.HasIndex(new[] { "ProfileName" }, "IX_conversations_profile_name_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "ProfileName" }, "IX_conversations_profile_name_trgm"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "ProfileName" }, "IX_conversations_profile_name_trgm"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex(new[] { "TenantId", "AssignedMemberId", "Status", "LastActivityAt", "Id" }, "IX_conversations_tenant_assignee_status_activity")
+                        .IsDescending(false, false, false, true, true)
+                        .HasFilter("assigned_member_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId", "CustomerId", "LastActivityAt" }, "IX_conversations_tenant_customer_activity")
+                        .IsDescending(false, false, true)
+                        .HasFilter("customer_id IS NOT NULL");
 
                     b.HasIndex(new[] { "TenantId" }, "IX_conversations_tenant_open")
                         .HasFilter("status = 'Open'");
+
+                    b.HasIndex(new[] { "TenantId", "Status", "LastActivityAt", "Id" }, "IX_conversations_tenant_status_activity")
+                        .IsDescending(false, false, true, true);
+
+                    b.HasIndex(new[] { "TenantId", "Status", "LastActivityAt", "Id" }, "IX_conversations_tenant_unassigned_status_activity")
+                        .IsDescending(false, false, true, true)
+                        .HasFilter("assigned_member_id IS NULL");
 
                     b.HasIndex(new[] { "TenantId" }, "IX_conversations_tenant_unread")
                         .HasFilter("unread_count > 0");
 
                     NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex(new[] { "TenantId" }, "IX_conversations_tenant_unread"), new[] { "UnreadCount" });
 
+                    b.HasIndex(new[] { "Username" }, "IX_conversations_username_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "Username" }, "IX_conversations_username_trgm"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "Username" }, "IX_conversations_username_trgm"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex(new[] { "WaId" }, "IX_conversations_wa_id_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "WaId" }, "IX_conversations_wa_id_trgm"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "WaId" }, "IX_conversations_wa_id_trgm"), new[] { "gin_trgm_ops" });
+
                     b.ToTable("conversations", "messaging", t =>
                         {
+                            t.HasCheckConstraint("CK_conversations_assignment", "(assigned_member_id IS NULL) = (assigned_at IS NULL)");
+
+                            t.HasCheckConstraint("CK_conversations_identity", "user_id IS NOT NULL OR wa_id IS NOT NULL");
+
                             t.HasCheckConstraint("CK_conversations_status", "status IN ('Open','Resolved')");
 
                             t.HasCheckConstraint("CK_conversations_unread", "unread_count >= 0");
@@ -333,6 +381,14 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("occurred_at");
 
+                    b.Property<Guid?>("ReplyToMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reply_to_message_id");
+
+                    b.Property<string>("ReplyToWamid")
+                        .HasColumnType("text")
+                        .HasColumnName("reply_to_wamid");
+
                     b.Property<NpgsqlTsVector>("SearchVector")
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("tsvector")
@@ -382,13 +438,17 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                     b.ToTable("messages", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_messages_direction", "direction IN (1, 2)");
+                            t.HasCheckConstraint("CK_messages_direction", "direction IN (1, 2, 3)");
+
+                            t.HasCheckConstraint("CK_messages_event_shape", "direction <> 3 OR (wamid IS NULL AND client_id IS NULL AND status = 2 AND details IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_messages_inbound_not_failed", "direction = 2 OR status <> 4");
 
-                            t.HasCheckConstraint("CK_messages_kind", "kind BETWEEN 1 AND 12");
+                            t.HasCheckConstraint("CK_messages_kind", "kind BETWEEN 1 AND 13");
 
                             t.HasCheckConstraint("CK_messages_status", "status BETWEEN 1 AND 4");
+
+                            t.HasCheckConstraint("CK_messages_system_is_event", "(direction = 3) = (kind = 13)");
                         });
                 });
 

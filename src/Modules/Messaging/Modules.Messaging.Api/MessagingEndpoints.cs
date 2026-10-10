@@ -71,6 +71,33 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-10-10 §5.1 y §8.4: asignación con If-Match (428 sin él, 412 con versión vieja); 200 ConversationSummary.
+        group.MapPost("/conversations/{conversationId:guid}/take", TakeAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/conversations/{conversationId:guid}/transfer", TransferAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<TransferConversationRequest>("application/json")
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/conversations/{conversationId:guid}/release", ReleaseAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         group.MapGet("/messages/search", SearchMessagesAsync)
             .RequireAuthorization(MessagingPermissions.ConversationRead)
             .Produces<SearchPageDto>()
@@ -84,6 +111,12 @@ public static class MessagingEndpoints
             .Produces(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .Produces(StatusCodes.Status404NotFound);
+
+        // Spec 2026-10-10 §5.1 (D-A1): a quién se le puede transferir.
+        group.MapGet("/assignees", ListAssigneesAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<AssigneesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
 
         return endpoints;
     }
@@ -128,8 +161,11 @@ public static class MessagingEndpoints
         || contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IResult> ListConversationsAsync(
-        Guid tenantId, string? status, string? search, int? page, int? pageSize, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new ListConversationsQuery(tenantId, status, search, page, pageSize), cancellationToken));
+        Guid tenantId, string? status, string? search, int? page, int? pageSize, string? assigned, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListConversationsQuery(tenantId, status, search, page, pageSize, assigned), cancellationToken));
+
+    private static async Task<IResult> ListAssigneesAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListAssigneesQuery(tenantId), cancellationToken));
 
     private static async Task<IResult> GetConversationAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetConversationQuery(tenantId, conversationId), cancellationToken));
@@ -146,7 +182,7 @@ public static class MessagingEndpoints
     private static async Task<IResult> SendMessageAsync(
         Guid tenantId, Guid conversationId, SendMessageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
-        var message = await dispatcher.SendAsync(new SendMessageCommand(tenantId, conversationId, request.ClientId, request.Text), cancellationToken);
+        var message = await dispatcher.SendAsync(new SendMessageCommand(tenantId, conversationId, request.ClientId, request.Text, request.ReplyTo), cancellationToken);
         // Sin Location: no hay GET de un mensaje suelto, y apuntar a la colección del hilo confundiría.
         return Results.Created((string?)null, message);
     }
@@ -162,6 +198,16 @@ public static class MessagingEndpoints
 
     private static async Task<IResult> ReopenAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ReopenConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> TakeAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new TakeConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> TransferAsync(
+        Guid tenantId, Guid conversationId, TransferConversationRequest request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new TransferConversationCommand(tenantId, conversationId, request.MemberId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ReleaseAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ReleaseConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
 
     // Copia de IntegrationsEndpoints: mismo contrato que /pos y /orders-export-layout; sin If-Match 428,
     // vieja 412 (en el handler).
@@ -192,4 +238,7 @@ public static class MessagingEndpoints
 }
 
 /// <summary>§5.3: <c>clientId</c> lo genera la pantalla por intento de envío; un reintento con el mismo no duplica.</summary>
-public sealed record SendMessageRequest(Guid? ClientId, string? Text);
+public sealed record SendMessageRequest(Guid? ClientId, string? Text, Guid? ReplyTo = null);
+
+/// <summary>Spec 2026-10-10 §5.1.</summary>
+public sealed record TransferConversationRequest(Guid? MemberId);

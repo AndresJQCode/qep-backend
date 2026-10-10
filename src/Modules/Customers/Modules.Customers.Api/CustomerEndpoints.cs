@@ -163,7 +163,8 @@ public static class CustomerEndpoints
         Guid[]? departmentIds = null,
         Guid[]? cityIds = null,
         int page = 1,
-        int pageSize = CustomerPaging.DefaultPageSize)
+        int pageSize = CustomerPaging.DefaultPageSize,
+        string? isComplete = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListCustomersQuery(
@@ -175,7 +176,8 @@ public static class CustomerEndpoints
                 departmentIds,
                 cityIds,
                 page,
-                pageSize),
+                pageSize,
+                isComplete),
             cancellationToken);
 
         return Results.Ok(new CustomersResponse(
@@ -433,7 +435,8 @@ public static class CustomerEndpoints
         customer.VatSurplus,
         customer.IsActive,
         customer.CreatedAt,
-        customer.UpdatedAt);
+        customer.UpdatedAt,
+        customer.IsComplete);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
@@ -447,5 +450,6 @@ public static class CustomerEndpoints
         customer.Department,
         customer.CityName,
         customer.Classification,
-        customer.IsActive);
+        customer.IsActive,
+        customer.IsComplete);
 }

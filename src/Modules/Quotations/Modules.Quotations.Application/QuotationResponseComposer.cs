@@ -111,7 +111,9 @@ public sealed class QuotationResponseComposer(
             ? null
             : new QuotationClientResponse(
                 customer.Id,
-                customer.Cuc,
+                // Un incompleto no tiene CUC (spec 2026-10-10 §6.2), pero tampoco cotizaciones:
+                // Quotations lo rechaza (T4). Esto sólo cubre el tipo y deja el contrato igual.
+                customer.Cuc ?? string.Empty,
                 customer.Name,
                 customer.Phone,
                 customer.Email,
