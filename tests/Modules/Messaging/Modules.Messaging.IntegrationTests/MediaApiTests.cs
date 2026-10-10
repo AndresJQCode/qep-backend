@@ -54,7 +54,7 @@ public sealed class MediaApiTests
         await EnableMessagingAsync(connectionString, tenant.TenantId);
         await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Ventas", "111", "222");
         var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
-        factory.MetaHandler.Respond("/media-1", HttpStatusCode.OK, $$"""{"url":"https://lookaside.test/m/1","mime_type":"{{mimeType}}","sha256":"{{(wrongSha ? "deadbeef" : sha)}}","file_size":{{bytes.Length}},"id":"media-1"}""");
+        factory.MetaHandler.Respond("/media-1", HttpStatusCode.OK, $$"""{"url":"https://lookaside.test/m/1","mime_type":"{{mimeType}}","sha256":"{{(wrongSha ? new string('0', 64) : sha)}}","file_size":{{bytes.Length}},"id":"media-1"}""");
         // El fake compara contra el path: la URL firmada de Meta es https://lookaside.test/m/1.
         factory.MetaHandler.RespondWith("^/m/1$", _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
         using var anonymous = host.CreateClient();
@@ -95,6 +95,26 @@ public sealed class MediaApiTests
         Assert.Equal("true|16", await ScalarAsync<string>(f.ConnectionString, "SELECT (stored_at IS NOT NULL)::text || '|' || size_bytes FROM messaging.message_media"));
         var download = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.Host == "lookaside.test");
         Assert.Equal($"Bearer {SentinelMetaAccessToken}", download.Authorization);
+    }
+
+    [Theory]
+    [InlineData("audio/ogg")]
+    [InlineData("video/mp4")]
+    [InlineData("image/webp")]
+    public async Task AudioVideoAndRasterImagesAreServedInline(string mimeType)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, mimeType);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        await DrainMediaAsync(f.Host);
+
+        var served = await f.Client.GetAsync(MediaUrl(f.Tenant.TenantId, f.MessageId), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, served.StatusCode);
+        Assert.Equal(mimeType, served.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("inline", served.Content.Headers.ContentDisposition?.DispositionType);
+        Assert.Equal("sandbox; default-src 'none'", served.Headers.GetValues("Content-Security-Policy").Single());
     }
 
     // Review Focus 5.

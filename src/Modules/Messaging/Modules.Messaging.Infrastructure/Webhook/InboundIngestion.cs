@@ -73,7 +73,7 @@ internal static class InboundIngestion
         {
             // §8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El
             // mensaje entra; el medio queda rendido de una vez, con el motivo, y el worker nunca lo reclama.
-            var valid = Media.MediaCopyProcessor.IsValidMetaMediaId(media.MetaMediaId);
+            var valid = Media.MediaTransfer.IsValidMetaMediaId(media.MetaMediaId);
             var metaMediaId = valid ? media.MetaMediaId : string.Empty;
             var nextAttemptAt = valid ? now : Media.MediaCopyProcessor.GiveUpAt;
             var lastError = valid ? null : "invalid_media_id";

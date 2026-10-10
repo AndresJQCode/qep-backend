@@ -16,7 +16,9 @@ internal sealed class Sha256PassThroughStream(Stream inner) : Stream
     public override long Length => throw new NotSupportedException();
     public override long Position { get => BytesRead; set => throw new NotSupportedException(); }
 
-    public string FinishHex() => Convert.ToHexStringLower(_hash.GetHashAndReset());
+    public byte[] FinishBytes() => _hash.GetHashAndReset();
+
+    public string FinishHex() => Convert.ToHexStringLower(FinishBytes());
 
     public override int Read(byte[] buffer, int offset, int count)
     {

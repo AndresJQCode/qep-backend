@@ -181,11 +181,22 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     public Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task<MessagingGraphResult<MediaInfo>> GetMediaAsync(MessagingSender sender, string mediaId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    /// <summary>§8.6: lo que responde <c>GET /{media-id}</c>; sin configurar, la prueba no debía llegar acá.</summary>
+    public MessagingGraphResult<MediaInfo>? MediaInfo { get; set; }
+
+    /// <summary>§8.6: el cuerpo de la URL firmada, o la excepción que lanza.</summary>
+    public Func<Uri, CancellationToken, Stream>? OpenMedia { get; set; }
+
+    public List<string> MediaRequests { get; } = [];
+
+    public Task<MessagingGraphResult<MediaInfo>> GetMediaAsync(MessagingSender sender, string mediaId, CancellationToken cancellationToken)
+    {
+        MediaRequests.Add(mediaId);
+        return Task.FromResult(MediaInfo ?? throw new NotSupportedException());
+    }
 
     public Task<Stream> OpenMediaAsync(MessagingSender sender, Uri url, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult((OpenMedia ?? throw new NotSupportedException())(url, cancellationToken));
 }
 
 /// <summary>Cada <c>ClaimAsync</c> deja un <see cref="FakeClaim"/> con cómo se cerró: <c>committed-sent:wamid</c>,

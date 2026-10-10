@@ -50,6 +50,7 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IOutboundMessages, OutboundMessages>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
+        services.AddScoped<MediaTransfer>();
         services.AddScoped<MediaCopyProcessor>();
         services.AddHostedService<MediaCopyWorker>();
 
