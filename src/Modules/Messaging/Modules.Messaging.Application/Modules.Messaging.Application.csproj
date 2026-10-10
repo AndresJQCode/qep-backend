@@ -12,5 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FluentValidation" />
+    <!-- ILogger: el acuse de leído a Meta es best effort y su falla sólo se registra (§8.4). -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 </Project>

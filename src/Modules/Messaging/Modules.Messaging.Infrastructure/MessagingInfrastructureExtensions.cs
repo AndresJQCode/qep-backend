@@ -22,6 +22,8 @@ public static class MessagingInfrastructureExtensions
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
+        // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).
+        services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();
         services.AddScoped<IMessageQueries, MessageQueries>();

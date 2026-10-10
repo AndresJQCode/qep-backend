@@ -533,6 +533,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
         // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
         services.AddScoped<ICommandHandler<SendMessageCommand, MessageDto>, SendMessageHandler>();
+        // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
+        services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
+        services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
+        services.AddScoped<ICommandHandler<ReopenConversationCommand, ConversationSummary>, ReopenConversationHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
