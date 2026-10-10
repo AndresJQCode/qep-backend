@@ -192,9 +192,10 @@ public static class ExportLoadSeeder
                -- que decir de donde es. CO porque la ciudad sale de geography.cities, que es DIVIPOLA.
                'CO', city.id,
                @classification, false, false, 1, @now, @now,
-               -- Sin DEFAULT a propósito (AddCustomerCompleteness): la carga trae todos los datos de una
-               -- ficha completa, y CK_customers_complete_fields lo verifica. Es el nombre del enum
-               -- CustomerCompleteness, que EF guarda como texto.
+               -- Explícito aunque la columna tenga DEFAULT 'Complete': ese default existe sólo para el
+               -- pod viejo durante el despliegue y se quita en una migración posterior. La carga trae
+               -- todos los datos de una ficha completa, y CK_customers_complete_fields lo verifica. Es
+               -- el nombre del enum CustomerCompleteness, que EF guarda como texto.
                'Complete'
         FROM generate_series(1, @customers) AS n
         CROSS JOIN city
