@@ -24,7 +24,7 @@ public sealed class ListConversationsValidator : AbstractValidator<ListConversat
         RuleFor(query => query.PageSize).InclusiveBetween(1, 50).When(query => query.PageSize is not null).OverridePropertyName("pageSize");
         RuleFor(query => query.Assigned)
             .Must(value => value is null or "me" or "none" or "all")
-            .OverridePropertyName("assigned").WithMessage("assigned debe ser me, none o all.");
+            .OverridePropertyName("assigned").WithMessage("assigned must be me, none or all.");
     }
 }
 

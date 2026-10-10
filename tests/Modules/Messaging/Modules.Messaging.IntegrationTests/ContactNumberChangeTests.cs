@@ -106,6 +106,7 @@ public sealed class ContactNumberChangeTests
     // P7: el cambio de número es mantenimiento de identidad, como los statuses: se aplica con Paused o el módulo apagado.
     // La conversación se siembra sin webhook para que la ruta no quede en caché antes de pausar; el entrante de CO.OTHER
     // en el mismo lote prueba que el descarte sí estaba activo.
+    // Los casos user-id-update son de caracterización: esa ruta nunca pasa por el filtro de Paused, así que no fallarían si se quitara la guarda de aplicar siempre.
     [Theory]
     [InlineData("paused", "user-id-update")]
     [InlineData("paused", "system-message")]
