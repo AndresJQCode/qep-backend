@@ -282,12 +282,21 @@ internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing)
 
     public ExistingOutbound? Existing => existing;
 
-    // Como EF/Npgsql: un token ya cancelado hace fallar el commit o el rollback antes de llegar a la base.
-    public Task CommitSentAsync(string wamid, DateTimeOffset occurredAt, CancellationToken cancellationToken) =>
-        Close("committed-sent:" + wamid, cancellationToken);
+    /// <summary>Lo que recibió el commit como id del medio en Meta (spec 2026-10-11 §6.5).</summary>
+    public string? MetaMediaId { get; private set; }
 
-    public Task CommitFailedAsync(int failureCode, string? failureTitle, DateTimeOffset occurredAt, CancellationToken cancellationToken) =>
-        Close("committed-failed:" + failureCode.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+    // Como EF/Npgsql: un token ya cancelado hace fallar el commit o el rollback antes de llegar a la base.
+    public Task CommitSentAsync(string wamid, DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
+    {
+        MetaMediaId = metaMediaId;
+        return Close("committed-sent:" + wamid, cancellationToken);
+    }
+
+    public Task CommitFailedAsync(int failureCode, string? failureTitle, DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
+    {
+        MetaMediaId = metaMediaId;
+        return Close("committed-failed:" + failureCode.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+    }
 
     public Task RollbackAsync(CancellationToken cancellationToken) => Close("rolled-back", cancellationToken);
 

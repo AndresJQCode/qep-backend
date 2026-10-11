@@ -138,7 +138,7 @@ public sealed class SendMessageHandler(
         switch (result.Outcome)
         {
             case SendOutcome.Sent when !string.IsNullOrEmpty(result.Wamid):
-                await claim.CommitSentAsync(result.Wamid, answeredAt, CancellationToken.None);
+                await claim.CommitSentAsync(result.Wamid, answeredAt, null, CancellationToken.None);
                 return await ToDtoAsync(
                     command,
                     new MessageRow(claim.MessageId, conversation.Id, MessageDirection.Outbound, MessageKind.Text, text, null, null, MessageStatus.Sent, null, answeredAt, member,
@@ -152,16 +152,16 @@ public sealed class SendMessageHandler(
                 throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials.");
 
             case SendOutcome.GraphError when result.Code is 131047:
-                await claim.CommitFailedAsync(131047, result.Title, answeredAt, CancellationToken.None);
+                await claim.CommitFailedAsync(131047, result.Title, answeredAt, null, CancellationToken.None);
                 throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "Meta closed the 24-hour window.");
 
             case SendOutcome.GraphError:
-                await claim.CommitFailedAsync(result.Code ?? UnknownGraphErrorCode, result.Title, answeredAt, CancellationToken.None);
+                await claim.CommitFailedAsync(result.Code ?? UnknownGraphErrorCode, result.Title, answeredAt, null, CancellationToken.None);
                 throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "Meta rejected the message.");
 
             default:
                 // Timeout, 5xx, red o un 2xx sin messages[0].id: Meta pudo haberlo aceptado (riesgo residual de §8.3).
-                await claim.CommitFailedAsync(MessageFailureReasons.Unconfirmed, null, answeredAt, CancellationToken.None);
+                await claim.CommitFailedAsync(MessageFailureReasons.Unconfirmed, null, answeredAt, null, CancellationToken.None);
                 throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "The send could not be confirmed with Meta.");
         }
     }
