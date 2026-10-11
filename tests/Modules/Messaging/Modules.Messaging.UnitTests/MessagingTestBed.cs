@@ -207,7 +207,7 @@ internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, stri
 
 internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 {
-    public SendTextResult NextSend { get; set; } = new(SendOutcome.Sent, "wamid.default", null, null);
+    public SendResult NextSend { get; set; } = new(SendOutcome.Sent, "wamid.default", null, null);
 
     public List<SentText> Sends { get; } = [];
 
@@ -215,7 +215,7 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     public Action? DuringSend { get; set; }
 
     /// <summary>Como HttpClient: Meta ya recibió el mensaje, pero un token cancelado a mitad de la llamada lanza.</summary>
-    public Task<SendTextResult> SendTextAsync(
+    public Task<SendResult> SendTextAsync(
         MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
         Sends.Add(new SentText(sender, target, body, callbackData, contextWamid));
@@ -247,7 +247,7 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     }
 
     /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
-    public Task<SendTextResult> SendAudioAsync(
+    public Task<SendResult> SendAudioAsync(
         MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
         AudioSends.Add(new SentAudio(sender, target, mediaId, callbackData, contextWamid));

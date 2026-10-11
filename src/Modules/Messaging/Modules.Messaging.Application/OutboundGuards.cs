@@ -129,7 +129,7 @@ internal sealed class OutboundGuards(
     /// rollback por credencial (la nota de voz borra ahí lo que subió a R2).
     /// </summary>
     public async Task SettleAsync(
-        Guid tenantId, Guid connectionId, IOutboundClaim claim, SendTextResult result, DateTimeOffset answeredAt, string? metaMediaId, Func<Task>? afterRollback)
+        Guid tenantId, Guid connectionId, IOutboundClaim claim, SendResult result, DateTimeOffset answeredAt, string? metaMediaId, Func<Task>? afterRollback)
     {
         ArgumentNullException.ThrowIfNull(claim);
         ArgumentNullException.ThrowIfNull(result);

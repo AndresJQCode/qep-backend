@@ -140,10 +140,10 @@ public sealed class SendAudioMessageHandler(
 
     /// <summary>§6.3 paso 2: una subida fallida usa la tabla del envío. Un 4xx es un rechazo con su código (190/133010
     /// pasan la conexión a NeedsAttention); 5xx, timeout, red o un 2xx sin <c>id</c> no confirman nada.</summary>
-    private static SendTextResult FromUploadFailure(MessagingGraphFailure? failure) =>
+    private static SendResult FromUploadFailure(MessagingGraphFailure? failure) =>
         failure is { HttpStatus: >= 400 and < 500 }
-            ? new SendTextResult(SendOutcome.GraphError, null, failure.Code, null)
-            : new SendTextResult(SendOutcome.Unconfirmed, null, null, null);
+            ? new SendResult(SendOutcome.GraphError, null, failure.Code, null)
+            : new SendResult(SendOutcome.Unconfirmed, null, null, null);
 
     // Best effort: si borrar falla queda un objeto sin fila en el bucket privado, que nadie puede pedir (el GET de media
     // va por la fila). No vale cambiar la respuesta por eso.

@@ -161,7 +161,7 @@ conversación (base §8.3).
 Task<MessagingGraphResult<string>> UploadMediaAsync(
     MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken);
 
-Task<SendTextResult> SendAudioAsync(
+Task<SendResult> SendAudioAsync(
     MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid,
     CancellationToken cancellationToken);
 ```
@@ -169,8 +169,8 @@ Task<SendTextResult> SendAudioAsync(
 - `UploadMediaAsync`: `POST {version}/{phone_number_id}/media`, `MultipartFormDataContent` con
   `messaging_product=whatsapp`, `type=audio/ogg` y `file` (nombre `voice.ogg`, `Content-Type:
   audio/ogg`). Devuelve el `id` o un `MessagingGraphFailure` con el status y `error.code`.
-- `SendAudioAsync` devuelve el mismo `SendTextResult` que el texto. El nombre del record no se cambia
-  en este trabajo (renombrarlo tocaría todo Messaging por un detalle de nombre).
+- `SendAudioAsync` devuelve el mismo `SendResult` que el texto (antes `SendTextResult`; renombrado al
+  dejar de ser sólo del texto, D-V4).
 - Registro: igual que hoy, status, `error.code`, `error_subcode` y `fbtrace_id`. Nunca el token, los
   bytes ni el `media_id` junto a datos de la persona.
 
@@ -290,9 +290,9 @@ claves ni configuración nuevas. Sin migración.
 
 ## 12. Decisiones menores tomadas por el spec (a ratificar)
 
-- **D-V1:** la fila `Failed` también guarda `message_media`, para que la nota se escuche desde otro
+- **D-V1 (ratificada 2026-10-11):** la fila `Failed` también guarda `message_media`, para que la nota se escuche desde otro
   dispositivo y el reintento sobrescriba en lugar de duplicar.
 - **D-V2:** `meta_media_id = ''` cuando la subida a Meta falló, para no migrar la columna a nullable.
 - **D-V3:** se extraen las guardas comunes a `OutboundGuards` en vez de duplicar ~50 líneas de
   `SendMessageHandler`.
-- **D-V4:** `SendTextResult` no se renombra en este trabajo.
+- **D-V4 (revisada 2026-10-11):** el owner pidió renombrar `SendTextResult` a `SendResult`: Messaging no está desplegado.

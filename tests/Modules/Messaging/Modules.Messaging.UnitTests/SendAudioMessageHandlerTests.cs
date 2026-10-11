@@ -24,7 +24,7 @@ public sealed class SendAudioMessageHandlerTests
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: bed.MemberId);
         bed.Meta.NextUpload = new MessagingGraphResult<string>("media.out", null);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.Sent, "wamid.voice", null, null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.voice", null, null);
 
         var message = await bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct);
 
@@ -146,7 +146,7 @@ public sealed class SendAudioMessageHandlerTests
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
         bed.Meta.NextUpload = new MessagingGraphResult<string>("media.out", null);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, graphCode, "title");
+        bed.Meta.NextSend = new SendResult(SendOutcome.GraphError, null, graphCode, "title");
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct));
 
@@ -162,7 +162,7 @@ public sealed class SendAudioMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, 190, "title");
+        bed.Meta.NextSend = new SendResult(SendOutcome.GraphError, null, 190, "title");
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct));
 
@@ -312,7 +312,7 @@ public sealed class SendAudioMessageHandlerTests
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
         using var aborted = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.Sent, "wamid.aborted", null, null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.aborted", null, null);
         bed.Meta.DuringSend = aborted.Cancel;
 
         var message = await bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), aborted.Token);

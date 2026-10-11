@@ -57,11 +57,11 @@ internal sealed partial class WhatsAppCloudClient(
 
     private string Version => string.IsNullOrWhiteSpace(options.Value.GraphApiVersion) ? DefaultGraphApiVersion : options.Value.GraphApiVersion.Trim();
 
-    public Task<SendTextResult> SendTextAsync(
+    public Task<SendResult> SendTextAsync(
         MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
         PostMessageAsync(sender, MessagePayload(target, "text", new JsonObject { ["body"] = body }, callbackData, contextWamid), cancellationToken);
 
-    public Task<SendTextResult> SendAudioAsync(
+    public Task<SendResult> SendAudioAsync(
         MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
         PostMessageAsync(sender, MessagePayload(target, "audio", new JsonObject { ["id"] = mediaId, ["voice"] = true }, callbackData, contextWamid), cancellationToken);
 
@@ -136,7 +136,7 @@ internal sealed partial class WhatsAppCloudClient(
         return payload;
     }
 
-    private async Task<SendTextResult> PostMessageAsync(MessagingSender sender, JsonObject payload, CancellationToken cancellationToken)
+    private async Task<SendResult> PostMessageAsync(MessagingSender sender, JsonObject payload, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sender);
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/messages")
@@ -147,24 +147,24 @@ internal sealed partial class WhatsAppCloudClient(
         using var response = answer.Response;
         if (response is null)
         {
-            return new SendTextResult(SendOutcome.Unconfirmed, null, null, null);
+            return new SendResult(SendOutcome.Unconfirmed, null, null, null);
         }
 
         // §8.3: un 5xx no confirma nada (Meta pudo haberlo aceptado); un 4xx es un rechazo con su código.
         if ((int)response.StatusCode >= 500)
         {
-            return new SendTextResult(SendOutcome.Unconfirmed, null, null, null);
+            return new SendResult(SendOutcome.Unconfirmed, null, null, null);
         }
 
         if (!response.IsSuccessStatusCode)
         {
-            return new SendTextResult(SendOutcome.GraphError, null, answer.Error?.Code, answer.Error?.Title);
+            return new SendResult(SendOutcome.GraphError, null, answer.Error?.Code, answer.Error?.Title);
         }
 
         var wamid = ReadWamid(answer.Body);
         return wamid is null
-            ? new SendTextResult(SendOutcome.Unconfirmed, null, null, null)
-            : new SendTextResult(SendOutcome.Sent, wamid, null, null);
+            ? new SendResult(SendOutcome.Unconfirmed, null, null, null)
+            : new SendResult(SendOutcome.Sent, wamid, null, null);
     }
 
     public async Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken)

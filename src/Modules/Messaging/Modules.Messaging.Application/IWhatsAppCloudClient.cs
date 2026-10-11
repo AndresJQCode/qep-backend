@@ -9,7 +9,7 @@ public enum SendOutcome
 
 /// <summary>§8.3: 2xx con <c>messages[0].id</c>; un error de Graph con su <c>code</c> y <c>title</c>; o nada
 /// confirmado (timeout, 5xx, red).</summary>
-public sealed record SendTextResult(SendOutcome Outcome, string? Wamid, int? Code, string? Title);
+public sealed record SendResult(SendOutcome Outcome, string? Wamid, int? Code, string? Title);
 
 /// <summary>Copia chica de <c>GraphFailure</c> de Integrations: Messaging no lo referencia.</summary>
 public sealed record MessagingGraphFailure(int HttpStatus, int? Code, string Reason);
@@ -25,7 +25,7 @@ public sealed record MediaInfo(Uri Url, string MimeType, string? Sha256, long Fi
 public interface IWhatsAppCloudClient
 {
     /// <summary>§8.3 y spec 2026-10-10 §6.1.4: <paramref name="contextWamid"/> = el <c>wamid</c> citado, o <c>null</c>.</summary>
-    Task<SendTextResult> SendTextAsync(
+    Task<SendResult> SendTextAsync(
         MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-11 §6.4: <c>POST /{phone_number_id}/media</c> en multipart; devuelve el <c>id</c> del
@@ -34,8 +34,8 @@ public interface IWhatsAppCloudClient
         MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-11 §6.4: <c>type: "audio"</c> con <c>voice: true</c>, para que llegue como nota de voz.
-    /// Devuelve el mismo <see cref="SendTextResult"/> que el texto (D-V4: el nombre no se cambia en este trabajo).</summary>
-    Task<SendTextResult> SendAudioAsync(
+    /// Devuelve el mismo <see cref="SendResult"/> que el texto (D-V4: el nombre no se cambia en este trabajo).</summary>
+    Task<SendResult> SendAudioAsync(
         MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
     /// <summary>§8.4: best effort, 5 s. <c>true</c> si Meta respondió 2xx.</summary>

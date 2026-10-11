@@ -16,7 +16,7 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.Sent, "wamid.out", null, null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.out", null, null);
 
         var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "Sí, tenemos 12 unidades."), Ct);
 
@@ -233,7 +233,7 @@ public sealed class SendMessageHandlerTests
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
         var existingId = Guid.CreateVersion7();
         bed.Outbound.Existing = new ExistingOutbound(existingId, MessageStatus.Failed, bed.Now.AddMinutes(-5), bed.MemberId, "de nuevo");
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.Sent, "wamid.again", null, null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.again", null, null);
 
         var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "de nuevo"), Ct);
 
@@ -251,7 +251,7 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, graphCode, "title");
+        bed.Meta.NextSend = new SendResult(SendOutcome.GraphError, null, graphCode, "title");
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), Ct));
 
@@ -267,7 +267,7 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.Sent, "wamid.aborted", null, null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.aborted", null, null);
         using var request = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         bed.Meta.DuringSend = request.Cancel;
 
@@ -289,7 +289,7 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, 190, "title");
+        bed.Meta.NextSend = new SendResult(SendOutcome.GraphError, null, 190, "title");
         using var request = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         bed.Meta.DuringSend = request.Cancel;
 
@@ -308,7 +308,7 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, 133010, "title");
+        bed.Meta.NextSend = new SendResult(SendOutcome.GraphError, null, 133010, "title");
         var cause = new InvalidOperationException("integrations down");
         bed.Connections.ReportFailure = cause;
 
@@ -326,7 +326,7 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.GraphError, null, null, null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.GraphError, null, null, null);
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), Ct));
 
@@ -340,7 +340,7 @@ public sealed class SendMessageHandlerTests
     {
         var bed = new MessagingTestBed();
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
-        bed.Meta.NextSend = new SendTextResult(SendOutcome.Unconfirmed, null, null, null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Unconfirmed, null, null, null);
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "x"), Ct));
 

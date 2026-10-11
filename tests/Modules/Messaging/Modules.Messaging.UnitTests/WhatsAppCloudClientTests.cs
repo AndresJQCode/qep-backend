@@ -266,6 +266,6 @@ public sealed class WhatsAppCloudClientTests
         var result = await ClientFor(handler).SendAudioAsync(
             new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.1", "qep:x", null, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new SendTextResult(SendOutcome.GraphError, null, 131053, "Media upload error"), result);
+        Assert.Equal(new SendResult(SendOutcome.GraphError, null, 131053, "Media upload error"), result);
     }
 }
