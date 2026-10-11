@@ -37,6 +37,8 @@ internal sealed class MessagingTestBed
 
     public FakeMessageQueries Messages { get; } = new();
 
+    public InMemoryMediaStore Store { get; } = new();
+
     public ConversationRow OpenConversation(int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null)
     {
         var row = new ConversationRow(
@@ -65,6 +67,26 @@ internal sealed class MessagingTestBed
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
             new SendMessageValidator());
+    }
+
+    public SendAudioMessageHandler SendAudioHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendAudioMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Store,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            new SendAudioMessageValidator());
     }
 }
 
@@ -355,4 +377,35 @@ internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames
     public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             memberIds.Contains(memberId) ? new Dictionary<Guid, string> { [memberId] = "Andrés" } : new Dictionary<Guid, string>());
+}
+
+/// <summary>Spec 2026-10-11 §6.3: R2 en un diccionario. <see cref="UploadFailure"/> simula que R2 no aceptó el audio.</summary>
+internal sealed class InMemoryMediaStore : IMessagingMediaStore
+{
+    public Dictionary<string, (byte[] Bytes, string ContentType)> Objects { get; } = new(StringComparer.Ordinal);
+
+    public List<string> Deleted { get; } = [];
+
+    public Exception? UploadFailure { get; set; }
+
+    public async Task UploadAsync(string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken)
+    {
+        if (UploadFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, cancellationToken);
+        Objects[key] = (buffer.ToArray(), contentType);
+    }
+
+    public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken)
+    {
+        Deleted.Add(key);
+        Objects.Remove(key);
+        return Task.CompletedTask;
+    }
 }
