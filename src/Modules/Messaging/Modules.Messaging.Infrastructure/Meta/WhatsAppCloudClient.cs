@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Media;
 using Modules.Messaging.Infrastructure.Options;
 
 namespace Modules.Messaging.Infrastructure.Meta;
@@ -22,6 +23,9 @@ internal sealed partial class WhatsAppCloudClient(
     public const string BaseUrl = "https://graph.facebook.com/";
     public const string DefaultGraphApiVersion = "v24.0";
     public static readonly TimeSpan ReadReceiptTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>Spec 2026-10-11 §6.4: el nombre del archivo en la subida. Meta no lo muestra en una nota de voz.</summary>
+    public const string VoiceFileName = "voice.ogg";
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Graph {Operation} answered HTTP {StatusCode} (code {Code}, subcode {Subcode}, fbtrace {FbTraceId})")]
     private static partial void LogAnswered(ILogger logger, string operation, int statusCode, int? code, int? subcode, string? fbTraceId);
@@ -40,18 +44,63 @@ internal sealed partial class WhatsAppCloudClient(
 
     private string Version => string.IsNullOrWhiteSpace(options.Value.GraphApiVersion) ? DefaultGraphApiVersion : options.Value.GraphApiVersion.Trim();
 
-    public async Task<SendTextResult> SendTextAsync(
-        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    public Task<SendTextResult> SendTextAsync(
+        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        PostMessageAsync(sender, MessagePayload(target, "text", new JsonObject { ["body"] = body }, callbackData, contextWamid), cancellationToken);
+
+    public Task<SendTextResult> SendAudioAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        PostMessageAsync(sender, MessagePayload(target, "audio", new JsonObject { ["id"] = mediaId, ["voice"] = true }, callbackData, contextWamid), cancellationToken);
+
+    public async Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sender);
+        var file = new ReadOnlyMemoryContent(content);
+        file.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
+        using var form = new MultipartFormDataContent
+        {
+            { new StringContent("whatsapp"), "messaging_product" },
+            { new StringContent(mimeType), "type" },
+            { file, "file", VoiceFileName },
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/media") { Content = form };
+        var answer = await SendAsync("upload", request, sender.AccessToken, null, cancellationToken);
+        using var response = answer.Response;
+        if (response is null)
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
+        }
+
+        var status = (int)response.StatusCode;
+        if (!response.IsSuccessStatusCode)
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
+        }
+
+        var id = ReadId(answer.Body);
+        if (string.IsNullOrEmpty(id))
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(status, null, "no_id"));
+        }
+
+        // Review Focus 2: meta_media_id es varchar(64). Un id que no cabe haría fallar el commit después de enviar.
+        return MediaTransfer.IsValidMetaMediaId(id)
+            ? new MessagingGraphResult<string>(id, null)
+            : new MessagingGraphResult<string>(null, new MessagingGraphFailure(status, null, "invalid_id"));
+    }
+
+    /// <summary>Spec 2026-10-10 §6.1.4: con <c>JsonObject</c> la clave ausente no viaja (ni <c>to</c> con BSUID ni
+    /// <c>recipient</c> sin él). El orden de los campos es el de siempre: el texto no cambia por compartir esto.</summary>
+    private static JsonObject MessagePayload(SendTarget target, string type, JsonObject content, string callbackData, string? contextWamid)
+    {
         ArgumentNullException.ThrowIfNull(target);
-        // Spec 2026-10-10 §6.1.4: con JsonObject la clave ausente no viaja (ni "to" con BSUID ni "recipient" sin él).
         var payload = new JsonObject
         {
             ["messaging_product"] = "whatsapp",
             ["recipient_type"] = "individual",
-            ["type"] = "text",
-            ["text"] = new JsonObject { ["body"] = body },
+            ["type"] = type,
+            [type] = content,
             ["biz_opaque_callback_data"] = callbackData,
         };
         switch (target)
@@ -71,6 +120,12 @@ internal sealed partial class WhatsAppCloudClient(
             payload["context"] = new JsonObject { ["message_id"] = contextWamid };
         }
 
+        return payload;
+    }
+
+    private async Task<SendTextResult> PostMessageAsync(MessagingSender sender, JsonObject payload, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sender);
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/messages")
         {
             Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
@@ -202,6 +257,23 @@ internal sealed partial class WhatsAppCloudClient(
             response?.Dispose();
             LogUnreachable(logger, operation, "network");
             return new GraphAnswer(null, string.Empty, null, "network");
+        }
+    }
+
+    private static string? ReadId(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                ? id.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

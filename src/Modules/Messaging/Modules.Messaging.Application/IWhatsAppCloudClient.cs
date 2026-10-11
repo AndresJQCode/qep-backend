@@ -28,6 +28,16 @@ public interface IWhatsAppCloudClient
     Task<SendTextResult> SendTextAsync(
         MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-11 §6.4: <c>POST /{phone_number_id}/media</c> en multipart; devuelve el <c>id</c> del
+    /// medio en Meta. Una falla lleva el status (0 = no hubo respuesta) y el <c>error.code</c> si vino.</summary>
+    Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §6.4: <c>type: "audio"</c> con <c>voice: true</c>, para que llegue como nota de voz.
+    /// Devuelve el mismo <see cref="SendTextResult"/> que el texto (D-V4: el nombre no se cambia en este trabajo).</summary>
+    Task<SendTextResult> SendAudioAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken);
+
     /// <summary>§8.4: best effort, 5 s. <c>true</c> si Meta respondió 2xx.</summary>
     Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken);
 

@@ -179,6 +179,10 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
 
 internal sealed record SentText(MessagingSender Sender, SendTarget Target, string Body, string CallbackData, string? ContextWamid);
 
+internal sealed record UploadedMedia(MessagingSender Sender, byte[] Content, string MimeType);
+
+internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid);
+
 internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 {
     public SendTextResult NextSend { get; set; } = new(SendOutcome.Sent, "wamid.default", null, null);
@@ -193,6 +197,30 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
         Sends.Add(new SentText(sender, target, body, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Spec 2026-10-11 §6.3 paso 2: lo que responde la subida a Meta.</summary>
+    public MessagingGraphResult<string> NextUpload { get; set; } = new("media.default", null);
+
+    public List<UploadedMedia> Uploads { get; } = [];
+
+    public List<SentAudio> AudioSends { get; } = [];
+
+    public Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken)
+    {
+        Uploads.Add(new UploadedMedia(sender, content.ToArray(), mimeType));
+        return Task.FromResult(NextUpload);
+    }
+
+    /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
+    public Task<SendTextResult> SendAudioAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        AudioSends.Add(new SentAudio(sender, target, mediaId, callbackData, contextWamid));
         DuringSend?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(NextSend);

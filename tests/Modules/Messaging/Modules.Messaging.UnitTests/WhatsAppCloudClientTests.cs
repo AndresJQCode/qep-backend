@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -73,5 +74,151 @@ public sealed class WhatsAppCloudClientTests
         Assert.Equal(new SendToUserId("CO.1"), SendTarget.For("CO.1", "573001234567"));
         Assert.Equal(new SendToPhone("573001234567"), SendTarget.For(null, "573001234567"));
         Assert.Throws<InvalidOperationException>(() => SendTarget.For(null, null));
+    }
+
+    private sealed record CapturedPart(string? Name, string? FileName, string? ContentType, byte[] Bytes);
+
+    /// <summary>Anota método, path, partes del multipart (o el cuerpo) y responde lo que se le pida.</summary>
+    private sealed class ScriptedHandler(HttpStatusCode status, string responseBody) : HttpMessageHandler
+    {
+        public HttpMethod? Method { get; private set; }
+
+        public string? Path { get; private set; }
+
+        public string? MediaType { get; private set; }
+
+        public string? Body { get; private set; }
+
+        public List<CapturedPart> Parts { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Method = request.Method;
+            Path = request.RequestUri?.AbsolutePath;
+            MediaType = request.Content?.Headers.ContentType?.MediaType;
+            if (request.Content is MultipartFormDataContent multipart)
+            {
+                foreach (var part in multipart)
+                {
+                    Parts.Add(new CapturedPart(
+                        part.Headers.ContentDisposition?.Name?.Trim('"'),
+                        part.Headers.ContentDisposition?.FileName?.Trim('"'),
+                        part.Headers.ContentType?.MediaType,
+                        await part.ReadAsByteArrayAsync(cancellationToken)));
+                }
+            }
+            else if (request.Content is not null)
+            {
+                Body = await request.Content.ReadAsStringAsync(cancellationToken);
+            }
+
+            return new HttpResponseMessage(status) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") };
+        }
+    }
+
+    private sealed class NetworkDownHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("network down");
+    }
+
+    private static WhatsAppCloudClient ClientFor(HttpMessageHandler handler) =>
+        new(new SingleClientFactory(handler), Options.Create(new MessagingMetaOptions()), NullLogger<WhatsAppCloudClient>.Instance);
+
+    private static readonly byte[] Audio = [0x4F, 0x67, 0x67, 0x53, 1, 2, 3];
+
+    [Fact]
+    public async Task AVoiceNoteUploadIsMultipartWithProductTypeAndFile()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"id":"media.123"}""");
+
+        var result = await ClientFor(handler).UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
+
+        Assert.Equal(("media.123", (MessagingGraphFailure?)null), (result.Value, result.Failure));
+        Assert.Equal((HttpMethod.Post, "/v24.0/111/media", "multipart/form-data"), (handler.Method, handler.Path, handler.MediaType));
+        Assert.Equal(["messaging_product", "type", "file"], handler.Parts.Select(part => part.Name));
+        Assert.Equal("whatsapp", Encoding.UTF8.GetString(handler.Parts[0].Bytes));
+        Assert.Equal("audio/ogg", Encoding.UTF8.GetString(handler.Parts[1].Bytes));
+        Assert.Equal(("voice.ogg", "audio/ogg"), (handler.Parts[2].FileName, handler.Parts[2].ContentType));
+        Assert.Equal(Audio, handler.Parts[2].Bytes);
+    }
+
+    [Theory]
+    [InlineData(400, """{"error":{"code":100,"fbtrace_id":"t"}}""", 400, 100, "http_400")]
+    [InlineData(500, "{}", 500, null, "http_500")]
+    [InlineData(200, "{}", 200, null, "no_id")]
+    [InlineData(200, """{"id":""}""", 200, null, "no_id")]
+    public async Task AnUploadThatMetaDoesNotConfirmIsAFailureWithItsStatusAndCode(int status, string body, int expectedStatus, int? expectedCode, string expectedReason)
+    {
+        using var handler = new ScriptedHandler((HttpStatusCode)status, body);
+
+        var result = await ClientFor(handler).UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
+
+        Assert.Null(result.Value);
+        Assert.Equal(new MessagingGraphFailure(expectedStatus, expectedCode, expectedReason), result.Failure);
+    }
+
+    // Review Focus 2: message_media.meta_media_id es varchar(64); un id más largo haría fallar el commit después de enviar.
+    [Fact]
+    public async Task AnUploadIdLongerThanTheColumnIsAFailure()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, $$"""{"id":"{{new string('9', 65)}}"}""");
+
+        var result = await ClientFor(handler).UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new MessagingGraphFailure(200, null, "invalid_id"), result.Failure);
+    }
+
+    [Fact]
+    public async Task AnUnreachableGraphIsAFailureWithoutStatus()
+    {
+        using var handler = new NetworkDownHandler();
+
+        var result = await ClientFor(handler).UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new MessagingGraphFailure(0, null, "network"), result.Failure);
+    }
+
+    [Fact]
+    public async Task AVoiceNoteGoesAsAudioWithVoiceTrueByRecipient()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.voice"}]}""");
+
+        var result = await ClientFor(handler).SendAudioAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.1", "qep:x", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal((SendOutcome.Sent, "wamid.voice"), (result.Outcome, result.Wamid));
+        Assert.Equal("/v24.0/111/messages", handler.Path);
+        Assert.Contains("\"type\":\"audio\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"audio\":{\"id\":\"media.1\",\"voice\":true}", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"biz_opaque_callback_data\":\"qep:x\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"recipient\":\"CO.1\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"to\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"text\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"context\"", handler.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AQuotedVoiceNoteToALegacyPhoneCarriesToAndTheContext()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.voice"}]}""");
+
+        await ClientFor(handler).SendAudioAsync(
+            new MessagingSender("111", "token"), new SendToPhone("573001234567"), "media.1", "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
+
+        Assert.Contains("\"to\":\"573001234567\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"recipient\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"context\":{\"message_id\":\"wamid.quoted\"}", handler.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ARejectedVoiceNoteKeepsTheGraphCodeLikeText()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.BadRequest, """{"error":{"code":131053,"error_user_title":"Media upload error"}}""");
+
+        var result = await ClientFor(handler).SendAudioAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.1", "qep:x", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new SendTextResult(SendOutcome.GraphError, null, 131053, "Media upload error"), result);
     }
 }
