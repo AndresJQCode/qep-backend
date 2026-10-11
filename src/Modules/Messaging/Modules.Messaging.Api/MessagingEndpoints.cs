@@ -1,7 +1,9 @@
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using Modules.Messaging.Application;
 
@@ -9,7 +11,11 @@ namespace Modules.Messaging.Api;
 
 public static class MessagingEndpoints
 {
-    /// <summary>Lista, detalle e hilo (Task 14), búsqueda (Task 15) y envío (Task 16), leído, resolver y reabrir (Task 17)
+    /// <summary>Spec 2026-10-11 §6.1: 16 MB de audio más lo que ocupa el multipart (límites, cabeceras de cada parte y
+    /// los dos campos de texto). Sólo para esta ruta: el resto de la API conserva el suyo (§9).</summary>
+    internal const long AudioBodyMaxBytes = 17L * 1024 * 1024;
+
+    /// <summary>Lista, detalle e hilo (Task 14), búsqueda (Task 15) y envío (Task 16), nota de voz (spec 2026-10-11), leído, resolver y reabrir (Task 17)
     /// y el medio (Task 18), todos bajo <c>/api/v1/tenants/{tenantId:guid}/messaging</c>.</summary>
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -44,6 +50,19 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec 2026-10-11 §4.1: nota de voz en multipart. Ruta propia, para que el Accepts del texto siga en JSON.
+        // DisableAntiforgery con el criterio de CustomerEndpoints (/import); el CSRF por X-Qep-Client sigue aplicando.
+        // Sin .Accepts("multipart/form-data") a propósito: esa metadata activa el AcceptsMatcherPolicy del routing, que
+        // responde 415 a un cuerpo JSON antes de entrar al delegado, y el contrato pide 422 con errors.file y errors.clientId.
+        group.MapPost("/conversations/{conversationId:guid}/messages/audio", SendAudioMessageAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<MessageDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
 
         // Spec 2026-10-09 §8.4: sin If-Match; el acuse a Meta es best effort y la respuesta siempre 204.
         group.MapPost("/conversations/{conversationId:guid}/read", MarkReadAsync)
@@ -186,6 +205,73 @@ public static class MessagingEndpoints
         // Sin Location: no hay GET de un mensaje suelto, y apuntar a la colección del hilo confundiría.
         return Results.Created((string?)null, message);
     }
+
+    /// <summary>
+    /// Spec 2026-10-11 §6.1. El form se lee a mano y no con un <c>IFormFile</c> en la firma: el binder lo leería entero
+    /// antes de entrar acá, con el tope global, y fijar el del endpoint ya no serviría. Primero el tope, después el form.
+    /// Un <c>Content-Length</c> declarado de más se corta sin leer; uno chunked lo corta <c>MultipartBodyLengthLimit</c>.
+    /// Lo que falte o no parsee llega como <c>null</c> (o <c>Guid.Empty</c> en <c>replyTo</c>) y lo marca el validador
+    /// con su clave: un form sin <c>file</c> o un cuerpo que no es multipart es 422, no 415.
+    /// </summary>
+    private static async Task<IResult> SendAudioMessageAsync(
+        Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        if (httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sizeFeature)
+        {
+            sizeFeature.MaxRequestBodySize = AudioBodyMaxBytes;
+        }
+
+        var request = httpContext.Request;
+        if (request.ContentLength > AudioBodyMaxBytes)
+        {
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        }
+
+        IFormCollection form;
+        try
+        {
+            form = request.HasFormContentType
+                ? await request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = AudioBodyMaxBytes }, cancellationToken)
+                : FormCollection.Empty;
+        }
+        catch (InvalidDataException)
+        {
+            // MultipartBodyLengthLimit superado en un cuerpo sin Content-Length.
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        }
+        catch (BadHttpRequestException exception)
+        {
+            // Lo que Kestrel corta al leer (el tope superado, o un cuerpo más corto que su Content-Length): un request malo,
+            // no una falla nuestra. Sin esto ApiExceptionHandler lo volvería un 500 (mismo criterio que WebhookBodyReader).
+            return Results.StatusCode(exception.StatusCode);
+        }
+
+        var command = new SendAudioMessageCommand(
+            tenantId, conversationId, ParseClientId(form["clientId"]), await ReadAudioAsync(form.Files.GetFile("file"), cancellationToken), ParseReplyTo(form["replyTo"]));
+        var message = await dispatcher.SendAsync(command, cancellationToken);
+        // Sin Location, igual que el texto.
+        return Results.Created((string?)null, message);
+    }
+
+    // ≤ 17 MB por el tope del cuerpo; el validador decide si cabe en los 16 MB de Meta.
+    private static async Task<byte[]?> ReadAudioAsync(IFormFile? file, CancellationToken cancellationToken)
+    {
+        if (file is null)
+        {
+            return null;
+        }
+
+        using var buffer = new MemoryStream(capacity: (int)Math.Min(file.Length, AudioBodyMaxBytes));
+        await file.CopyToAsync(buffer, cancellationToken);
+        return buffer.ToArray();
+    }
+
+    private static Guid? ParseClientId(StringValues value) => Guid.TryParse(value.ToString(), out var id) ? id : null;
+
+    /// <summary>Ausente o vacío: sin cita. Presente y no GUID: <c>Guid.Empty</c>, para que el validador lo marque en
+    /// <c>errors.replyTo</c> en vez de ignorar la cita en silencio.</summary>
+    private static Guid? ParseReplyTo(StringValues value) =>
+        StringValues.IsNullOrEmpty(value) ? null : Guid.TryParse(value.ToString(), out var id) ? id : Guid.Empty;
 
     private static async Task<IResult> MarkReadAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {

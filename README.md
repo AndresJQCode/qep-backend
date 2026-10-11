@@ -791,7 +791,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
-| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `read` (`POST`), `resolve` y `reopen` (`POST`, `If-Match`); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` y `reopen` (`POST`, `If-Match`); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -1898,6 +1898,15 @@ del teléfono no aparece en QEP todavía.
 `(conversación, clientId)`: repetir devuelve el mismo mensaje; un `Failed` se reenvía. Cada envío lleva
 `biz_opaque_callback_data = "qep:{messageId}"`, que es como se correlaciona un acuse que llegue antes de
 que el `wamid` esté guardado.
+
+**Notas de voz.** `POST …/conversations/{id}/messages/audio` en `multipart/form-data` con `clientId`, `file` y
+`replyTo` opcional (spec 2026-10-11). Mismas reglas que el texto: ventana, asignado, autoasignación, cita e
+idempotencia por `clientId`. El archivo se valida **por contenido** (OGG con `OpusHead`; un WebM o un MP4 es 422 en
+`file`), hasta 16 MB; el cuerpo tiene tope propio de 17 MB (413). Dentro del reclamo: R2 (`messaging/{tenantId}/{messageId}`,
+bucket privado) → `POST /{phone_number_id}/media` → envío con `audio.voice = true`, que es lo que hace que llegue como
+nota de voz. R2 caído es 422 `messaging.media.upload_failed` sin fila. La fila `Failed` guarda su `message_media`
+(con `meta_media_id = ''` si Meta nunca dio un id), así que la nota se escucha desde otro dispositivo y el reintento
+sobrescribe la misma clave.
 
 **Medios.** Los entrantes se copian a R2 (bucket privado, `messaging/{tenantId}/{messageId}`) con un
 worker que verifica el SHA-256 de Meta; `GET …/messaging/media/{messageId}` los sirve con la sesión,

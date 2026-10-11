@@ -275,6 +275,40 @@ public sealed class RealAuthenticationApiTests
         return content;
     }
 
+    // Spec 2026-10-11 §6.1: la nota de voz lleva DisableAntiforgery por el mismo motivo que /import, y un multipart POST
+    // es un request simple, sin preflight. Sólo X-Qep-Client lo frena. La defensa corre antes de la autenticación.
+    [Fact]
+    public async Task VoiceNoteWithoutCsrfHeaderIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var url = $"/api/v1/tenants/{Guid.NewGuid()}/messaging/conversations/{Guid.NewGuid()}/messages/audio";
+
+        using var withoutHeader = new HttpRequestMessage(HttpMethod.Post, url) { Content = VoiceUpload() };
+        var rejected = await client.SendAsync(withoutHeader, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
+        var problem = await rejected.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal("Missing required client header.", problem?.Title);
+
+        using var withHeader = new HttpRequestMessage(HttpMethod.Post, url) { Content = VoiceUpload() };
+        withHeader.Headers.Add("X-Qep-Client", "web");
+        var passed = await client.SendAsync(withHeader, TestContext.Current.CancellationToken);
+
+        // Pasó la defensa CSRF y la frenó la autenticación: no hay sesión.
+        Assert.Equal(HttpStatusCode.Unauthorized, passed.StatusCode);
+    }
+
+    private static MultipartFormDataContent VoiceUpload()
+    {
+        var content = new MultipartFormDataContent { { new StringContent(Guid.NewGuid().ToString()), "clientId" } };
+        var file = new ByteArrayContent("OggS"u8.ToArray());
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/ogg");
+        content.Add(file, "file", "voice.ogg");
+        return content;
+    }
+
     private sealed record ProblemPayload(string? Title);
 
     [Fact]
