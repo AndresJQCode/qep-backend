@@ -229,12 +229,20 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 
     public List<UploadedMedia> Uploads { get; } = [];
 
+    /// <summary>Lo inesperado durante la subida a Meta (una cancelación, un bug): ya se subió a R2.</summary>
+    public Exception? UploadException { get; set; }
+
     public List<SentAudio> AudioSends { get; } = [];
 
     public Task<MessagingGraphResult<string>> UploadMediaAsync(
         MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken)
     {
         Uploads.Add(new UploadedMedia(sender, content.ToArray(), mimeType));
+        if (UploadException is { } exception)
+        {
+            throw exception;
+        }
+
         return Task.FromResult(NextUpload);
     }
 
@@ -402,9 +410,20 @@ internal sealed class InMemoryMediaStore : IMessagingMediaStore
 
     public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+    public Exception? DeleteFailure { get; set; }
+
+    /// <summary>Los tokens con que se pidió borrar: el borrado best effort va con <c>CancellationToken.None</c>.</summary>
+    public List<CancellationToken> DeleteTokens { get; } = [];
+
     public Task DeleteAsync(string key, CancellationToken cancellationToken)
     {
         Deleted.Add(key);
+        DeleteTokens.Add(cancellationToken);
+        if (DeleteFailure is { } failure)
+        {
+            throw failure;
+        }
+
         Objects.Remove(key);
         return Task.CompletedTask;
     }

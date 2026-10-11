@@ -24,6 +24,13 @@ internal sealed partial class WhatsAppCloudClient(
     public const string DefaultGraphApiVersion = "v24.0";
     public static readonly TimeSpan ReadReceiptTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>La subida de una nota de voz (hasta 16 MB) va por su propio cliente: en los 10 s del compartido, una red
+    /// lenta la cortaría y la nota quedaría Failed por Unconfirmed sin que Meta haya contestado. El texto, el leído y la
+    /// descarga de medios siguen en <see cref="HttpClientName"/>.</summary>
+    public const string UploadHttpClientName = "messaging.meta-graph-upload";
+
+    public static readonly TimeSpan UploadTimeout = TimeSpan.FromSeconds(30);
+
     /// <summary>Spec 2026-10-11 §6.4: el nombre del archivo en la subida. Meta no lo muestra en una nota de voz.</summary>
     public const string VoiceFileName = "voice.ogg";
 
@@ -40,6 +47,12 @@ internal sealed partial class WhatsAppCloudClient(
         client.BaseAddress = new Uri(BaseUrl, UriKind.Absolute);
         client.Timeout = TimeSpan.FromSeconds(10);
         client.DefaultRequestHeaders.UserAgent.ParseAdd("qep-messaging");
+    }
+
+    internal static void ConfigureUploadClient(HttpClient client)
+    {
+        ConfigureClient(client);
+        client.Timeout = UploadTimeout;
     }
 
     private string Version => string.IsNullOrWhiteSpace(options.Value.GraphApiVersion) ? DefaultGraphApiVersion : options.Value.GraphApiVersion.Trim();
@@ -65,7 +78,7 @@ internal sealed partial class WhatsAppCloudClient(
             { file, "file", VoiceFileName },
         };
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/media") { Content = form };
-        var answer = await SendAsync("upload", request, sender.AccessToken, null, cancellationToken);
+        var answer = await SendAsync("upload", request, sender.AccessToken, null, cancellationToken, UploadHttpClientName);
         using var response = answer.Response;
         if (response is null)
         {
@@ -227,10 +240,11 @@ internal sealed partial class WhatsAppCloudClient(
     /// <summary>Manda el request y lee el cuerpo una vez. <c>Response</c> en <c>null</c> = timeout o red; el
     /// llamador desecha la respuesta.</summary>
     private async Task<GraphAnswer> SendAsync(
-        string operation, HttpRequestMessage request, string accessToken, TimeSpan? timeout, CancellationToken cancellationToken)
+        string operation, HttpRequestMessage request, string accessToken, TimeSpan? timeout, CancellationToken cancellationToken,
+        string clientName = HttpClientName)
     {
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        var client = httpClientFactory.CreateClient(HttpClientName);
+        var client = httpClientFactory.CreateClient(clientName);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeout is { } limit)
         {

@@ -46,6 +46,9 @@ internal static class MessagingApiHarness
 
     public const string MessagingGraphClientName = "messaging.meta-graph";
 
+    /// <summary>La subida de la nota de voz va por su propio cliente (30 s); sin interceptarlo, la prueba saldría a Meta.</summary>
+    public const string MessagingGraphUploadClientName = "messaging.meta-graph-upload";
+
     public const string WebhookUrl = "/api/webhooks/whatsapp";
 
     /// <summary>La llave con la que el host cifra los tokens de las conexiones. Calculada, no escrita.</summary>
@@ -194,6 +197,8 @@ internal static class MessagingApiHarness
                 services.AddHttpClient(IntegrationsGraphClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient(MessagingGraphUploadClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
             });
         }

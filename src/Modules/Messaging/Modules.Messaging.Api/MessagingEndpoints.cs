@@ -253,17 +253,19 @@ public static class MessagingEndpoints
         return Results.Created((string?)null, message);
     }
 
-    // ≤ 17 MB por el tope del cuerpo; el validador decide si cabe en los 16 MB de Meta.
-    private static async Task<byte[]?> ReadAudioAsync(IFormFile? file, CancellationToken cancellationToken)
+    // ≤ 17 MB por el tope del cuerpo; el validador decide si cabe en los 16 MB de Meta. Un solo arreglo del tamaño del
+    // archivo: pasar por un MemoryStream y después ToArray() duplicaba hasta 16 MB en el LOH por request.
+    internal static async Task<byte[]?> ReadAudioAsync(IFormFile? file, CancellationToken cancellationToken)
     {
         if (file is null)
         {
             return null;
         }
 
-        using var buffer = new MemoryStream(capacity: (int)Math.Min(file.Length, AudioBodyMaxBytes));
-        await file.CopyToAsync(buffer, cancellationToken);
-        return buffer.ToArray();
+        var audio = new byte[checked((int)Math.Min(file.Length, AudioBodyMaxBytes))];
+        await using var content = file.OpenReadStream();
+        await content.ReadExactlyAsync(audio, cancellationToken);
+        return audio;
     }
 
     private static Guid? ParseClientId(StringValues value) => Guid.TryParse(value.ToString(), out var id) ? id : null;

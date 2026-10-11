@@ -1,9 +1,12 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure;
 using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
 
@@ -167,6 +170,50 @@ public sealed class WhatsAppCloudClientTests
         var result = await ClientFor(handler).UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
 
         Assert.Equal(new MessagingGraphFailure(200, null, "invalid_id"), result.Failure);
+    }
+
+    private sealed class RecordingClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public List<string> Names { get; } = [];
+
+        public HttpClient CreateClient(string name)
+        {
+            Names.Add(name);
+            var client = new HttpClient(handler, disposeHandler: false);
+            WhatsAppCloudClient.ConfigureClient(client);
+            return client;
+        }
+    }
+
+    // Una nota de varios MB por una red lenta no cabe en los 10 s del cliente compartido: sin su propio cliente, la
+    // subida se corta y la nota queda Failed por Unconfirmed sin que Meta haya contestado nada.
+    [Fact]
+    public async Task TheUploadGoesThroughItsOwnClientAndTheSendKeepsTheSharedOne()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"id":"media.123","messages":[{"id":"wamid.voice"}]}""");
+        var factory = new RecordingClientFactory(handler);
+        var client = new WhatsAppCloudClient(factory, Options.Create(new MessagingMetaOptions()), NullLogger<WhatsAppCloudClient>.Instance);
+
+        await client.UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
+        await client.SendAudioAsync(new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.123", "qep:x", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["messaging.meta-graph-upload", "messaging.meta-graph"], factory.Names);
+    }
+
+    [Fact]
+    public void TheRegisteredUploadClientWaitsThirtySecondsAndTheSharedOneTen()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:QepDatabase"] = "Host=localhost;Database=unused" })
+            .Build();
+        using var provider = new ServiceCollection().AddLogging().AddMessagingInfrastructure(configuration).BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        using var upload = factory.CreateClient("messaging.meta-graph-upload");
+        using var shared = factory.CreateClient("messaging.meta-graph");
+
+        Assert.Equal((TimeSpan.FromSeconds(30), new Uri(WhatsAppCloudClient.BaseUrl)), (upload.Timeout, upload.BaseAddress));
+        Assert.Equal(TimeSpan.FromSeconds(10), shared.Timeout);
     }
 
     [Fact]

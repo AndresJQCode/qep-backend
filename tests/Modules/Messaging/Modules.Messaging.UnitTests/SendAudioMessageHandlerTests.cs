@@ -238,6 +238,57 @@ public sealed class SendAudioMessageHandlerTests
         Assert.Equal($"messaging/{bed.TenantId}/{failed}", Assert.Single(bed.Store.Objects).Key);
     }
 
+    // Lo que escape después de subir a R2 deshace el reclamo de la fila nueva: el objeto no tendría fila que lo sirva.
+    [Theory]
+    [InlineData("cancelled")]
+    [InlineData("unexpected")]
+    public async Task AnExceptionAfterTheR2UploadOfANewRowDeletesTheStoredAudio(string scenario)
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        Exception thrown = scenario == "cancelled" ? new OperationCanceledException() : new InvalidOperationException("boom");
+        bed.Meta.UploadException = thrown;
+
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct));
+
+        Assert.Same(thrown, error);
+        var claim = Assert.Single(bed.Outbound.Claims);
+        Assert.Equal([$"messaging/{bed.TenantId}/{claim.MessageId}"], bed.Store.Deleted);
+        Assert.Equal([CancellationToken.None], bed.Store.DeleteTokens);
+        Assert.Empty(bed.Store.Objects);
+    }
+
+    [Fact]
+    public async Task AFailedDeleteDoesNotHideTheOriginalException()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        var thrown = new InvalidOperationException("boom");
+        bed.Meta.UploadException = thrown;
+        bed.Store.DeleteFailure = new IOException("R2 no responde");
+
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct));
+
+        Assert.Same(thrown, error);
+        Assert.Single(bed.Store.Deleted);
+    }
+
+    // Review Focus 1, otra vez: en un reintento de un Failed el objeto es el que la fila ya sirve.
+    [Fact]
+    public async Task AnExceptionAfterTheR2UploadOnARetryKeepsTheAudioTheFailedRowServes()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        var failed = Guid.CreateVersion7();
+        bed.Outbound.Existing = new ExistingOutbound(failed, MessageStatus.Failed, bed.Now.AddMinutes(-5), bed.MemberId, "", null, MessageKind.Audio, "audio/ogg");
+        bed.Meta.UploadException = new OperationCanceledException();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct));
+
+        Assert.Empty(bed.Store.Deleted);
+        Assert.Equal($"messaging/{bed.TenantId}/{failed}", Assert.Single(bed.Store.Objects).Key);
+    }
+
     [Fact]
     public async Task AQuotedVoiceNoteOnAnUnassignedConversationTakesItAndCarriesTheContext()
     {

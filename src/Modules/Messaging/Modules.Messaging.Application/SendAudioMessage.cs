@@ -34,9 +34,9 @@ public sealed class SendAudioMessageValidator : AbstractValidator<SendAudioMessa
 /// <summary>
 /// Spec 2026-10-11 §6.3: mismo orden que <see cref="SendMessageHandler"/> (spec 2026-10-10 §8.5), con las mismas
 /// guardas (<see cref="OutboundGuards"/>). Dentro del reclamo, en este orden: R2 → subida a Meta → envío con
-/// <c>voice: true</c> → la tabla del texto. El candado de la fila dura las tres llamadas (≤ 10 s cada una en
-/// <c>messaging.meta-graph</c>, R2 con su propio tope) y sigue bloqueando una sola fila de mensaje, nunca la
-/// conversación.
+/// <c>voice: true</c> → la tabla del texto. El candado de la fila dura las tres llamadas (≤ 30 s la subida a Meta en
+/// <c>messaging.meta-graph-upload</c>, ≤ 10 s el envío en <c>messaging.meta-graph</c>, R2 con su propio tope) y sigue
+/// bloqueando una sola fila de mensaje, nunca la conversación.
 /// </summary>
 public sealed class SendAudioMessageHandler(
     IConversationQueries conversations,
@@ -104,19 +104,33 @@ public sealed class SendAudioMessageHandler(
         // 2 y 3. Desde acá, como el texto, todo va con CancellationToken.None: si Meta ya aceptó, cortar por la pestaña
         // cerrada borraría la fila y el reintento mandaría la nota dos veces. Una subida fallida no envió nada todavía, así
         // que entra a la misma tabla sin riesgo de duplicar.
-        var upload = await meta.UploadMediaAsync(sender, audio, OggOpusSniffer.MimeType, CancellationToken.None);
-        var mediaId = upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
-        var result = mediaId is null
-            ? FromUploadFailure(upload.Failure)
-            : await meta.SendAudioAsync(
-                sender, SendTarget.For(conversation.UserId, conversation.WaId), mediaId, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
-                permit.Quoted?.Wamid, CancellationToken.None);
-        var answeredAt = _guards.UtcNow;
+        string? mediaId;
+        DateTimeOffset answeredAt;
+        try
+        {
+            var upload = await meta.UploadMediaAsync(sender, audio, OggOpusSniffer.MimeType, CancellationToken.None);
+            mediaId = upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
+            var result = mediaId is null
+                ? FromUploadFailure(upload.Failure)
+                : await meta.SendAudioAsync(
+                    sender, SendTarget.For(conversation.UserId, conversation.WaId), mediaId, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
+                    permit.Quoted?.Wamid, CancellationToken.None);
+            answeredAt = _guards.UtcNow;
 
-        // 4. La tabla del texto. Un rollback por credencial deja sin fila lo que subió una fila nueva: se borra de R2. En
-        // un reintento de un Failed el objeto es el que esa fila ya sirve, y se queda.
-        await _guards.SettleAsync(
-            command.TenantId, conversation.ConnectionId, claim, result, answeredAt, mediaId, claim.Inserted ? () => DiscardStoredAsync(key) : null);
+            // 4. La tabla del texto. Un rollback por credencial deja sin fila lo que subió una fila nueva: se borra de R2. En
+            // un reintento de un Failed el objeto es el que esa fila ya sirve, y se queda.
+            await _guards.SettleAsync(
+                command.TenantId, conversation.ConnectionId, claim, result, answeredAt, mediaId, claim.Inserted ? () => DiscardStoredAsync(key) : null);
+        }
+        catch (Exception exception) when (claim.Inserted && exception is not MessagingDomainException)
+        {
+            // Una cancelación, una falla del commit o un bug: el reclamo se deshace al desecharse y la fila nueva no queda,
+            // así que el objeto de R2 no tendría quién lo sirva. Las MessagingDomainException de SettleAsync llegan después
+            // de un commit Failed (la fila sirve el objeto) o de su propio borrado por credencial: ésas no se tocan.
+            await DiscardStoredAsync(key);
+            throw;
+        }
+
         return await _guards.ToDtoAsync(
             command.TenantId,
             new MessageRow(claim.MessageId, conversation.Id, MessageDirection.Outbound, MessageKind.Audio, null, null, null, MessageStatus.Sent, null, answeredAt, target.Member,

@@ -50,6 +50,10 @@ public static class MessagingInfrastructureExtensions
         services.AddHttpClient(WhatsAppCloudClient.HttpClientName, WhatsAppCloudClient.ConfigureClient)
             .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
             .RemoveAllLoggers();
+        // Spec 2026-10-11 §6.4: la subida de la nota de voz, igual que el anterior pero con 30 s.
+        services.AddHttpClient(WhatsAppCloudClient.UploadHttpClientName, WhatsAppCloudClient.ConfigureUploadClient)
+            .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
         services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
         services.AddScoped<IOutboundMessages, OutboundMessages>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
