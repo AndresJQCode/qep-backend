@@ -18,4 +18,7 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-10 §10: transferir a una membresía que no es activa del tenant o no tiene manage.</summary>
     public const string AssigneeCannotReply = "messaging.conversation.assignee_cannot_reply";
+
+    /// <summary>Spec 2026-10-11 §4.1: R2 no aceptó la nota de voz. No queda fila; reintentar es seguro.</summary>
+    public const string MediaUploadFailed = "messaging.media.upload_failed";
 }
