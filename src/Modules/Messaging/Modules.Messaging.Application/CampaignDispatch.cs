@@ -33,6 +33,10 @@ public sealed record ClaimedRecipient(
     IReadOnlyDictionary<string, CampaignParameter> Parameters,
     Guid CreatedByMemberId);
 
+/// <summary>Decisión del owner 2026-10-12 (P3): lo que pasó el presupuesto de envío. <see cref="Wait"/> es lo que falta para el próximo token
+/// de la conexión que antes se libere (<c>null</c> si todos pasaron): el worker espera eso, y no el tick, antes de reclamar de nuevo.</summary>
+public sealed record CampaignAdmission(IReadOnlyList<ClaimedRecipient> Admitted, TimeSpan? Wait);
+
 /// <summary>El mensaje saliente ya insertado para un destinatario, y su conversación.</summary>
 public sealed record PreparedSend(Guid MessageId, Guid ConversationId);
 
@@ -115,7 +119,7 @@ public sealed partial class CampaignDispatcher(
     IMessagingConnectionDirectory connections,
     IMessagingCustomerDirectory customers,
     IMessageTemplates templates,
-    CampaignRateLimiter limiter,
+    IConnectionSendBudget budget,
     IClock clock)
 {
     /// <summary>§6.3: cinco intentos y después <c>Failed</c>.</summary>
@@ -154,6 +158,48 @@ public sealed partial class CampaignDispatcher(
     /// <summary>Paso 3, primera mitad: hasta <c>MessagesPerSecond × 2</c> destinatarios, con lease de 2 minutos.</summary>
     public Task<IReadOnlyList<ClaimedRecipient>> ClaimAsync(int messagesPerSecond, CancellationToken cancellationToken) =>
         store.ClaimAsync(messagesPerSecond * 2, clock.UtcNow, LeaseLength, cancellationToken);
+
+    /// <summary>
+    /// Decisión del owner 2026-10-12 (P3 y P5), entre el reclamo y el envío: le pide al presupuesto compartido de cada conexión tantos tokens
+    /// como destinatarios reclamó y deja pasar sólo a los que se concedieron. Los demás vuelven a <c>Pending</c> <b>sin gastar el intento</b>
+    /// (<see cref="ICampaignDispatchStore.DeferAsync"/>, como el R4), con <c>next_attempt_at</c> escalonado a la cadencia del ritmo: el primero
+    /// al próximo token y cada uno de los siguientes 1/ritmo después, para que no vuelvan todos juntos a pelear por un token.
+    /// </summary>
+    public async Task<CampaignAdmission> AdmitAsync(IReadOnlyList<ClaimedRecipient> claimed, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(claimed);
+        if (claimed.Count == 0)
+        {
+            return new CampaignAdmission([], null);
+        }
+
+        var now = clock.UtcNow;
+        var admitted = new HashSet<Guid>();
+        TimeSpan? wait = null;
+        foreach (var group in claimed.GroupBy(recipient => recipient.ConnectionId))
+        {
+            var recipients = group.ToList();
+            var grant = await budget.AcquireAsync(recipients[0].TenantId, group.Key, recipients.Count, now, cancellationToken);
+            var granted = Math.Clamp(grant.Granted, 0, recipients.Count);
+            foreach (var recipient in recipients.Take(granted))
+            {
+                admitted.Add(recipient.Id);
+            }
+
+            for (var index = 0; index < recipients.Count - granted; index++)
+            {
+                var turn = grant.Rate > 0 ? TimeSpan.FromTicks((long)Math.Round(index / grant.Rate * TimeSpan.TicksPerSecond)) : TimeSpan.Zero;
+                await store.DeferAsync(recipients[granted + index], now + grant.RetryAfter + turn, cancellationToken);
+            }
+
+            if (granted < recipients.Count && (wait is null || grant.RetryAfter < wait))
+            {
+                wait = grant.RetryAfter;
+            }
+        }
+
+        return new CampaignAdmission([.. claimed.Where(recipient => admitted.Contains(recipient.Id))], wait);
+    }
 
     /// <summary>Pasos 4 y 5.</summary>
     public async Task FinishTickAsync(CancellationToken cancellationToken)
@@ -215,8 +261,6 @@ public sealed partial class CampaignDispatcher(
 
         var built = TemplateCatalog.BuildSend(template, ResolveValues(recipient));
 
-        // El ritmo antes de insertar el mensaje: cancelar mientras se espera no deja un message_id que la recuperación tome por «en vuelo».
-        await limiter.WaitAsync(recipient.ConnectionId, cancellationToken);
         var prepared = await store.PrepareAsync(recipient, built.Text, built.DetailsJson, clock.UtcNow, cancellationToken);
         if (prepared is null)
         {
@@ -295,6 +339,13 @@ public sealed partial class CampaignDispatcher(
     {
         var code = result.Code ?? SendMessageHandler.UnknownGraphErrorCode;
         var text = code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (code == MetaErrorCodes.ThroughputLimit)
+        {
+            // P3: Meta dice que la conexión se pasó de su throughput; el ritmo compartido baja para todas las réplicas. El 131056 (el par)
+            // sólo espera su backoff y no toca el ritmo de la conexión.
+            await ThrottleAsync(recipient, now);
+        }
+
         if (CampaignFailureCodes.IsRetriable(code))
         {
             await RetryOrFailAsync(recipient, prepared, text, code, result.Title, CancellationToken.None);
@@ -315,6 +366,19 @@ public sealed partial class CampaignDispatcher(
         {
             // Decisión 10: Meta avisa que la persona apagó el marketing; queda en su ficha.
             await customers.MarkMarketingOptOutAsync(recipient.TenantId, recipient.CustomerId, CancellationToken.None);
+        }
+    }
+
+    // Si el presupuesto no se deja bajar, el destinatario igual se reintenta con su backoff; el siguiente 130429 volverá a intentarlo.
+    private async Task ThrottleAsync(ClaimedRecipient recipient, DateTimeOffset now)
+    {
+        try
+        {
+            await budget.ThrottleAsync(recipient.TenantId, recipient.ConnectionId, now, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Ver arriba.
         }
     }
 

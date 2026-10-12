@@ -55,6 +55,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureMessage(modelBuilder);
         ConfigureMedia(modelBuilder);
         ConfigureDelivery(modelBuilder);
+        ConfigureSendBudget(modelBuilder);
         ConfigureCampaign(modelBuilder);
         ConfigureCampaignRecipient(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
@@ -277,6 +278,25 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         recipient.HasIndex(value => value.NextAttemptAt, "IX_campaign_recipients_due").HasFilter("status IN ('Pending','Sending')");
         // Los contadores y el filtro por estado del detalle.
         recipient.HasIndex(value => new { value.CampaignId, value.Status }, "IX_campaign_recipients_campaign_status");
+    }
+
+    /// <summary>Decisión del owner 2026-10-12 (P3 y P5): el cubo de envío por conexión. Sin FK: la conexión es de Integrations, otro schema.</summary>
+    private static void ConfigureSendBudget(ModelBuilder modelBuilder)
+    {
+        var budget = modelBuilder.Entity<ConnectionSendBudgetRecord>();
+        budget.ToTable("connection_send_budgets", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_connection_send_budgets_rate", "rate >= 1");
+            table.HasCheckConstraint("CK_connection_send_budgets_tokens", "tokens >= 0");
+        });
+        budget.HasKey(value => value.ConnectionId);
+        budget.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
+        budget.Property(value => value.TenantId).HasColumnName("tenant_id");
+        budget.Property(value => value.Tokens).HasColumnName("tokens");
+        budget.Property(value => value.Rate).HasColumnName("rate");
+        budget.Property(value => value.RefilledAt).HasColumnName("refilled_at");
+        budget.Property(value => value.ThrottledUntil).HasColumnName("throttled_until");
+        budget.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     private static void ConfigureDelivery(ModelBuilder modelBuilder)

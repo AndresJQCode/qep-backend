@@ -480,6 +480,46 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.ConnectionSendBudgetRecord", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<double>("Rate")
+                        .HasColumnType("double precision")
+                        .HasColumnName("rate");
+
+                    b.Property<DateTimeOffset>("RefilledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("refilled_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("ThrottledUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("throttled_until");
+
+                    b.Property<double>("Tokens")
+                        .HasColumnType("double precision")
+                        .HasColumnName("tokens");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("ConnectionId");
+
+                    b.ToTable("connection_send_budgets", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_connection_send_budgets_rate", "rate >= 1");
+
+                            t.HasCheckConstraint("CK_connection_send_budgets_tokens", "tokens >= 0");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.MessageMediaRecord", b =>
                 {
                     b.Property<Guid>("MessageId")

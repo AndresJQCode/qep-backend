@@ -138,27 +138,68 @@ internal sealed class FakeDispatchStore : ICampaignDispatchStore
     }
 }
 
+/// <summary>Un reloj que sólo avanza cuando alguien lo mueve.</summary>
+internal sealed class ManualTimeProvider : TimeProvider
+{
+    private long _ticks;
+
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override long GetTimestamp() => _ticks;
+
+    public TimeSpan Elapsed => TimeSpan.FromTicks(_ticks);
+
+    public void Advance(TimeSpan span) => _ticks += span.Ticks;
+
+    /// <summary>El «Task.Delay» de las pruebas: no duerme, avanza el reloj.</summary>
+    public Task Delay(TimeSpan span, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Advance(span);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Decisión del owner 2026-10-12 (P3 y P5): el presupuesto de envío compartido, en memoria. Por defecto concede todo lo pedido;
+/// <see cref="Grant"/> decide cuántos concede por llamada y <see cref="Acquired"/> / <see cref="Throttled"/> anotan lo que el despachador pidió.</summary>
+internal sealed class FakeSendBudget : IConnectionSendBudget
+{
+    public Func<Guid, int, SendGrant> Grant { get; set; } = (_, requested) => new SendGrant(requested, TimeSpan.Zero, 1000);
+
+    public List<(Guid ConnectionId, int Requested, DateTimeOffset Now)> Acquired { get; } = [];
+
+    public List<(Guid ConnectionId, DateTimeOffset Now)> Throttled { get; } = [];
+
+    public Task<SendGrant> AcquireAsync(Guid tenantId, Guid connectionId, int requested, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Acquired.Add((connectionId, requested, now));
+        return Task.FromResult(Grant(connectionId, requested));
+    }
+
+    public Task ThrottleAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Throttled.Add((connectionId, now));
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>El despachador sobre el banco de Messaging: el mismo tenant, conexión Active (111/token), catálogo con <c>promo</c>, clientes
-/// y reloj fijo, más un cubo con reloj manual para ver el ritmo.</summary>
+/// y reloj fijo, más un presupuesto de envío de mentira.</summary>
 internal sealed class DispatchBed
 {
-    public DispatchBed(int messagesPerSecond = 1000)
+    public DispatchBed()
     {
         Bed = new MessagingTestBed();
         Bed.Templates.Catalog.Add(FakeMessageTemplates.Hello("promo", "es", "MARKETING"));
-        Time = new ManualTimeProvider();
-        Limiter = new CampaignRateLimiter(messagesPerSecond, Time, Time.Delay);
         Clock = new FakeClock(Bed.Now);
-        Dispatcher = new CampaignDispatcher(Store, Bed.Meta, Bed.Connections, Bed.Customers, Bed.Templates, Limiter, Clock);
+        Dispatcher = new CampaignDispatcher(Store, Bed.Meta, Bed.Connections, Bed.Customers, Bed.Templates, Budget, Clock);
     }
 
     public MessagingTestBed Bed { get; }
 
     public FakeDispatchStore Store { get; } = new();
 
-    public ManualTimeProvider Time { get; }
-
-    public CampaignRateLimiter Limiter { get; }
+    public FakeSendBudget Budget { get; } = new();
 
     public FakeClock Clock { get; }
 

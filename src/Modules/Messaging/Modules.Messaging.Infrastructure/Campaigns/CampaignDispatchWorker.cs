@@ -18,11 +18,16 @@ internal sealed partial class CampaignDispatchWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<MessagingWorkerOptions> workerOptions,
     IOptions<MessagingCampaignOptions> campaignOptions,
+    TimeProvider time,
     ILogger<CampaignDispatchWorker> logger) : BackgroundService
 {
-    /// <summary>Cuántos envíos corren a la vez. El ritmo lo fija el cubo, no esto: con ~300 ms por llamada a Meta, 20 mps piden más de uno
-    /// en vuelo, y los tokens esperan por turno.</summary>
+    /// <summary>Cuántos envíos corren a la vez. El ritmo lo fija el presupuesto compartido, no esto: con ~300 ms por llamada a Meta, 20 mps piden
+    /// más de uno en vuelo.</summary>
     internal const int Parallelism = 8;
+
+    /// <summary>Lo mínimo que espera el worker cuando el presupuesto no alcanzó para todos: pedir token por token multiplicaría las vueltas a la
+    /// base sin mandar más (la capacidad del cubo es un segundo, así que 250 ms no pierde ninguno).</summary>
+    internal static readonly TimeSpan MinimumPause = TimeSpan.FromMilliseconds(250);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Campaign dispatch tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
@@ -51,27 +56,60 @@ internal sealed partial class CampaignDispatchWorker(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    /// <summary>Una pasada: internal para las pruebas (P10). Una falla en un paso la deja subir; la del envío de un destinatario sólo se anota.</summary>
+    /// <summary>Una pasada: internal para las pruebas (P10). Una falla en un paso la deja subir; la del envío de un destinatario sólo se anota.
+    /// Decisión del owner 2026-10-12 (P3): el cubo de la conexión guarda un segundo de ráfaga, así que un tick cada 2 s no alcanzaría el ritmo.
+    /// La pasada reclama y envía en rondas, esperando lo que el presupuesto indique, hasta gastar un intervalo del worker; ahí corren la
+    /// recuperación y el cierre y el siguiente tick arranca enseguida.</summary>
     internal async Task DrainAsync(CancellationToken cancellationToken)
     {
-        IReadOnlyList<ClaimedRecipient> claimed;
-        await using (var scope = scopeFactory.CreateAsyncScope())
+        var started = time.GetTimestamp();
+        var span = TimeSpan.FromSeconds(Math.Max(1, workerOptions.Value.CampaignPollSeconds));
+        var first = true;
+        while (true)
         {
-            var dispatcher = scope.ServiceProvider.GetRequiredService<CampaignDispatcher>();
-            await dispatcher.PrepareTickAsync(cancellationToken);
-            claimed = await dispatcher.ClaimAsync(campaignOptions.Value.MessagesPerSecond, cancellationToken);
-        }
+            IReadOnlyList<ClaimedRecipient> claimed;
+            CampaignAdmission admission;
+            await using (var scope = scopeFactory.CreateAsyncScope())
+            {
+                var dispatcher = scope.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+                if (first)
+                {
+                    await dispatcher.PrepareTickAsync(cancellationToken);
+                    first = false;
+                }
 
-        if (claimed.Count > 0)
-        {
-            // R3: el token del host sólo detiene lo que todavía no empezó (el reclamo, los destinatarios sin turno, la espera del ritmo).
-            // Parallel.ForEachAsync no vuelve hasta que terminan los envíos que ya están corriendo, y éstos llaman a Meta con
-            // CancellationToken.None y liquidan igual: al cerrar el host, lo que está en vuelo se asienta en lugar de quedar unknown_outcome.
-            // Lo que no llegó a empezar queda Sending sin mensaje, y la recuperación lo devuelve a Pending al vencer el lease.
-            await Parallel.ForEachAsync(
-                claimed,
-                new ParallelOptions { MaxDegreeOfParallelism = Parallelism, CancellationToken = cancellationToken },
-                SendOneAsync);
+                claimed = await dispatcher.ClaimAsync(campaignOptions.Value.MessagesPerSecond, cancellationToken);
+                admission = await dispatcher.AdmitAsync(claimed, cancellationToken);
+            }
+
+            if (admission.Admitted.Count > 0)
+            {
+                // R3: el token del host sólo detiene lo que todavía no empezó (el reclamo, los destinatarios sin turno). Parallel.ForEachAsync
+                // no vuelve hasta que terminan los envíos que ya están corriendo, y éstos llaman a Meta con CancellationToken.None y liquidan
+                // igual: al cerrar el host, lo que está en vuelo se asienta en lugar de quedar unknown_outcome. Lo que no llegó a empezar
+                // queda Sending sin mensaje, y la recuperación lo devuelve a Pending al vencer el lease.
+                await Parallel.ForEachAsync(
+                    admission.Admitted,
+                    new ParallelOptions { MaxDegreeOfParallelism = Parallelism, CancellationToken = cancellationToken },
+                    SendOneAsync);
+            }
+
+            var remaining = span - time.GetElapsedTime(started);
+            if (claimed.Count == 0 || remaining <= TimeSpan.Zero)
+            {
+                break;
+            }
+
+            if (admission.Wait is { } wait)
+            {
+                var pause = wait > MinimumPause ? wait : MinimumPause;
+                if (pause >= remaining)
+                {
+                    break;
+                }
+
+                await Task.Delay(pause, time, cancellationToken);
+            }
         }
 
         await using (var scope = scopeFactory.CreateAsyncScope())

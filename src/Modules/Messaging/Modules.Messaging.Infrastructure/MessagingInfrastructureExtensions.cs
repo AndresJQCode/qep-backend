@@ -74,8 +74,8 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-11 §6.3: el worker de campañas. El cubo de ritmo es un singleton (el estado es del proceso); el despachador y su
         // persistencia, scoped. TimeProvider.System sólo si nadie registró otro.
         services.TryAddSingleton(TimeProvider.System);
-        services.AddSingleton(provider => new CampaignRateLimiter(
-            provider.GetRequiredService<IOptions<MessagingCampaignOptions>>().Value.MessagesPerSecond, provider.GetRequiredService<TimeProvider>(), Task.Delay));
+        // Decisión del owner 2026-10-12 (P3 y P5): el límite de envío es un cubo por conexión en Postgres, compartido por las réplicas.
+        services.AddScoped<IConnectionSendBudget, ConnectionSendBudget>();
         services.AddScoped<ICampaignDispatchStore, CampaignDispatchStore>();
         services.AddScoped<CampaignDispatcher>();
         services.AddHostedService<CampaignDispatchWorker>();

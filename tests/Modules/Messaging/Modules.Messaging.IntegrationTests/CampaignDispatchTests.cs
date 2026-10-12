@@ -185,6 +185,10 @@ public sealed class CampaignDispatchTests
         Assert.Equal("Sending", await CampaignStatusAsync(f, id));
         var messageId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT message_id FROM messaging.campaign_recipients");
 
+        // Decisión del owner 2026-10-12 (P3): el 130429 bajó el ritmo de la conexión a la mitad y la pausó 30 s, para todas las réplicas.
+        Assert.Equal(10d, await ScalarAsync<double>(f.ConnectionString, "SELECT rate FROM messaging.connection_send_budgets WHERE connection_id = @c", ("c", f.ConnectionId)));
+        Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT throttled_until > now() FROM messaging.connection_send_budgets WHERE connection_id = @c", ("c", f.ConnectionId)));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.connection_send_budgets SET throttled_until = now() - interval '1 minute', refilled_at = now() - interval '1 minute'");
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET next_attempt_at = now() - interval '1 hour'");
         await DrainCampaignsAsync(f.Host);
 

@@ -464,18 +464,102 @@ public sealed class CampaignDispatcherTests
     }
 
     [Fact]
-    public async Task TheRateIsKeptPerConnectionAcrossRecipients()
+    public async Task AdmittingAsksTheSharedBudgetOnceForEachConnectionWithItsCount()
     {
-        var bed = new DispatchBed(messagesPerSecond: 2);
+        var bed = new DispatchBed();
+        var other = Guid.CreateVersion7();
+        var first = bed.Recipient();
+        var second = bed.Recipient();
+        var third = bed.Recipient() with { ConnectionId = other };
 
-        for (var index = 0; index < 6; index++)
-        {
-            await bed.Dispatcher.SendAsync(bed.Recipient(), Ct);
-        }
+        var admission = await bed.Dispatcher.AdmitAsync([first, second, third], Ct);
 
-        // Dos de golpe y los cuatro que faltan a 2 por segundo: dos segundos de reloj simulado.
-        Assert.Equal(6, bed.Bed.Meta.TemplateSends.Count);
-        Assert.InRange(bed.Time.Elapsed.TotalSeconds, 1.99, 2.01);
+        Assert.Equal([first, second, third], admission.Admitted);
+        Assert.Null(admission.Wait);
+        Assert.Equal(
+            [(bed.Bed.ConnectionId, 2, bed.Bed.Now), (other, 1, bed.Bed.Now)],
+            bed.Budget.Acquired.OrderByDescending(call => call.Requested).ToList());
+        Assert.Empty(bed.Store.Deferred);
+    }
+
+    [Fact]
+    public async Task OnlyAsManyAsTheBudgetGrantsAreAdmittedAndTheRestGoBackToPendingWithoutSpendingTheAttempt()
+    {
+        var bed = new DispatchBed();
+        bed.Budget.Grant = (_, _) => new SendGrant(2, TimeSpan.FromMilliseconds(50), 20);
+        var recipients = Enumerable.Range(0, 5).Select(_ => bed.Recipient(attempts: 3)).ToList();
+
+        var admission = await bed.Dispatcher.AdmitAsync(recipients, Ct);
+
+        Assert.Equal(recipients.Take(2), admission.Admitted);
+        Assert.Equal(TimeSpan.FromMilliseconds(50), admission.Wait);
+        // Cada uno de los que sobran espera su turno: 50 ms al primer token y 1/20 s más por cada uno que va delante.
+        Assert.Equal(
+            recipients.Skip(2).Select((recipient, index) => (recipient, bed.Bed.Now.AddMilliseconds(50 + (50 * index)))).ToList(),
+            bed.Store.Deferred);
+        Assert.Empty(bed.Store.Retries);
+        Assert.Empty(bed.Store.Failed);
+    }
+
+    [Fact]
+    public async Task ABudgetThatGrantsNothingDefersEveryoneUntilItsRetryAfter()
+    {
+        var bed = new DispatchBed();
+        bed.Budget.Grant = (_, _) => new SendGrant(0, TimeSpan.FromSeconds(30), 10);
+        var recipients = new[] { bed.Recipient(), bed.Recipient() };
+
+        var admission = await bed.Dispatcher.AdmitAsync(recipients, Ct);
+
+        Assert.Empty(admission.Admitted);
+        Assert.Equal(TimeSpan.FromSeconds(30), admission.Wait);
+        Assert.Equal(
+            [(recipients[0], bed.Bed.Now.AddSeconds(30)), (recipients[1], bed.Bed.Now.AddSeconds(30).AddMilliseconds(100))],
+            bed.Store.Deferred);
+    }
+
+    [Fact]
+    public async Task AdmittingNobodyDoesNotTouchTheBudget()
+    {
+        var bed = new DispatchBed();
+
+        var admission = await bed.Dispatcher.AdmitAsync([], Ct);
+
+        Assert.Empty(admission.Admitted);
+        Assert.Empty(bed.Budget.Acquired);
+    }
+
+    [Fact]
+    public async Task A130429AnswerThrottlesTheConnectionAndStillRetriesTheRecipient()
+    {
+        var bed = new DispatchBed();
+        bed.Bed.Meta.NextSend = Graph(130429);
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(), Ct);
+
+        Assert.Equal([(bed.Bed.ConnectionId, bed.Bed.Now)], bed.Budget.Throttled);
+        Assert.Single(bed.Store.Retries);
+    }
+
+    [Fact]
+    public async Task A131056AnswerBacksOffTheRecipientButLeavesTheConnectionRateAlone()
+    {
+        var bed = new DispatchBed();
+        bed.Bed.Meta.NextSend = Graph(131056);
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(), Ct);
+
+        Assert.Empty(bed.Budget.Throttled);
+        Assert.Single(bed.Store.Retries);
+    }
+
+    [Fact]
+    public async Task SendingDoesNotWaitForOrAskTheBudget()
+    {
+        var bed = new DispatchBed();
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(), Ct);
+
+        Assert.Empty(bed.Budget.Acquired);
     }
 
     [Fact]
