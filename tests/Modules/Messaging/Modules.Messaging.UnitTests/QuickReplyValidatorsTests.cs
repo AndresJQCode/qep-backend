@@ -81,4 +81,8 @@ public sealed class QuickReplyValidatorsTests
 
     [Fact]
     public void BothFieldsFailTogether() => Assert.Equal(["body", "shortcut"], Keys(Validate("/horarios", "   ")));
+
+    [Fact]
+    public void TheCreateValidatorUsesTheSharedRules() =>
+        Assert.Equal(["body", "shortcut"], Keys(new CreateQuickReplyValidator().Validate(new CreateQuickReplyCommand(Guid.CreateVersion7(), "/x", ""))));
 }

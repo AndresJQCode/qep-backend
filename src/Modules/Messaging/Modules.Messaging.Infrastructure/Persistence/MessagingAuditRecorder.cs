@@ -40,4 +40,18 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             NoChangedFields,
             Source,
             occurredAt));
+
+    // Spec 2026-10-12 §3.3: siempre una persona (quien gestiona en Settings). changed_fields vacío, como el resto del módulo.
+    public void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            actorId,
+            AuditActorType.Human,
+            action,
+            MessagingAuditActions.QuickReplyResourceType,
+            quickReplyId.ToString(),
+            Outcome,
+            NoChangedFields,
+            Source,
+            occurredAt));
 }

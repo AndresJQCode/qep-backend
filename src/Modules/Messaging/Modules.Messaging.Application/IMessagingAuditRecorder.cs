@@ -9,6 +9,9 @@ public interface IMessagingAuditRecorder
     /// <summary>Spec 2026-10-11 §6.2: la auditoría de una campaña (creada, lanzada, cancelada, terminada o fallida). Las dos últimas las
     /// escribe el worker, sin una persona detrás: <paramref name="bySystem"/> y actor vacío, como Customers con la ingesta.</summary>
     void RecordCampaign(Guid tenantId, Guid actorId, bool bySystem, string action, Guid campaignId, DateTimeOffset occurredAt);
+
+    /// <summary>Spec 2026-10-12 §3.3: crear, editar y borrar una respuesta rápida, en la misma transacción que el cambio.</summary>
+    void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt);
 }
 
 public static class MessagingAuditActions
@@ -30,4 +33,9 @@ public static class MessagingAuditActions
     public const string CampaignCancelled = "messaging.campaign.cancelled";
     public const string CampaignCompleted = "messaging.campaign.completed";
     public const string CampaignFailed = "messaging.campaign.failed";
+
+    public const string QuickReplyResourceType = "quick_reply";
+    public const string QuickReplyCreated = "messaging.quick_reply.created";
+    public const string QuickReplyUpdated = "messaging.quick_reply.updated";
+    public const string QuickReplyDeleted = "messaging.quick_reply.deleted";
 }
