@@ -16,4 +16,7 @@ public static class MessagingAuditActions
     public const string Transferred = "messaging.conversation.transferred";
     public const string Released = "messaging.conversation.released";
     public const string AutoTaken = "messaging.conversation.auto_taken";
+
+    /// <summary>Spec 2026-10-11 decisión 9: una conversación abierta desde la plataforma, asignada a quien la inició.</summary>
+    public const string Started = "messaging.conversation.started";
 }

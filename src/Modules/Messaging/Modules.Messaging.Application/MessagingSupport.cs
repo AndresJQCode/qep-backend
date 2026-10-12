@@ -145,7 +145,8 @@ internal static class MessageMapping
                     conversationEvent.Type.ToString(),
                     Member(conversationEvent.Actor, memberNames),
                     Member(conversationEvent.Target, memberNames),
-                    Member(conversationEvent.Previous, memberNames)));
+                    Member(conversationEvent.Previous, memberNames)),
+            row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null);
     }
 
     /// <summary>§5.1: el <c>preview</c> es el texto o la leyenda del citado, recortado a <see cref="ReplyPreviewMaxLength"/>.</summary>

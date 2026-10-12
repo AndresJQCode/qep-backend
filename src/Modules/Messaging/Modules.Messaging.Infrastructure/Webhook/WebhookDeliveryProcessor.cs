@@ -218,6 +218,11 @@ internal sealed partial class WebhookDeliveryProcessor(
             {
                 LogForeignStatus(logger, deliveryId);
             }
+            else if (await StatusIngestion.FindMarketingOptOutCustomerAsync(dbContext, route.ConnectionId, status, cancellationToken) is { } customerId)
+            {
+                // Spec 2026-10-11 decisión 10: la persona apagó el marketing. Idempotente; si falla, la entrega se reintenta.
+                await customers.MarkMarketingOptOutAsync(route.TenantId, customerId, cancellationToken);
+            }
         }
 
         return outcome;

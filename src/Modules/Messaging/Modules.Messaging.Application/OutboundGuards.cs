@@ -51,7 +51,25 @@ internal sealed class OutboundGuards(
 
     /// <summary>Pasos 6 a 9: status Open → ventana → el citado → dueño. Todo lo que puede fallar por validación va antes
     /// de la autoasignación: un request inválido no cambia estado.</summary>
-    public async Task<OutboundPermit> AdmitAsync(Guid tenantId, OutboundTarget target, Guid? replyTo, CancellationToken cancellationToken)
+    public Task<OutboundPermit> AdmitAsync(Guid tenantId, OutboundTarget target, Guid? replyTo, CancellationToken cancellationToken) =>
+        AdmitAsync(tenantId, target, replyTo, requireOpenWindow: true, cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §5.2: lo mismo que <see cref="AdmitAsync(Guid, OutboundTarget, Guid?, CancellationToken)"/> sin la
+    /// ventana de 24 h ni la cita: una plantilla existe justamente para escribir con la ventana cerrada.</summary>
+    public Task<OutboundPermit> AdmitTemplateAsync(Guid tenantId, OutboundTarget target, CancellationToken cancellationToken) =>
+        AdmitAsync(tenantId, target, replyTo: null, requireOpenWindow: false, cancellationToken);
+
+    /// <summary>Tenant, permiso, módulo y membresía activa, sin conversación todavía (<c>POST /conversations</c>): el id de la
+    /// membresía de quien llama.</summary>
+    public async Task<Guid> AuthorizeAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, tenantId, MessagingPermissions.ConversationManage, cancellationToken);
+        return await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, tenantId, cancellationToken)
+            ?? throw new RequestForbiddenException("authorization.denied", "The subject does not have an active membership in this tenant.");
+    }
+
+    private async Task<OutboundPermit> AdmitAsync(
+        Guid tenantId, OutboundTarget target, Guid? replyTo, bool requireOpenWindow, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         var conversation = target.Conversation;
@@ -61,7 +79,7 @@ internal sealed class OutboundGuards(
             throw new MessagingDomainException(MessagingErrorCodes.ConversationNotOpen, "The conversation is resolved; reopen it to answer.");
         }
 
-        if (conversation.LastInboundAt is not { } lastInbound || lastInbound.Add(Conversation.WindowLength) <= now)
+        if (requireOpenWindow && (conversation.LastInboundAt is not { } lastInbound || lastInbound.Add(Conversation.WindowLength) <= now))
         {
             throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "More than 24 hours passed since the person last wrote.");
         }
@@ -184,8 +202,11 @@ internal sealed class OutboundGuards(
     public static MessageRow ExistingRow(Guid conversationId, ExistingOutbound existing, Guid? clientId)
     {
         ArgumentNullException.ThrowIfNull(existing);
+        // Spec 2026-10-11 §5.2: una plantilla guardada vuelve con su texto ya armado y su detalle (de ahí sale template).
+        var isTemplate = existing.Kind == MessageKind.Template;
         return new MessageRow(
-            existing.Id, conversationId, MessageDirection.Outbound, existing.Kind, existing.Kind == MessageKind.Text ? existing.Text : null, null, null,
+            existing.Id, conversationId, MessageDirection.Outbound, existing.Kind, existing.Kind is MessageKind.Text or MessageKind.Template ? existing.Text : null, null,
+            isTemplate ? existing.DetailsJson : null,
             existing.Status, null, existing.OccurredAt, existing.SentByMemberId, clientId,
             existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, null) : null, existing.ReplyToMessageId);
     }

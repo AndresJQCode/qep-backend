@@ -12,14 +12,15 @@ public sealed record OutboundMedia(string MimeType, long SizeBytes, string Sha25
 /// (spec 2026-10-10 §8.6). <c>Kind</c> y <c>Media</c>: spec 2026-10-11 §6.5; el texto sigue con <c>Text</c> y sin medio.</summary>
 public sealed record OutboundDraft(
     Guid MessageId, Guid ConversationId, Guid TenantId, Guid ConnectionId, Guid ClientId, string? Text, Guid SentByMemberId,
-    DateTimeOffset Now, Guid? ReplyToMessageId = null, string? ReplyToWamid = null, MessageKind Kind = MessageKind.Text, OutboundMedia? Media = null);
+    DateTimeOffset Now, Guid? ReplyToMessageId = null, string? ReplyToWamid = null, MessageKind Kind = MessageKind.Text, OutboundMedia? Media = null,
+    string? DetailsJson = null);
 
 /// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación (con <c>FOR UPDATE</c> en el reclamo).
 /// <c>Kind</c> y <c>MediaMimeType</c> (spec 2026-10-11 §6.5): la idempotencia devuelve la burbuja de audio con su
-/// <c>media.url</c>.</summary>
+/// <c>media.url</c>. <c>DetailsJson</c> (spec 2026-10-11 §5.2): la plantilla de un mensaje <c>Template</c>, para devolver lo guardado.</summary>
 public sealed record ExistingOutbound(
     Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text, Guid? ReplyToMessageId = null,
-    MessageKind Kind = MessageKind.Text, string? MediaMimeType = null);
+    MessageKind Kind = MessageKind.Text, string? MediaMimeType = null, string? DetailsJson = null);
 
 /// <summary>
 /// §8.3, «Idempotencia sin que la fila a medio enviar se vea»: una transacción abierta con la fila del

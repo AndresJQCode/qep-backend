@@ -39,11 +39,20 @@ internal sealed class MessagingTestBed
 
     public InMemoryMediaStore Store { get; } = new();
 
-    public ConversationRow OpenConversation(int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null)
+    public FakeMessageTemplates Templates { get; } = new();
+
+    public FakeCustomerDirectory Customers { get; } = new();
+
+    public FakeConversationOpener Opener => _opener ??= new FakeConversationOpener(this);
+
+    private FakeConversationOpener? _opener;
+
+    public ConversationRow OpenConversation(
+        int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null, Guid? customerId = null, string? userId = null, string? waId = "573001234567")
     {
         var row = new ConversationRow(
-            Guid.CreateVersion7(), TenantId, ConnectionId, UserId: null, WaId: "573001234567", Username: null, "Laura",
-            CustomerId: null, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
+            Guid.CreateVersion7(), TenantId, ConnectionId, UserId: userId, WaId: waId, Username: null, "Laura",
+            CustomerId: customerId, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
             null, null, null, null, null, null, Now, 1);
         Conversations.Rows.Add(row);
@@ -68,6 +77,58 @@ internal sealed class MessagingTestBed
             new FakeClock(Now),
             new SendMessageValidator());
     }
+
+    public SendTemplateMessageHandler SendTemplateHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendTemplateMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            Templates,
+            Customers,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            new SendTemplateMessageValidator());
+    }
+
+    public StartConversationHandler StartHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        var memberNames = new FakeMemberNames(MemberId);
+        var context = new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage);
+        return new StartConversationHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Connections,
+            memberNames,
+            membership,
+            Templates,
+            Customers,
+            Opener,
+            new ConversationSummaryBuilder(Connections, Customers, memberNames, new CallerMembership(membership, context)),
+            TenantModules,
+            context,
+            new FakeClock(Now),
+            new StartConversationValidator());
+    }
+
+    public ListTemplatesHandler ListTemplatesHandler(params string[] permissions) =>
+        new(Templates, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
+
+    public ListMessagingConnectionsHandler ListConnectionsHandler(params string[] permissions) =>
+        new(Connections, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
 
     public SendAudioMessageHandler SendAudioHandler(Guid? tenantId = null)
     {
@@ -183,6 +244,17 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
     public Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 
+    /// <summary>Spec 2026-10-11 §5.1: <c>null</c> = conexión que no está Active (o de otro tenant).</summary>
+    public MessagingTemplateSource? TemplateSource { get; set; } = new("222", "token");
+
+    public List<MessagingConnectionDto> Active { get; } = [];
+
+    public Task<MessagingTemplateSource?> ResolveTemplateSourceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(TemplateSource);
+
+    public Task<IReadOnlyList<MessagingConnectionDto>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessagingConnectionDto>>(Active.ToList());
+
     /// <summary>Simula que Integrations no pudo guardar el cambio de estado.</summary>
     public Exception? ReportFailure { get; set; }
 
@@ -202,6 +274,8 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
 internal sealed record SentText(MessagingSender Sender, SendTarget Target, string Body, string CallbackData, string? ContextWamid);
 
 internal sealed record UploadedMedia(MessagingSender Sender, byte[] Content, string MimeType);
+
+internal sealed record SentTemplate(MessagingSender Sender, SendTarget Target, TemplateSend Template, string CallbackData);
 
 internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid);
 
@@ -251,6 +325,29 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
         AudioSends.Add(new SentAudio(sender, target, mediaId, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Spec 2026-10-11 §5.1: lo que responde la lista de plantillas, y cuántas veces se pidió.</summary>
+    public MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>> NextTemplates { get; set; } = new([], null);
+
+    public int TemplateListCalls { get; private set; }
+
+    public Task<MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    {
+        TemplateListCalls++;
+        return Task.FromResult(NextTemplates);
+    }
+
+    public List<SentTemplate> TemplateSends { get; } = [];
+
+    /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
+    public Task<SendResult> SendTemplateAsync(
+        MessagingSender sender, SendTarget target, TemplateSend send, string callbackData, CancellationToken cancellationToken)
+    {
+        TemplateSends.Add(new SentTemplate(sender, target, send, callbackData));
         DuringSend?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(NextSend);

@@ -22,6 +22,8 @@ public static class MessagingInfrastructureExtensions
             options.UseNpgsql(connectionString, npgsql => npgsql.MigrationsHistoryTable("__ef_migrations_history", MessagingDbContext.Schema)));
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
+        // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
+        services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).
         services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
@@ -56,6 +58,8 @@ public static class MessagingInfrastructureExtensions
             .RemoveAllLoggers();
         services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
         services.AddScoped<IOutboundMessages, OutboundMessages>();
+        // Spec 2026-10-11 §5.1: el catálogo de plantillas aprobadas, 5 minutos por (tenant, conexión) en IMemoryCache.
+        services.AddScoped<IMessageTemplates, MessageTemplateCatalog>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

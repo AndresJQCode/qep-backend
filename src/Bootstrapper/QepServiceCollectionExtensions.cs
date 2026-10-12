@@ -579,6 +579,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SendMessageCommand, MessageDto>, SendMessageHandler>();
         // Messaging (spec 2026-10-11 §6): la nota de voz, con las mismas guardas que el texto.
         services.AddScoped<ICommandHandler<SendAudioMessageCommand, MessageDto>, SendAudioMessageHandler>();
+        // Messaging (spec 2026-10-11 §5): plantillas. Conexiones y catálogo para leer; enviar una plantilla y abrir una conversación con ella.
+        services.AddScoped<IQueryHandler<ListMessagingConnectionsQuery, IReadOnlyList<MessagingConnectionDto>>, ListMessagingConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
+        services.AddScoped<ICommandHandler<SendTemplateMessageCommand, MessageDto>, SendTemplateMessageHandler>();
+        services.AddScoped<ICommandHandler<StartConversationCommand, StartConversationResult>, StartConversationHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();

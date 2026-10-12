@@ -51,6 +51,37 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-11 §5.2: plantillas. Las conexiones de WhatsApp activas (con el permiso de la bandeja, no el de Integrations) y el
+        // catálogo aprobado de una de ellas.
+        group.MapGet("/connections", ListConnectionsAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationRead)
+            .Produces<IReadOnlyList<MessagingConnectionDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapGet("/connections/{connectionId:guid}/templates", ListTemplatesAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationRead)
+            .Produces<IReadOnlyList<MessageTemplateDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/conversations/{conversationId:guid}/messages/template", SendTemplateAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<SendTemplateRequest>("application/json")
+            .Produces<MessageDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // 201 con la conversación creada; 200 si el cliente ya tenía una en esa conexión y se envió ahí.
+        group.MapPost("/conversations", StartConversationAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<StartConversationRequest>("application/json")
+            .Produces<StartedConversationDto>(StatusCodes.Status201Created)
+            .Produces<StartedConversationDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Spec 2026-10-11 §4.1: nota de voz en multipart. Ruta propia, para que el Accepts del texto siga en JSON.
         // DisableAntiforgery con el criterio de CustomerEndpoints (/import); el CSRF por X-Qep-Client sigue aplicando.
         // Sin .Accepts("multipart/form-data") a propósito: esa metadata activa el AcceptsMatcherPolicy del routing, que
@@ -206,6 +237,32 @@ public static class MessagingEndpoints
         return Results.Created((string?)null, message);
     }
 
+    private static async Task<IResult> ListConnectionsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListMessagingConnectionsQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> ListTemplatesAsync(
+        Guid tenantId, Guid connectionId, bool? refresh, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListTemplatesQuery(tenantId, connectionId, refresh ?? false), cancellationToken));
+
+    private static async Task<IResult> SendTemplateAsync(
+        Guid tenantId, Guid conversationId, SendTemplateRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var message = await dispatcher.SendAsync(
+            new SendTemplateMessageCommand(tenantId, conversationId, request.ClientId, request.Name, request.Language, request.Parameters), cancellationToken);
+        // Sin Location, igual que el texto.
+        return Results.Created((string?)null, message);
+    }
+
+    private static async Task<IResult> StartConversationAsync(
+        Guid tenantId, StartConversationRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync(
+            new StartConversationCommand(
+                tenantId, request.ClientId, request.ConnectionId, request.CustomerId, request.Template?.Name, request.Template?.Language, request.Template?.Parameters),
+            cancellationToken);
+        return result.Created ? Results.Created((string?)null, result.Body) : Results.Ok(result.Body);
+    }
+
     /// <summary>
     /// Spec 2026-10-11 §6.1. El form se lee a mano y no con un <c>IFormFile</c> en la firma: el binder lo leería entero
     /// antes de entrar acá, con el tope global, y fijar el del endpoint ya no serviría. Primero el tope, después el form.
@@ -330,3 +387,11 @@ public sealed record SendMessageRequest(Guid? ClientId, string? Text, Guid? Repl
 
 /// <summary>Spec 2026-10-10 §5.1.</summary>
 public sealed record TransferConversationRequest(Guid? MemberId);
+
+/// <summary>Spec 2026-10-11 §5.2: <c>parameters</c> es un objeto <c>{ clave: valor }</c> con exactamente las claves de la plantilla.</summary>
+public sealed record SendTemplateRequest(Guid? ClientId, string? Name, string? Language, Dictionary<string, string?>? Parameters);
+
+/// <summary>Spec 2026-10-11 §5.2: <c>POST /conversations</c>.</summary>
+public sealed record StartConversationRequest(Guid? ClientId, Guid? ConnectionId, Guid? CustomerId, StartConversationTemplateRequest? Template);
+
+public sealed record StartConversationTemplateRequest(string? Name, string? Language, Dictionary<string, string?>? Parameters);

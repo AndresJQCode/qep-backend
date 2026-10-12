@@ -20,6 +20,11 @@ public sealed class MessageFailureReasonsTests
     [InlineData(131005, "QEP perdió los permisos sobre tu cuenta de WhatsApp. Vuelve a conectar el número.")]
     [InlineData(131016, "WhatsApp no está disponible en este momento. Intenta de nuevo en unos minutos.")]
     [InlineData(131000, "WhatsApp no pudo enviar el mensaje por un error desconocido. Intenta de nuevo.")]
+    [InlineData(132000, "Las variables de la plantilla no coinciden con las que WhatsApp espera. Actualiza las plantillas y vuelve a intentarlo.")]
+    [InlineData(132001, "La plantilla no existe en WhatsApp o no está aprobada en ese idioma. Actualiza las plantillas y elige otra.")]
+    [InlineData(132015, "WhatsApp pausó esta plantilla por su calidad. Elige otra o revisa su estado en WhatsApp Manager.")]
+    [InlineData(132016, "WhatsApp deshabilitó esta plantilla. Elige otra o crea una nueva en WhatsApp Manager.")]
+    [InlineData(132018, "WhatsApp rechazó el valor de una variable: no puede tener saltos de línea, tabulaciones ni más de 4 espacios seguidos.")]
     [InlineData(-1, "No pudimos confirmar el envío con WhatsApp. Intenta de nuevo.")]
     [InlineData(999999, "WhatsApp no pudo entregar el mensaje.")]
     public void EveryKnownCodeHasItsText(int code, string expected) =>
