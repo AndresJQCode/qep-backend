@@ -15,4 +15,8 @@ public static class MessagingPermissions
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: crear, lanzar y cancelar campañas. De núcleo y de fábrica sólo en <c>admin</c>:
     /// una campaña llega a miles de personas en nombre de la empresa y el costo es por mensaje.</summary>
     public const string CampaignManage = "messaging.campaign.manage";
+
+    /// <summary>Spec 2026-10-12 §3.5 y D-Q6: crear, editar y borrar las respuestas rápidas del tenant. Leerlas no lo pide (basta
+    /// <see cref="ConversationRead"/>). De núcleo y de fábrica sólo en <c>admin</c>, como <see cref="CampaignManage"/>.</summary>
+    public const string QuickReplyManage = "messaging.quick_reply.manage";
 }

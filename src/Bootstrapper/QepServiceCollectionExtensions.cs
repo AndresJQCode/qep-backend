@@ -881,7 +881,10 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.ConversationManage,
                 // Spec 2026-10-11 §6.4 y decisión 16: las campañas llegan a miles de personas en nombre de la empresa
                 // y el costo es por mensaje; de fábrica sólo en admin (no en advisor: P2 del spec).
-                MessagingPermissions.CampaignManage
+                MessagingPermissions.CampaignManage,
+                // Spec 2026-10-12 D-Q6: lo que el asesor manda en nombre de la empresa lo decide quien administra.
+                // El rol vive en código: sin migración.
+                MessagingPermissions.QuickReplyManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1357,6 +1360,14 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "high",
             RequiredModules: []));
+        // Spec 2026-10-12 §3.5: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.QuickReplyManage,
+            "Gestionar respuestas rápidas de WhatsApp",
+            "Permite crear, editar y borrar los textos guardados que los asesores insertan en la bandeja de WhatsApp.",
+            "Messaging",
+            "medium",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1651,7 +1662,11 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage))
             .AddPolicy(
                 MessagingPermissions.CampaignManage,
-                policy => AddPermissionRequirement(policy, MessagingPermissions.CampaignManage));
+                policy => AddPermissionRequirement(policy, MessagingPermissions.CampaignManage))
+            // Sin esta política, RequireAuthorization(QuickReplyManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.QuickReplyManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.QuickReplyManage));
     }
 
     private static void AddPermissionRequirement(
