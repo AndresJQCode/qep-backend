@@ -91,6 +91,9 @@ public sealed record TemplateParameter(string Key, string Value);
 /// </summary>
 public sealed record TemplateSend(string Name, string Language, bool Named, IReadOnlyList<TemplateParameter> Parameters);
 
+/// <summary>R10: lo que sale de armar una plantilla con sus valores, igual para el envío humano y para el worker.</summary>
+public sealed record BuiltTemplate(TemplateSend Send, string Text, string DetailsJson);
+
 /// <summary>Spec 2026-10-11 §5.2: <c>GET /connections</c>. <c>displayPhoneNumber</c> es <c>null</c> si la conexión no lo guardó.</summary>
 public sealed record MessagingConnectionDto(Guid Id, string Name, string? DisplayPhoneNumber);
 
@@ -158,6 +161,24 @@ public static partial class TemplateCatalog
         }
 
         return template;
+    }
+
+    /// <summary>
+    /// R10: de la plantilla y sus valores, lo que viaja a Meta (<see cref="TemplateSend"/>, parámetros en el orden de la plantilla), el texto
+    /// que verá la persona y el <c>details</c> del mensaje. El envío humano y el worker de campañas arman lo mismo por acá: dos copias se
+    /// separarían la primera vez que alguien tocara una.
+    /// </summary>
+    public static BuiltTemplate BuildSend(MessageTemplateDto template, IReadOnlyDictionary<string, string> values)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        ArgumentNullException.ThrowIfNull(values);
+        var send = new TemplateSend(
+            template.Name,
+            template.Language,
+            template.ParameterFormat == Named,
+            [.. template.Parameters.Select(key => new TemplateParameter(key, values[key]))]);
+        return new BuiltTemplate(
+            send, Render(template, values), TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, values));
     }
 
     /// <summary>Lo que verá la persona: encabezado, cuerpo con las variables sustituidas y pie, separados por una línea en

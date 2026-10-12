@@ -68,7 +68,7 @@ internal static class StatusIngestion
 
     /// <summary>Spec 2026-10-11 decisión 10: Meta aceptó una plantilla de marketing y la reporta después con este código, porque la persona
     /// apagó las promociones de la organización.</summary>
-    public const int MarketingOptOutCode = 131050;
+    public const int MarketingOptOutCode = Modules.Messaging.Domain.MetaErrorCodes.MarketingOptOut;
 
     /// <summary>El cliente de la conversación del mensaje que falló con <see cref="MarketingOptOutCode"/>; <c>null</c> si el estado es otro, el
     /// mensaje no es nuestro o la conversación no tiene cliente. Se consulta aparte de <see cref="ApplyAsync"/> y también cuando el estado ya

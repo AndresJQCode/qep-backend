@@ -157,7 +157,7 @@ internal sealed class OutboundGuards(
                 await claim.CommitSentAsync(result.Wamid, answeredAt, metaMediaId, CancellationToken.None);
                 return;
 
-            case SendOutcome.GraphError when result.Code is 190 or 133010:
+            case SendOutcome.GraphError when result.Code is MetaErrorCodes.TokenExpired or MetaErrorCodes.NumberUnregistered:
                 // §8.3: la credencial o el número ya no sirven; la fila no se guarda y la conexión pasa a NeedsAttention.
                 await claim.RollbackAsync(CancellationToken.None);
                 if (afterRollback is not null)
@@ -165,7 +165,7 @@ internal sealed class OutboundGuards(
                     await afterRollback();
                 }
 
-                await ReportRejectedAsync(tenantId, connectionId, result.Code == 190 ? "token_expired" : "number_unregistered");
+                await ReportRejectedAsync(tenantId, connectionId, MetaErrorCodes.RejectedReason(result.Code.Value));
                 throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials.");
 
             case SendOutcome.GraphError when result.Code is 131047:

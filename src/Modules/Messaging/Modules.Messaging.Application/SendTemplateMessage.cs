@@ -9,7 +9,7 @@ namespace Modules.Messaging.Application;
 /// <summary>
 /// Spec 2026-10-11 §5.2: las reglas de Meta sobre el valor de un parámetro de plantilla (error 132018), validadas acá para que el
 /// 422 diga el campo exacto (<c>parameters.first_name</c>) en lugar de una falla tardía de Meta. Las comparten el envío a una
-/// conversación, la conversación nueva y (E3) el formulario de campañas.
+/// conversación, la conversación nueva y el formulario de campañas.
 /// </summary>
 public static class TemplateParameterRules
 {

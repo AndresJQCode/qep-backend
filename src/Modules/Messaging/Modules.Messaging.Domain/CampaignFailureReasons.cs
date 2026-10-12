@@ -28,11 +28,16 @@ public static class CampaignFailureCodes
     public const string ConnectionUnavailable = "connection_unavailable";
 
     /// <summary>Meta (§2): throughput y tasa por par emisor–destinatario. Los 5xx y los timeouts llegan como «sin confirmar», sin código.</summary>
-    public static bool IsRetriable(int code) => code is 130429 or 131056;
+    public static bool IsRetriable(int code) => code is MetaErrorCodes.ThroughputLimit or MetaErrorCodes.PairRateLimit;
 
     /// <summary>Decisión 15: plantilla inexistente (132001), pausada (132015) o deshabilitada (132016), y credenciales o número
     /// rechazados (190, 133010). Seguir enviando sólo junta fallas.</summary>
-    public static bool StopsTheCampaign(int code) => code is 132001 or 132015 or 132016 or 190 or 133010;
+    public static bool StopsTheCampaign(int code) =>
+        code is MetaErrorCodes.TemplateDoesNotExist or MetaErrorCodes.TemplatePaused or MetaErrorCodes.TemplateDisabled
+        || MetaErrorCodes.IsRejectedCredentials(code);
+
+    /// <summary>Los parámetros guardados de la campaña no se pueden leer: ningún destinatario se podría armar, así que la campaña se detiene.</summary>
+    public const string InvalidParameters = "invalid_parameters";
 }
 
 /// <summary>
@@ -51,6 +56,7 @@ public static class CampaignFailureReasons
         [CampaignFailureCodes.UnknownOutcome] = "No se pudo confirmar el envío; no se reintentó para evitar duplicados.",
         [CampaignFailureCodes.ConnectionUnavailable] = "La conexión de WhatsApp está pausada, necesita atención o ya no existe. Revísala en Integraciones.",
         [CampaignFailureCodes.NotSent] = "No se pudo conectar con WhatsApp; el mensaje no salió.",
+        [CampaignFailureCodes.InvalidParameters] = "Las variables guardadas de la campaña no se pueden leer. Crea la campaña de nuevo.",
         ["190"] = "Meta rechazó las credenciales de la conexión de WhatsApp. Vuelve a conectar el número.",
         ["133010"] = "Meta rechazó las credenciales del número de la conexión: no está registrado en WhatsApp Business. Vuelve a conectarlo.",
     };

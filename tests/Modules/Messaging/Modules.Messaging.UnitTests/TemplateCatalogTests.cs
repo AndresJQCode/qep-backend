@@ -211,6 +211,21 @@ public sealed class TemplateCatalogTests
     }
 
     [Fact]
+    public void BuildSendGivesTheMetaPayloadTheRenderedTextAndTheDetailsInOneStep()
+    {
+        // R10: el envío humano y el worker arman lo mismo; una sola función.
+        var template = Single(NamedUtility);
+        var values = new Dictionary<string, string> { ["first_name"] = "Ana", ["order_id"] = "A-1" };
+
+        var built = TemplateCatalog.BuildSend(template, values);
+
+        Assert.Equal(TemplateCatalog.Render(template, values), built.Text);
+        Assert.Equal(("order_update", "es", true), (built.Send.Name, built.Send.Language, built.Send.Named));
+        Assert.Equal([new TemplateParameter("first_name", "Ana"), new TemplateParameter("order_id", "A-1")], built.Send.Parameters);
+        Assert.Equal(TemplateDetailsJson.Serialize("order_update", "es", "UTILITY", values), built.DetailsJson);
+    }
+
+    [Fact]
     public void RenderOmitsTheMissingParts()
     {
         var template = Single("""

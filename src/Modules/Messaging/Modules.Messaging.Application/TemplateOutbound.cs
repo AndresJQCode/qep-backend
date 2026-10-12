@@ -12,9 +12,6 @@ internal sealed record ResolvedTemplate(MessageTemplateDto Template, IReadOnlyDi
 /// </summary>
 internal sealed class TemplateOutbound(OutboundGuards guards, IWhatsAppCloudClient meta, IMessageTemplates templates, IMessagingCustomerDirectory customers)
 {
-    /// <summary>Meta devuelve 131050 cuando la persona apagó el marketing de la organización.</summary>
-    private const int MarketingOptOutCode = 131050;
-
     public OutboundGuards Guards => guards;
 
     public async Task<ResolvedTemplate> ResolveAsync(
@@ -44,8 +41,9 @@ internal sealed class TemplateOutbound(OutboundGuards guards, IWhatsAppCloudClie
         var conversation = target.Conversation;
         var permit = await guards.AdmitTemplateAsync(tenantId, target, cancellationToken);
         var template = resolved.Template;
-        var text = TemplateCatalog.Render(template, resolved.Parameters);
-        var details = TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, resolved.Parameters);
+        var built = TemplateCatalog.BuildSend(template, resolved.Parameters);
+        var text = built.Text;
+        var details = built.DetailsJson;
         var draft = new OutboundDraft(
             Guid.CreateVersion7(), conversation.Id, tenantId, conversation.ConnectionId, clientId, text, target.Member, permit.Now,
             ReplyToMessageId: null, ReplyToWamid: null, MessageKind.Template, Media: null, details);
@@ -59,20 +57,15 @@ internal sealed class TemplateOutbound(OutboundGuards guards, IWhatsAppCloudClie
         }
 
         var sender = await guards.ResolveSenderAsync(tenantId, conversation.ConnectionId, claim, cancellationToken);
-        var send = new TemplateSend(
-            template.Name,
-            template.Language,
-            template.ParameterFormat == TemplateCatalog.Named,
-            template.Parameters.Select(key => new TemplateParameter(key, resolved.Parameters[key])).ToArray());
         var result = await meta.SendTemplateAsync(
-            sender, SendTarget.ForTemplate(conversation.UserId, conversation.WaId), send, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
+            sender, SendTarget.ForTemplate(conversation.UserId, conversation.WaId), built.Send, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
             CancellationToken.None);
         var answeredAt = guards.UtcNow;
 
         // Decisión 10: Meta avisa que la persona apagó el marketing; se anota en su ficha antes de cerrar el reclamo (que lanza).
         // La falla del aviso no le quita el 422 a quien envía: el reclamo se deshace al desecharse, y reintentar es seguro porque
         // Meta no aceptó el mensaje.
-        if (result is { Outcome: SendOutcome.GraphError, Code: MarketingOptOutCode } && conversation.CustomerId is { } customerId)
+        if (result is { Outcome: SendOutcome.GraphError, Code: MetaErrorCodes.MarketingOptOut } && conversation.CustomerId is { } customerId)
         {
             await customers.MarkMarketingOptOutAsync(tenantId, customerId, CancellationToken.None);
         }
