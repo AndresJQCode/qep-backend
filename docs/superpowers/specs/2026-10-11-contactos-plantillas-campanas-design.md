@@ -84,10 +84,12 @@ mensajería, política de WhatsApp Business), respond.io, WATI, Kommo, Zoko, Zen
    (si hay más de una) y plantilla. Si ya existe la conversación de ese cliente en esa conexión, se envía
    ahí. Si no, se crea **asignada a quien la inició**: quien inicia es quien espera la respuesta.
 10. **Consentimiento de marketing como dato.** Hay una bandera `marketing_opt_out` en el cliente. La
-    prende o apaga una persona en la ficha, y se prende sola cuando Meta responde 131050. Las campañas con
-    plantilla `MARKETING` excluyen a esos clientes; las `UTILITY` no, porque el opt-out de Meta es sólo de
-    marketing. Las palabras clave (STOP, BAJA) quedan fuera de v1 por falsos positivos en español
-    («no me den de baja el pedido»): registrado como §12-P1.
+    prende o apaga una persona en la ficha, y se prende sola en dos casos: cuando Meta responde 131050 (origen
+    `meta`) y cuando la persona toca el botón de respuesta rápida «Detener promociones» de una plantilla
+    (origen `button`; decisión del owner 2026-10-12, §12-P1). Las campañas con plantilla `MARKETING` excluyen a
+    esos clientes; las `UTILITY` no, porque el opt-out de Meta es sólo de marketing. **No se detectan
+    palabras clave** (STOP, BAJA) en el texto libre: dan falsos positivos en español («no me den de baja el
+    pedido»). Sólo cuenta el botón, y un mensaje de texto con las mismas palabras no hace nada.
 11. **Campañas en `Messaging`, envío asíncrono con worker**, sin reusar el camino síncrono del texto. Ese
     camino tiene una transacción abierta durante la llamada a Meta: aceptable para un mensaje, no para
     miles. El worker copia `MediaCopyWorker`: `FOR UPDATE SKIP LOCKED`, lease y reintento con
@@ -97,8 +99,11 @@ mensajería, política de WhatsApp Business), respond.io, WATI, Kommo, Zoko, Zen
     cuesta plata y quejas; un faltante se ve en el detalle y se reintenta con una campaña nueva.
 13. **Audiencia congelada al empezar el envío**, no al crear la campaña. Una campaña programada para
     mañana le llega a quien tenga la etiqueta mañana. Así funcionan los segmentos de respond.io.
-14. **Ritmo:** 20 mensajes por segundo por conexión, configurable (`Messaging:Campaigns:MessagesPerSecond`).
-    Es un cuarto del mínimo de Meta (80 mps), así que deja aire para la bandeja en el mismo número.
+14. **Ritmo:** 20 mensajes por segundo por conexión como objetivo inicial, configurable
+    (`Messaging:Campaigns:MessagesPerSecond`), con un techo de 80 (`MaxMessagesPerSecond`, el throughput por
+    defecto de Meta por número). Un cuarto del techo deja aire para la bandeja en el mismo número. El ritmo
+    es **adaptativo y compartido** (decisión del owner 2026-10-12, §12-P3 y P5): vive en Postgres, así que
+    todas las réplicas gastan del mismo cubo, y se ajusta a lo que Meta contesta (§6.3 paso 3.4).
 15. **Una plantilla pausada o deshabilitada** (132015/132016), una inexistente (132001) o credenciales
     rechazadas **detienen la campaña**: estado `Failed` con motivo, y los pendientes quedan `Skipped`.
     Seguir enviando sólo junta fallas.
@@ -328,7 +333,20 @@ Cada tick hace:
       nunca salió): backoff de 30 s · 2^n, hasta 5 intentos, después `Failed`. Un resultado incierto (timeout, 5xx, reset) es
       `Failed unknown_outcome` y no se reenvía (decisión 12). No reintentables: `Failed`, y 131050 marca el
       opt-out. Los de la decisión 15 detienen la campaña.
-   4. Un token bucket en memoria por conexión mantiene el ritmo de la decisión 14.
+   4. **Ritmo (decisión 14).** Antes de enviar, el despachador agrupa lo reclamado por conexión y le pide al presupuesto
+      compartido (`messaging.connection_send_budgets`, un token bucket por conexión en Postgres) tantos tokens como
+      destinatarios tiene esa conexión, en **una sola sentencia** `UPDATE … RETURNING` que rellena, concede y descuenta. Sólo
+      se envía a quienes se concedió; los demás vuelven a `Pending` **sin gastar el intento** (como el R4), con
+      `next_attempt_at` escalonado: el primero al próximo token y cada uno de los siguientes `1/ritmo` después. La
+      capacidad es un segundo de ráfaga (= el ritmo), así que el worker no espera al tick de 2 s: reclama y envía en rondas,
+      pausando lo que indique el presupuesto (mínimo 250 ms), hasta gastar un intervalo del worker, y entonces corren los
+      pasos 4 y 5. El ritmo se adapta a Meta:
+      - Un **130429** de una conexión baja su ritmo a `max(1, ritmo / 2)` y la pausa 30 s (sin concesiones), **para todas las
+        réplicas**. Varias respuestas durante la misma pausa cuentan una sola vez. El destinatario afectado se reintenta con su
+        backoff, como antes.
+      - Sin nuevos 130429, pasada la pausa el ritmo sube de a **+1 mps cada 30 s** hasta el objetivo. Bajar el objetivo en la
+        configuración se aplica de inmediato.
+      - El **131056** (demasiados mensajes a esa persona) sigue siendo sólo un backoff del destinatario: no toca el ritmo de la conexión.
 4. **Recuperar.** Un destinatario `Sending` con lease vencido y `message_id` puesto pasa a
    `Failed unknown_outcome` (decisión 12). Uno sin mensaje vuelve a `Pending`.
 5. **Cerrar.** Una campaña `Sending` sin `Pending` ni `Sending` pasa a `Completed`.
@@ -364,7 +382,7 @@ Lo que el spec no fija y el código decidió, o lo que se agregó sin cambiar el
   proceso cae con la llamada en vuelo, la burbuja ya dice la verdad y la recuperación deja al destinatario `Failed unknown_outcome`.
   `client_id` del mensaje es el id del destinatario, así `(conversation_id, client_id)` garantiza un mensaje por destinatario aunque dos
   pods lleguen al mismo punto. La llamada a Meta no retiene transacción y se liquida aunque el proceso esté cerrando. Hasta 8 envíos en
-  paralelo por tick, cada uno en su scope; el ritmo lo fija el cubo, no el paralelismo.
+  paralelo por ronda, cada uno en su scope; el ritmo lo fija el presupuesto compartido, no el paralelismo.
 - **Entrega como máximo una vez (decisión 12).** Se reintenta —30 s · 2^n, 5 intentos— sólo cuando Meta **contestó** con un código reintentable
   (130429, 131056) o cuando el request demostrablemente nunca salió (la conexión no llegó a establecerse: `SendOutcome.NotSent`; agotados los
   intentos queda `Failed not_sent`). Todo lo demás con el request ya enviado —timeout, reset a mitad, 5xx, 2xx sin id— es `Failed
@@ -373,8 +391,9 @@ Lo que el spec no fija y el código decidió, o lo que se agregó sin cambiar el
 - **Una plantilla o una conexión que dejan de servir** a mitad del envío detienen la campaña como los códigos de Meta de la decisión 15:
   `132001` (plantilla fuera del catálogo o con otras variables) o `connection_unavailable`. Un destinatario reclamado cuya campaña se
   canceló o falló mientras esperaba su turno no se envía: queda `Skipped campaign_cancelled` o `campaign_failed`.
-- **Configuración.** `Messaging:Campaigns:MessagesPerSecond` (1 a 80, por defecto 20; se valida al arrancar) y
-  `Messaging:Workers:CampaignPollSeconds` (2).
+- **Configuración.** `Messaging:Campaigns:MessagesPerSecond` (objetivo, por defecto 20), `Messaging:Campaigns:MaxMessagesPerSecond` (techo, por
+  defecto 80) con `1 <= objetivo <= techo <= 1000`, validado al arrancar; `Messaging:Workers:CampaignPollSeconds` (2) y
+  `Messaging:MarketingOptOut:ButtonTexts` (ver abajo).
 - **Permiso.** `messaging.campaign.manage` es el 51.º permiso del catálogo; de núcleo, de fábrica sólo en `admin`.
 
 **Correcciones de la revisión (R1 a R10, 2026-10-12).** Ninguna cambia el contrato HTTP de la §6.2 salvo R8, que sólo endurece un permiso.
@@ -414,6 +433,24 @@ Lo que el spec no fija y el código decidió, o lo que se agregó sin cambiar el
   plantilla y los reintentables), y `TemplateCatalog.BuildSend` arma de una vez el `TemplateSend`, el texto y el `details`; el envío
   humano (`TemplateOutbound`) y el worker leen de ahí. El saludo de respaldo `cliente` es una constante con su motivo (Meta rechaza una
   variable vacía con `132018`).
+
+**Decisiones del owner (2026-10-12), implementadas.**
+
+- **Opt-out por botón (P1).** El entrante `type = button` (respuesta rápida de una plantilla; `button.text` y `button.payload`) se compara con
+  `Messaging:MarketingOptOut:ButtonTexts` (por defecto «Detener promociones» y «Stop promotions»; si se configura, la lista **reemplaza** a la
+  de fábrica), sin mayúsculas, sin tildes y sin espacios en los bordes, contra el texto **o** el payload del botón. Las respuestas a mensajes
+  interactivos (`interactive.button_reply`) y los mensajes de texto no cuentan. Ocurre **después** de que la transacción de la ingesta
+  commitea, y sólo si la conversación ya tiene cliente: llama a `IMessagingCustomerDirectory.MarkMarketingOptOutByButtonAsync`, que marca
+  con origen `button` (valor de contrato `"button"`; `MarketingConsentSource.Button`). Es idempotente (el `UPDATE` es condicional y conserva el
+  rastro original) y un fallo se registra sin relanzar: el mensaje ya quedó guardado y la entrega no se reintenta por esto. La migración de
+  Customers (`AllowButtonMarketingConsentSource`) amplía `CK_customers_marketing_opt_out_source` a `('manual', 'meta', 'button')`. El opt-out
+  por botón no escribe evento de conversación ni auditoría, igual que el de 131050.
+- **Campañas sólo del admin (P2).** No se agregan al rol advisor. Sin cambios.
+- **Ritmo y límite de Meta (P3 y P5).** El `CampaignRateLimiter` en memoria se reemplazó por `IConnectionSendBudget`, un cubo adaptativo por
+  conexión en Postgres (§6.3 paso 3.4). Tabla `messaging.connection_send_budgets` (`connection_id` PK, `tenant_id`, `tokens`, `rate`,
+  `refilled_at`, `throttled_until`, `updated_at`, sin FK porque la conexión es de Integrations). `updated_at` es el último cambio del ritmo, no
+  el último uso. El reloj es el `now` que llega por parámetro, no el de Postgres, así que las réplicas y las pruebas hablan del mismo tiempo.
+- **Sin tope de audiencia (P4).** No hay tope por campaña ni presupuesto diario. Sin cambios.
 
 ## 7. Frontend
 
@@ -518,9 +555,11 @@ se hacen en paralelo contra el contrato de este documento.
 
 ## 10. Despliegue
 
-- Hay tres migraciones nuevas: Customers (notas, etiquetas y consentimiento) y Messaging (campañas). No
-  hay datos que migrar.
-- `Messaging:Campaigns:MessagesPerSecond` es opcional (por defecto 20).
+- Hay cinco migraciones nuevas: Customers (notas, etiquetas y consentimiento; y el origen `button` del consentimiento) y
+  Messaging (campañas; y `connection_send_budgets`). No hay datos que migrar.
+- `Messaging:Campaigns:MessagesPerSecond` (por defecto 20), `Messaging:Campaigns:MaxMessagesPerSecond` (80) y
+  `Messaging:MarketingOptOut:ButtonTexts` son opcionales. El texto del botón de la plantilla de marketing tiene que coincidir con uno de
+  `ButtonTexts`, o el opt-out por botón no se marca.
 - **Antes de usar campañas en producción:** la plantilla de marketing debería tener el botón «Detener
   promociones», y el negocio necesita opt-in de sus clientes (política de Meta).
 - Orden de despliegue: backend → frontend.
@@ -539,11 +578,15 @@ se hacen en paralelo contra el contrato de este documento.
 - Webhook `user_preferences`.
 - Marketing Messages API.
 
-## 12. Decisiones pendientes
+## 12. Decisiones del owner (2026-10-12)
 
-- **P1.** ¿Se marca el opt-out con palabras clave entrantes (STOP, BAJA) o con el botón de respuesta
-  rápida «Detener promociones»? Lo segundo es más seguro: requiere leer el `button.payload` del entrante.
-- **P2.** ¿Las campañas deberían estar también en el rol advisor?
-- **P3.** ¿El tope de 20 mps alcanza para el volumen real del primer tenant?
-- **P4.** ¿Tope de audiencia por campaña o presupuesto diario por tenant?
-- **P5.** El ritmo es por proceso: con varias réplicas se multiplica; hay que moverlo a un límite compartido antes de escalar réplicas.
+- **P1. El opt-out se marca con el botón de respuesta rápida «Detener promociones», no con palabras clave.** Se lee el `button.text` y el
+  `button.payload` del entrante `type = button` y se compara con `Messaging:MarketingOptOut:ButtonTexts`. Un mensaje de texto con las mismas
+  palabras no marca nada (decisión 10; §6.5).
+- **P2. No: las campañas siguen siendo sólo del admin.** No se agregan al rol advisor (decisión 16).
+- **P3. El ritmo de envío tiene que tener en cuenta el límite de Meta.** El ritmo es adaptativo: 20 mps de objetivo, 80 de techo, mitad y
+  pausa de 30 s ante un 130429, y +1 mps cada 30 s hasta recuperar el objetivo (decisión 14; §6.3 paso 3.4).
+- **P4. No hay tope de audiencia ni presupuesto.** Ni por campaña ni diario por tenant; el costo lo frena el aviso de confirmación de la
+  decisión 17 y el 131049 de Meta.
+- **P5. El límite se comparte entre réplicas.** Vive en Postgres (no hay Redis en el stack) y todas las réplicas gastan del mismo cubo por
+  conexión, así que se puede escalar el backend sin multiplicar el ritmo.
