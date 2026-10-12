@@ -410,8 +410,9 @@ public sealed class LaunchCampaignHandler(
             throw new ValidationException([new ValidationFailure("scheduledAt", "La fecha de envío ya pasó. Edita el borrador y elige otra.")]);
         }
 
-        _ = await CampaignSupport.ResolveTemplateAsync(
+        var template = await CampaignSupport.ResolveTemplateAsync(
             templates, command.TenantId, campaign.ConnectionId, campaign.TemplateName, campaign.TemplateLanguage, campaign.Parameters.Keys, cancellationToken);
+        campaign.UseLiveTemplateCategory(template.Category);
         campaign.Launch(now);
         audit.RecordCampaign(command.TenantId, executionContext.SubjectId, bySystem: false, MessagingAuditActions.CampaignLaunched, campaign.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

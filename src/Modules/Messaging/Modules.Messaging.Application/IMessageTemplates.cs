@@ -37,7 +37,9 @@ public sealed class ListTemplatesHandler(IMessageTemplates templates, ITenantMod
     public async Task<IReadOnlyList<MessageTemplateDto>> HandleAsync(ListTemplatesQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
-        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.ConversationRead, cancellationToken);
+        // R8: leer la caché es lectura; refresh se la salta y le pega a Meta, así que pide el permiso de gestionar.
+        var permission = query.Refresh ? MessagingPermissions.ConversationManage : MessagingPermissions.ConversationRead;
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, permission, cancellationToken);
         return await templates.ListAsync(query.TenantId, query.ConnectionId, query.Refresh, cancellationToken);
     }
 }

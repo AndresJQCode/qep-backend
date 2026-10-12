@@ -38,10 +38,33 @@ public sealed class TemplateQueriesTests
         var bed = new MessagingTestBed();
         bed.Templates.Catalog.Add(FakeMessageTemplates.Hello());
 
-        var templates = await bed.ListTemplatesHandler(MessagingPermissions.ConversationRead).HandleAsync(new ListTemplatesQuery(bed.TenantId, bed.ConnectionId, refresh), Ct);
+        var templates = await bed.ListTemplatesHandler(MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage)
+            .HandleAsync(new ListTemplatesQuery(bed.TenantId, bed.ConnectionId, refresh), Ct);
 
         Assert.Equal("hola", Assert.Single(templates).Name);
         Assert.Equal((bed.TenantId, bed.ConnectionId, refresh), Assert.Single(bed.Templates.Calls));
+    }
+
+    [Fact]
+    public async Task ReadingWithoutRefreshStaysOnTheReadPermission()
+    {
+        var bed = new MessagingTestBed();
+        bed.Templates.Catalog.Add(FakeMessageTemplates.Hello());
+
+        var templates = await bed.ListTemplatesHandler(MessagingPermissions.ConversationRead).HandleAsync(new ListTemplatesQuery(bed.TenantId, bed.ConnectionId, false), Ct);
+
+        Assert.Single(templates);
+    }
+
+    [Fact]
+    public async Task ARefreshNeedsTheManagePermissionBecauseItBurnsMetaQuotaAndNeverReachesTheCatalogWithout()
+    {
+        // R8: refresh salta la caché de 5 minutos; con sólo lectura cualquiera podría martillar a Meta.
+        var bed = new MessagingTestBed();
+
+        await Assert.ThrowsAsync<RequestForbiddenException>(
+            () => bed.ListTemplatesHandler(MessagingPermissions.ConversationRead).HandleAsync(new ListTemplatesQuery(bed.TenantId, bed.ConnectionId, true), Ct));
+        Assert.Empty(bed.Templates.Calls);
     }
 
     [Fact]

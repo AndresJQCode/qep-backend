@@ -221,6 +221,22 @@ public sealed class CampaignHandlersTests
     }
 
     [Fact]
+    public async Task LaunchStoresTheCategoryTheCatalogHasNowNotTheOneTheDraftWasSavedWith()
+    {
+        // R7: Meta puede reclasificar la plantilla entre que se guardó el borrador y el lanzamiento.
+        var bed = new CampaignBed();
+        var campaign = bed.SeedDraft();
+        bed.Bed.Templates.Catalog.Clear();
+        bed.Bed.Templates.Catalog.Add(FakeMessageTemplates.Hello("promo", "es", "UTILITY"));
+        Assert.Equal("MARKETING", campaign.TemplateCategory);
+
+        var dto = await bed.LaunchHandler().HandleAsync(new LaunchCampaignCommand(bed.Bed.TenantId, campaign.Id, 1), Ct);
+
+        Assert.Equal("UTILITY", campaign.TemplateCategory);
+        Assert.Equal("UTILITY", dto.Template.Category);
+    }
+
+    [Fact]
     public async Task LaunchWithAFutureDateSchedulesIt()
     {
         var bed = new CampaignBed();

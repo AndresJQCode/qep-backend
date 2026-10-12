@@ -115,8 +115,27 @@ public sealed class TemplateCatalogApiTests
         await f.Client.GetAsync(url, Ct);
         Assert.Equal(1, TemplateCalls(f.Factory.MetaHandler));
 
-        await f.Client.GetAsync(url + "?refresh=true", Ct);
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        Assert.Equal(HttpStatusCode.OK, (await manager.GetAsync(url + "?refresh=true", Ct)).StatusCode);
         Assert.Equal(2, TemplateCalls(f.Factory.MetaHandler));
+    }
+
+    [Fact]
+    public async Task ARefreshWithOnlyTheReadPermissionIs403AndNeverReachesMeta()
+    {
+        // R8: refresh salta la caché y le pega a Meta; leer el catálogo cacheado sigue siendo de lectura.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, TemplatesPage);
+        var url = $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/connections/{f.ConnectionId}/templates";
+
+        var refreshed = await f.Client.GetAsync(url + "?refresh=true", Ct);
+        var plain = await f.Client.GetAsync(url, Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, refreshed.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, plain.StatusCode);
+        Assert.Equal(1, TemplateCalls(f.Factory.MetaHandler));
     }
 
     [Fact]

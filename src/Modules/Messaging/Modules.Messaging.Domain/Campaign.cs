@@ -181,6 +181,15 @@ public sealed class Campaign
         Version++;
     }
 
+    /// <summary>R7: al lanzar se guarda la categoría que el catálogo tiene <b>ahora</b>; Meta puede reclasificar una plantilla entre que
+    /// se guardó el borrador y se lanzó, y de eso depende si el opt-out excluye. Sólo en un borrador; no sube la versión (la sube
+    /// <see cref="Launch"/> en la misma operación).</summary>
+    public void UseLiveTemplateCategory(string templateCategory)
+    {
+        RequireStatus(IsEditable);
+        TemplateCategory = templateCategory;
+    }
+
     /// <summary>Con una fecha futura queda <see cref="CampaignStatus.Scheduled"/>; sin fecha empieza ya. Una fecha que ya pasó desde
     /// que se guardó el borrador no se envía de golpe: se pide corregirla.</summary>
     public void Launch(DateTimeOffset now)
