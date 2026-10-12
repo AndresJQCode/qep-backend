@@ -38,6 +38,17 @@ public interface IWhatsAppCloudClient
     Task<SendResult> SendAudioAsync(
         MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-11 §5.1: <c>GET /{waba_id}/message_templates</c> con los campos que lee el normalizador, de a 100 y
+    /// siguiendo <c>paging.next</c> hasta 10 páginas. Devuelve cada plantilla tal cual la mandó Meta (ya clonada, sin ligar al
+    /// documento), para que <see cref="TemplateCatalog"/> la normalice. Una falla en cualquier página es la falla de todo.</summary>
+    Task<MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>>> ListTemplatesAsync(
+        MessagingTemplateSource source, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §5.1: <c>type: "template"</c> por el mismo <c>MessagePayload</c> del texto. Devuelve el mismo
+    /// <see cref="SendResult"/>. Sin cita: una plantilla no responde a nada.</summary>
+    Task<SendResult> SendTemplateAsync(
+        MessagingSender sender, SendTarget target, TemplateSend send, string callbackData, CancellationToken cancellationToken);
+
     /// <summary>§8.4: best effort, 5 s. <c>true</c> si Meta respondió 2xx.</summary>
     Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken);
 

@@ -65,6 +65,98 @@ internal sealed partial class WhatsAppCloudClient(
         MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
         PostMessageAsync(sender, MessagePayload(target, "audio", new JsonObject { ["id"] = mediaId, ["voice"] = true }, callbackData, contextWamid), cancellationToken);
 
+    /// <summary>Spec 2026-10-11 §5.1: tope de páginas de <c>message_templates</c>. Con 100 por página son 1000 plantillas, el
+    /// máximo que Meta deja tener por cuenta.</summary>
+    public const int MaxTemplatePages = 10;
+
+    public const string TemplateFields = "name,language,status,category,components,parameter_format";
+
+    public async Task<MessagingGraphResult<IReadOnlyList<JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var templates = new List<JsonElement>();
+        var next = new Uri(
+            $"{Version}/{Uri.EscapeDataString(source.WabaId)}/message_templates?fields={TemplateFields}&limit=100", UriKind.Relative);
+        for (var page = 0; page < MaxTemplatePages && next is not null; page++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, next);
+            var answer = await SendAsync("templates", request, source.AccessToken, null, cancellationToken);
+            using var response = answer.Response;
+            if (response is null)
+            {
+                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
+            }
+
+            var status = (int)response.StatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(answer.Body);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                {
+                    return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+                }
+
+                templates.AddRange(data.EnumerateArray().Select(template => template.Clone()));
+                next = NextPage(root);
+            }
+            catch (JsonException)
+            {
+                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+            }
+        }
+
+        return new MessagingGraphResult<IReadOnlyList<JsonElement>>(templates, null);
+    }
+
+    /// <summary><c>paging.next</c> es una URL absoluta y firmada de Graph. Sólo se sigue si es https y del mismo host que el
+    /// cliente: el token viaja en cada request y no debe salir de graph.facebook.com por lo que diga el cuerpo.</summary>
+    private static Uri? NextPage(JsonElement root)
+    {
+        if (!root.TryGetProperty("paging", out var paging) || paging.ValueKind != JsonValueKind.Object
+            || !paging.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.String
+            || !Uri.TryCreate(next.GetString(), UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        return uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.Host, new Uri(BaseUrl).Host, StringComparison.OrdinalIgnoreCase) ? uri : null;
+    }
+
+    public Task<SendResult> SendTemplateAsync(
+        MessagingSender sender, SendTarget target, TemplateSend send, string callbackData, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        var content = new JsonObject
+        {
+            ["name"] = send.Name,
+            ["language"] = new JsonObject { ["code"] = send.Language },
+        };
+        if (send.Parameters.Count > 0)
+        {
+            var parameters = new JsonArray();
+            foreach (var parameter in send.Parameters)
+            {
+                var item = new JsonObject { ["type"] = "text", ["text"] = parameter.Value };
+                if (send.Named)
+                {
+                    item["parameter_name"] = parameter.Key;
+                }
+
+                parameters.Add(item);
+            }
+
+            content["components"] = new JsonArray(new JsonObject { ["type"] = "body", ["parameters"] = parameters });
+        }
+
+        return PostMessageAsync(sender, MessagePayload(target, "template", content, callbackData, null), cancellationToken);
+    }
+
     public async Task<MessagingGraphResult<string>> UploadMediaAsync(
         MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken)
     {

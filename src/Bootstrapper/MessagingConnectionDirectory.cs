@@ -32,6 +32,37 @@ internal sealed class MessagingConnectionDirectory(
                 : null;
     }
 
+    public async Task<MessagingTemplateSource?> ResolveTemplateSourceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        var resolved = await connections.ResolveAsync(tenantId, connectionId, cancellationToken);
+        if (resolved is null || !string.Equals(resolved.ProviderKey, Provider, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return resolved.Fields.TryGetValue(WhatsAppCloudFieldKeys.WabaId, out var wabaId) && !string.IsNullOrWhiteSpace(wabaId)
+            && resolved.Secrets.TryGetValue(WhatsAppCloudFieldKeys.AccessToken, out var token)
+                ? new MessagingTemplateSource(wabaId, token)
+                : null;
+    }
+
+    public async Task<IReadOnlyList<MessagingConnectionDto>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        // El número que se muestra vive en los campos de la conexión, que sólo trae ResolveAsync (con el token descifrado, que acá se
+        // descarta). Una conexión que no se resuelve (un secreto que no descifra) no sirve para enviar y no se ofrece.
+        var result = new List<MessagingConnectionDto>();
+        foreach (var summary in (await connections.ListActiveAsync(tenantId, Provider, cancellationToken)).OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            if (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken) is { } resolved)
+            {
+                result.Add(new MessagingConnectionDto(
+                    summary.Id, summary.Name, resolved.Fields.GetValueOrDefault(WhatsAppCloudFieldKeys.DisplayPhoneNumber)));
+            }
+        }
+
+        return result;
+    }
+
     public async Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         (await connections.ListByProviderAsync(tenantId, Provider, cancellationToken))
             .ToDictionary(listing => listing.Id, listing => listing.Name);

@@ -21,4 +21,20 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-11 §4.1: R2 no aceptó la nota de voz. No queda fila; reintentar es seguro.</summary>
     public const string MediaUploadFailed = "messaging.media.upload_failed";
+
+    /// <summary>Spec 2026-10-11 §5.2: la plantilla no está en el catálogo de la conexión, no está aprobada o v1 no sabe enviarla.</summary>
+    public const string TemplateNotAvailable = "messaging.template.not_available";
+
+    /// <summary>§5.2: las claves de <c>parameters</c> no son exactamente las de la plantilla.</summary>
+    public const string TemplateParametersMismatch = "messaging.template.parameters_mismatch";
+
+    /// <summary>§5.2: <c>POST /conversations</c> con un cliente que no existe en el tenant o está inactivo (404).</summary>
+    public const string CustomerNotFound = "messaging.customer.not_found";
+
+    /// <summary>§5.2: el cliente no tiene teléfono ni BSUID: no hay a dónde escribirle.</summary>
+    public const string CustomerUnreachable = "messaging.customer.unreachable";
+
+    /// <summary>Agregado al implementar E2 (el spec no lo nombra): Meta no contestó la lista de plantillas, así que no hay catálogo
+    /// contra el cual validar ni nada que mostrar. Es un 422 como <see cref="ConnectionUnavailable"/>: reintentar es seguro.</summary>
+    public const string TemplatesUnavailable = "messaging.templates.unavailable";
 }
