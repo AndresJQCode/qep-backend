@@ -6,6 +6,17 @@ public sealed record MessagingContact(string UserId, string? WaId, string? Profi
 /// <summary><c>Created</c> decide el evento: <c>CustomerCreated</c> si se creó, si no <c>CustomerLinked</c> (§8.2).</summary>
 public sealed record MessagingEnsuredCustomer(Guid CustomerId, bool Created);
 
+/// <summary>Spec 2026-10-11 §4.4: cómo escribirle a un cliente. <c>PhoneE164</c> con «+» (el <c>waId</c> son sus dígitos) y
+/// <c>WhatsAppUserId</c> es el BSUID; sin ninguno de los dos no se le puede escribir. <c>MarketingOptOut</c> es la bandera de
+/// la ficha: las plantillas <c>MARKETING</c> lo excluyen y las <c>UTILITY</c> no.</summary>
+public sealed record MessagingCustomerContact(
+    Guid CustomerId, string Name, string? PhoneE164, string? WhatsAppUserId, bool IsActive, bool MarketingOptOut);
+
+/// <summary>Spec 2026-10-11 §4.4: cuántos tiene una audiencia y por qué algunos no recibirían nada. Cubos excluyentes y con
+/// precedencia —inactivo, luego sin WhatsApp, luego con opt-out—: «le llegará a» es <c>Total - Inactive - WithoutWhatsApp</c>,
+/// y a eso se le resta <c>OptedOut</c> sólo si la plantilla es <c>MARKETING</c>.</summary>
+public sealed record MessagingAudienceCount(int Total, int Inactive, int OptedOut, int WithoutWhatsApp);
+
 /// <summary>Spec 2026-10-09 §6.5: los clientes de QEP por teléfono, con adaptador en Bootstrapper sobre
 /// <c>ICustomerPhoneDirectory</c> (Messaging no referencia Customers). El <c>waId</c> de Meta son los
 /// dígitos del E.164; el adaptador traduce. «Nombres y clientes» de §7.6: una consulta por página.</summary>
@@ -32,4 +43,20 @@ public interface IMessagingCustomerDirectory
     /// <summary>Spec 2026-10-10 §8.3: el cliente con el BSUID anterior pasa al nuevo. Si el nuevo ya es de otro cliente no
     /// se toca (lo registra el adaptador). El teléfono del cliente no cambia: es dato maestro.</summary>
     Task ReplaceUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §4.4: el cliente del tenant para escribirle, o <c>null</c> si no existe en este tenant.</summary>
+    Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
+    /// <summary>§4.4: los clientes que tienen alguna de las etiquetas, más los sueltos, sin duplicados y ordenados por id. Se
+    /// entrega por lotes de 500 internamente (paginado por id): quien consume decide cuándo parar y cuántos acumula. Incluye
+    /// inactivos, sin WhatsApp y con opt-out; omitirlos y con qué motivo es de la campaña.</summary>
+    IAsyncEnumerable<MessagingCustomerContact> ListAudienceAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>§4.4: el conteo de la misma audiencia que <see cref="ListAudienceAsync"/>.</summary>
+    Task<MessagingAudienceCount> CountAudienceAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>§4.4 y decisión 10: Meta respondió 131050. Idempotente; el origen queda en <c>meta</c>.</summary>
+    Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 }
