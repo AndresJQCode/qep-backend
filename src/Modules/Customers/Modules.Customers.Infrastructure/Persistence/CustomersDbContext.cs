@@ -13,6 +13,12 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 
     public DbSet<ClientClassification> ClientClassifications => Set<ClientClassification>();
 
+    internal DbSet<CustomerNote> CustomerNotes => Set<CustomerNote>();
+
+    internal DbSet<Tag> Tags => Set<Tag>();
+
+    internal DbSet<CustomerTagAssignment> CustomerTagAssignments => Set<CustomerTagAssignment>();
+
     internal DbSet<CustomerCucCounter> CucCounters => Set<CustomerCucCounter>();
 
     internal DbSet<CustomersOutboxMessage> Outbox => Set<CustomersOutboxMessage>();
@@ -23,12 +29,22 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL "
         + "AND address IS NOT NULL AND country IS NOT NULL AND classification_id IS NOT NULL)";
 
+    /// <summary>El único por <c>(tenant_id, lower(name))</c>. Va en la migración con SQL —EF no modela índices por
+    /// expresión— y <c>CustomersUnitOfWork</c> lo traduce por este nombre a 409 <c>customers.tag.name_taken</c>.</summary>
+    public const string TagNameIndex = "IX_tags_tenant_name";
+
+    /// <summary>La clave de <c>customer_tags</c>: dos <c>PUT</c> simultáneos que agregan la misma etiqueta chocan acá.</summary>
+    public const string CustomerTagPrimaryKey = "PK_customer_tags";
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureCustomer(modelBuilder);
         ConfigureCustomerAddress(modelBuilder);
         ConfigureClientClassification(modelBuilder);
         ConfigureCucCounter(modelBuilder);
+        ConfigureCustomerNote(modelBuilder);
+        ConfigureTag(modelBuilder);
+        ConfigureCustomerTagAssignment(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -39,6 +55,9 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         {
             table.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
             table.HasCheckConstraint("CK_customers_complete_fields", CompleteFieldsCheck);
+            table.HasCheckConstraint(
+                "CK_customers_marketing_opt_out_source",
+                "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
         });
         customer.HasKey(value => value.Id);
         customer.Property(value => value.Id)
@@ -130,6 +149,16 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasPrincipalKey(value => new { value.TenantId, value.Id })
             .HasConstraintName("FK_customers_client_classifications_classification_id")
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Spec 2026-10-11 §4.1. El DEFAULT existe para las filas anteriores a la migración; el código siempre escribe
+        // la columna.
+        customer.Property(value => value.MarketingOptOut).HasColumnName("marketing_opt_out").HasDefaultValue(false);
+        customer.Property(value => value.MarketingOptOutAt).HasColumnName("marketing_opt_out_at");
+        customer.Property(value => value.MarketingOptOutSource)
+            .HasColumnName("marketing_opt_out_source")
+            .HasMaxLength(16)
+            .HasConversion(new ValueConverter<MarketingConsentSource, string>(
+                source => source.ToWireValue(), wire => MarketingConsentSourceParser.Parse(wire)));
 
         customer.Property(value => value.WithRetention).HasColumnName("with_retention");
         customer.Property(value => value.VatSurplus).HasColumnName("vat_surplus");
@@ -243,6 +272,91 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         address.HasOne<Customer>()
             .WithMany(customer => customer.Addresses)
             .HasForeignKey(value => value.CustomerId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Spec 2026-10-11 §4.1. La nota es su propio agregado (no una colección de Customer): una nota no sube la versión
+    // del cliente. La FK al cliente es CASCADE por completitud —los clientes no se borran—.
+    private static void ConfigureCustomerNote(ModelBuilder modelBuilder)
+    {
+        var note = modelBuilder.Entity<CustomerNote>();
+        note.ToTable("customer_notes", "customers");
+        note.HasKey(value => value.Id);
+        note.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new CustomerNoteId(value))
+            .ValueGeneratedNever();
+        note.Property(value => value.TenantId).HasColumnName("tenant_id");
+        note.Property(value => value.CustomerId)
+            .HasColumnName("customer_id")
+            .HasConversion(id => id.Value, value => new CustomerId(value));
+        note.Property(value => value.Body).HasColumnName("body").HasMaxLength(CustomerNote.BodyMaxLength);
+        note.Property(value => value.AuthorUserId).HasColumnName("author_user_id");
+        note.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        note.Property(value => value.CreatedAt).HasColumnName("created_at");
+        note.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        // La lista de la ficha: las notas de un cliente, de la más nueva a la más vieja.
+        note.HasIndex(value => new { value.TenantId, value.CustomerId, value.CreatedAt })
+            .IsDescending(false, false, true)
+            .HasDatabaseName("IX_customer_notes_tenant_customer_created");
+        note.HasOne<Customer>()
+            .WithMany()
+            .HasForeignKey(value => value.CustomerId)
+            .HasConstraintName("FK_customer_notes_customers_customer_id")
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Spec 2026-10-11 §4.1. La unicidad del nombre (lower(name)) NO está en el modelo: EF no modela índices por
+    // expresión. La crea la migración a mano, con el nombre de TagNameIndex.
+    private static void ConfigureTag(ModelBuilder modelBuilder)
+    {
+        var tag = modelBuilder.Entity<Tag>();
+        tag.ToTable("tags", "customers", table => table.HasCheckConstraint(
+            "CK_tags_color", "color IN ('gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple')"));
+        tag.HasKey(value => value.Id);
+        tag.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new TagId(value))
+            .ValueGeneratedNever();
+        tag.Property(value => value.TenantId).HasColumnName("tenant_id");
+        tag.Property(value => value.Name).HasColumnName("name").HasMaxLength(Tag.NameMaxLength);
+        tag.Property(value => value.Color)
+            .HasColumnName("color")
+            .HasMaxLength(16)
+            .HasConversion(new ValueConverter<TagColor, string>(color => color.ToWireValue(), wire => TagColorParser.Parse(wire)));
+        tag.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        tag.Property(value => value.CreatedAt).HasColumnName("created_at");
+        tag.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        tag.HasIndex(value => value.TenantId).HasDatabaseName("IX_tags_tenant");
+    }
+
+    // Spec 2026-10-11 §4.1: la clave (customer_id, tag_id) impide la repetida; borrar la etiqueta borra sus
+    // asignaciones (CASCADE), y el índice (tenant_id, tag_id) sirve para contar y para armar audiencias.
+    private static void ConfigureCustomerTagAssignment(ModelBuilder modelBuilder)
+    {
+        var assignment = modelBuilder.Entity<CustomerTagAssignment>();
+        assignment.ToTable("customer_tags", "customers");
+        assignment.HasKey(value => new { value.CustomerId, value.TagId }).HasName(CustomerTagPrimaryKey);
+        assignment.Property(value => value.CustomerId)
+            .HasColumnName("customer_id")
+            .HasConversion(id => id.Value, value => new CustomerId(value));
+        assignment.Property(value => value.TagId)
+            .HasColumnName("tag_id")
+            .HasConversion(id => id.Value, value => new TagId(value));
+        assignment.Property(value => value.TenantId).HasColumnName("tenant_id");
+        assignment.Property(value => value.AssignedAt).HasColumnName("assigned_at");
+        assignment.Property(value => value.AssignedByUserId).HasColumnName("assigned_by_user_id");
+        assignment.HasIndex(value => new { value.TenantId, value.TagId }).HasDatabaseName("IX_customer_tags_tenant_tag");
+        assignment.HasOne<Customer>()
+            .WithMany()
+            .HasForeignKey(value => value.CustomerId)
+            .HasConstraintName("FK_customer_tags_customers_customer_id")
+            .OnDelete(DeleteBehavior.Cascade);
+        assignment.HasOne<Tag>()
+            .WithMany()
+            .HasForeignKey(value => value.TagId)
+            .HasConstraintName("FK_customer_tags_tags_tag_id")
             .OnDelete(DeleteBehavior.Cascade);
     }
 

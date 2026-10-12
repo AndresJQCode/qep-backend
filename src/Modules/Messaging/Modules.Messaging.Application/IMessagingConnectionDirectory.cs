@@ -34,6 +34,14 @@ public interface IMessagingConnectionDirectory
     /// <summary>Nombre de cada conexión whatsapp-cloud del tenant, Active o no.</summary>
     Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-11 §5.1: <c>wabaId</c> (<c>WhatsAppCloudFieldKeys.WabaId</c>) y el token en claro de una conexión
+    /// <c>Active</c> del tenant; <c>null</c> si no existe, es de otro tenant, no está activa o no tiene <c>wabaId</c>.</summary>
+    Task<MessagingTemplateSource?> ResolveTemplateSourceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §5.2: las conexiones <c>whatsapp-cloud</c> <c>Active</c> del tenant, por nombre, con el número
+    /// que la pantalla muestra. Lo usan la conversación nueva y las campañas.</summary>
+    Task<IReadOnlyList<MessagingConnectionDto>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
+
     /// <summary><c>Active → NeedsAttention</c> con el código (<c>token_expired</c>, <c>number_unregistered</c>, <c>account_disabled</c>).</summary>
     Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken);
 }

@@ -163,6 +163,7 @@ app.MapCatalogTaxRateEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();
+app.MapCustomerEngagementEndpoints();
 app.MapGeographyEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();

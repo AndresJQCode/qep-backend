@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Modules.Customers.Application;
 using Modules.Messaging.Application;
@@ -6,7 +7,7 @@ namespace Bootstrapper;
 
 /// <summary>§6.5: el wa_id de Meta son los dígitos del E.164; se traduce en las dos direcciones acá.</summary>
 internal sealed partial class MessagingCustomerDirectory(
-    ICustomerPhoneDirectory phones, ICustomerWhatsAppDirectory whatsApp, ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
+    ICustomerPhoneDirectory phones, ICustomerWhatsAppDirectory whatsApp, ICustomerTagLookup tagLookup, ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
 {
     /// <summary>El tope de <c>FindPhonesByNameAsync</c> (spec §6.5); el puerto de Customers no tiene default.</summary>
     public const int NameCap = 200;
@@ -37,6 +38,40 @@ internal sealed partial class MessagingCustomerDirectory(
             cancellationToken);
         return new MessagingEnsuredCustomer(ensured.CustomerId, ensured.Outcome == EnsureOutcome.Created);
     }
+
+    private static MessagingCustomerContact ToMessaging(CustomerContact contact) =>
+        new(contact.CustomerId, contact.Name, contact.PhoneE164, contact.WhatsAppUserId, contact.IsActive, contact.MarketingOptOut);
+
+    public async Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        await whatsApp.FindContactAsync(tenantId, customerId, cancellationToken) is { } contact ? ToMessaging(contact) : null;
+
+    public async IAsyncEnumerable<MessagingCustomerContact> ListAudienceAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> tagIds,
+        IReadOnlyCollection<Guid> customerIds,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var contact in whatsApp.ListAudienceAsync(tenantId, tagIds, customerIds, cancellationToken))
+        {
+            yield return ToMessaging(contact);
+        }
+    }
+
+    public async Task<MessagingAudienceCount> CountAudienceAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        var count = await whatsApp.CountAudienceAsync(tenantId, tagIds, customerIds, cancellationToken);
+        return new MessagingAudienceCount(count.Total, count.Inactive, count.OptedOut, count.WithoutWhatsApp);
+    }
+
+    public async Task<IReadOnlyList<MessagingTagRef>> FindTagsAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
+        [.. (await tagLookup.FindAsync(tenantId, tagIds, cancellationToken)).Select(tag => new MessagingTagRef(tag.Id, tag.Name, tag.Color))];
+
+    public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        whatsApp.MarkMarketingOptOutAsync(tenantId, customerId, cancellationToken);
+
+    public Task MarkMarketingOptOutByButtonAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        whatsApp.MarkMarketingOptOutByButtonAsync(tenantId, customerId, cancellationToken);
 
     // §11: sin el BSUID en el log; el tenant basta para buscar la conversación.
     [LoggerMessage(Level = LogLevel.Information, Message = "A WhatsApp number change for tenant {TenantId} was not applied to Customers: no customer had the previous id, or the new one already belongs to another customer.")]

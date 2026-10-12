@@ -10,6 +10,14 @@ public abstract record SendTarget
         userId is not null ? new SendToUserId(userId)
         : waId is not null ? new SendToPhone(waId)
         : throw new InvalidOperationException("A conversation has a user id or a wa_id (CK_conversations_identity).");
+
+    /// <summary>Spec 2026-10-11 decisión 8: una plantilla va por <c>to</c> si hay teléfono y sólo si no por <c>recipient</c> con
+    /// el BSUID. Es la regla de Meta (si llegan los dos gana <c>to</c>) dicha explícitamente; el BSUID de plantillas de
+    /// autenticación no aplica porque v1 no las envía.</summary>
+    public static SendTarget ForTemplate(string? userId, string? waId) =>
+        waId is not null ? new SendToPhone(waId)
+        : userId is not null ? new SendToUserId(userId)
+        : throw new InvalidOperationException("A conversation has a user id or a wa_id (CK_conversations_identity).");
 }
 
 public sealed record SendToUserId(string UserId) : SendTarget;

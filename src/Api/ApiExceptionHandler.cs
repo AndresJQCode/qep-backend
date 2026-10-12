@@ -146,6 +146,8 @@ internal sealed class ApiExceptionHandler(
                 (StatusCodes.Status403Forbidden, "Access denied", value.Code),
             RequestUnauthorizedException value =>
                 (StatusCodes.Status401Unauthorized, "Unauthorized", value.Code),
+            ResourceConflictException value =>
+                (StatusCodes.Status409Conflict, "Conflict", value.Code),
             RequestConcurrencyException value =>
                 (StatusCodes.Status412PreconditionFailed, "Concurrency conflict", value.Code),
             PreconditionRequiredException value =>

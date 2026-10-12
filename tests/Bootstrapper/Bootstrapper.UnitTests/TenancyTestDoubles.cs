@@ -37,7 +37,8 @@ internal sealed class InMemoryMembershipRepository(params Membership[] membershi
 
     public Task<Membership?> FindByUserAndTenantAsync(
         Guid userId, TenantId tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(memberships.SingleOrDefault(
+            membership => membership.UserId == userId && membership.TenantId == tenantId));
 
     public Task<Membership?> FindByIdAsync(
         MembershipId id, TenantId tenantId, CancellationToken cancellationToken) =>

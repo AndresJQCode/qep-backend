@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Campaigns;
 using Modules.Messaging.Infrastructure.Media;
 using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
@@ -22,6 +24,8 @@ public static class MessagingInfrastructureExtensions
             options.UseNpgsql(connectionString, npgsql => npgsql.MigrationsHistoryTable("__ef_migrations_history", MessagingDbContext.Schema)));
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
+        // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
+        services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).
         services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
@@ -50,13 +54,31 @@ public static class MessagingInfrastructureExtensions
         services.AddHttpClient(WhatsAppCloudClient.HttpClientName, WhatsAppCloudClient.ConfigureClient)
             .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
             .RemoveAllLoggers();
+        // Spec 2026-10-11 §6.4: la subida de la nota de voz, igual que el anterior pero con 30 s.
+        services.AddHttpClient(WhatsAppCloudClient.UploadHttpClientName, WhatsAppCloudClient.ConfigureUploadClient)
+            .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
         services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
         services.AddScoped<IOutboundMessages, OutboundMessages>();
+        // Spec 2026-10-11 §5.1: el catálogo de plantillas aprobadas, 5 minutos por (tenant, conexión) en IMemoryCache.
+        services.AddScoped<IMessageTemplates, MessageTemplateCatalog>();
+        // Spec 2026-10-11 §6: las campañas. El agregado con tracking, las lecturas con sus contadores y el armado de los DTO.
+        services.AddScoped<ICampaignRepository, CampaignRepository>();
+        services.AddScoped<ICampaignQueries, CampaignQueries>();
+        services.AddScoped<CampaignMapper>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();
         services.AddScoped<MediaCopyProcessor>();
         services.AddHostedService<MediaCopyWorker>();
+        // Spec 2026-10-11 §6.3: el worker de campañas. El cubo de ritmo es un singleton (el estado es del proceso); el despachador y su
+        // persistencia, scoped. TimeProvider.System sólo si nadie registró otro.
+        services.TryAddSingleton(TimeProvider.System);
+        // Decisión del owner 2026-10-12 (P3 y P5): el límite de envío es un cubo por conexión en Postgres, compartido por las réplicas.
+        services.AddScoped<IConnectionSendBudget, ConnectionSendBudget>();
+        services.AddScoped<ICampaignDispatchStore, CampaignDispatchStore>();
+        services.AddScoped<CampaignDispatcher>();
+        services.AddHostedService<CampaignDispatchWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
@@ -64,6 +86,12 @@ public static class MessagingInfrastructureExtensions
             .Bind(configuration.GetSection(MessagingWebhookOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<MessagingWebhookOptions>, MessagingWebhookOptionsValidator>();
+        services.AddOptions<MessagingCampaignOptions>()
+            .Bind(configuration.GetSection(MessagingCampaignOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<MessagingCampaignOptions>, MessagingCampaignOptionsValidator>();
+        services.AddOptions<MessagingMarketingOptOutOptions>().Bind(configuration.GetSection(MessagingMarketingOptOutOptions.SectionName));
+        services.AddSingleton<MarketingOptOutButtons>();
         services.AddOptions<MessagingWorkerOptions>().Bind(configuration.GetSection(MessagingWorkerOptions.SectionName));
         services.AddOptions<MessagingSearchOptions>().Bind(configuration.GetSection(MessagingSearchOptions.SectionName));
 

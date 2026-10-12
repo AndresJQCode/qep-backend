@@ -13,7 +13,8 @@ internal static class CustomerMapping
         this Customer customer,
         CustomerCityRef? city,
         ClientClassification? classification,
-        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById) => new(
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyCollection<TagDto> tags) => new(
         customer.Id.Value,
         customer.Cuc,
         customer.Name,
@@ -50,7 +51,11 @@ internal static class CustomerMapping
         customer.IsActive,
         customer.CreatedAt,
         customer.UpdatedAt,
-        customer.IsComplete);
+        customer.IsComplete,
+        // Spec 2026-10-11 §4.2: la ficha y la modal se dibujan con un solo GET. El listado y el Excel no las
+        // piden y pasan una colección vacía.
+        tags,
+        customer.ToConsentDto());
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo
@@ -87,6 +92,7 @@ internal static class CustomerMapping
         this Customer customer,
         ICustomerGeographyLookup geographyLookup,
         IClientClassificationRepository classificationRepository,
+        ICustomerTagRepository tagRepository,
         CancellationToken cancellationToken)
     {
         // Las ciudades del domicilio y de todas las direcciones de envio de una vez: el domicilio
@@ -108,7 +114,11 @@ internal static class CustomerMapping
                     $"'{customer.Id}' was not found.")
             : null;
 
-        return customer.ToDto(city, classification, citiesById);
+        var tags = (await tagRepository.ListForCustomerAsync(customer.TenantId, customer.Id, cancellationToken))
+            .Select(item => item.ToDto())
+            .ToArray();
+
+        return customer.ToDto(city, classification, citiesById, tags);
     }
 
     /// <summary>

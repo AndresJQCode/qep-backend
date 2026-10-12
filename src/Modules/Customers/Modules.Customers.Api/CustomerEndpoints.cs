@@ -436,7 +436,9 @@ public static class CustomerEndpoints
         customer.IsActive,
         customer.CreatedAt,
         customer.UpdatedAt,
-        customer.IsComplete);
+        customer.IsComplete,
+        customer.Tags,
+        customer.MarketingConsent);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,

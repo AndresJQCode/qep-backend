@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using BuildingBlocks.Application;
 using Modules.Customers.Domain;
 
@@ -10,8 +11,12 @@ public sealed class CustomerWhatsAppDirectory(
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IPhoneNumberNormalizer phoneNormalizer,
-    IClock clock) : ICustomerWhatsAppDirectory
+    IClock clock,
+    ICustomerAudienceRepository audience) : ICustomerWhatsAppDirectory
 {
+    /// <summary>Spec 2026-10-11 §4.4: de a cuántos clientes se lee la audiencia.</summary>
+    public const int AudienceBatchSize = 500;
+
     private const string Success = "success";
 
     public async Task<EnsuredCustomer> EnsureAsync(Guid tenantId, WhatsAppContact contact, CancellationToken cancellationToken)
@@ -87,6 +92,44 @@ public sealed class CustomerWhatsAppDirectory(
     /// <paramref name="cap"/> clientes del tenant, que no es «ninguno coincide».</summary>
     public async Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
         string.IsNullOrWhiteSpace(term) ? [] : await repository.FindIdsByNameAsync(tenantId, term.Trim(), cap, cancellationToken);
+
+    public Task<CustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        audience.FindContactAsync(tenantId, customerId, cancellationToken);
+
+    public async IAsyncEnumerable<CustomerContact> ListAudienceAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> tagIds,
+        IReadOnlyCollection<Guid> customerIds,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        Guid? after = null;
+        while (true)
+        {
+            var batch = await audience.ListAudienceBatchAsync(tenantId, tagIds, customerIds, after, AudienceBatchSize, cancellationToken);
+            foreach (var contact in batch)
+            {
+                yield return contact;
+            }
+
+            // Un lote corto es el último; uno completo puede serlo también, y se averigua con una lectura más.
+            if (batch.Count < AudienceBatchSize)
+            {
+                yield break;
+            }
+
+            after = batch[^1].CustomerId;
+        }
+    }
+
+    public Task<AudienceCount> CountAudienceAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        audience.CountAudienceAsync(tenantId, tagIds, customerIds, cancellationToken);
+
+    public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        audience.MarkMarketingOptOutAsync(tenantId, customerId, MarketingConsentSource.Meta, clock.UtcNow, cancellationToken);
+
+    public Task MarkMarketingOptOutByButtonAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        audience.MarkMarketingOptOutAsync(tenantId, customerId, MarketingConsentSource.Button, clock.UtcNow, cancellationToken);
 
     private async Task<EnsuredCustomer> WinnerAsync(Guid tenantId, string userId, CancellationToken cancellationToken)
     {

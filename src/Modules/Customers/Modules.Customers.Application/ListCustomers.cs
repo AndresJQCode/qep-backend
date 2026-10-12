@@ -187,7 +187,7 @@ public sealed class ListCustomersHandler(
                         $"'{customer.Id}' was not found.");
             }
 
-            items.Add(customer.ToDto(city, classification, citiesById));
+            items.Add(customer.ToDto(city, classification, citiesById, []));
         }
 
         return items;

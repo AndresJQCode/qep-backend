@@ -66,5 +66,30 @@ internal static class StatusIngestion
         return StatusOutcome.Applied;
     }
 
+    /// <summary>Spec 2026-10-11 decisión 10: Meta aceptó una plantilla de marketing y la reporta después con este código, porque la persona
+    /// apagó las promociones de la organización.</summary>
+    public const int MarketingOptOutCode = Modules.Messaging.Domain.MetaErrorCodes.MarketingOptOut;
+
+    /// <summary>El cliente de la conversación del mensaje que falló con <see cref="MarketingOptOutCode"/>; <c>null</c> si el estado es otro, el
+    /// mensaje no es nuestro o la conversación no tiene cliente. Se consulta aparte de <see cref="ApplyAsync"/> y también cuando el estado ya
+    /// estaba aplicado (<see cref="StatusOutcome.NoChange"/>): si el aviso al cliente falló, el reintento de la entrega todavía lo marca.</summary>
+    public static async Task<Guid?> FindMarketingOptOutCustomerAsync(
+        MessagingDbContext dbContext, Guid connectionId, StatusUpdate update, CancellationToken cancellationToken)
+    {
+        if (update.Status != MessageStatus.Failed || update.ErrorCode != MarketingOptOutCode)
+        {
+            return null;
+        }
+
+        var callback = update.CallbackMessageId ?? Guid.Empty;
+        var customers = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            SELECT c.customer_id AS "Value"
+            FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id
+            WHERE m.connection_id = {connectionId} AND (m.wamid = {update.Wamid} OR m.id = {callback}) AND m.direction = 2 AND c.customer_id IS NOT NULL
+            """).ToListAsync(cancellationToken);
+        return customers.Count == 1 ? customers[0] : null;
+    }
+
     private sealed record AppliedRow(Guid Id, Guid ConversationId);
 }

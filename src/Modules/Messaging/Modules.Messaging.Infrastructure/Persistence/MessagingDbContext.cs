@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
 using Modules.Messaging.Domain;
@@ -40,6 +42,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     internal DbSet<WebhookDeliveryRecord> Deliveries => Set<WebhookDeliveryRecord>();
 
+    /// <summary>Spec 2026-10-11 §6.1: el agregado de la campaña.</summary>
+    public DbSet<Campaign> Campaigns => Set<Campaign>();
+
+    internal DbSet<CampaignRecipientRecord> CampaignRecipients => Set<CampaignRecipientRecord>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -48,6 +55,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureMessage(modelBuilder);
         ConfigureMedia(modelBuilder);
         ConfigureDelivery(modelBuilder);
+        ConfigureSendBudget(modelBuilder);
+        ConfigureCampaign(modelBuilder);
+        ConfigureCampaignRecipient(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
 
@@ -188,6 +198,105 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         media.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
         media.Property(value => value.LastError).HasColumnName("last_error").HasMaxLength(256);
         media.HasIndex(value => value.NextAttemptAt).HasDatabaseName("IX_message_media_pending").HasFilter("stored_at IS NULL");
+    }
+
+    private static readonly ValueConverter<IReadOnlyList<Guid>, Guid[]> GuidListConverter = new(list => list.ToArray(), array => array);
+
+    private static readonly ValueComparer<IReadOnlyList<Guid>> GuidListComparer = new(
+        (left, right) => left!.SequenceEqual(right!),
+        list => list.Aggregate(0, (hash, id) => HashCode.Combine(hash, id)),
+        list => list.ToArray());
+
+    private static void ConfigureCampaign(ModelBuilder modelBuilder)
+    {
+        var campaign = modelBuilder.Entity<Campaign>();
+        campaign.ToTable("campaigns", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_campaigns_status", "status IN ('Draft','Scheduled','Sending','Completed','Cancelled','Failed')");
+            table.HasCheckConstraint("CK_campaigns_customers_cap", "cardinality(audience_customer_ids) <= 500");
+            table.HasCheckConstraint("CK_campaigns_audience", "cardinality(audience_tag_ids) + cardinality(audience_customer_ids) > 0");
+        });
+        campaign.HasKey(value => value.Id);
+        campaign.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        campaign.Property(value => value.TenantId).HasColumnName("tenant_id");
+        campaign.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        campaign.Property(value => value.Name).HasColumnName("name").HasMaxLength(Campaign.NameMaxLength);
+        campaign.Property(value => value.TemplateName).HasColumnName("template_name").HasMaxLength(512);
+        campaign.Property(value => value.TemplateLanguage).HasColumnName("template_language").HasMaxLength(16);
+        campaign.Property(value => value.TemplateCategory).HasColumnName("template_category").HasMaxLength(32);
+        campaign.Property(value => value.Parameters).HasColumnName("parameters").HasColumnType("jsonb")
+            .HasConversion(CampaignParametersJson.Converter, CampaignParametersJson.Comparer);
+        campaign.Property(value => value.AudienceTagIds).HasColumnName("audience_tag_ids").HasColumnType("uuid[]")
+            .HasConversion(GuidListConverter, GuidListComparer);
+        campaign.Property(value => value.AudienceCustomerIds).HasColumnName("audience_customer_ids").HasColumnType("uuid[]")
+            .HasConversion(GuidListConverter, GuidListComparer);
+        campaign.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        campaign.Property(value => value.FailureReason).HasColumnName("failure_reason").HasMaxLength(512);
+        campaign.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+        campaign.Property(value => value.ScheduledAt).HasColumnName("scheduled_at");
+        campaign.Property(value => value.StartedAt).HasColumnName("started_at");
+        campaign.Property(value => value.CompletedAt).HasColumnName("completed_at");
+        campaign.Property(value => value.AudienceFrozenAt).HasColumnName("audience_frozen_at");
+        campaign.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
+        campaign.Property(value => value.CreatedAt).HasColumnName("created_at");
+        campaign.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        campaign.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        campaign.HasIndex(value => new { value.TenantId, value.CreatedAt }, "IX_campaigns_tenant_created").IsDescending(false, true);
+        // El worker busca las programadas que ya vencieron y las que están enviándose; ninguna de las dos es la mayoría de la tabla.
+        campaign.HasIndex(value => value.ScheduledAt, "IX_campaigns_scheduled").HasFilter("status = 'Scheduled'");
+        campaign.HasIndex(value => value.Status, "IX_campaigns_sending").HasFilter("status = 'Sending'");
+    }
+
+    private static void ConfigureCampaignRecipient(ModelBuilder modelBuilder)
+    {
+        var recipient = modelBuilder.Entity<CampaignRecipientRecord>();
+        recipient.ToTable("campaign_recipients", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_campaign_recipients_status", "status IN ('Pending','Sending','Sent','Failed','Skipped')");
+        });
+        recipient.HasKey(value => value.Id);
+        recipient.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        recipient.Property(value => value.CampaignId).HasColumnName("campaign_id");
+        recipient.Property(value => value.TenantId).HasColumnName("tenant_id");
+        recipient.Property(value => value.CustomerId).HasColumnName("customer_id");
+        recipient.Property(value => value.CustomerName).HasColumnName("customer_name").HasMaxLength(256);
+        recipient.Property(value => value.WaId).HasColumnName("wa_id").HasMaxLength(Conversation.WaIdMaxLength);
+        recipient.Property(value => value.UserId).HasColumnName("user_id").HasMaxLength(Conversation.UserIdMaxLength);
+        recipient.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        recipient.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+        recipient.Property(value => value.FailureReason).HasColumnName("failure_reason").HasMaxLength(512);
+        recipient.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        recipient.Property(value => value.MessageId).HasColumnName("message_id");
+        recipient.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
+        recipient.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
+        recipient.Property(value => value.LockedUntil).HasColumnName("locked_until");
+        recipient.Property(value => value.SentAt).HasColumnName("sent_at");
+        recipient.HasOne<Campaign>().WithMany().HasForeignKey(value => value.CampaignId)
+            .HasConstraintName("FK_campaign_recipients_campaign").OnDelete(DeleteBehavior.Cascade);
+        // El blanco del ON CONFLICT DO NOTHING con el que el worker congela la audiencia: repetirlo es inocuo.
+        recipient.HasIndex(value => new { value.CampaignId, value.CustomerId }, "IX_campaign_recipients_campaign_customer").IsUnique();
+        recipient.HasIndex(value => value.NextAttemptAt, "IX_campaign_recipients_due").HasFilter("status IN ('Pending','Sending')");
+        // Los contadores y el filtro por estado del detalle.
+        recipient.HasIndex(value => new { value.CampaignId, value.Status }, "IX_campaign_recipients_campaign_status");
+    }
+
+    /// <summary>Decisión del owner 2026-10-12 (P3 y P5): el cubo de envío por conexión. Sin FK: la conexión es de Integrations, otro schema.</summary>
+    private static void ConfigureSendBudget(ModelBuilder modelBuilder)
+    {
+        var budget = modelBuilder.Entity<ConnectionSendBudgetRecord>();
+        budget.ToTable("connection_send_budgets", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_connection_send_budgets_rate", "rate >= 1");
+            table.HasCheckConstraint("CK_connection_send_budgets_tokens", "tokens >= 0");
+        });
+        budget.HasKey(value => value.ConnectionId);
+        budget.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
+        budget.Property(value => value.TenantId).HasColumnName("tenant_id");
+        budget.Property(value => value.Tokens).HasColumnName("tokens");
+        budget.Property(value => value.Rate).HasColumnName("rate");
+        budget.Property(value => value.RefilledAt).HasColumnName("refilled_at");
+        budget.Property(value => value.ThrottledUntil).HasColumnName("throttled_until");
+        budget.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     private static void ConfigureDelivery(ModelBuilder modelBuilder)

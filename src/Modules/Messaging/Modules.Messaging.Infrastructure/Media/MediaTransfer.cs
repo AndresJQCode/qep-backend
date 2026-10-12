@@ -61,7 +61,7 @@ internal sealed class MediaTransfer(
     /// <summary>Configurable sólo para las pruebas.</summary>
     public TimeSpan CopyTimeout { get; init; } = DefaultCopyTimeout;
 
-    public static string KeyFor(Guid tenantId, Guid messageId) => $"messaging/{tenantId}/{messageId}";
+    public static string KeyFor(Guid tenantId, Guid messageId) => MessagingMediaKeys.For(tenantId, messageId);
 
     public static bool IsValidMetaMediaId(string? metaMediaId) =>
         !string.IsNullOrWhiteSpace(metaMediaId) && metaMediaId.Length <= MetaMediaIdMaxLength;

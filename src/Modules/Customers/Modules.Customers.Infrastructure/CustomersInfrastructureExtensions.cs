@@ -28,6 +28,10 @@ public static class CustomersInfrastructureExtensions
 
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<IClientClassificationRepository, ClientClassificationRepository>();
+        services.AddScoped<ICustomerNoteRepository, CustomerNoteRepository>();
+        services.AddScoped<ICustomerTagRepository, CustomerTagRepository>();
+        services.AddScoped<ICustomerAudienceRepository, CustomerAudienceRepository>();
+        services.AddScoped<ICustomerTagLookup, CustomerTagLookup>();
         services.AddScoped<ICustomersUnitOfWork, CustomersUnitOfWork>();
         services.AddScoped<ICustomersAuditPublisher, CustomersAuditPublisher>();
         services.AddScoped<ICucGenerator, CucGenerator>();

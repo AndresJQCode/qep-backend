@@ -26,6 +26,10 @@ internal sealed record AccountUpdateChange(string WabaId, string Event, string? 
 
 internal sealed record UnknownChange(string Field) : WebhookChange;
 
+/// <summary>Decisión del owner 2026-10-12 (P1): el botón de respuesta rápida de una plantilla (<c>type = button</c>), con su texto y su
+/// payload. Sólo ese tipo lo trae: ni un texto escrito a mano ni la respuesta a un mensaje interactivo.</summary>
+internal sealed record QuickReplyButton(string Text, string? Payload);
+
 internal sealed record InboundMedia(string MetaMediaId, string MimeType, string? Sha256, string? FileName);
 
 /// <summary>Ya con el <c>kind</c> del mapa de §8.7 y el texto/leyenda/detalles separados como los guarda §7.3.
@@ -44,7 +48,8 @@ internal sealed record InboundMessage(
     string? Caption,
     string? DetailsJson,
     InboundMedia? Media,
-    string? QuotedWamid);
+    string? QuotedWamid,
+    QuickReplyButton? QuickReply = null);
 
 internal sealed record StatusUpdate(
     string Wamid,

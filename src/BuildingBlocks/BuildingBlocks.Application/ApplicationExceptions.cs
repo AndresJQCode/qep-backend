@@ -27,6 +27,15 @@ public sealed class RequestConcurrencyException(
     public string Code { get; } = code;
 }
 
+// 409: lo pedido choca con lo que ya existe y el cliente puede resolverlo cambiando el pedido (un nombre repetido,
+// una campaña que ya no es borrador). Distinta de RequestConcurrencyException (412), que es «el recurso cambió desde
+// que lo leíste», y de DomainException (422), que es «el pedido no cumple una regla de negocio».
+public sealed class ResourceConflictException(string code, string message, Exception? innerException = null)
+    : Exception(message, innerException)
+{
+    public string Code { get; } = code;
+}
+
 public sealed class PreconditionRequiredException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;

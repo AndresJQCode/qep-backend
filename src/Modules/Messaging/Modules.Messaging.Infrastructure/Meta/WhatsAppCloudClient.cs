@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Media;
 using Modules.Messaging.Infrastructure.Options;
 
 namespace Modules.Messaging.Infrastructure.Meta;
@@ -23,6 +24,16 @@ internal sealed partial class WhatsAppCloudClient(
     public const string DefaultGraphApiVersion = "v24.0";
     public static readonly TimeSpan ReadReceiptTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>La subida de una nota de voz (hasta 16 MB) va por su propio cliente: en los 10 s del compartido, una red
+    /// lenta la cortaría y la nota quedaría Failed por Unconfirmed sin que Meta haya contestado. El texto, el leído y la
+    /// descarga de medios siguen en <see cref="HttpClientName"/>.</summary>
+    public const string UploadHttpClientName = "messaging.meta-graph-upload";
+
+    public static readonly TimeSpan UploadTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>Spec 2026-10-11 §6.4: el nombre del archivo en la subida. Meta no lo muestra en una nota de voz.</summary>
+    public const string VoiceFileName = "voice.ogg";
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Graph {Operation} answered HTTP {StatusCode} (code {Code}, subcode {Subcode}, fbtrace {FbTraceId})")]
     private static partial void LogAnswered(ILogger logger, string operation, int statusCode, int? code, int? subcode, string? fbTraceId);
 
@@ -38,20 +49,163 @@ internal sealed partial class WhatsAppCloudClient(
         client.DefaultRequestHeaders.UserAgent.ParseAdd("qep-messaging");
     }
 
+    internal static void ConfigureUploadClient(HttpClient client)
+    {
+        ConfigureClient(client);
+        client.Timeout = UploadTimeout;
+    }
+
     private string Version => string.IsNullOrWhiteSpace(options.Value.GraphApiVersion) ? DefaultGraphApiVersion : options.Value.GraphApiVersion.Trim();
 
-    public async Task<SendTextResult> SendTextAsync(
-        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    public Task<SendResult> SendTextAsync(
+        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        PostMessageAsync(sender, MessagePayload(target, "text", new JsonObject { ["body"] = body }, callbackData, contextWamid), cancellationToken);
+
+    public Task<SendResult> SendAudioAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        PostMessageAsync(sender, MessagePayload(target, "audio", new JsonObject { ["id"] = mediaId, ["voice"] = true }, callbackData, contextWamid), cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §5.1: tope de páginas de <c>message_templates</c>. Con 100 por página son 1000 plantillas, el
+    /// máximo que Meta deja tener por cuenta.</summary>
+    public const int MaxTemplatePages = 10;
+
+    public const string TemplateFields = "name,language,status,category,components,parameter_format";
+
+    public async Task<MessagingGraphResult<IReadOnlyList<JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var templates = new List<JsonElement>();
+        var next = new Uri(
+            $"{Version}/{Uri.EscapeDataString(source.WabaId)}/message_templates?fields={TemplateFields}&limit=100", UriKind.Relative);
+        for (var page = 0; page < MaxTemplatePages && next is not null; page++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, next);
+            var answer = await SendAsync("templates", request, source.AccessToken, null, cancellationToken);
+            using var response = answer.Response;
+            if (response is null)
+            {
+                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
+            }
+
+            var status = (int)response.StatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(answer.Body);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                {
+                    return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+                }
+
+                templates.AddRange(data.EnumerateArray().Select(template => template.Clone()));
+                next = NextPage(root);
+            }
+            catch (JsonException)
+            {
+                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+            }
+        }
+
+        return new MessagingGraphResult<IReadOnlyList<JsonElement>>(templates, null);
+    }
+
+    /// <summary><c>paging.next</c> es una URL absoluta y firmada de Graph. Sólo se sigue si es https y del mismo host que el
+    /// cliente: el token viaja en cada request y no debe salir de graph.facebook.com por lo que diga el cuerpo.</summary>
+    private static Uri? NextPage(JsonElement root)
+    {
+        if (!root.TryGetProperty("paging", out var paging) || paging.ValueKind != JsonValueKind.Object
+            || !paging.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.String
+            || !Uri.TryCreate(next.GetString(), UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        return uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.Host, new Uri(BaseUrl).Host, StringComparison.OrdinalIgnoreCase) ? uri : null;
+    }
+
+    public Task<SendResult> SendTemplateAsync(
+        MessagingSender sender, SendTarget target, TemplateSend send, string callbackData, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        var content = new JsonObject
+        {
+            ["name"] = send.Name,
+            ["language"] = new JsonObject { ["code"] = send.Language },
+        };
+        if (send.Parameters.Count > 0)
+        {
+            var parameters = new JsonArray();
+            foreach (var parameter in send.Parameters)
+            {
+                var item = new JsonObject { ["type"] = "text", ["text"] = parameter.Value };
+                if (send.Named)
+                {
+                    item["parameter_name"] = parameter.Key;
+                }
+
+                parameters.Add(item);
+            }
+
+            content["components"] = new JsonArray(new JsonObject { ["type"] = "body", ["parameters"] = parameters });
+        }
+
+        return PostMessageAsync(sender, MessagePayload(target, "template", content, callbackData, null), cancellationToken);
+    }
+
+    public async Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sender);
+        var file = new ReadOnlyMemoryContent(content);
+        file.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
+        using var form = new MultipartFormDataContent
+        {
+            { new StringContent("whatsapp"), "messaging_product" },
+            { new StringContent(mimeType), "type" },
+            { file, "file", VoiceFileName },
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/media") { Content = form };
+        var answer = await SendAsync("upload", request, sender.AccessToken, null, cancellationToken, UploadHttpClientName);
+        using var response = answer.Response;
+        if (response is null)
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
+        }
+
+        var status = (int)response.StatusCode;
+        if (!response.IsSuccessStatusCode)
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
+        }
+
+        var id = ReadId(answer.Body);
+        if (string.IsNullOrEmpty(id))
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(status, null, "no_id"));
+        }
+
+        // Review Focus 2: meta_media_id es varchar(64). Un id que no cabe haría fallar el commit después de enviar.
+        return MediaTransfer.IsValidMetaMediaId(id)
+            ? new MessagingGraphResult<string>(id, null)
+            : new MessagingGraphResult<string>(null, new MessagingGraphFailure(status, null, "invalid_id"));
+    }
+
+    /// <summary>Spec 2026-10-10 §6.1.4: con <c>JsonObject</c> la clave ausente no viaja (ni <c>to</c> con BSUID ni
+    /// <c>recipient</c> sin él). El orden de los campos es el de siempre: el texto no cambia por compartir esto.</summary>
+    private static JsonObject MessagePayload(SendTarget target, string type, JsonObject content, string callbackData, string? contextWamid)
+    {
         ArgumentNullException.ThrowIfNull(target);
-        // Spec 2026-10-10 §6.1.4: con JsonObject la clave ausente no viaja (ni "to" con BSUID ni "recipient" sin él).
         var payload = new JsonObject
         {
             ["messaging_product"] = "whatsapp",
             ["recipient_type"] = "individual",
-            ["type"] = "text",
-            ["text"] = new JsonObject { ["body"] = body },
+            ["type"] = type,
+            [type] = content,
             ["biz_opaque_callback_data"] = callbackData,
         };
         switch (target)
@@ -71,6 +225,12 @@ internal sealed partial class WhatsAppCloudClient(
             payload["context"] = new JsonObject { ["message_id"] = contextWamid };
         }
 
+        return payload;
+    }
+
+    private async Task<SendResult> PostMessageAsync(MessagingSender sender, JsonObject payload, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sender);
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/messages")
         {
             Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
@@ -79,24 +239,24 @@ internal sealed partial class WhatsAppCloudClient(
         using var response = answer.Response;
         if (response is null)
         {
-            return new SendTextResult(SendOutcome.Unconfirmed, null, null, null);
+            return new SendResult(answer.UnreachableReason == "not-sent" ? SendOutcome.NotSent : SendOutcome.Unconfirmed, null, null, null);
         }
 
         // §8.3: un 5xx no confirma nada (Meta pudo haberlo aceptado); un 4xx es un rechazo con su código.
         if ((int)response.StatusCode >= 500)
         {
-            return new SendTextResult(SendOutcome.Unconfirmed, null, null, null);
+            return new SendResult(SendOutcome.Unconfirmed, null, null, null);
         }
 
         if (!response.IsSuccessStatusCode)
         {
-            return new SendTextResult(SendOutcome.GraphError, null, answer.Error?.Code, answer.Error?.Title);
+            return new SendResult(SendOutcome.GraphError, null, answer.Error?.Code, answer.Error?.Title);
         }
 
         var wamid = ReadWamid(answer.Body);
         return wamid is null
-            ? new SendTextResult(SendOutcome.Unconfirmed, null, null, null)
-            : new SendTextResult(SendOutcome.Sent, wamid, null, null);
+            ? new SendResult(SendOutcome.Unconfirmed, null, null, null)
+            : new SendResult(SendOutcome.Sent, wamid, null, null);
     }
 
     public async Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken)
@@ -172,10 +332,11 @@ internal sealed partial class WhatsAppCloudClient(
     /// <summary>Manda el request y lee el cuerpo una vez. <c>Response</c> en <c>null</c> = timeout o red; el
     /// llamador desecha la respuesta.</summary>
     private async Task<GraphAnswer> SendAsync(
-        string operation, HttpRequestMessage request, string accessToken, TimeSpan? timeout, CancellationToken cancellationToken)
+        string operation, HttpRequestMessage request, string accessToken, TimeSpan? timeout, CancellationToken cancellationToken,
+        string clientName = HttpClientName)
     {
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        var client = httpClientFactory.CreateClient(HttpClientName);
+        var client = httpClientFactory.CreateClient(clientName);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeout is { } limit)
         {
@@ -197,11 +358,30 @@ internal sealed partial class WhatsAppCloudClient(
             LogUnreachable(logger, operation, "timeout");
             return new GraphAnswer(null, string.Empty, null, "timeout");
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
             response?.Dispose();
-            LogUnreachable(logger, operation, "network");
-            return new GraphAnswer(null, string.Empty, null, "network");
+            // Sin conexión establecida el request nunca salió; cualquier otra falla pudo ocurrir con el request ya enviado.
+            var neverLeft = exception.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError;
+            LogUnreachable(logger, operation, neverLeft ? "not-sent" : "network");
+            return new GraphAnswer(null, string.Empty, null, neverLeft ? "not-sent" : "network");
+        }
+    }
+
+    private static string? ReadId(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                ? id.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

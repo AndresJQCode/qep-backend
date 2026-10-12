@@ -20,4 +20,23 @@ public static class CustomersPermissions
     public const string ClassificationRead = "customers.classification.read";
 
     public const string ClassificationManage = "customers.classification.manage";
+
+    // Spec 2026-10-11 §4.3. Crear una etiqueta en línea es CustomerManage (quien etiqueta crea, como en
+    // respond.io); renombrar, recolorear y borrar cambia lo que ven todos y vacía campañas, así que es de admin.
+    public const string TagManage = "customers.tag.manage";
+
+    // Borrar notas ajenas. El autor borra las suyas con CustomerManage.
+    public const string NoteModerate = "customers.note.moderate";
+}
+
+/// <summary>
+/// Políticas que no son un permiso: combinan varios. La de borrar una nota deja pasar a quien pueda hacerlo por
+/// alguna de las dos vías —el autor con <see cref="CustomersPermissions.CustomerManage"/> o quien tiene
+/// <see cref="CustomersPermissions.NoteModerate"/>—; el handler decide cuál aplica según de quién es la nota.
+/// Se registra en <c>AddAuthorization</c> junto a los permisos; sin ella <c>RequireAuthorization</c> no resuelve y el
+/// síntoma es un 500.
+/// </summary>
+public static class CustomersPolicies
+{
+    public const string NoteDelete = "customers.note.delete";
 }

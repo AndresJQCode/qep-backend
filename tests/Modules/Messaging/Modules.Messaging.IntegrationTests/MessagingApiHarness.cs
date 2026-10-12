@@ -46,6 +46,9 @@ internal static class MessagingApiHarness
 
     public const string MessagingGraphClientName = "messaging.meta-graph";
 
+    /// <summary>La subida de la nota de voz va por su propio cliente (30 s); sin interceptarlo, la prueba saldría a Meta.</summary>
+    public const string MessagingGraphUploadClientName = "messaging.meta-graph-upload";
+
     public const string WebhookUrl = "/api/webhooks/whatsapp";
 
     /// <summary>La llave con la que el host cifra los tokens de las conexiones. Calculada, no escrita.</summary>
@@ -56,6 +59,9 @@ internal static class MessagingApiHarness
 
     public static readonly string[] ManagePermissions =
         [MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage];
+
+    /// <summary>Spec 2026-10-11 §6.4: sólo el admin de fábrica; ni la bandeja ni el asesor llevan este permiso.</summary>
+    public static readonly string[] CampaignPermissions = [MessagingPermissions.CampaignManage];
 
     public static string ConversationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/conversations";
 
@@ -105,8 +111,9 @@ internal static class MessagingApiHarness
             .WithPassword("qep-integration")
             // Con la suite completa xUnit corre las clases en paralelo, cada una con su base, su host y su
             // pool de Npgsql, más los 64 INSERT concurrentes de la prueba de carga y los workers: el límite
-            // por defecto (100) se agota y la API responde 500 con 53300 (too many clients).
-            .WithCommand("-c", "max_connections=400")
+            // por defecto (100) se agota y la API responde 500 con 53300 (too many clients). Con las campañas (E3) cada host suma
+            // los envíos en paralelo del worker, y la prueba de dos pods levanta tres: 800 deja margen a la suite entera.
+            .WithCommand("-c", "max_connections=800")
             .Build();
         await server.StartAsync(CancellationToken.None);
         await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
@@ -188,12 +195,15 @@ internal static class MessagingApiHarness
             // Los workers no corren solos durante una prueba: la prueba llama DrainAsync.
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             builder.ConfigureTestServices(services =>
             {
                 services.AddHttpClient(IntegrationsGraphClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient(MessagingGraphUploadClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
             });
         }
@@ -400,6 +410,67 @@ internal static class MessagingApiHarness
         return customer.Id;
     }
 
+    /// <summary>Varios clientes del mismo tenant con una sola clasificación (<see cref="CreateCustomerAsync"/> crea una por llamada y
+    /// la segunda chocaría por nombre). Devuelve los ids en el orden pedido.</summary>
+    public static async Task<IReadOnlyList<Guid>> CreateCustomersAsync(
+        WebApplicationFactory<Program> factory, RegisteredTenant tenant, params (string Name, string Phone)[] customers)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var client = CreateClient(
+            factory, tenant.OwnerUserId, tenant.TenantId,
+            "customers.customer.read", "customers.customer.manage", "customers.classification.read", "customers.classification.manage");
+
+        var departments = await client.GetFromJsonAsync<List<GeographyItemDto>>("/api/v1/departments", ct);
+        Assert.NotNull(departments);
+        Guid? cityId = null;
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<GeographyItemDto>>($"/api/v1/cities?departmentId={department.Id}", ct);
+            if (cities is { Count: > 0 })
+            {
+                cityId = cities[0].Id;
+                break;
+            }
+        }
+
+        Assert.NotNull(cityId);
+        var customersUrl = $"/api/v1/tenants/{tenant.TenantId}/customers";
+        var classificationResponse = await client.PostAsJsonAsync($"{customersUrl}/classifications", new { name = "Mediano", prefix = "CLI" }, ct);
+        classificationResponse.EnsureSuccessStatusCode();
+        var classification = await classificationResponse.Content.ReadFromJsonAsync<IdDto>(ct);
+        Assert.NotNull(classification);
+
+        var ids = new List<Guid>();
+        var number = 0;
+        foreach (var (name, phone) in customers)
+        {
+            number++;
+            var response = await client.PostAsJsonAsync(
+                customersUrl,
+                new
+                {
+                    name,
+                    identificationType = "NIT",
+                    identificationNumber = $"900.123.4{number:D2}-1",
+                    phone,
+                    email = "compras@verde.co",
+                    address = "Calle 10 # 45-12",
+                    country = "CO",
+                    cityId,
+                    classificationId = classification.Id,
+                    withRetention = false,
+                    vatSurplus = false,
+                },
+                ct);
+            response.EnsureSuccessStatusCode();
+            var customer = await response.Content.ReadFromJsonAsync<IdDto>(ct);
+            Assert.NotNull(customer);
+            ids.Add(customer.Id);
+        }
+
+        return ids;
+    }
+
     private sealed record GeographyItemDto(Guid Id);
 
     private sealed record IdDto(Guid Id);
@@ -463,6 +534,14 @@ internal static class MessagingApiHarness
     {
         var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
             .OfType<Modules.Messaging.Infrastructure.Media.MediaCopyWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Una pasada del worker de campañas (spec 2026-10-11 §6.3): activa, congela, envía, recupera y cierra, como un tick suyo.</summary>
+    public static async Task DrainCampaignsAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Campaigns.CampaignDispatchWorker>().Single();
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 

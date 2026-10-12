@@ -21,6 +21,7 @@ internal sealed partial class WebhookDeliveryProcessor(
     IMessagingCustomerDirectory customers,
     IMessagingAssignees assignees,
     IClock clock,
+    MarketingOptOutButtons optOutButtons,
     ILogger<WebhookDeliveryProcessor> logger)
 {
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: a status with a QEP callback has no message row yet (attempt {Attempt}); it is retried.")]
@@ -41,6 +42,9 @@ internal sealed partial class WebhookDeliveryProcessor(
     // Spec 2026-10-10 §8.1: «se salta y se registra». Sin el texto, el teléfono ni el BSUID que no vino.
     [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: {Count} inbound message(s) without a valid from_user_id were skipped for phone number id {PhoneNumberId}.")]
     private static partial void LogSkippedWithoutUserId(ILogger logger, long deliveryId, int count, string phoneNumberId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: the marketing opt-out by button could not be recorded; the message was ingested anyway.")]
+    private static partial void LogButtonOptOutFailed(ILogger logger, long deliveryId, Exception exception);
 
     public async Task<DeliveryOutcome> ProcessAsync(long deliveryId, string payload, int attempts, CancellationToken cancellationToken)
     {
@@ -113,11 +117,38 @@ internal sealed partial class WebhookDeliveryProcessor(
             {
                 var context = await PrepareAsync(route.TenantId, route.ConnectionId, message, cancellationToken);
                 await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, cancellationToken);
+                await MarkOptOutIfButtonAsync(deliveryId, route, message, cancellationToken);
             }
         }
 
         // Los statuses se aplican siempre, también con Paused o módulo apagado (decisión 7, D-M18). Task 13b.
         return await ProcessStatusesAsync(deliveryId, route, change, attempts, cancellationToken);
+    }
+
+    /// <summary>Decisión del owner 2026-10-12 (P1): ya con el mensaje commiteado, si es el botón de respuesta rápida «Detener promociones» y la
+    /// conversación tiene cliente, se apaga su marketing con origen <c>button</c>. Idempotente (un reenvío de Meta repite sin efecto). Un
+    /// fallo se registra y no se relanza: el mensaje ya quedó y la entrega no debe reintentarse por esto.</summary>
+    private async Task MarkOptOutIfButtonAsync(long deliveryId, MessagingRoute route, InboundMessage message, CancellationToken cancellationToken)
+    {
+        if (message.QuickReply is not { } button || !optOutButtons.Matches(button))
+        {
+            return;
+        }
+
+        try
+        {
+            var owners = await dbContext.Database.SqlQuery<Guid>(
+                $"""SELECT customer_id AS "Value" FROM messaging.conversations WHERE connection_id = {route.ConnectionId} AND user_id = {message.UserId} AND customer_id IS NOT NULL""")
+                .ToListAsync(cancellationToken);
+            if (owners is [var customerId])
+            {
+                await customers.MarkMarketingOptOutByButtonAsync(route.TenantId, customerId, cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogButtonOptOutFailed(logger, deliveryId, exception);
+        }
     }
 
     /// <summary>Spec 2026-10-10 §8.3: por phone_number_id si viene; si no, por la WABA (el BSUID es por portafolio y
@@ -217,6 +248,11 @@ internal sealed partial class WebhookDeliveryProcessor(
             else if (result == StatusOutcome.NotFound)
             {
                 LogForeignStatus(logger, deliveryId);
+            }
+            else if (await StatusIngestion.FindMarketingOptOutCustomerAsync(dbContext, route.ConnectionId, status, cancellationToken) is { } customerId)
+            {
+                // Spec 2026-10-11 decisión 10: la persona apagó el marketing. Idempotente; si falla, la entrega se reintenta.
+                await customers.MarkMarketingOptOutAsync(route.TenantId, customerId, cancellationToken);
             }
         }
 

@@ -321,6 +321,40 @@ public static class QepServiceCollectionExtensions
         // TaxRate frente a Product en Catalog. Registrados a mano, uno por uno: un caso de uso
         // que se olvide compila, mapea su endpoint y falla recien en runtime con 500 al no
         // encontrar handler.
+        // Spec 2026-10-11 §4: notas, etiquetas y consentimiento de marketing. Registro explícito, como todo el módulo.
+        services.AddScoped<
+            IQueryHandler<ListCustomerNotesQuery, IReadOnlyList<CustomerNoteDto>>,
+            ListCustomerNotesHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateCustomerNoteCommand, CustomerNoteDto>,
+            CreateCustomerNoteHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCustomerNoteCommand, CustomerNoteDto>,
+            UpdateCustomerNoteHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteCustomerNoteCommand, CustomerNoteDeletedResult>,
+            DeleteCustomerNoteHandler>();
+        services.AddScoped<
+            IQueryHandler<ListTagsQuery, IReadOnlyList<TagDto>>,
+            ListTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateTagCommand, TagDto>,
+            CreateTagHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateTagCommand, TagDto>,
+            UpdateTagHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteTagCommand, TagDeletedResult>,
+            DeleteTagHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCustomerTagsQuery, IReadOnlyList<TagDto>>,
+            ListCustomerTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<SetCustomerTagsCommand, IReadOnlyList<TagDto>>,
+            SetCustomerTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<SetMarketingConsentCommand, MarketingConsentDto>,
+            SetMarketingConsentHandler>();
         services.AddScoped<
             IQueryHandler<ListClientClassificationsQuery, IReadOnlyList<ClientClassificationDto>>,
             ListClientClassificationsHandler>();
@@ -543,6 +577,23 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
         // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
         services.AddScoped<ICommandHandler<SendMessageCommand, MessageDto>, SendMessageHandler>();
+        // Messaging (spec 2026-10-11 §6): la nota de voz, con las mismas guardas que el texto.
+        services.AddScoped<ICommandHandler<SendAudioMessageCommand, MessageDto>, SendAudioMessageHandler>();
+        // Messaging (spec 2026-10-11 §5): plantillas. Conexiones y catálogo para leer; enviar una plantilla y abrir una conversación con ella.
+        services.AddScoped<IQueryHandler<ListMessagingConnectionsQuery, IReadOnlyList<MessagingConnectionDto>>, ListMessagingConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
+        services.AddScoped<ICommandHandler<SendTemplateMessageCommand, MessageDto>, SendTemplateMessageHandler>();
+        services.AddScoped<ICommandHandler<StartConversationCommand, StartConversationResult>, StartConversationHandler>();
+        // Messaging (spec 2026-10-11 §6.2): campañas. Cada handler a mano: sin registro, 500.
+        services.AddScoped<IQueryHandler<ListCampaignsQuery, CampaignPageDto<CampaignSummaryDto>>, ListCampaignsHandler>();
+        services.AddScoped<IQueryHandler<GetCampaignQuery, CampaignDetailDto>, GetCampaignHandler>();
+        services.AddScoped<IQueryHandler<ListCampaignRecipientsQuery, CampaignPageDto<CampaignRecipientDto>>, ListCampaignRecipientsHandler>();
+        services.AddScoped<IQueryHandler<PreviewAudienceQuery, AudiencePreviewDto>, PreviewAudienceHandler>();
+        services.AddScoped<ICommandHandler<CreateCampaignCommand, CampaignDetailDto>, CreateCampaignHandler>();
+        services.AddScoped<ICommandHandler<UpdateCampaignCommand, CampaignDetailDto>, UpdateCampaignHandler>();
+        services.AddScoped<ICommandHandler<DeleteCampaignCommand, bool>, DeleteCampaignHandler>();
+        services.AddScoped<ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>, LaunchCampaignHandler>();
+        services.AddScoped<ICommandHandler<CancelCampaignCommand, CampaignDetailDto>, CancelCampaignHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
@@ -614,6 +665,8 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.
+        services.AddScoped<ICustomerAuthorNames, CustomersAuthorNames>();
         // Spec 2026-10-10 §6.1.3: quién puede responder, por Tenancy, Identity y Authorization.
         services.AddScoped<IMessagingAssignees, MessagingAssignees>();
         // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
@@ -774,6 +827,10 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
+                // Spec 2026-10-11 §4.3: renombrar o borrar etiquetas y borrar notas ajenas. Sólo admin: el
+                // asesor crea etiquetas y notas con CustomerManage, pero no cambia lo que ven todos.
+                CustomersPermissions.TagManage,
+                CustomersPermissions.NoteModerate,
                 QuotationsPermissions.QuotationRead,
                 QuotationsPermissions.QuotationManage,
                 OrdersPermissions.OrderRead,
@@ -821,7 +878,10 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-09 (Mensajería), decisión 5: la bandeja de WhatsApp. De núcleo; el
                 // módulo messaging lo revisa cada handler. El rol vive en código: sin migración.
                 MessagingPermissions.ConversationRead,
-                MessagingPermissions.ConversationManage
+                MessagingPermissions.ConversationManage,
+                // Spec 2026-10-11 §6.4 y decisión 16: las campañas llegan a miles de personas en nombre de la empresa
+                // y el costo es por mensaje; de fábrica sólo en admin (no en advisor: P2 del spec).
+                MessagingPermissions.CampaignManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1066,6 +1126,20 @@ public static class QepServiceCollectionExtensions
             "medium",
             RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.TagManage,
+            "Gestionar etiquetas de clientes",
+            "Permite renombrar, cambiar de color y eliminar etiquetas de clientes. Crearlas y asignarlas es de quien gestiona clientes.",
+            "Customers",
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.NoteModerate,
+            "Moderar notas de clientes",
+            "Permite eliminar las notas internas que escribió otra persona.",
+            "Customers",
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationRead,
             "Leer cotizaciones",
             "Permite consultar el listado y el detalle de las cotizaciones del tenant.",
@@ -1275,6 +1349,14 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-11 §6.4: núcleo como las otras dos de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.CampaignManage,
+            "Gestionar campañas de WhatsApp",
+            "Permite crear, programar, lanzar y cancelar campañas de plantillas de WhatsApp a etiquetas o clientes; cada mensaje tiene costo.",
+            "Messaging",
+            "high",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1457,6 +1539,24 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.ClassificationManage,
                 policy => AddPermissionRequirement(
                     policy, CustomersPermissions.ClassificationManage))
+            // Spec 2026-10-11 §4.3: las dos mitades de los permisos de etiquetas y notas. Sin la política el síntoma
+            // es un 500, no un 403.
+            .AddPolicy(
+                CustomersPermissions.TagManage,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.TagManage))
+            .AddPolicy(
+                CustomersPermissions.NoteModerate,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.NoteModerate))
+            // Borrar una nota lo puede hacer el autor (manage) o un moderador: RequireClaim con varios valores deja
+            // pasar a quien tenga cualquiera, y el handler decide según de quién es la nota.
+            .AddPolicy(
+                CustomersPolicies.NoteDelete,
+                policy =>
+                {
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(
+                        QepClaimTypes.Permission, CustomersPermissions.CustomerManage, CustomersPermissions.NoteModerate);
+                })
             // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que
             // TaxRateRead/TaxRateManage y ClassificationRead/ClassificationManage.
@@ -1548,7 +1648,10 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationRead))
             .AddPolicy(
                 MessagingPermissions.ConversationManage,
-                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage));
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage))
+            .AddPolicy(
+                MessagingPermissions.CampaignManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.CampaignManage));
     }
 
     private static void AddPermissionRequirement(

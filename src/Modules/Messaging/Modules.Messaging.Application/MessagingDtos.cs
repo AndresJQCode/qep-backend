@@ -76,7 +76,12 @@ public sealed record MessageDto(
     MemberRefDto? SentBy,
     Guid? ClientId,
     ReplyToDto? ReplyTo,
-    MessageEventDto? Event);
+    MessageEventDto? Event,
+    MessageTemplateRefDto? Template = null);
+
+/// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
+/// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>
+public sealed record MessageTemplateRefDto(string Name, string Language);
 
 public sealed record MessagePageDto(IReadOnlyList<MessageDto> Items, bool HasMore);
 

@@ -143,7 +143,10 @@ local y por variable de entorno en k8s
 | `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`  | user-secrets                                                                                  | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret |
 | `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
-| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios y purga |
+| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 2`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
+| `Messaging:Campaigns:MessagesPerSecond`              | `20` (opcional; `1 <= valor <= MaxMessagesPerSecond`)                                         | Ritmo inicial y objetivo de envío de una campaña **por conexión**, compartido por todas las réplicas (cubo en Postgres, `messaging.connection_send_budgets`). Es adaptativo: un `130429` de Meta lo baja a la mitad y pausa la conexión 30 s; sin nuevos `130429` sube 1 mps cada 30 s hasta este valor |
+| `Messaging:Campaigns:MaxMessagesPerSecond`           | `80` (opcional; hasta `1000`)                                                                 | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número |
+| `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
 | `Messaging:Search:StatementTimeoutMs`                | `2000`                                                                                        | Tope de la búsqueda en el historial; al pasarlo responde 422 en `q` |
 
 Ejemplo con variables de entorno:
@@ -791,7 +794,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
-| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `read` (`POST`), `resolve` y `reopen` (`POST`, `If-Match`); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` y `reopen` (`POST`, `If-Match`); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -1898,6 +1901,15 @@ del teléfono no aparece en QEP todavía.
 `(conversación, clientId)`: repetir devuelve el mismo mensaje; un `Failed` se reenvía. Cada envío lleva
 `biz_opaque_callback_data = "qep:{messageId}"`, que es como se correlaciona un acuse que llegue antes de
 que el `wamid` esté guardado.
+
+**Notas de voz.** `POST …/conversations/{id}/messages/audio` en `multipart/form-data` con `clientId`, `file` y
+`replyTo` opcional (spec 2026-10-11). Mismas reglas que el texto: ventana, asignado, autoasignación, cita e
+idempotencia por `clientId`. El archivo se valida **por contenido** (OGG con `OpusHead`; un WebM o un MP4 es 422 en
+`file`), hasta 16 MB; el cuerpo tiene tope propio de 17 MB (413). Dentro del reclamo: R2 (`messaging/{tenantId}/{messageId}`,
+bucket privado) → `POST /{phone_number_id}/media` → envío con `audio.voice = true`, que es lo que hace que llegue como
+nota de voz. R2 caído es 422 `messaging.media.upload_failed` sin fila. La fila `Failed` guarda su `message_media`
+(con `meta_media_id = ''` si Meta nunca dio un id), así que la nota se escucha desde otro dispositivo y el reintento
+sobrescribe la misma clave.
 
 **Medios.** Los entrantes se copian a R2 (bucket privado, `messaging/{tenantId}/{messageId}`) con un
 worker que verifica el SHA-256 de Meta; `GET …/messaging/media/{messageId}` los sirve con la sesión,
