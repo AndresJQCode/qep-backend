@@ -5,6 +5,10 @@ public enum SendOutcome
     Sent,
     GraphError,
     Unconfirmed,
+
+    /// <summary>La conexión no llegó a establecerse (rechazada, sin DNS): el request nunca salió y reintentar no puede duplicar nada.
+    /// Quien no distingue este caso lo trata como <see cref="Unconfirmed"/>.</summary>
+    NotSent,
 }
 
 /// <summary>§8.3: 2xx con <c>messages[0].id</c>; un error de Graph con su <c>code</c> y <c>title</c>; o nada

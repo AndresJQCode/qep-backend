@@ -124,31 +124,78 @@ public sealed class CampaignDispatcherTests
         Assert.Empty(bed.Store.Stops);
     }
 
-    [Fact]
-    public async Task AnUnconfirmedSendIsRetriedAndFailsAsUnconfirmedAfterFiveAttempts()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    public async Task AnUnconfirmedSendIsUnknownOutcomeAndNeverResent(int attempts)
     {
         var bed = new DispatchBed();
         bed.Bed.Meta.NextSend = Unconfirmed();
 
-        await bed.Dispatcher.SendAsync(bed.Recipient(attempts: 2), Ct);
+        await bed.Dispatcher.SendAsync(bed.Recipient(attempts: attempts), Ct);
+
+        Assert.Empty(bed.Store.Retries);
+        var failed = Assert.Single(bed.Store.Failed);
+        Assert.Equal((CampaignFailureCodes.UnknownOutcome, (int?)MessageFailureReasons.Unconfirmed), (failed.Code, failed.GraphCode));
+    }
+
+    [Theory]
+    [InlineData(1, 30)]
+    [InlineData(3, 120)]
+    public async Task AProvablyNotSentRequestIsRetriedWithBackoffAndFailsAsNotSentAfterFiveAttempts(int attempts, int seconds)
+    {
+        var bed = new DispatchBed();
+        bed.Bed.Meta.NextSend = new SendResult(SendOutcome.NotSent, null, null, null);
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(attempts: attempts), Ct);
         await bed.Dispatcher.SendAsync(bed.Recipient(attempts: 5), Ct);
 
-        var retry = Assert.Single(bed.Store.Retries);
-        Assert.Equal(bed.Bed.Now.AddSeconds(60), retry.NextAttemptAt);
-        var failed = Assert.Single(bed.Store.Failed);
-        Assert.Equal((CampaignFailureCodes.Unconfirmed, (int?)MessageFailureReasons.Unconfirmed), (failed.Code, failed.GraphCode));
+        Assert.Equal(bed.Bed.Now.AddSeconds(seconds), Assert.Single(bed.Store.Retries).NextAttemptAt);
+        Assert.Equal(CampaignFailureCodes.NotSent, Assert.Single(bed.Store.Failed).Code);
     }
 
     [Fact]
-    public async Task ANetworkExceptionCountsAsUnconfirmed()
+    public async Task AConnectionFailureBeforeAnyResponseIsRetried()
     {
         var bed = new DispatchBed();
-        bed.Bed.Meta.DuringSend = () => throw new HttpRequestException("boom");
+        bed.Bed.Meta.DuringSend = () => throw new HttpRequestException(HttpRequestError.ConnectionError, "refused");
 
         await bed.Dispatcher.SendAsync(bed.Recipient(attempts: 1), Ct);
 
         Assert.Single(bed.Store.Retries);
         Assert.Empty(bed.Store.Failed);
+    }
+
+    [Fact]
+    public async Task ASocketFailureInsideAnHttpRequestExceptionIsRetried()
+    {
+        var bed = new DispatchBed();
+        bed.Bed.Meta.DuringSend = () => throw new HttpRequestException("x", new System.Net.Sockets.SocketException());
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(attempts: 1), Ct);
+
+        Assert.Single(bed.Store.Retries);
+    }
+
+    [Fact]
+    public async Task AResetMidRequestATimeoutOrAnyOtherExceptionIsUnknownOutcome()
+    {
+        foreach (Exception exception in new Exception[]
+        {
+            new HttpRequestException(HttpRequestError.ResponseEnded, "reset"),
+            new TimeoutException(),
+            new TaskCanceledException("timeout"),
+            new InvalidOperationException("boom"),
+        })
+        {
+            var bed = new DispatchBed();
+            bed.Bed.Meta.DuringSend = () => throw exception;
+
+            await bed.Dispatcher.SendAsync(bed.Recipient(attempts: 1), Ct);
+
+            Assert.Empty(bed.Store.Retries);
+            Assert.Equal(CampaignFailureCodes.UnknownOutcome, Assert.Single(bed.Store.Failed).Code);
+        }
     }
 
     [Fact]
@@ -165,15 +212,17 @@ public sealed class CampaignDispatcherTests
     }
 
     [Fact]
-    public async Task OnceMetaIsCalledAShutdownDoesNotLoseItsAnswer()
+    public async Task AShutdownDuringTheMetaCallLeavesTheRecipientSendingForLeaseRecovery()
     {
         var bed = new DispatchBed();
         using var shuttingDown = new CancellationTokenSource();
         bed.Bed.Meta.DuringSend = () => shuttingDown.Cancel();
 
-        await bed.Dispatcher.SendAsync(bed.Recipient(), shuttingDown.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => bed.Dispatcher.SendAsync(bed.Recipient(), shuttingDown.Token));
 
-        Assert.Single(bed.Store.Sent);
+        Assert.Empty(bed.Store.Sent);
+        Assert.Empty(bed.Store.Failed);
+        Assert.Empty(bed.Store.Retries);
     }
 
     [Theory]

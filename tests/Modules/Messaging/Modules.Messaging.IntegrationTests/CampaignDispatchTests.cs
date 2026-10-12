@@ -198,7 +198,7 @@ public sealed class CampaignDispatchTests
     }
 
     [Fact]
-    public async Task AfterFiveUnconfirmedAttemptsTheRecipientFailsAndTheCampaignStillCompletes()
+    public async Task A5xxIsUnknownOutcomeAndIsNeverResent()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -209,15 +209,12 @@ public sealed class CampaignDispatchTests
         var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
         var id = await LaunchAsync(f, Input(f, [.. customers]));
 
-        for (var attempt = 1; attempt <= 5; attempt++)
-        {
-            await DrainCampaignsAsync(f.Host);
-            await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET next_attempt_at = now() - interval '1 hour' WHERE status = 'Pending'");
-        }
+        await DrainCampaignsAsync(f.Host);
+        await DrainCampaignsAsync(f.Host);
 
-        Assert.Equal(5, MetaSends(f.Pod.MetaHandler));
+        Assert.Equal(1, MetaSends(f.Pod.MetaHandler));
         Assert.Equal("Failed", await RecipientStatusAsync(f, "Ana Ruiz"));
-        Assert.Equal("unconfirmed", await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaign_recipients"));
+        Assert.Equal("unknown_outcome", await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaign_recipients"));
         Assert.Equal("4|-1", await ScalarAsync<string>(f.ConnectionString, "SELECT status || '|' || failure_code FROM messaging.messages WHERE direction = 2"));
         Assert.Equal("Completed", await CampaignStatusAsync(f, id));
     }

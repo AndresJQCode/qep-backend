@@ -324,8 +324,9 @@ Cada tick hace:
    1. Abre la conversación con `ConversationOpener`, sin asignar.
    2. Inserta el mensaje saliente `Template` con `sent_by_member_id` = creador de la campaña y guarda
       `message_id` en el destinatario, **en la misma transacción**.
-   3. Llama a Meta y liquida el mensaje y el destinatario. Errores reintentables (§2): backoff de
-      30 s · 2^n, hasta 5 intentos, después `Failed`. No reintentables: `Failed`, y 131050 marca el
+   3. Llama a Meta y liquida el mensaje y el destinatario. Errores reintentables (§2: 130429 y 131056, o un request que
+      nunca salió): backoff de 30 s · 2^n, hasta 5 intentos, después `Failed`. Un resultado incierto (timeout, 5xx, reset) es
+      `Failed unknown_outcome` y no se reenvía (decisión 12). No reintentables: `Failed`, y 131050 marca el
       opt-out. Los de la decisión 15 detienen la campaña.
    4. Un token bucket en memoria por conexión mantiene el ritmo de la decisión 14.
 4. **Recuperar.** Un destinatario `Sending` con lease vencido y `message_id` puesto pasa a
@@ -364,8 +365,11 @@ Lo que el spec no fija y el código decidió, o lo que se agregó sin cambiar el
   `client_id` del mensaje es el id del destinatario, así `(conversation_id, client_id)` garantiza un mensaje por destinatario aunque dos
   pods lleguen al mismo punto. La llamada a Meta no retiene transacción y se liquida aunque el proceso esté cerrando. Hasta 8 envíos en
   paralelo por tick, cada uno en su scope; el ritmo lo fija el cubo, no el paralelismo.
-- **Riesgo aceptado de la decisión 12.** Un timeout o un 5xx (Meta pudo haber aceptado el mensaje) se reintenta como pide §6.3; eso puede
-  duplicar un envío en ese caso puntual. Lo que cae a mitad de llamada (proceso muerto) sí queda `unknown_outcome` y no se reenvía.
+- **Entrega como máximo una vez (decisión 12).** Se reintenta —30 s · 2^n, 5 intentos— sólo cuando Meta **contestó** con un código reintentable
+  (130429, 131056) o cuando el request demostrablemente nunca salió (la conexión no llegó a establecerse: `SendOutcome.NotSent`; agotados los
+  intentos queda `Failed not_sent`). Todo lo demás con el request ya enviado —timeout, reset a mitad, 5xx, 2xx sin id— es `Failed
+  unknown_outcome` y no se reenvía. Un cierre del host en plena llamada deja al destinatario `Sending`: el lease vence y la recuperación
+  (§6.3 paso 4) lo deja `unknown_outcome` si ya tiene mensaje.
 - **Una plantilla o una conexión que dejan de servir** a mitad del envío detienen la campaña como los códigos de Meta de la decisión 15:
   `132001` (plantilla fuera del catálogo o con otras variables) o `connection_unavailable`. Un destinatario reclamado cuya campaña se
   canceló o falló mientras esperaba su turno no se envía: queda `Skipped campaign_cancelled` o `campaign_failed`.

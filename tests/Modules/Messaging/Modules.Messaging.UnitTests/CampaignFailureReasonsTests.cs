@@ -26,6 +26,10 @@ public sealed class CampaignFailureReasonsTests
     }
 
     [Fact]
+    public void NotSentHasItsOwnText() =>
+        Assert.Contains("no salió", CampaignFailureReasons.For(CampaignFailureCodes.NotSent), StringComparison.Ordinal);
+
+    [Fact]
     public void NoCodeIsNoReasonAndAnUnknownNumberIsTheGenericText()
     {
         Assert.Null(CampaignFailureReasons.For(null));

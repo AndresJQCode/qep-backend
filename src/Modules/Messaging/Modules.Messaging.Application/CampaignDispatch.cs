@@ -175,7 +175,7 @@ public sealed partial class CampaignDispatcher(
         catch (MessagingDomainException exception) when (exception.Code == MessagingErrorCodes.TemplatesUnavailable)
         {
             // Meta no contestó la lista: no se intentó enviar nada, así que reintentar es seguro.
-            await RetryOrFailAsync(recipient, prepared: null, CampaignFailureCodes.Unconfirmed, MessageFailureReasons.Unconfirmed, title: null, cancellationToken);
+            await RetryOrFailAsync(recipient, prepared: null, CampaignFailureCodes.NotSent, MessageFailureReasons.Unconfirmed, title: null, cancellationToken);
             return;
         }
 
@@ -203,11 +203,12 @@ public sealed partial class CampaignDispatcher(
             template.Language,
             template.ParameterFormat == TemplateCatalog.Named,
             [.. template.Parameters.Select(key => new TemplateParameter(key, values[key]))]);
-        var result = await CallMetaAsync(sender, recipient, send, prepared);
+        var result = await CallMetaAsync(sender, recipient, send, prepared, cancellationToken);
         await SettleAsync(recipient, prepared, result);
     }
 
-    private async Task<SendResult> CallMetaAsync(MessagingSender sender, ClaimedRecipient recipient, TemplateSend send, PreparedSend prepared)
+    private async Task<SendResult> CallMetaAsync(
+        MessagingSender sender, ClaimedRecipient recipient, TemplateSend send, PreparedSend prepared, CancellationToken cancellationToken)
     {
         try
         {
@@ -216,11 +217,22 @@ public sealed partial class CampaignDispatcher(
                 SendTarget.ForTemplate(recipient.UserId, recipient.WaId),
                 send,
                 SendMessageHandler.CallbackPrefix + prepared.MessageId.ToString("D"),
-                CancellationToken.None);
+                cancellationToken);
         }
-        catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Como un timeout o un 5xx: Meta pudo haberlo aceptado.
+            // Cierre del host: el destinatario queda Sending y el lease decide (unknown_outcome si ya tiene mensaje), §6.3 paso 4.
+            throw;
+        }
+        catch (HttpRequestException exception) when (exception.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError
+            || exception.InnerException is System.Net.Sockets.SocketException)
+        {
+            // La conexión no se estableció: el request nunca salió, reintentar no duplica.
+            return new SendResult(SendOutcome.NotSent, null, null, null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // Timeout, reset a mitad del request o cualquier otra falla con el request ya enviado: Meta pudo haberlo aceptado.
             return new SendResult(SendOutcome.Unconfirmed, null, null, null);
         }
     }
@@ -238,8 +250,14 @@ public sealed partial class CampaignDispatcher(
                 await SettleGraphErrorAsync(recipient, prepared, graph, now);
                 return;
 
+            case { Outcome: SendOutcome.NotSent }:
+                await RetryOrFailAsync(recipient, prepared, CampaignFailureCodes.NotSent, MessageFailureReasons.Unconfirmed, title: null, CancellationToken.None);
+                return;
+
             default:
-                await RetryOrFailAsync(recipient, prepared, CampaignFailureCodes.Unconfirmed, MessageFailureReasons.Unconfirmed, title: null, CancellationToken.None);
+                // Decisión 12: un timeout, un 5xx o una respuesta sin id no dicen si Meta lo aceptó; nunca se reenvía.
+                await store.SettleFailedAsync(
+                    recipient, prepared, CampaignFailureCodes.UnknownOutcome, MessageFailureReasons.Unconfirmed, title: null, now, CancellationToken.None);
                 return;
         }
     }

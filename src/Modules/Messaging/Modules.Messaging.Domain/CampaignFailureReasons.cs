@@ -21,6 +21,9 @@ public static class CampaignFailureCodes
     /// <summary>Se agotaron los reintentos de un timeout, un 5xx o una respuesta sin id: Meta no confirmó nunca.</summary>
     public const string Unconfirmed = "unconfirmed";
 
+    /// <summary>Se agotaron los reintentos de una conexión que nunca llegó a establecerse: el mensaje no salió.</summary>
+    public const string NotSent = "not_sent";
+
     /// <summary>La conexión dejó de estar activa (pausada, borrada o con atención pendiente) a mitad del envío.</summary>
     public const string ConnectionUnavailable = "connection_unavailable";
 
@@ -47,6 +50,7 @@ public static class CampaignFailureReasons
         [CampaignFailureCodes.CampaignFailed] = "La campaña se detuvo.",
         [CampaignFailureCodes.UnknownOutcome] = "No se pudo confirmar el envío; no se reintentó para evitar duplicados.",
         [CampaignFailureCodes.ConnectionUnavailable] = "La conexión de WhatsApp está pausada, necesita atención o ya no existe. Revísala en Integraciones.",
+        [CampaignFailureCodes.NotSent] = "No se pudo conectar con WhatsApp; el mensaje no salió.",
         ["190"] = "Meta rechazó las credenciales de la conexión de WhatsApp. Vuelve a conectar el número.",
         ["133010"] = "Meta rechazó las credenciales del número de la conexión: no está registrado en WhatsApp Business. Vuelve a conectarlo.",
     };

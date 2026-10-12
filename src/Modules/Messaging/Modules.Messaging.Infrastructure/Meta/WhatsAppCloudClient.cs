@@ -239,7 +239,7 @@ internal sealed partial class WhatsAppCloudClient(
         using var response = answer.Response;
         if (response is null)
         {
-            return new SendResult(SendOutcome.Unconfirmed, null, null, null);
+            return new SendResult(answer.UnreachableReason == "not-sent" ? SendOutcome.NotSent : SendOutcome.Unconfirmed, null, null, null);
         }
 
         // §8.3: un 5xx no confirma nada (Meta pudo haberlo aceptado); un 4xx es un rechazo con su código.
@@ -358,11 +358,13 @@ internal sealed partial class WhatsAppCloudClient(
             LogUnreachable(logger, operation, "timeout");
             return new GraphAnswer(null, string.Empty, null, "timeout");
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
             response?.Dispose();
-            LogUnreachable(logger, operation, "network");
-            return new GraphAnswer(null, string.Empty, null, "network");
+            // Sin conexión establecida el request nunca salió; cualquier otra falla pudo ocurrir con el request ya enviado.
+            var neverLeft = exception.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError;
+            LogUnreachable(logger, operation, neverLeft ? "not-sent" : "network");
+            return new GraphAnswer(null, string.Empty, null, neverLeft ? "not-sent" : "network");
         }
     }
 
