@@ -34,6 +34,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>§7.3: calificada con esquema para no depender del search_path de quien inserte.</summary>
     public const string SearchVectorSql = "to_tsvector('messaging.es_unaccent', coalesce(text, '') || ' ' || coalesce(caption, ''))";
 
+    /// <summary>Spec 2026-10-12 §3.4: <c>MessagingUnitOfWork</c> discrimina por este nombre para responder <c>shortcut_taken</c>.</summary>
+    public const string QuickReplyShortcutIndex = "IX_quick_replies_tenant_shortcut";
+
     public DbSet<Conversation> Conversations => Set<Conversation>();
 
     internal DbSet<MessageRecord> Messages => Set<MessageRecord>();
@@ -47,6 +50,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     internal DbSet<CampaignRecipientRecord> CampaignRecipients => Set<CampaignRecipientRecord>();
 
+    /// <summary>Spec 2026-10-12 §3.1: el agregado de la respuesta rápida.</summary>
+    public DbSet<QuickReply> QuickReplies => Set<QuickReply>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -58,6 +64,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureSendBudget(modelBuilder);
         ConfigureCampaign(modelBuilder);
         ConfigureCampaignRecipient(modelBuilder);
+        ConfigureQuickReply(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
 
@@ -278,6 +285,23 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         recipient.HasIndex(value => value.NextAttemptAt, "IX_campaign_recipients_due").HasFilter("status IN ('Pending','Sending')");
         // Los contadores y el filtro por estado del detalle.
         recipient.HasIndex(value => new { value.CampaignId, value.Status }, "IX_campaign_recipients_campaign_status");
+    }
+
+    /// <summary>Spec 2026-10-12 §3.1: el atajo es único por tenant. El índice va con nombre porque la unidad de trabajo lo reconoce
+    /// por nombre (§3.4).</summary>
+    private static void ConfigureQuickReply(ModelBuilder modelBuilder)
+    {
+        var quickReply = modelBuilder.Entity<QuickReply>();
+        quickReply.ToTable("quick_replies", Schema);
+        quickReply.HasKey(value => value.Id);
+        quickReply.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        quickReply.Property(value => value.TenantId).HasColumnName("tenant_id");
+        quickReply.Property(value => value.Shortcut).HasColumnName("shortcut").HasMaxLength(QuickReply.ShortcutMaxLength);
+        quickReply.Property(value => value.Body).HasColumnName("body").HasMaxLength(QuickReply.BodyMaxLength);
+        quickReply.Property(value => value.CreatedAt).HasColumnName("created_at");
+        quickReply.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        quickReply.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        quickReply.HasIndex(value => new { value.TenantId, value.Shortcut }, QuickReplyShortcutIndex).IsUnique();
     }
 
     /// <summary>Decisión del owner 2026-10-12 (P3 y P5): el cubo de envío por conexión. Sin FK: la conexión es de Integrations, otro schema.</summary>
