@@ -597,6 +597,8 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-12 §3.3): respuestas rápidas. Cada handler a mano: sin registro, 500.
         services.AddScoped<IQueryHandler<ListQuickRepliesQuery, QuickReplyListDto>, ListQuickRepliesHandler>();
         services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
+        services.AddScoped<ICommandHandler<UpdateQuickReplyCommand, QuickReplyDto>, UpdateQuickReplyHandler>();
+        services.AddScoped<ICommandHandler<DeleteQuickReplyCommand, bool>, DeleteQuickReplyHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();

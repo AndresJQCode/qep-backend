@@ -29,6 +29,23 @@ internal static class QuickReplyEndpoints
             .Produces<QuickReplyDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/{quickReplyId:guid}", UpdateAsync)
+            .RequireAuthorization(MessagingPermissions.QuickReplyManage)
+            .Accepts<SaveQuickReplyRequest>("application/json")
+            .Produces<QuickReplyDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/{quickReplyId:guid}", DeleteAsync)
+            .RequireAuthorization(MessagingPermissions.QuickReplyManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static async Task<IResult> ListAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -40,6 +57,18 @@ internal static class QuickReplyEndpoints
         Results.Created(
             (string?)null,
             await dispatcher.SendAsync(new CreateQuickReplyCommand(tenantId, request.Shortcut, request.Body), cancellationToken));
+
+    private static async Task<IResult> UpdateAsync(
+        Guid tenantId, Guid quickReplyId, SaveQuickReplyRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateQuickReplyCommand(tenantId, quickReplyId, request.Shortcut, request.Body, request.Version), cancellationToken));
+
+    private static async Task<IResult> DeleteAsync(
+        Guid tenantId, Guid quickReplyId, long? version, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new DeleteQuickReplyCommand(tenantId, quickReplyId, version), cancellationToken);
+        return Results.NoContent();
+    }
 }
 
 /// <summary>§3.6: el cuerpo de crear y editar. <c>shortcut</c> sin <c>/</c>. El <c>POST</c> ignora <c>version</c>; el <c>PUT</c> la

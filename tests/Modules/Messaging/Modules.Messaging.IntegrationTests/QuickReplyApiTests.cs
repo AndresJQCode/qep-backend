@@ -192,4 +192,156 @@ public sealed class QuickReplyApiTests
         Assert.Equal(["body", "shortcut"], (await ProblemAsync(empty)).ErrorKeys);
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.quick_replies"));
     }
+
+    private static Task<HttpResponseMessage> PutAsync(HttpClient client, Guid tenantId, Guid id, string shortcut, string body, long? version) =>
+        SendAsync(client, HttpMethod.Put, QuickReplyUrl(tenantId, id), new { shortcut, body, version });
+
+    private static Task<HttpResponseMessage> DeleteAsync(HttpClient client, Guid tenantId, Guid id, long? version) =>
+        SendAsync(client, HttpMethod.Delete, version is null ? QuickReplyUrl(tenantId, id) : $"{QuickReplyUrl(tenantId, id)}?version={version}");
+
+    // Review Focus 4: el mismo atajo que ya tiene no choca con su propia fila.
+    [Fact]
+    public async Task UpdatingKeepsItsOwnShortcutBumpsTheVersionAndAudits()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f, "horarios")).GetProperty("id").GetGuid();
+
+        var response = await PutAsync(f.Admin, f.Tenant.TenantId, id, "horarios", "  Abrimos de 7 a 7, {nombre}.  ", 1);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal((id, "horarios", "Abrimos de 7 a 7, {nombre}.", 2L), (
+            updated.GetProperty("id").GetGuid(), updated.GetProperty("shortcut").GetString(), updated.GetProperty("body").GetString(), updated.GetProperty("version").GetInt64()));
+        Assert.Equal(1L, await AuditCountAsync(f, "messaging.quick_reply.updated", id));
+    }
+
+    [Fact]
+    public async Task RenamingToATakenShortcutIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await CreateAsync(f, "horarios");
+        var id = (await CreateAsync(f, "pago")).GetProperty("id").GetGuid();
+
+        var taken = await PutAsync(f.Admin, f.Tenant.TenantId, id, "Horarios", "Otro", 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, taken.StatusCode);
+        Assert.Equal("messaging.quick_reply.shortcut_taken", (await ProblemAsync(taken)).Code);
+        Assert.Equal("pago", await ScalarAsync<string>(f.ConnectionString, "SELECT shortcut FROM messaging.quick_replies WHERE id = @id", ("id", id)));
+    }
+
+    // Review Focus 5: la versión vieja no edita ni borra.
+    [Fact]
+    public async Task AStaleVersionIs412OnUpdateAndOnDeleteAndNothingChanges()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f, "horarios")).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(f.Admin, f.Tenant.TenantId, id, "horarios", "Versión dos.", 1)).StatusCode);
+
+        var staleUpdate = await PutAsync(f.Admin, f.Tenant.TenantId, id, "horarios", "Pisada.", 1);
+        var staleDelete = await DeleteAsync(f.Admin, f.Tenant.TenantId, id, 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, staleUpdate.StatusCode);
+        Assert.Equal("concurrency.conflict", (await ProblemAsync(staleUpdate)).Code);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, staleDelete.StatusCode);
+        Assert.Equal("concurrency.conflict", (await ProblemAsync(staleDelete)).Code);
+        Assert.Equal("Versión dos.", await ScalarAsync<string>(f.ConnectionString, "SELECT body FROM messaging.quick_replies WHERE id = @id", ("id", id)));
+        Assert.Equal(2L, await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.quick_replies WHERE id = @id", ("id", id)));
+    }
+
+    [Fact]
+    public async Task AMissingVersionIs422OnVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f, "horarios")).GetProperty("id").GetGuid();
+
+        var update = await PutAsync(f.Admin, f.Tenant.TenantId, id, "horarios", "Otro", null);
+        var delete = await DeleteAsync(f.Admin, f.Tenant.TenantId, id, null);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, update.StatusCode);
+        Assert.Equal(["version"], (await ProblemAsync(update)).ErrorKeys);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, delete.StatusCode);
+        Assert.Equal(["version"], (await ProblemAsync(delete)).ErrorKeys);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.quick_replies"));
+    }
+
+    [Fact]
+    public async Task DeletingRemovesItAndAudits()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f, "horarios")).GetProperty("id").GetGuid();
+
+        var deleted = await DeleteAsync(f.Admin, f.Tenant.TenantId, id, 1);
+        var list = await f.Admin.GetFromJsonAsync<JsonElement>(QuickRepliesUrl(f.Tenant.TenantId), Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.Equal(0, list.GetProperty("items").GetArrayLength());
+        Assert.Equal(1L, await AuditCountAsync(f, "messaging.quick_reply.deleted", id));
+    }
+
+    // Review Focus 5: el id de otro tenant bajo la ruta propia es 404, igual que uno inexistente; la ruta ajena es 403.
+    [Fact]
+    public async Task AnUnknownOrForeignIdIs404AndAnotherTenantsRouteIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f, "horarios")).GetProperty("id").GetGuid();
+        var other = await RegisterTenantAsync(f.Factory);
+        await EnableMessagingAsync(f.ConnectionString, other.TenantId);
+        using var otherAdmin = CreateClient(f.Factory, other.OwnerUserId, other.TenantId, AdminPermissions);
+        var unknown = Guid.CreateVersion7();
+
+        var notFound = new[]
+        {
+            await PutAsync(f.Admin, f.Tenant.TenantId, unknown, "x-y", "Hola", 1),
+            await DeleteAsync(f.Admin, f.Tenant.TenantId, unknown, 1),
+            await PutAsync(otherAdmin, other.TenantId, id, "x-y", "Hola", 1),
+            await DeleteAsync(otherAdmin, other.TenantId, id, 1),
+        };
+        var forbidden = new[]
+        {
+            await PutAsync(otherAdmin, f.Tenant.TenantId, id, "x-y", "Hola", 1),
+            await DeleteAsync(otherAdmin, f.Tenant.TenantId, id, 1),
+        };
+
+        foreach (var response in notFound)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("messaging.quick_reply.not_found", (await ProblemAsync(response)).Code);
+        }
+
+        foreach (var response in forbidden)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal("authorization.denied", (await ProblemAsync(response)).Code);
+        }
+
+        Assert.Equal(("horarios", 1L), (
+            await ScalarAsync<string>(f.ConnectionString, "SELECT shortcut FROM messaging.quick_replies WHERE id = @id", ("id", id)),
+            await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.quick_replies WHERE id = @id", ("id", id))));
+    }
+
+    [Fact]
+    public async Task UpdatingOrDeletingWithoutThePermissionIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f, "horarios")).GetProperty("id").GetGuid();
+        using var advisor = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await PutAsync(advisor, f.Tenant.TenantId, id, "horarios", "Otro", 1)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await DeleteAsync(advisor, f.Tenant.TenantId, id, 1)).StatusCode);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.quick_replies WHERE version = 1"));
+    }
 }

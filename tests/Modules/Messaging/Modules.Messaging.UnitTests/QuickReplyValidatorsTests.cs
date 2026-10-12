@@ -85,4 +85,24 @@ public sealed class QuickReplyValidatorsTests
     [Fact]
     public void TheCreateValidatorUsesTheSharedRules() =>
         Assert.Equal(["body", "shortcut"], Keys(new CreateQuickReplyValidator().Validate(new CreateQuickReplyCommand(Guid.CreateVersion7(), "/x", ""))));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public void UpdateAndDeleteNeedAPositiveVersion(long? version)
+    {
+        var update = Assert.Single(new UpdateQuickReplyValidator().Validate(
+            new UpdateQuickReplyCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), "horarios", "Hola", version)).Errors);
+        var delete = Assert.Single(new DeleteQuickReplyValidator().Validate(
+            new DeleteQuickReplyCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), version)).Errors);
+
+        Assert.Equal(("version", "Falta la versión de la respuesta que estás viendo."), (update.PropertyName, update.ErrorMessage));
+        Assert.Equal(("version", "Falta la versión de la respuesta que estás viendo."), (delete.PropertyName, delete.ErrorMessage));
+    }
+
+    [Fact]
+    public void TheUpdateValidatorUsesTheSharedRules() =>
+        Assert.Equal(["body", "shortcut"], Keys(new UpdateQuickReplyValidator().Validate(
+            new UpdateQuickReplyCommand(Guid.CreateVersion7(), Guid.CreateVersion7(), "a", "Hola {cliente}", 1))));
 }

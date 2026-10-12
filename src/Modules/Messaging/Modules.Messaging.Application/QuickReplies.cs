@@ -70,6 +70,12 @@ internal static class QuickReplySupport
 {
     public static QuickReplyDto ToDto(QuickReply quickReply) =>
         new(quickReply.Id, quickReply.Shortcut, quickReply.Body, quickReply.UpdatedAt, quickReply.Version);
+
+    public static ResourceNotFoundException NotFound(Guid quickReplyId) =>
+        new(MessagingErrorCodes.QuickReplyNotFound, $"Quick reply '{quickReplyId}' was not found.");
+
+    public static RequestConcurrencyException Stale() =>
+        new("concurrency.conflict", "The quick reply changed since it was loaded.");
 }
 
 /// <summary>§3.6 <c>GET /quick-replies</c>: todo asesor de la caja (<c>messaging.conversation.read</c>). Las variables se resuelven
@@ -124,5 +130,88 @@ public sealed class CreateQuickReplyHandler(
         audit.RecordQuickReply(command.TenantId, executionContext.SubjectId, MessagingAuditActions.QuickReplyCreated, quickReply.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return QuickReplySupport.ToDto(quickReply);
+    }
+}
+
+public sealed record UpdateQuickReplyCommand(Guid TenantId, Guid QuickReplyId, string? Shortcut, string? Body, long? Version)
+    : ICommand<QuickReplyDto>, IQuickReplyInput;
+
+public sealed record DeleteQuickReplyCommand(Guid TenantId, Guid QuickReplyId, long? Version) : ICommand<bool>;
+
+public sealed class UpdateQuickReplyValidator : QuickReplyInputValidator<UpdateQuickReplyCommand>
+{
+    public UpdateQuickReplyValidator() =>
+        RuleFor(command => command.Version).Must(version => version is > 0)
+            .OverridePropertyName("version").WithMessage(QuickReplyMessages.MissingVersion);
+}
+
+/// <summary>§3.6: la versión viaja en el query (<c>?version=</c>), un <c>DELETE</c> no lleva cuerpo.</summary>
+public sealed class DeleteQuickReplyValidator : AbstractValidator<DeleteQuickReplyCommand>
+{
+    public DeleteQuickReplyValidator() =>
+        RuleFor(command => command.Version).Must(version => version is > 0)
+            .OverridePropertyName("version").WithMessage(QuickReplyMessages.MissingVersion);
+}
+
+/// <summary>§3.6 <c>PUT /quick-replies/{id}</c>: reemplaza atajo y cuerpo con la versión que se está viendo (412 si no). Un id que no
+/// es del tenant es 404, igual que uno inexistente.</summary>
+public sealed class UpdateQuickReplyHandler(
+    IQuickReplyRepository repository,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingAuditRecorder audit,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<UpdateQuickReplyCommand> validator)
+    : ICommandHandler<UpdateQuickReplyCommand, QuickReplyDto>
+{
+    public async Task<QuickReplyDto> HandleAsync(UpdateQuickReplyCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.QuickReplyManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var quickReply = await repository.FindAsync(command.TenantId, command.QuickReplyId, cancellationToken)
+            ?? throw QuickReplySupport.NotFound(command.QuickReplyId);
+        if (quickReply.Version != command.Version)
+        {
+            throw QuickReplySupport.Stale();
+        }
+
+        var now = clock.UtcNow;
+        quickReply.Update(command.Shortcut, command.Body, now);
+        audit.RecordQuickReply(command.TenantId, executionContext.SubjectId, MessagingAuditActions.QuickReplyUpdated, quickReply.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return QuickReplySupport.ToDto(quickReply);
+    }
+}
+
+/// <summary>§3.6 <c>DELETE /quick-replies/{id}?version=</c>: con la versión que se está viendo (412 si no; una carrera entre la
+/// lectura y el commit también es 412, por el token de concurrencia).</summary>
+public sealed class DeleteQuickReplyHandler(
+    IQuickReplyRepository repository,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingAuditRecorder audit,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<DeleteQuickReplyCommand> validator)
+    : ICommandHandler<DeleteQuickReplyCommand, bool>
+{
+    public async Task<bool> HandleAsync(DeleteQuickReplyCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.QuickReplyManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var quickReply = await repository.FindAsync(command.TenantId, command.QuickReplyId, cancellationToken)
+            ?? throw QuickReplySupport.NotFound(command.QuickReplyId);
+        if (quickReply.Version != command.Version)
+        {
+            throw QuickReplySupport.Stale();
+        }
+
+        repository.Remove(quickReply);
+        audit.RecordQuickReply(command.TenantId, executionContext.SubjectId, MessagingAuditActions.QuickReplyDeleted, quickReply.Id, clock.UtcNow);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return true;
     }
 }
