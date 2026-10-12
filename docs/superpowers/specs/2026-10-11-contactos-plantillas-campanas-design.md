@@ -368,14 +368,52 @@ Lo que el spec no fija y el código decidió, o lo que se agregó sin cambiar el
 - **Entrega como máximo una vez (decisión 12).** Se reintenta —30 s · 2^n, 5 intentos— sólo cuando Meta **contestó** con un código reintentable
   (130429, 131056) o cuando el request demostrablemente nunca salió (la conexión no llegó a establecerse: `SendOutcome.NotSent`; agotados los
   intentos queda `Failed not_sent`). Todo lo demás con el request ya enviado —timeout, reset a mitad, 5xx, 2xx sin id— es `Failed
-  unknown_outcome` y no se reenvía. Un cierre del host en plena llamada deja al destinatario `Sending`: el lease vence y la recuperación
-  (§6.3 paso 4) lo deja `unknown_outcome` si ya tiene mensaje.
+  unknown_outcome` y no se reenvía. Si el proceso **muere** en plena llamada, el destinatario queda `Sending`: el lease vence y la
+  recuperación (§6.3 paso 4) lo deja `unknown_outcome` si ya tiene mensaje. Un cierre ordenado del host ya no es ese caso (R3).
 - **Una plantilla o una conexión que dejan de servir** a mitad del envío detienen la campaña como los códigos de Meta de la decisión 15:
   `132001` (plantilla fuera del catálogo o con otras variables) o `connection_unavailable`. Un destinatario reclamado cuya campaña se
   canceló o falló mientras esperaba su turno no se envía: queda `Skipped campaign_cancelled` o `campaign_failed`.
 - **Configuración.** `Messaging:Campaigns:MessagesPerSecond` (1 a 80, por defecto 20; se valida al arrancar) y
   `Messaging:Workers:CampaignPollSeconds` (2).
 - **Permiso.** `messaging.campaign.manage` es el 51.º permiso del catálogo; de núcleo, de fábrica sólo en `admin`.
+
+**Correcciones de la revisión (R1 a R10, 2026-10-12).** Ninguna cambia el contrato HTTP de la §6.2 salvo R8, que sólo endurece un permiso.
+
+- **R1. Propiedad del destinatario (compare-and-set).** Un worker que se frena y recupera su turno después de que el lease venció ya no
+  puede enviar lo que otro reclamó. `PrepareAsync` ata el `message_id` con un `UPDATE` que debe afectar **exactamente una fila** con
+  `status = 'Sending'`, `locked_until > now` y `attempts` igual al valor que ese worker reclamó; con cero filas deshace el mensaje y
+  no llama a Meta. Liquidar (`Sent`, `Failed`), omitir, reintentar y diferir llevan la misma guarda de estado e intento. Excepción
+  deliberada: si el lease venció con la llamada ya en vuelo y la recuperación dejó `unknown_outcome`, una respuesta `Sent` de Meta con
+  ese mismo `message_id` sí corrige al destinatario, porque lo que Meta contestó es la verdad.
+- **R2. Sin bucles.** La recuperación manda a `Failed not_sent` (con el texto existente) al destinatario sin mensaje que ya gastó los 5
+  intentos, en vez de devolverlo a `Pending` para siempre. `ClaimAsync` lee los parámetros fila por fila: un JSON ilegible falla a
+  esa campaña (`Failed invalid_parameters`, con sus pendientes en `Skipped campaign_failed`) y no tumba el lote de las demás.
+- **R3. Cierre del host.** La llamada a Meta no recibe el token del host (`CancellationToken.None`); la acota el timeout del `HttpClient`
+  con nombre. Al cerrar, el worker no reclama nada nuevo ni arranca destinatarios sin turno, pero espera a que los envíos en vuelo
+  terminen y se liquiden, así que no quedan en `unknown_outcome` por un despliegue.
+- **R4. Caída del catálogo.** `MessageTemplateCatalog` recuerda 30 s que Meta no contestó la lista y lee de a una por `(tenant, conexión)`
+  (single-flight): ocho destinatarios en paralelo comparten la misma llamada o la misma falla. Un `refresh` ignora la falla recordada.
+  En el worker, que el catálogo no conteste reprograma al destinatario a +60 s **sin gastar el intento** (`DeferAsync` devuelve el que
+  sumó el reclamo, con la guarda de R1): una caída de minutos no deja cientos en `Failed`.
+- **R5. Equidad.** El reclamo reparte por turnos: numera los vencidos por campaña, luego por conexión según ese número, y toma los de
+  número más bajo. Una campaña grande no deja sin cupo a una chica, y una conexión con mucha cola no frena a las demás. Sigue siendo
+  `FOR UPDATE SKIP LOCKED`: el candado va en un CTE aparte que vuelve a exigir `Pending`.
+- **R6. Consentimiento al enviar.** Justo antes de enviar a un destinatario de una campaña `MARKETING`, el worker vuelve a leer la ficha
+  (`FindContactAsync`): inactivo, `Skipped inactive`; con opt-out, `Skipped opted_out`; inexistente, `Skipped unreachable`. Ocurre antes
+  de `PrepareAsync`, así que no se inserta ningún mensaje. El congelado de la audiencia pudo ser de hace horas.
+- **R7. Categoría vigente.** Al lanzar se guarda en la campaña la categoría que el catálogo tiene en ese momento (`template_category`), y
+  al enviar la exclusión de R6 aplica si **cualquiera** de las dos —la guardada o la del catálogo vivo— es `MARKETING`: Meta puede reclasificar
+  una plantilla entre el borrador y el envío.
+- **R8. `refresh` pide gestionar.** `GET /connections/{id}/templates?refresh=true` exige `messaging.conversation.manage` (`403` si no);
+  sin `refresh` sigue en `messaging.conversation.read`. Es lo único que cambia en el contrato: `refresh` salta la caché de 5 minutos y le
+  pega a Meta, así que no debe estar al alcance de cualquiera que sólo lee.
+- **R9. Cancelar durante el congelado.** `AddRecipientsAsync` inserta sólo mientras la campaña sigue `Sending` (`INSERT … SELECT … WHERE
+  EXISTS`), y `MarkFrozenAsync` deja `Skipped` con el motivo terminal de la campaña (`campaign_cancelled` o `campaign_failed`) a cualquier
+  `Pending` rezagado que un lote en vuelo haya escrito después de la cancelación.
+- **R10. Una sola copia.** `MetaErrorCodes` (Domain) concentra los códigos de Meta que se deciden por número (131050, 190, 133010, los de
+  plantilla y los reintentables), y `TemplateCatalog.BuildSend` arma de una vez el `TemplateSend`, el texto y el `details`; el envío
+  humano (`TemplateOutbound`) y el worker leen de ahí. El saludo de respaldo `cliente` es una constante con su motivo (Meta rechaza una
+  variable vacía con `132018`).
 
 ## 7. Frontend
 
@@ -507,3 +545,5 @@ se hacen en paralelo contra el contrato de este documento.
   rápida «Detener promociones»? Lo segundo es más seguro: requiere leer el `button.payload` del entrante.
 - **P2.** ¿Las campañas deberían estar también en el rol advisor?
 - **P3.** ¿El tope de 20 mps alcanza para el volumen real del primer tenant?
+- **P4.** ¿Tope de audiencia por campaña o presupuesto diario por tenant?
+- **P5.** El ritmo es por proceso: con varias réplicas se multiplica; hay que moverlo a un límite compartido antes de escalar réplicas.
