@@ -128,6 +128,9 @@ public sealed class CustomerWhatsAppDirectory(
     public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         audience.MarkMarketingOptOutAsync(tenantId, customerId, MarketingConsentSource.Meta, clock.UtcNow, cancellationToken);
 
+    public Task MarkMarketingOptOutByButtonAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        audience.MarkMarketingOptOutAsync(tenantId, customerId, MarketingConsentSource.Button, clock.UtcNow, cancellationToken);
+
     private async Task<EnsuredCustomer> WinnerAsync(Guid tenantId, string userId, CancellationToken cancellationToken)
     {
         var winner = await repository.FindByWhatsAppUserIdAsync(tenantId, userId, cancellationToken)

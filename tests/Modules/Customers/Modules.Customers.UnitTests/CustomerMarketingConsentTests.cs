@@ -92,6 +92,7 @@ public sealed class CustomerMarketingConsentTests
     [Theory]
     [InlineData(MarketingConsentSource.Manual, "manual")]
     [InlineData(MarketingConsentSource.Meta, "meta")]
+    [InlineData(MarketingConsentSource.Button, "button")]
     public void TheSourceTravelsByLowercaseName(MarketingConsentSource source, string wire)
     {
         Assert.Equal(wire, source.ToWireValue());

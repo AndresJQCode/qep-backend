@@ -70,6 +70,9 @@ internal sealed partial class MessagingCustomerDirectory(
     public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         whatsApp.MarkMarketingOptOutAsync(tenantId, customerId, cancellationToken);
 
+    public Task MarkMarketingOptOutByButtonAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        whatsApp.MarkMarketingOptOutByButtonAsync(tenantId, customerId, cancellationToken);
+
     // §11: sin el BSUID en el log; el tenant basta para buscar la conversación.
     [LoggerMessage(Level = LogLevel.Information, Message = "A WhatsApp number change for tenant {TenantId} was not applied to Customers: no customer had the previous id, or the new one already belongs to another customer.")]
     private static partial void LogNotReplaced(ILogger logger, Guid tenantId);

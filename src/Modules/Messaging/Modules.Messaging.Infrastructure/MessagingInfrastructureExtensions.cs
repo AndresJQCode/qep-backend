@@ -90,6 +90,8 @@ public static class MessagingInfrastructureExtensions
             .Bind(configuration.GetSection(MessagingCampaignOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<MessagingCampaignOptions>, MessagingCampaignOptionsValidator>();
+        services.AddOptions<MessagingMarketingOptOutOptions>().Bind(configuration.GetSection(MessagingMarketingOptOutOptions.SectionName));
+        services.AddSingleton<MarketingOptOutButtons>();
         services.AddOptions<MessagingWorkerOptions>().Bind(configuration.GetSection(MessagingWorkerOptions.SectionName));
         services.AddOptions<MessagingSearchOptions>().Bind(configuration.GetSection(MessagingSearchOptions.SectionName));
 

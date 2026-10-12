@@ -117,4 +117,15 @@ public sealed class CustomerAudienceDirectoryTests
 
         Assert.Equal((customer, MarketingConsentSource.Meta, Now), Assert.Single(audience.OptOuts));
     }
+
+    [Fact]
+    public async Task MarkingTheOptOutByButtonRecordsButtonAsTheSourceWithTheClockTime()
+    {
+        var audience = new FakeAudience(1);
+        var customer = Guid.NewGuid();
+
+        await DirectoryOver(audience).MarkMarketingOptOutByButtonAsync(TenantId, customer, TestContext.Current.CancellationToken);
+
+        Assert.Equal((customer, MarketingConsentSource.Button, Now), Assert.Single(audience.OptOuts));
+    }
 }

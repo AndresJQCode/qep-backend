@@ -57,7 +57,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             table.HasCheckConstraint("CK_customers_complete_fields", CompleteFieldsCheck);
             table.HasCheckConstraint(
                 "CK_customers_marketing_opt_out_source",
-                "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta')");
+                "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
         });
         customer.HasKey(value => value.Id);
         customer.Property(value => value.Id)

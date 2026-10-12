@@ -145,6 +145,7 @@ local y por variable de entorno en k8s
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
 | `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 2`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
 | `Messaging:Campaigns:MessagesPerSecond`              | `20` (opcional, de 1 a 80)                                                                    | Ritmo de envío de una campaña por conexión: un cuarto de los 80 mps de Meta, para dejar aire a la bandeja del mismo número |
+| `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
 | `Messaging:Search:StatementTimeoutMs`                | `2000`                                                                                        | Tope de la búsqueda en el historial; al pasarlo responde 422 en `q` |
 
 Ejemplo con variables de entorno:

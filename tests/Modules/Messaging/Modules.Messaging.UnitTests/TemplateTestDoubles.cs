@@ -30,6 +30,14 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
 
     public List<Guid> OptedOut { get; } = [];
 
+    public List<Guid> OptedOutByButton { get; } = [];
+
+    public Task MarkMarketingOptOutByButtonAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+    {
+        OptedOutByButton.Add(customerId);
+        return Task.CompletedTask;
+    }
+
     public MessagingCustomerContact Add(string name = "Laura", string? phone = "+573001234567", string? userId = null, bool active = true, bool optOut = false)
     {
         var contact = new MessagingCustomerContact(Guid.CreateVersion7(), name, phone, userId, active, optOut);

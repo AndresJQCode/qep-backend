@@ -152,6 +152,7 @@ internal static partial class WebhookPayloadParser
         string? caption = null;
         string? details = null;
         InboundMedia? media = null;
+        QuickReplyButton? quickReply = null;
 
         if (MessageKindMap.HasMedia(kind) && type is not null && TryObject(item, type, out var mediaElement))
         {
@@ -195,6 +196,7 @@ internal static partial class WebhookPayloadParser
                     break;
                 case MessageKind.Interactive when type == "button" && TryObject(item, "button", out var button):
                     text = ReadString(button, "text");
+                    quickReply = new QuickReplyButton(text ?? string.Empty, ReadString(button, "payload"));
                     details = button.GetRawText();
                     break;
                 case MessageKind.Unsupported:
@@ -211,7 +213,7 @@ internal static partial class WebhookPayloadParser
 
         // El ! va detrás de IsValidUserId, que descarta el null.
         return new InboundMessage(
-            wamid, userId!, waId, contact?.Name, contact?.Username, contact?.ParentUserId, occurredAt, kind, text, caption, details, media, quotedWamid);
+            wamid, userId!, waId, contact?.Name, contact?.Username, contact?.ParentUserId, occurredAt, kind, text, caption, details, media, quotedWamid, quickReply);
     }
 
     private static string? ValidWaId(string? value) =>

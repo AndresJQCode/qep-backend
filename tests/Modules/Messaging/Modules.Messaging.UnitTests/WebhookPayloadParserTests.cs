@@ -162,6 +162,20 @@ public sealed class WebhookPayloadParserTests
     }
 
     [Fact]
+    public void OnlyATemplateQuickReplyButtonCarriesTheQuickReply()
+    {
+        var button = Envelope("messages", Messages(new { from = "1", id = "w4", timestamp = "1", type = "button", button = new { payload = "Detener promociones", text = "Detener promociones" } }));
+        var interactive = Envelope("messages", Messages(new { from = "1", id = "w3", timestamp = "1", type = "interactive", interactive = new { type = "button_reply", button_reply = new { id = "b", title = "Detener promociones" } } }));
+        var text = Envelope("messages", Messages(new { from = "1", id = "w2", timestamp = "1", type = "text", text = new { body = "Detener promociones" } }));
+
+        Assert.Equal(new QuickReplyButton("Detener promociones", "Detener promociones"), Single(button).QuickReply);
+        Assert.Null(Single(interactive).QuickReply);
+        Assert.Null(Single(text).QuickReply);
+
+        static InboundMessage Single(string json) => Assert.Single(Assert.IsType<MessagesChange>(WebhookPayloadParser.Parse(json)[0]).Messages);
+    }
+
+    [Fact]
     public void AnUnsupportedMessageKeepsItsTypeAndErrorsInDetails()
     {
         var json = Envelope("messages", Messages(new { from = "1", id = "w5", timestamp = "1", type = "unsupported", errors = new[] { new { code = 131051, title = "Unsupported message type" } } }));

@@ -58,4 +58,8 @@ public interface ICustomerWhatsAppDirectory
     /// <summary>§4.4 y decisión 10: Meta respondió 131050 (la persona apagó el marketing). Idempotente; el origen queda en
     /// <c>meta</c> y el cliente que ya tenía el opt-out conserva el rastro original.</summary>
     Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
+    /// <summary>Decisión del owner 2026-10-12 (P1): la persona tocó el botón «Detener promociones» de una plantilla. Igual que
+    /// <see cref="MarkMarketingOptOutAsync"/> pero el origen queda en <c>button</c>.</summary>
+    Task MarkMarketingOptOutByButtonAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 }

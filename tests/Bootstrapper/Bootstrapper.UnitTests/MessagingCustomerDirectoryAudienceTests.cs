@@ -55,6 +55,14 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             return Task.CompletedTask;
         }
 
+        public List<Guid> OptedOutByButton { get; } = [];
+
+        public Task MarkMarketingOptOutByButtonAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+        {
+            OptedOutByButton.Add(customerId);
+            return Task.CompletedTask;
+        }
+
         public Task<EnsuredCustomer> EnsureAsync(Guid tenantId, WhatsAppContact contact, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -136,5 +144,17 @@ public sealed class MessagingCustomerDirectoryAudienceTests
 
         Assert.Equal(new MessagingAudienceCount(10, 1, 2, 3), count);
         Assert.Equal([customer], whatsApp.OptedOut);
+    }
+
+    [Fact]
+    public async Task OptOutByButtonPassesThroughToItsOwnPort()
+    {
+        var whatsApp = new FakeWhatsApp();
+        var customer = Guid.NewGuid();
+
+        await AdapterOver(whatsApp).MarkMarketingOptOutByButtonAsync(Tenant, customer, TestContext.Current.CancellationToken);
+
+        Assert.Equal([customer], whatsApp.OptedOutByButton);
+        Assert.Empty(whatsApp.OptedOut);
     }
 }

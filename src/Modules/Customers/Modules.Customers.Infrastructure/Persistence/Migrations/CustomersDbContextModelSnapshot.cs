@@ -250,7 +250,7 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
 
-                            t.HasCheckConstraint("CK_customers_marketing_opt_out_source", "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta')");
+                            t.HasCheckConstraint("CK_customers_marketing_opt_out_source", "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
                         });
                 });
 
