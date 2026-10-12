@@ -342,6 +342,37 @@ cae en «Sin asignar» si nadie la tenía, que es justo donde un asesor la toma.
 `MessagingPermissions.CampaignManage = "messaging.campaign.manage"`, de fábrica en admin (decisión 16).
 Lleva constante, política y la entrada en el catálogo de permisos de roles.
 
+### 6.5 Notas de la implementación (E3, 2026-10-11)
+
+Lo que el spec no fija y el código decidió, o lo que se agregó sin cambiar el contrato HTTP de la §6.2:
+
+- **La versión viaja en el cuerpo** (`expectedVersion`) en `PUT`, `launch` y `cancel`, no en `If-Match`: así lo implementó la pantalla. Falta o
+  `<= 0` es `422` en `expectedVersion`; una versión vieja es `412 concurrency.conflict`.
+- **`failureCode` y `failureReason`** (en la campaña y en cada destinatario) los calcula el backend en español: el código estable
+  (`opted_out`, `131049`, `unknown_outcome`, `unconfirmed`, `connection_unavailable`…) y su texto (`CampaignFailureReasons`; los numéricos
+  reusan `MessageFailureReasons`). Las columnas `failure_reason` guardan el texto; el DTO cae al cálculo si falta.
+- **Contadores.** `sent` son los `Sent` («Meta lo aceptó»); `delivered` y `read` son subconjuntos de `sent` (leído implica entregado);
+  `replied` cuenta los `Sent` con un entrante posterior; `pending` suma `Pending` y `Sending`; `total = pending + sent + failed + skipped`.
+  `messageStatus` de un destinatario sólo viaja cuando está `Sent`.
+- **Columnas extra** en `messaging.campaigns`: `failure_code` y `audience_frozen_at`. La segunda marca que el worker terminó de escribir los
+  destinatarios: sin ella, una audiencia que se cayó a medias parecería terminada y la campaña se cerraría como `Completed`. No sube
+  `version` (no es algo que la pantalla edite), así que el «Cancelar» de quien mira no choca con un `412`.
+- **`launch` con una fecha que ya pasó** desde que se guardó el borrador es `422` en `scheduledAt`: no se manda de golpe lo que alguien
+  había agendado. La plantilla se valida de nuevo contra el catálogo al lanzar.
+- **Worker.** El mensaje saliente nace `Failed` con `failure_code = -1` (sin confirmar) y pasa a `Sent` solo cuando Meta acepta: si el
+  proceso cae con la llamada en vuelo, la burbuja ya dice la verdad y la recuperación deja al destinatario `Failed unknown_outcome`.
+  `client_id` del mensaje es el id del destinatario, así `(conversation_id, client_id)` garantiza un mensaje por destinatario aunque dos
+  pods lleguen al mismo punto. La llamada a Meta no retiene transacción y se liquida aunque el proceso esté cerrando. Hasta 8 envíos en
+  paralelo por tick, cada uno en su scope; el ritmo lo fija el cubo, no el paralelismo.
+- **Riesgo aceptado de la decisión 12.** Un timeout o un 5xx (Meta pudo haber aceptado el mensaje) se reintenta como pide §6.3; eso puede
+  duplicar un envío en ese caso puntual. Lo que cae a mitad de llamada (proceso muerto) sí queda `unknown_outcome` y no se reenvía.
+- **Una plantilla o una conexión que dejan de servir** a mitad del envío detienen la campaña como los códigos de Meta de la decisión 15:
+  `132001` (plantilla fuera del catálogo o con otras variables) o `connection_unavailable`. Un destinatario reclamado cuya campaña se
+  canceló o falló mientras esperaba su turno no se envía: queda `Skipped campaign_cancelled` o `campaign_failed`.
+- **Configuración.** `Messaging:Campaigns:MessagesPerSecond` (1 a 80, por defecto 20; se valida al arrancar) y
+  `Messaging:Workers:CampaignPollSeconds` (2).
+- **Permiso.** `messaging.campaign.manage` es el 51.º permiso del catálogo; de núcleo, de fábrica sólo en `admin`.
+
 ## 7. Frontend
 
 UI en español, tuteando. Componentes de `components/ui`, formularios con react-hook-form y zod, TanStack
