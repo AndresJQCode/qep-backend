@@ -7,4 +7,7 @@ namespace Modules.Messaging.Application;
 public interface IMessagingMemberNames
 {
     Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken);
+
+    /// <summary>Sólo el <c>DisplayName</c> de la membresía, sin caer al correo: lo usa <c>{asesor}</c>, que llega al cliente (spec 2026-10-12, decisión del owner). <c>null</c> si no hay membresía en el tenant o no tiene nombre.</summary>
+    Task<string?> FindDisplayNameAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
 }

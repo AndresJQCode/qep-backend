@@ -495,6 +495,9 @@ internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames
     public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             memberIds.Contains(memberId) ? new Dictionary<Guid, string> { [memberId] = "Andrés" } : new Dictionary<Guid, string>());
+
+    public Task<string?> FindDisplayNameAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(id == memberId ? "Andrés" : null);
 }
 
 /// <summary>Spec 2026-10-11 §6.3: R2 en un diccionario. <see cref="UploadFailure"/> simula que R2 no aceptó el audio.</summary>

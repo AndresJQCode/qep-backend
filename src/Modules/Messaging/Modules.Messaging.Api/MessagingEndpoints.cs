@@ -170,6 +170,8 @@ public static class MessagingEndpoints
 
         // Spec 2026-10-11 §6.2: campañas, con su propio permiso (decisión 16).
         group.MapCampaignEndpoints();
+        // Spec 2026-10-12 §3.6: respuestas rápidas.
+        group.MapQuickReplyEndpoints();
 
         return endpoints;
     }

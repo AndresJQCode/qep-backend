@@ -66,6 +66,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ICampaignRepository, CampaignRepository>();
         services.AddScoped<ICampaignQueries, CampaignQueries>();
         services.AddScoped<CampaignMapper>();
+        // Spec 2026-10-12 §3.1: las respuestas rápidas, con tracking; el atajo repetido lo traduce MessagingUnitOfWork.
+        services.AddScoped<IQuickReplyRepository, QuickReplyRepository>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

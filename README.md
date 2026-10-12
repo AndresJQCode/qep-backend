@@ -795,6 +795,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
 | `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` y `reopen` (`POST`, `If-Match`); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -1917,6 +1918,14 @@ con `nosniff`, CSP `sandbox` y `attachment` para todo lo que no sea imagen, audi
 está copiado responde 404 sin código. El campo `sha256` de Meta se acepta en hex (64) o base64 (44); si
 llega en otro formato el medio se guarda **sin verificar** y queda un warning `stored without
 verification` por fila en el log.
+
+**Respuestas rápidas.** Textos del tenant con un atajo (`horarios`, sin `/`) que el asesor inserta en el compositor
+(spec 2026-10-12). Leerlas pide `messaging.conversation.read`; crearlas, editarlas y borrarlas,
+`messaging.quick_reply.manage` (de fábrica sólo en `admin`). El atajo se guarda recortado y en minúsculas y cumple
+`^[a-z0-9-]{2,32}$`; es único por tenant (`IX_quick_replies_tenant_shortcut` → 422 `messaging.quick_reply.shortcut_taken`).
+El cuerpo va de 1 a 4096 caracteres y sólo admite `{nombre}`, `{asesor}` y `{empresa}`. El `GET` devuelve la lista
+entera por atajo y `variables.asesor` / `variables.empresa` ya resueltos para quien llama; `{nombre}` lo resuelve el
+frontend con la conversación. `PUT` y `DELETE` exigen la versión (412 si cambió).
 
 **Búsqueda.** `GET …/messaging/messages/search?q=` busca por palabra en texto y leyendas con la
 configuración `messaging.es_unaccent` (español sin acentos ni flexiones, prefijo con 3+ letras) y el

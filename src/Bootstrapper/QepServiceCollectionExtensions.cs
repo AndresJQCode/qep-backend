@@ -594,6 +594,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteCampaignCommand, bool>, DeleteCampaignHandler>();
         services.AddScoped<ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>, LaunchCampaignHandler>();
         services.AddScoped<ICommandHandler<CancelCampaignCommand, CampaignDetailDto>, CancelCampaignHandler>();
+        // Messaging (spec 2026-10-12 §3.3): respuestas rápidas. Cada handler a mano: sin registro, 500.
+        services.AddScoped<IQueryHandler<ListQuickRepliesQuery, QuickReplyListDto>, ListQuickRepliesHandler>();
+        services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
+        services.AddScoped<ICommandHandler<UpdateQuickReplyCommand, QuickReplyDto>, UpdateQuickReplyHandler>();
+        services.AddScoped<ICommandHandler<DeleteQuickReplyCommand, bool>, DeleteQuickReplyHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
@@ -665,6 +670,8 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.
+        services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
         // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.
         services.AddScoped<ICustomerAuthorNames, CustomersAuthorNames>();
         // Spec 2026-10-10 §6.1.3: quién puede responder, por Tenancy, Identity y Authorization.
@@ -881,7 +888,10 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.ConversationManage,
                 // Spec 2026-10-11 §6.4 y decisión 16: las campañas llegan a miles de personas en nombre de la empresa
                 // y el costo es por mensaje; de fábrica sólo en admin (no en advisor: P2 del spec).
-                MessagingPermissions.CampaignManage
+                MessagingPermissions.CampaignManage,
+                // Spec 2026-10-12 D-Q6: lo que el asesor manda en nombre de la empresa lo decide quien administra.
+                // El rol vive en código: sin migración.
+                MessagingPermissions.QuickReplyManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1357,6 +1367,14 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "high",
             RequiredModules: []));
+        // Spec 2026-10-12 §3.5: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.QuickReplyManage,
+            "Gestionar respuestas rápidas de WhatsApp",
+            "Permite crear, editar y borrar los textos guardados que los asesores insertan en la bandeja de WhatsApp.",
+            "Messaging",
+            "medium",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1651,7 +1669,11 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage))
             .AddPolicy(
                 MessagingPermissions.CampaignManage,
-                policy => AddPermissionRequirement(policy, MessagingPermissions.CampaignManage));
+                policy => AddPermissionRequirement(policy, MessagingPermissions.CampaignManage))
+            // Sin esta política, RequireAuthorization(QuickReplyManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.QuickReplyManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.QuickReplyManage));
     }
 
     private static void AddPermissionRequirement(
