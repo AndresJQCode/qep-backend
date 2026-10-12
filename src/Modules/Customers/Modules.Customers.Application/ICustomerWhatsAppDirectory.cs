@@ -40,4 +40,22 @@ public interface ICustomerWhatsAppDirectory
     /// <summary>§6.1.6: ids de los clientes cuyo nombre contiene <paramref name="term"/> (usa
     /// <c>IX_customers_name_trgm</c>), hasta <paramref name="cap"/>.</summary>
     Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §4.4: cómo escribirle al cliente. <c>null</c> si no existe en el tenant.</summary>
+    Task<CustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
+    /// <summary>§4.4: la audiencia (clientes con alguna de las etiquetas, más los sueltos), sin duplicados, ordenada por
+    /// id. Se lee por lotes de <see cref="CustomerWhatsAppDirectory.AudienceBatchSize"/> con paginación por clave, así
+    /// que una audiencia de cien mil no se materializa de una vez. Incluye inactivos, sin WhatsApp y con opt-out: quien
+    /// arma la campaña decide a cuáles omitir y con qué motivo.</summary>
+    IAsyncEnumerable<CustomerContact> ListAudienceAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>§4.4: cuántos son y por qué algunos no recibirían nada (cubos excluyentes, ver <see cref="AudienceCount"/>).</summary>
+    Task<AudienceCount> CountAudienceAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>§4.4 y decisión 10: Meta respondió 131050 (la persona apagó el marketing). Idempotente; el origen queda en
+    /// <c>meta</c> y el cliente que ya tenía el opt-out conserva el rastro original.</summary>
+    Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 }

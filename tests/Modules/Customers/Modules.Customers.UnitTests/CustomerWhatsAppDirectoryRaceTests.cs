@@ -37,6 +37,22 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => throw new WhatsAppUserIdTakenException();
     }
 
+    // Estas pruebas no tocan la audiencia: cualquier uso es un error de la prueba.
+    private sealed class NoAudience : ICustomerAudienceRepository
+    {
+        public Task<CustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<CustomerContact>> ListAudienceBatchAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, Guid? afterId, int take, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<AudienceCount> CountAudienceAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, MarketingConsentSource source, DateTimeOffset occurredAt, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
     private sealed class FakeRepository : ICustomerRepository
     {
         public Queue<Customer?> ByWhatsAppUserId { get; } = new();
@@ -106,7 +122,7 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         Customer.CreateIncomplete(CustomerId.New(), Tenant, "Laura", "+573001234567", "CO", whatsAppUserId, Now, new EchoNormalizer());
 
     private static CustomerWhatsAppDirectory DirectoryOver(ICustomerRepository repository) =>
-        new(repository, new TakenUnitOfWork(), new NoAudit(), new EchoNormalizer(), new FixedClock());
+        new(repository, new TakenUnitOfWork(), new NoAudit(), new EchoNormalizer(), new FixedClock(), new NoAudience());
 
     [Fact]
     public async Task LosingTheCreateRaceReturnsTheWinnerAsExisting()

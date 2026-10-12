@@ -30,6 +30,7 @@ public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCo
 public sealed class CreateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
+    ICustomerTagRepository tagRepository,
     ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
@@ -144,6 +145,6 @@ public sealed class CreateCustomerHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, cancellationToken);
     }
 }

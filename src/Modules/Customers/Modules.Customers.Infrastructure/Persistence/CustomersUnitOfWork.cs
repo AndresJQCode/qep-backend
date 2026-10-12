@@ -19,6 +19,8 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
     // Interna: CustomerRepository la usa para traducir sus UPDATE condicionales, que no pasan por SaveChanges.
     internal const string WhatsAppUserIdIndex = "IX_customers_tenant_whatsapp_user_id";
 
+    private const string TagForeignKey = "FK_customer_tags_tags_tag_id";
+
     private const string ClassificationNameIndex = "IX_client_classifications_tenant_name";
 
     private const string ClassificationPrefixIndex = "IX_client_classifications_tenant_prefix";
@@ -77,6 +79,28 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
             // CustomerWhatsAppDirectory, en un scope sin más cambios; quien lo reutilice tiene que saberlo.
             dbContext.ChangeTracker.Clear();
             throw new WhatsAppUserIdTakenException(exception);
+        }
+        catch (DbUpdateException exception)
+            when (IsUniqueViolationOf(exception, CustomersDbContext.TagNameIndex))
+        {
+            // Spec 2026-10-11 §4.2: 409 y no 422. El nombre repetido es un choque con lo que ya existe, que el
+            // cliente resuelve eligiendo otro nombre; por eso es ResourceConflictException y no un error de
+            // dominio. Por nombre de índice, como los demás, aunque hoy sea el único único de tags.
+            throw new ResourceConflictException(
+                "customers.tag.name_taken", "Another tag in this tenant already uses that name.", exception);
+        }
+        catch (DbUpdateException exception)
+            when (IsUniqueViolationOf(exception, CustomersDbContext.CustomerTagPrimaryKey))
+        {
+            // Dos PUT de etiquetas del mismo cliente que agregan la misma etiqueta a la vez: el segundo perdió.
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", "The customer's tags changed while they were being saved.", exception);
+        }
+        catch (DbUpdateException exception)
+            when (IsForeignKeyViolationOf(exception, TagForeignKey))
+        {
+            // La etiqueta se borró entre la lectura y el commit.
+            throw new ResourceNotFoundException("customers.tag.not_found", "A tag was deleted while it was being assigned.");
         }
         catch (DbUpdateException exception)
             when (IsUniqueViolationOf(exception, ClassificationNameIndex))

@@ -167,12 +167,13 @@ public sealed class CompositionRootTests
 
     /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec de
     /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
-    /// specs de 2026-10-08, y las dos <c>messaging.*</c> del spec 2026-10-09.</summary>
+    /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09 y las dos de Customers
+    /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>) del spec 2026-10-11.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFortyEightConstants()
+    public void PermissionDiscoveryFindsTheFiftyConstants()
     {
-        // 46 + los dos de Messaging (spec 2026-10-09 §6.3).
-        Assert.Equal(48, PermissionConstants().Length);
+        // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3).
+        Assert.Equal(50, PermissionConstants().Length);
     }
 
     /// <summary>

@@ -321,6 +321,40 @@ public static class QepServiceCollectionExtensions
         // TaxRate frente a Product en Catalog. Registrados a mano, uno por uno: un caso de uso
         // que se olvide compila, mapea su endpoint y falla recien en runtime con 500 al no
         // encontrar handler.
+        // Spec 2026-10-11 §4: notas, etiquetas y consentimiento de marketing. Registro explícito, como todo el módulo.
+        services.AddScoped<
+            IQueryHandler<ListCustomerNotesQuery, IReadOnlyList<CustomerNoteDto>>,
+            ListCustomerNotesHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateCustomerNoteCommand, CustomerNoteDto>,
+            CreateCustomerNoteHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCustomerNoteCommand, CustomerNoteDto>,
+            UpdateCustomerNoteHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteCustomerNoteCommand, CustomerNoteDeletedResult>,
+            DeleteCustomerNoteHandler>();
+        services.AddScoped<
+            IQueryHandler<ListTagsQuery, IReadOnlyList<TagDto>>,
+            ListTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateTagCommand, TagDto>,
+            CreateTagHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateTagCommand, TagDto>,
+            UpdateTagHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteTagCommand, TagDeletedResult>,
+            DeleteTagHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCustomerTagsQuery, IReadOnlyList<TagDto>>,
+            ListCustomerTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<SetCustomerTagsCommand, IReadOnlyList<TagDto>>,
+            SetCustomerTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<SetMarketingConsentCommand, MarketingConsentDto>,
+            SetMarketingConsentHandler>();
         services.AddScoped<
             IQueryHandler<ListClientClassificationsQuery, IReadOnlyList<ClientClassificationDto>>,
             ListClientClassificationsHandler>();
@@ -616,6 +650,8 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.
+        services.AddScoped<ICustomerAuthorNames, CustomersAuthorNames>();
         // Spec 2026-10-10 §6.1.3: quién puede responder, por Tenancy, Identity y Authorization.
         services.AddScoped<IMessagingAssignees, MessagingAssignees>();
         // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
@@ -776,6 +812,10 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
+                // Spec 2026-10-11 §4.3: renombrar o borrar etiquetas y borrar notas ajenas. Sólo admin: el
+                // asesor crea etiquetas y notas con CustomerManage, pero no cambia lo que ven todos.
+                CustomersPermissions.TagManage,
+                CustomersPermissions.NoteModerate,
                 QuotationsPermissions.QuotationRead,
                 QuotationsPermissions.QuotationManage,
                 OrdersPermissions.OrderRead,
@@ -1064,6 +1104,20 @@ public static class QepServiceCollectionExtensions
             CustomersPermissions.ClassificationManage,
             "Gestionar clasificaciones de clientes",
             "Permite crear, editar, inactivar, reactivar y eliminar clasificaciones de clientes.",
+            "Customers",
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.TagManage,
+            "Gestionar etiquetas de clientes",
+            "Permite renombrar, cambiar de color y eliminar etiquetas de clientes. Crearlas y asignarlas es de quien gestiona clientes.",
+            "Customers",
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.NoteModerate,
+            "Moderar notas de clientes",
+            "Permite eliminar las notas internas que escribió otra persona.",
             "Customers",
             "medium",
             RequiredModules: [ModuleKeys.Customers]));
@@ -1459,6 +1513,24 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.ClassificationManage,
                 policy => AddPermissionRequirement(
                     policy, CustomersPermissions.ClassificationManage))
+            // Spec 2026-10-11 §4.3: las dos mitades de los permisos de etiquetas y notas. Sin la política el síntoma
+            // es un 500, no un 403.
+            .AddPolicy(
+                CustomersPermissions.TagManage,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.TagManage))
+            .AddPolicy(
+                CustomersPermissions.NoteModerate,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.NoteModerate))
+            // Borrar una nota lo puede hacer el autor (manage) o un moderador: RequireClaim con varios valores deja
+            // pasar a quien tenga cualquiera, y el handler decide según de quién es la nota.
+            .AddPolicy(
+                CustomersPolicies.NoteDelete,
+                policy =>
+                {
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(
+                        QepClaimTypes.Permission, CustomersPermissions.CustomerManage, CustomersPermissions.NoteModerate);
+                })
             // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que
             // TaxRateRead/TaxRateManage y ClassificationRead/ClassificationManage.

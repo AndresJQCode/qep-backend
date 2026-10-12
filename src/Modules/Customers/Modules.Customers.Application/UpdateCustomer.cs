@@ -31,6 +31,7 @@ public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCo
 public sealed class UpdateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
+    ICustomerTagRepository tagRepository,
     ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
@@ -134,7 +135,7 @@ public sealed class UpdateCustomerHandler(
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
             return await customer.ToDtoAsync(
-                geographyLookup, classificationRepository, cancellationToken);
+                geographyLookup, classificationRepository, tagRepository, cancellationToken);
         }
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -175,6 +176,6 @@ public sealed class UpdateCustomerHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, cancellationToken);
     }
 }

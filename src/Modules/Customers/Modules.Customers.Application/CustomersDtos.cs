@@ -69,7 +69,11 @@ public sealed record CustomerDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
-    bool IsComplete);
+    bool IsComplete,
+    /// <summary>Spec 2026-10-11 §4.2: las etiquetas del cliente, por nombre. Viaja siempre, vacía si no tiene.</summary>
+    IReadOnlyCollection<TagDto> Tags,
+    /// <summary>Spec 2026-10-11 decisión 10. Viaja siempre; con <c>optedOut = false</c> sus otros campos son null.</summary>
+    MarketingConsentDto MarketingConsent);
 
 public sealed record CustomerResponse(
     Guid Id,
@@ -93,7 +97,9 @@ public sealed record CustomerResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
-    bool IsComplete);
+    bool IsComplete,
+    IReadOnlyCollection<TagDto> Tags,
+    MarketingConsentDto MarketingConsent);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no

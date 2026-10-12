@@ -150,6 +150,21 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
+                    b.Property<bool>("MarketingOptOut")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("marketing_opt_out");
+
+                    b.Property<DateTimeOffset?>("MarketingOptOutAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("marketing_opt_out_at");
+
+                    b.Property<string>("MarketingOptOutSource")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("marketing_opt_out_source");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -234,6 +249,8 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_customers_complete_fields", "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL AND address IS NOT NULL AND country IS NOT NULL AND classification_id IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
+
+                            t.HasCheckConstraint("CK_customers_marketing_opt_out_source", "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta')");
                         });
                 });
 
@@ -292,6 +309,133 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_customer_addresses_principal");
 
                     b.ToTable("customer_addresses", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AuthorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_user_id");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("body");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("TenantId", "CustomerId", "CreatedAt")
+                        .IsDescending(false, false, true)
+                        .HasDatabaseName("IX_customer_notes_tenant_customer_created");
+
+                    b.ToTable("customer_notes", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerTagAssignment", b =>
+                {
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<Guid>("TagId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tag_id");
+
+                    b.Property<DateTimeOffset>("AssignedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("assigned_at");
+
+                    b.Property<Guid>("AssignedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_by_user_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("CustomerId", "TagId")
+                        .HasName("PK_customer_tags");
+
+                    b.HasIndex("TagId");
+
+                    b.HasIndex("TenantId", "TagId")
+                        .HasDatabaseName("IX_customer_tags_tenant_tag");
+
+                    b.ToTable("customer_tags", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.Tag", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Color")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("color");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_tags_tenant");
+
+                    b.ToTable("tags", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_tags_color", "color IN ('gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Customers.Infrastructure.Persistence.CustomerCucCounter", b =>
@@ -375,6 +519,33 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerNote", b =>
+                {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_customer_notes_customers_customer_id");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerTagAssignment", b =>
+                {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_customer_tags_customers_customer_id");
+
+                    b.HasOne("Modules.Customers.Domain.Tag", null)
+                        .WithMany()
+                        .HasForeignKey("TagId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_customer_tags_tags_tag_id");
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.Customer", b =>

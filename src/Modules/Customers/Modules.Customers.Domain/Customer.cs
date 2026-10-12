@@ -254,6 +254,14 @@ public sealed class Customer
 
     public bool VatSurplus { get; private set; }
 
+    /// <summary>Spec 2026-10-11 decisión 10: el cliente no quiere recibir promociones. Las campañas con plantilla
+    /// <c>MARKETING</c> lo excluyen; las <c>UTILITY</c> no, porque el opt-out de Meta es sólo de marketing.</summary>
+    public bool MarketingOptOut { get; private set; }
+
+    public DateTimeOffset? MarketingOptOutAt { get; private set; }
+
+    public MarketingConsentSource? MarketingOptOutSource { get; private set; }
+
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Company</c>, <c>Product</c> y <c>Membership</c>.
     /// Cada mutacion lo incrementa, y la infraestructura lo mapea con <c>IsConcurrencyToken()</c>,
@@ -647,6 +655,41 @@ public sealed class Customer
         IsActive = true;
         Version++;
         UpdatedAt = occurredAt;
+    }
+
+    /// <summary>
+    /// Apaga el marketing. Idempotente: si ya estaba apagado conserva el momento y el origen originales —el primero
+    /// es el que explica por qué— y devuelve <c>false</c>.
+    ///
+    /// No sube <see cref="Version"/> ni <see cref="UpdatedAt"/> a propósito: es un interruptor aparte de la ficha,
+    /// y subirla le daría un 412 a quien la tiene abierta para editarla (misma razón por la que las notas son otro
+    /// agregado).
+    /// </summary>
+    public bool OptOutOfMarketing(MarketingConsentSource source, DateTimeOffset occurredAt)
+    {
+        if (MarketingOptOut)
+        {
+            return false;
+        }
+
+        MarketingOptOut = true;
+        MarketingOptOutAt = occurredAt;
+        MarketingOptOutSource = source;
+        return true;
+    }
+
+    /// <summary>La vuelta de <see cref="OptOutOfMarketing"/>: borra el rastro. <c>false</c> si ya aceptaba marketing.</summary>
+    public bool OptInToMarketing()
+    {
+        if (!MarketingOptOut)
+        {
+            return false;
+        }
+
+        MarketingOptOut = false;
+        MarketingOptOutAt = null;
+        MarketingOptOutSource = null;
+        return true;
     }
 
     private void EnsureActive()
