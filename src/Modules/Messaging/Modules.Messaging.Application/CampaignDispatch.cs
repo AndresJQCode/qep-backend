@@ -65,7 +65,10 @@ public interface ICampaignDispatchStore
     /// <c>sent_by_member_id</c> = el creador de la campaña, y guarda <c>message_id</c> en el destinatario en la misma transacción. El
     /// mensaje nace <c>Failed</c> sin confirmar: si el proceso cae con la llamada a Meta en vuelo, no hay una burbuja que diga «enviado».
     /// En un reintento reutiliza el mensaje que ya tiene. <c>null</c> si la campaña ya no está <c>Sending</c> (se canceló o falló): el
-    /// destinatario queda <c>Skipped</c> y no hay nada que enviar.
+    /// destinatario queda <c>Skipped</c> y no hay nada que enviar. También <c>null</c> —sin tocar nada— si este worker dejó de ser el dueño
+    /// del destinatario (R1): ata el mensaje con un compare-and-set sobre <c>status = Sending</c>, el lease vivo y el número de intento
+    /// que reclamó <see cref="ClaimedRecipient.Attempts"/>. Todas las transiciones posteriores (liquidar, omitir, reintentar, diferir)
+    /// llevan la misma guarda de estado e intento.
     /// </summary>
     Task<PreparedSend?> PrepareAsync(ClaimedRecipient recipient, string text, string detailsJson, DateTimeOffset now, CancellationToken cancellationToken);
 
@@ -82,12 +85,17 @@ public interface ICampaignDispatchStore
     /// <summary>El destinatario <c>Skipped</c> con ese motivo (no se intentó enviarle).</summary>
     Task SkipAsync(ClaimedRecipient recipient, string code, CancellationToken cancellationToken);
 
+    /// <summary>R4: vuelve a <c>Pending</c> en <paramref name="nextAttemptAt"/> <b>sin gastar el intento</b> que el reclamo sumó (no se
+    /// llegó a intentar nada: el catálogo no contestó). Con la misma guarda de propiedad que el resto.</summary>
+    Task DeferAsync(ClaimedRecipient recipient, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken);
+
     /// <summary>Decisión 15: <c>Sending → Failed</c> con el motivo, los <c>Pending</c> a <c>Skipped campaign_failed</c> y la auditoría, todo en
     /// una transacción. <c>false</c> si otro worker ya la había detenido.</summary>
     Task<bool> StopCampaignAsync(Guid campaignId, Guid tenantId, string code, DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>Paso 4: un <c>Sending</c> con lease vencido y <c>message_id</c> pasa a <c>Failed unknown_outcome</c> (decisión 12: no se
-    /// reenvía); uno sin mensaje vuelve a <c>Pending</c>. Devuelve cuántos tocó.</summary>
+    /// reenvía); uno sin mensaje vuelve a <c>Pending</c>, salvo que ya haya gastado <see cref="CampaignDispatcher.MaxAttempts"/> intentos
+    /// (R2): ése queda <c>Failed not_sent</c>. Devuelve cuántos tocó.</summary>
     Task<int> RecoverExpiredAsync(DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>Paso 5: una <c>Sending</c> con la audiencia congelada y sin <c>Pending</c> ni <c>Sending</c> pasa a <c>Completed</c>, con su
@@ -125,6 +133,13 @@ public sealed partial class CampaignDispatcher(
 
     /// <summary>Decisión 15: una plantilla que ya no está en el catálogo es, para la campaña, lo mismo que Meta responde con 132001.</summary>
     private const string TemplateGoneCode = "132001";
+
+    /// <summary>R4: cuánto espera un destinatario cuando el catálogo no contestó. No cuenta como intento.</summary>
+    public static readonly TimeSpan CatalogRetryDelay = TimeSpan.FromSeconds(60);
+
+    /// <summary>Lo que se manda cuando el nombre del cliente queda vacío tras limpiarlo: Meta rechaza una variable vacía con 132018, y
+    /// «cliente» es un saludo que no inventa un nombre.</summary>
+    private const string FallbackCustomerName = "cliente";
 
     /// <summary>Pasos 1 y 2: activar las programadas y escribir la audiencia de las que empiezan.</summary>
     public async Task PrepareTickAsync(CancellationToken cancellationToken)
@@ -174,9 +189,21 @@ public sealed partial class CampaignDispatcher(
         }
         catch (MessagingDomainException exception) when (exception.Code == MessagingErrorCodes.TemplatesUnavailable)
         {
-            // Meta no contestó la lista: no se intentó enviar nada, así que reintentar es seguro.
-            await RetryOrFailAsync(recipient, prepared: null, CampaignFailureCodes.NotSent, MessageFailureReasons.Unconfirmed, title: null, cancellationToken);
+            // R4: Meta no contestó la lista. No se intentó enviar nada, así que no se gasta un intento del destinatario: una caída de
+            // minutos no puede dejar a cientos en Failed not_sent. Vuelve en un minuto, con el mismo contador.
+            await store.DeferAsync(recipient, clock.UtcNow.Add(CatalogRetryDelay), cancellationToken);
             return;
+        }
+
+        // R6 y R7: el consentimiento vigente al momento de enviar. Vale la categoría guardada al lanzar o la que el catálogo tiene ahora:
+        // si cualquiera de las dos es MARKETING, el opt-out excluye. Antes de PrepareAsync, para no dejar un mensaje a medias.
+        if (IsMarketing(recipient.TemplateCategory) || IsMarketing(template.Category))
+        {
+            if (await LateSkipReasonAsync(recipient, cancellationToken) is { } reason)
+            {
+                await store.SkipAsync(recipient, reason, cancellationToken);
+                return;
+            }
         }
 
         var sender = await connections.ResolveSenderAsync(recipient.TenantId, recipient.ConnectionId, cancellationToken);
@@ -186,29 +213,36 @@ public sealed partial class CampaignDispatcher(
             return;
         }
 
-        var values = ResolveValues(recipient);
-        var text = TemplateCatalog.Render(template, values);
-        var details = TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, values);
+        var built = TemplateCatalog.BuildSend(template, ResolveValues(recipient));
 
         // El ritmo antes de insertar el mensaje: cancelar mientras se espera no deja un message_id que la recuperación tome por «en vuelo».
         await limiter.WaitAsync(recipient.ConnectionId, cancellationToken);
-        var prepared = await store.PrepareAsync(recipient, text, details, clock.UtcNow, cancellationToken);
+        var prepared = await store.PrepareAsync(recipient, built.Text, built.DetailsJson, clock.UtcNow, cancellationToken);
         if (prepared is null)
         {
             return;
         }
 
-        var send = new TemplateSend(
-            template.Name,
-            template.Language,
-            template.ParameterFormat == TemplateCatalog.Named,
-            [.. template.Parameters.Select(key => new TemplateParameter(key, values[key]))]);
-        var result = await CallMetaAsync(sender, recipient, send, prepared, cancellationToken);
+        var result = await CallMetaAsync(sender, recipient, built.Send, prepared);
         await SettleAsync(recipient, prepared, result);
     }
 
-    private async Task<SendResult> CallMetaAsync(
-        MessagingSender sender, ClaimedRecipient recipient, TemplateSend send, PreparedSend prepared, CancellationToken cancellationToken)
+    private static bool IsMarketing(string category) =>
+        string.Equals(category, PreviewAudienceHandler.MarketingCategory, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Misma precedencia que el congelado (<see cref="Seed"/>): sin ficha no hay a quién escribirle, luego inactivo, luego opt-out.</summary>
+    private async Task<string?> LateSkipReasonAsync(ClaimedRecipient recipient, CancellationToken cancellationToken)
+    {
+        var contact = await customers.FindContactAsync(recipient.TenantId, recipient.CustomerId, cancellationToken);
+        return contact is null ? CampaignFailureCodes.Unreachable
+            : !contact.IsActive ? CampaignFailureCodes.Inactive
+            : contact.MarketingOptOut ? CampaignFailureCodes.OptedOut
+            : null;
+    }
+
+    // R3: la llamada a Meta no recibe el token del host. Si el proceso cierra con el request en vuelo, la respuesta igual se liquida; el
+    // HttpClient con nombre acota el tiempo. Cortar acá dejaría un envío que quizá salió convertido en unknown_outcome.
+    private async Task<SendResult> CallMetaAsync(MessagingSender sender, ClaimedRecipient recipient, TemplateSend send, PreparedSend prepared)
     {
         try
         {
@@ -217,12 +251,7 @@ public sealed partial class CampaignDispatcher(
                 SendTarget.ForTemplate(recipient.UserId, recipient.WaId),
                 send,
                 SendMessageHandler.CallbackPrefix + prepared.MessageId.ToString("D"),
-                cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Cierre del host: el destinatario queda Sending y el lease decide (unknown_outcome si ya tiene mensaje), §6.3 paso 4.
-            throw;
+                CancellationToken.None);
         }
         catch (HttpRequestException exception) when (exception.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError
             || exception.InnerException is System.Net.Sockets.SocketException)
@@ -230,7 +259,7 @@ public sealed partial class CampaignDispatcher(
             // La conexión no se estableció: el request nunca salió, reintentar no duplica.
             return new SendResult(SendOutcome.NotSent, null, null, null);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        catch (Exception)
         {
             // Timeout, reset a mitad del request o cualquier otra falla con el request ya enviado: Meta pudo haberlo aceptado.
             return new SendResult(SendOutcome.Unconfirmed, null, null, null);
@@ -275,21 +304,19 @@ public sealed partial class CampaignDispatcher(
         await store.SettleFailedAsync(recipient, prepared, text, code, result.Title, now, CancellationToken.None);
         if (CampaignFailureCodes.StopsTheCampaign(code))
         {
-            if (code is 190 or 133010)
+            if (MetaErrorCodes.IsRejectedCredentials(code))
             {
-                await ReportRejectedAsync(recipient, code == 190 ? "token_expired" : "number_unregistered");
+                await ReportRejectedAsync(recipient, MetaErrorCodes.RejectedReason(code));
             }
 
             await store.StopCampaignAsync(recipient.CampaignId, recipient.TenantId, text, now, CancellationToken.None);
         }
-        else if (code == MarketingOptOutCode)
+        else if (code == MetaErrorCodes.MarketingOptOut)
         {
             // Decisión 10: Meta avisa que la persona apagó el marketing; queda en su ficha.
             await customers.MarkMarketingOptOutAsync(recipient.TenantId, recipient.CustomerId, CancellationToken.None);
         }
     }
-
-    private const int MarketingOptOutCode = 131050;
 
     // Si Integrations no logra pasar la conexión a NeedsAttention, la campaña igual se detiene: el próximo envío manual vuelve a recibir
     // 190/133010 y reintenta el reporte (mismo criterio que OutboundGuards).
@@ -349,7 +376,7 @@ public sealed partial class CampaignDispatcher(
             cleaned = cleaned[..TemplateParameterRules.MaxValueLength].TrimEnd();
         }
 
-        return cleaned.Length == 0 ? "cliente" : cleaned;
+        return cleaned.Length == 0 ? FallbackCustomerName : cleaned;
     }
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]

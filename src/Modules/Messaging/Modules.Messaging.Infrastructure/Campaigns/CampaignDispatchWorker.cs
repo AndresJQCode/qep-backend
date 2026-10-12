@@ -64,6 +64,10 @@ internal sealed partial class CampaignDispatchWorker(
 
         if (claimed.Count > 0)
         {
+            // R3: el token del host sólo detiene lo que todavía no empezó (el reclamo, los destinatarios sin turno, la espera del ritmo).
+            // Parallel.ForEachAsync no vuelve hasta que terminan los envíos que ya están corriendo, y éstos llaman a Meta con
+            // CancellationToken.None y liquidan igual: al cerrar el host, lo que está en vuelo se asienta en lugar de quedar unknown_outcome.
+            // Lo que no llegó a empezar queda Sending sin mensaje, y la recuperación lo devuelve a Pending al vencer el lease.
             await Parallel.ForEachAsync(
                 claimed,
                 new ParallelOptions { MaxDegreeOfParallelism = Parallelism, CancellationToken = cancellationToken },

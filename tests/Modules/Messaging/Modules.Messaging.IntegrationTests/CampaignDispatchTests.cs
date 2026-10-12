@@ -362,7 +362,9 @@ public sealed class CampaignDispatchTests
         var conversation = await SeedBsuidConversationAsync(f.Host, f.ConnectionString, f.Tenant.TenantId, f.ConnectionId, "CO.573009990001", "573009990001");
         var inFlightMessage = await SeedOutboundAsync(f.ConnectionString, conversation, f.Tenant.TenantId, f.ConnectionId, null, status: 4, failureCode: -1);
         await SeedSendingRecipientAsync(f, id, "En vuelo", "573009990001", messageId: inFlightMessage, conversationId: conversation, lockedUntil: "now() - interval '1 hour'");
-        await SeedSendingRecipientAsync(f, id, "Sin mensaje", "573009990002", messageId: null, conversationId: null, lockedUntil: "now() - interval '1 hour'");
+        // Es el único que llega a enviarse, así que necesita un cliente que exista (el worker revisa su consentimiento, R6).
+        var real = await CreateCustomersAsync(f.Host, f.Tenant, ("Sin mensaje", "300 999 0002"));
+        await SeedSendingRecipientAsync(f, id, "Sin mensaje", "573009990002", messageId: null, conversationId: null, lockedUntil: "now() - interval '1 hour'", customerId: real[0]);
         await SeedSendingRecipientAsync(f, id, "Con lease vivo", "573009990003", messageId: null, conversationId: null, lockedUntil: "now() + interval '1 hour'");
 
         await DrainCampaignsAsync(f.Host);
@@ -424,9 +426,10 @@ public sealed class CampaignDispatchTests
         var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET audience_frozen_at = now() WHERE id = @id", ("id", id));
         const int recipients = 60;
+        var real = await CreateCustomersAsync(f.Host, f.Tenant, [.. Enumerable.Range(0, recipients).Select(index => ($"Cliente {index:D3}", $"300 {100 + index:D3} 2222"))]);
         for (var index = 0; index < recipients; index++)
         {
-            await SeedPendingRecipientAsync(f, id, $"Cliente {index:D3}", $"5730099{index:D5}");
+            await SeedPendingRecipientAsync(f, id, $"Cliente {index:D3}", $"5730099{index:D5}", real[index]);
         }
 
         for (var round = 0; round < 10 && await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status IN ('Pending','Sending')") > 0; round++)
@@ -442,20 +445,284 @@ public sealed class CampaignDispatchTests
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.campaign.completed' AND resource_id = @id", ("id", id.ToString())));
     }
 
-    private static Task<int> SeedSendingRecipientAsync(Fixture f, Guid campaignId, string name, string waId, Guid? messageId, Guid? conversationId, string lockedUntil) =>
+    [Fact]
+    public async Task ARecipientReclaimedByAnotherWorkerAfterTheLeaseExpiredIsNotSentTwice()
+    {
+        // R1: el worker A reclamó, se frenó (GC, red) y su lease venció; la recuperación lo devolvió a Pending y B lo reclamó. Cuando A
+        // despierta ya no es el dueño: no inserta mensaje ni llama a Meta.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        await LaunchAsync(f, Input(f, [.. customers]));
+        using var scopeA = f.Host.Services.CreateScope();
+        using var scopeB = f.Host.Services.CreateScope();
+        var workerA = scopeA.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        var workerB = scopeB.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        await workerA.PrepareTickAsync(Ct);
+        var claimedByA = Assert.Single(await workerA.ClaimAsync(20, Ct));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET locked_until = now() - interval '1 hour'");
+        await workerB.FinishTickAsync(Ct);
+        var claimedByB = Assert.Single(await workerB.ClaimAsync(20, Ct));
+        Assert.Equal((1, 2), (claimedByA.Attempts, claimedByB.Attempts));
+
+        await workerA.SendAsync(claimedByA, Ct);
+
+        Assert.Equal(0, MetaSends(f.Pod.MetaHandler));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.Equal(("Sending", 2), (await RecipientStatusAsync(f, "Ana Ruiz"), await ScalarAsync<int>(f.ConnectionString, "SELECT attempts FROM messaging.campaign_recipients")));
+        Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT message_id IS NULL FROM messaging.campaign_recipients"));
+
+        await workerB.SendAsync(claimedByB, Ct);
+
+        Assert.Equal(1, MetaSends(f.Pod.MetaHandler));
+        Assert.Equal("Sent", await RecipientStatusAsync(f, "Ana Ruiz"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
+    [Fact]
+    public async Task ALateSettleFromAWorkerThatLostTheRecipientChangesNothing()
+    {
+        // R1: ni Settle ni Skip ni Retry pisan a quien ya es de otro: el token de intento no coincide.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        await LaunchAsync(f, Input(f, [.. customers]));
+        using var scopeA = f.Host.Services.CreateScope();
+        using var scopeB = f.Host.Services.CreateScope();
+        var workerA = scopeA.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        var workerB = scopeB.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        await workerA.PrepareTickAsync(Ct);
+        var stale = Assert.Single(await workerA.ClaimAsync(20, Ct));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET locked_until = now() - interval '1 hour'");
+        await workerB.FinishTickAsync(Ct);
+        Assert.Single(await workerB.ClaimAsync(20, Ct));
+        var store = scopeA.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+
+        await store.SkipAsync(stale, CampaignFailureCodes.CampaignCancelled, Ct);
+        await store.ScheduleRetryAsync(stale, DateTimeOffset.UtcNow.AddHours(1), Ct);
+        await store.DeferAsync(stale, DateTimeOffset.UtcNow.AddHours(1), Ct);
+        await store.SettleFailedAsync(stale, prepared: null, CampaignFailureCodes.UnknownOutcome, graphCode: null, title: null, DateTimeOffset.UtcNow, Ct);
+
+        Assert.Equal(("Sending", 2), (await RecipientStatusAsync(f, "Ana Ruiz"), await ScalarAsync<int>(f.ConnectionString, "SELECT attempts FROM messaging.campaign_recipients")));
+    }
+
+    [Fact]
+    public async Task ADeferredRecipientGivesTheAttemptBackAndWaits()
+    {
+        // R4: DeferAsync reprograma sin consumir el intento que sumó el reclamo.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        await LaunchAsync(f, Input(f, [.. customers]));
+        using var scope = f.Host.Services.CreateScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        await dispatcher.PrepareTickAsync(Ct);
+        var claimed = Assert.Single(await dispatcher.ClaimAsync(20, Ct));
+        Assert.Equal(1, claimed.Attempts);
+
+        await scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>().DeferAsync(claimed, DateTimeOffset.UtcNow.AddSeconds(60), Ct);
+
+        Assert.Equal(("Pending", 0), (await RecipientStatusAsync(f, "Ana Ruiz"), await ScalarAsync<int>(f.ConnectionString, "SELECT attempts FROM messaging.campaign_recipients")));
+        Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT next_attempt_at > now() + interval '30 seconds' AND locked_until IS NULL FROM messaging.campaign_recipients"));
+        Assert.Empty(await dispatcher.ClaimAsync(20, Ct));
+    }
+
+    [Fact]
+    public async Task AnExpiredLeaseWithoutAMessageAndNoAttemptsLeftFailsAsNotSentInsteadOfLoopingForever()
+    {
+        // R2: sin esto, un destinatario cuyo worker muere siempre antes de insertar el mensaje vuelve a Pending sin tope.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET audience_frozen_at = now() WHERE id = @id", ("id", id));
+        await SeedSendingRecipientAsync(f, id, "Agotado", "573009990001", messageId: null, conversationId: null, lockedUntil: "now() - interval '1 hour'", attempts: CampaignDispatcher.MaxAttempts);
+        await SeedSendingRecipientAsync(f, id, "Con margen", "573009990002", messageId: null, conversationId: null, lockedUntil: "now() - interval '1 hour'", attempts: CampaignDispatcher.MaxAttempts - 1);
+
+        await using (var recovery = f.Host.Services.CreateAsyncScope())
+        {
+            await recovery.ServiceProvider.GetRequiredService<CampaignDispatcher>().FinishTickAsync(Ct);
+        }
+
+        Assert.Equal("Failed", await RecipientStatusAsync(f, "Agotado"));
+        Assert.Equal("not_sent", await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaign_recipients WHERE customer_name = 'Agotado'"));
+        Assert.Equal(CampaignFailureReasons.For(CampaignFailureCodes.NotSent), await ScalarAsync<string>(f.ConnectionString, "SELECT failure_reason FROM messaging.campaign_recipients WHERE customer_name = 'Agotado'"));
+        Assert.Equal("Pending", await RecipientStatusAsync(f, "Con margen"));
+        Assert.Equal(0, MetaSends(f.Pod.MetaHandler));
+    }
+
+    [Fact]
+    public async Task OneCampaignWithUnreadableParametersFailsAloneAndDoesNotTakeTheWholeBatchDown()
+    {
+        // R2: antes, un JSON de parámetros roto hacía lanzar a ClaimAsync entero: cada tick reclamaba, fallaba y dejaba a todos en Sending.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"), ("Beto Díaz", "310 222 3333"));
+        var broken = await LaunchAsync(f, Input(f, [customers[0]], name: "Rota"));
+        var healthy = await LaunchAsync(f, Input(f, [customers[1]], name: "Sana"));
+        await ExecuteAsync(f.ConnectionString, """UPDATE messaging.campaigns SET parameters = '{"1": 5}'::jsonb WHERE id = @id""", ("id", broken));
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal("Failed", await CampaignStatusAsync(f, broken));
+        Assert.Equal(CampaignFailureCodes.InvalidParameters, await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaigns WHERE id = @id", ("id", broken)));
+        Assert.Equal(("Failed", CampaignFailureCodes.InvalidParameters), (
+            await RecipientStatusAsync(f, "Ana Ruiz"),
+            await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaign_recipients WHERE customer_name = 'Ana Ruiz'")));
+        Assert.Equal("Sent", await RecipientStatusAsync(f, "Beto Díaz"));
+        Assert.Equal("Completed", await CampaignStatusAsync(f, healthy));
+        Assert.Equal(1, MetaSends(f.Pod.MetaHandler));
+    }
+
+    [Fact]
+    public async Task AClaimTakesTurnsAcrossCampaignsSoALargeOneDoesNotStarveASmallOne()
+    {
+        // R5: dos campañas en la misma conexión; la grande tiene los destinatarios más viejos. Con un reclamo de 2, el orden estricto por
+        // fecha le daría los dos cupos a la grande; el reparto por turnos le da uno a cada una.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var large = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()], name: "Grande"));
+        var small = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()], name: "Chica"));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET audience_frozen_at = now()");
+        for (var index = 0; index < 5; index++)
+        {
+            await SeedPendingRecipientAsync(f, large, $"Grande {index}", $"573009910{index:D3}");
+        }
+
+        await SeedPendingRecipientAsync(f, small, "Chica 0", "573009920000");
+        using var scope = f.Host.Services.CreateScope();
+
+        var claimed = await scope.ServiceProvider.GetRequiredService<CampaignDispatcher>().ClaimAsync(1, Ct);
+
+        Assert.Equal(2, claimed.Count);
+        Assert.Contains(claimed, recipient => recipient.CampaignId == small);
+        Assert.Contains(claimed, recipient => recipient.CampaignId == large);
+    }
+
+    [Fact]
+    public async Task TheConnectionsAlsoTakeTurns()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var second = await SeedWhatsAppConnectionAsync(f.Host, f.Tenant.TenantId, "Soporte", "333", "444");
+        var onFirst = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()], name: "Ventas"));
+        var onSecond = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()], name: "Soporte"));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET connection_id = @c WHERE id = @id", ("c", second), ("id", onSecond));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET audience_frozen_at = now()");
+        for (var index = 0; index < 5; index++)
+        {
+            await SeedPendingRecipientAsync(f, onFirst, $"Ventas {index}", $"573009910{index:D3}");
+        }
+
+        await SeedPendingRecipientAsync(f, onSecond, "Soporte 0", "573009920000");
+        using var scope = f.Host.Services.CreateScope();
+
+        var claimed = await scope.ServiceProvider.GetRequiredService<CampaignDispatcher>().ClaimAsync(1, Ct);
+
+        Assert.Contains(claimed, recipient => recipient.CampaignId == onSecond);
+    }
+
+    [Fact]
+    public async Task ARecipientWhoOptedOutAfterTheFreezeIsSkippedBeforeAnythingIsSent()
+    {
+        // R6: el congelado miró el consentimiento hace horas; al enviar se vuelve a mirar.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        await LaunchAsync(f, Input(f, [.. customers]));
+        using var scope = f.Host.Services.CreateScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        await dispatcher.PrepareTickAsync(Ct);
+        var claimed = Assert.Single(await dispatcher.ClaimAsync(20, Ct));
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET marketing_opt_out = true WHERE id = @id", ("id", customers[0]));
+
+        await dispatcher.SendAsync(claimed, Ct);
+
+        Assert.Equal(0, MetaSends(f.Pod.MetaHandler));
+        Assert.Equal(("Skipped", "opted_out"), (
+            await RecipientStatusAsync(f, "Ana Ruiz"),
+            await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaign_recipients")));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
+    [Fact]
+    public async Task ACampaignCancelledWhileItsAudienceIsBeingWrittenGetsNoNewPendingRecipients()
+    {
+        // R9: el INSERT de cada lote sólo corre mientras la campaña sigue Sending.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET status = 'Cancelled' WHERE id = @id", ("id", id));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var target = new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []);
+
+        await store.AddRecipientsAsync(
+            target,
+            [new CampaignRecipientSeed(Guid.CreateVersion7(), "Ana", "573001112222", null, CampaignRecipientStatus.Pending, null)],
+            DateTimeOffset.UtcNow, Ct);
+
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients"));
+    }
+
+    [Theory]
+    [InlineData("Cancelled", "campaign_cancelled")]
+    [InlineData("Failed", "campaign_failed")]
+    public async Task IfTheCampaignEndedWhileFreezingTheStragglersAreSkippedWithItsTerminalReason(string campaignStatus, string expectedCode)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        await SeedPendingRecipientAsync(f, id, "Rezagado", "573009990001");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET status = @status WHERE id = @id", ("status", campaignStatus), ("id", id));
+        using var scope = f.Host.Services.CreateScope();
+
+        await scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>().MarkFrozenAsync(id, DateTimeOffset.UtcNow, Ct);
+
+        Assert.Equal(("Skipped", expectedCode), (
+            await RecipientStatusAsync(f, "Rezagado"),
+            await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaign_recipients")));
+    }
+
+    [Fact]
+    public async Task MarkingTheAudienceFrozenOnACampaignThatIsStillSendingLeavesItsPendingRecipientsAlone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        await SeedPendingRecipientAsync(f, id, "Normal", "573009990001");
+        using var scope = f.Host.Services.CreateScope();
+
+        await scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>().MarkFrozenAsync(id, DateTimeOffset.UtcNow, Ct);
+
+        Assert.Equal("Pending", await RecipientStatusAsync(f, "Normal"));
+    }
+
+    private static Task<int> SeedSendingRecipientAsync(
+        Fixture f, Guid campaignId, string name, string waId, Guid? messageId, Guid? conversationId, string lockedUntil, int attempts = 1, Guid? customerId = null) =>
         ExecuteAsync(f.ConnectionString,
             $"""
             INSERT INTO messaging.campaign_recipients (id, campaign_id, tenant_id, customer_id, customer_name, wa_id, status, conversation_id, message_id, attempts, next_attempt_at, locked_until)
-            VALUES (@id, @campaign, @tenant, @customer, @name, @wa, 'Sending', @conversation, @message, 1, now() - interval '1 hour', {lockedUntil})
+            VALUES (@id, @campaign, @tenant, @customer, @name, @wa, 'Sending', @conversation, @message, {attempts}, now() - interval '1 hour', {lockedUntil})
             """,
-            ("id", Guid.CreateVersion7()), ("campaign", campaignId), ("tenant", f.Tenant.TenantId), ("customer", Guid.CreateVersion7()), ("name", name), ("wa", waId),
+            ("id", Guid.CreateVersion7()), ("campaign", campaignId), ("tenant", f.Tenant.TenantId), ("customer", customerId ?? Guid.CreateVersion7()), ("name", name), ("wa", waId),
             ("conversation", (object?)conversationId ?? DBNull.Value), ("message", (object?)messageId ?? DBNull.Value));
 
-    private static Task<int> SeedPendingRecipientAsync(Fixture f, Guid campaignId, string name, string waId) =>
+    private static Task<int> SeedPendingRecipientAsync(Fixture f, Guid campaignId, string name, string waId, Guid? customerId = null) =>
         ExecuteAsync(f.ConnectionString,
             """
             INSERT INTO messaging.campaign_recipients (id, campaign_id, tenant_id, customer_id, customer_name, wa_id, status, attempts, next_attempt_at)
             VALUES (@id, @campaign, @tenant, @customer, @name, @wa, 'Pending', 0, now() - interval '1 hour')
             """,
-            ("id", Guid.CreateVersion7()), ("campaign", campaignId), ("tenant", f.Tenant.TenantId), ("customer", Guid.CreateVersion7()), ("name", name), ("wa", waId));
+            ("id", Guid.CreateVersion7()), ("campaign", campaignId), ("tenant", f.Tenant.TenantId), ("customer", customerId ?? Guid.CreateVersion7()), ("name", name), ("wa", waId));
 }

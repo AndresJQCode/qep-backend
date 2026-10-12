@@ -212,17 +212,99 @@ public sealed class CampaignDispatcherTests
     }
 
     [Fact]
-    public async Task AShutdownDuringTheMetaCallLeavesTheRecipientSendingForLeaseRecovery()
+    public async Task AShutdownDuringTheMetaCallStillSettlesTheSendBecauseMetaNeverSeesTheHostToken()
     {
+        // R3: el host cerrando no puede cortar la llamada a Meta (quedaría unknown_outcome un envío que sí salió o no se sabe si salió).
         var bed = new DispatchBed();
         using var shuttingDown = new CancellationTokenSource();
         bed.Bed.Meta.DuringSend = () => shuttingDown.Cancel();
+        bed.Bed.Meta.NextSend = Sent("wamid.drained");
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => bed.Dispatcher.SendAsync(bed.Recipient(), shuttingDown.Token));
+        await bed.Dispatcher.SendAsync(bed.Recipient(), shuttingDown.Token);
 
-        Assert.Empty(bed.Store.Sent);
+        Assert.Equal("wamid.drained", Assert.Single(bed.Store.Sent).Wamid);
         Assert.Empty(bed.Store.Failed);
         Assert.Empty(bed.Store.Retries);
+    }
+
+    [Fact]
+    public async Task AFailureListingTheTemplatesDefersTheRecipientAMinuteWithoutSpendingAnAttempt()
+    {
+        // R4: una caída del catálogo no es un intento fallido del destinatario: se reprograma a +60 s y el contador no avanza.
+        var bed = new DispatchBed();
+        bed.Bed.Templates.Failure = new MessagingDomainException(MessagingErrorCodes.TemplatesUnavailable, "down");
+        var recipient = bed.Recipient(attempts: 5);
+
+        await bed.Dispatcher.SendAsync(recipient, Ct);
+
+        var deferred = Assert.Single(bed.Store.Deferred);
+        Assert.Equal((recipient, bed.Bed.Now.AddSeconds(60)), (deferred.Recipient, deferred.NextAttemptAt));
+        Assert.Empty(bed.Store.Retries);
+        Assert.Empty(bed.Store.Failed);
+        Assert.Empty(bed.Store.Stops);
+    }
+
+    [Fact]
+    public async Task AMarketingRecipientWhoOptedOutAfterTheFreezeIsSkippedBeforeAnythingIsInserted()
+    {
+        var bed = new DispatchBed();
+        var recipient = bed.Recipient(optOut: true);
+
+        await bed.Dispatcher.SendAsync(recipient, Ct);
+
+        Assert.Equal([(recipient, CampaignFailureCodes.OptedOut)], bed.Store.Skipped);
+        Assert.Empty(bed.Store.Prepared);
+        Assert.Empty(bed.Bed.Meta.TemplateSends);
+    }
+
+    [Fact]
+    public async Task AMarketingRecipientWhoWentInactiveIsSkippedAsInactive()
+    {
+        var bed = new DispatchBed();
+        var recipient = bed.Recipient(active: false, optOut: true);
+
+        await bed.Dispatcher.SendAsync(recipient, Ct);
+
+        Assert.Equal([(recipient, CampaignFailureCodes.Inactive)], bed.Store.Skipped);
+        Assert.Empty(bed.Bed.Meta.TemplateSends);
+    }
+
+    [Fact]
+    public async Task AMarketingRecipientWhoNoLongerExistsIsSkippedAsUnreachable()
+    {
+        var bed = new DispatchBed();
+        var recipient = bed.Recipient(inDirectory: false);
+
+        await bed.Dispatcher.SendAsync(recipient, Ct);
+
+        Assert.Equal([(recipient, CampaignFailureCodes.Unreachable)], bed.Store.Skipped);
+        Assert.Empty(bed.Bed.Meta.TemplateSends);
+    }
+
+    [Fact]
+    public async Task AUtilityCampaignDoesNotRecheckConsent()
+    {
+        var bed = new DispatchBed();
+        bed.Bed.Templates.Catalog.Clear();
+        bed.Bed.Templates.Catalog.Add(FakeMessageTemplates.Hello("promo", "es", "UTILITY"));
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(category: "UTILITY", optOut: true), Ct);
+
+        Assert.Single(bed.Bed.Meta.TemplateSends);
+        Assert.Empty(bed.Store.Skipped);
+    }
+
+    [Fact]
+    public async Task IfMetaReclassifiedTheTemplateAsMarketingTheExclusionAppliesEvenIfTheStoredCategoryWasNot()
+    {
+        // R7: la categoría guardada en la campaña era UTILITY, la del catálogo vivo ahora es MARKETING.
+        var bed = new DispatchBed();
+        var recipient = bed.Recipient(category: "UTILITY", optOut: true);
+
+        await bed.Dispatcher.SendAsync(recipient, Ct);
+
+        Assert.Equal([(recipient, CampaignFailureCodes.OptedOut)], bed.Store.Skipped);
+        Assert.Empty(bed.Bed.Meta.TemplateSends);
     }
 
     [Theory]
@@ -356,19 +438,6 @@ public sealed class CampaignDispatcherTests
         Assert.Empty(bed.Bed.Meta.TemplateSends);
         Assert.Equal([(bed.CampaignId, CampaignFailureCodes.ConnectionUnavailable)], bed.Store.Stops);
         Assert.Equal([(recipient, CampaignFailureCodes.CampaignFailed)], bed.Store.Skipped);
-    }
-
-    [Fact]
-    public async Task AFailureListingTheTemplatesIsRetriedNotFatal()
-    {
-        var bed = new DispatchBed();
-        bed.Bed.Templates.Failure = new MessagingDomainException(MessagingErrorCodes.TemplatesUnavailable, "down");
-
-        await bed.Dispatcher.SendAsync(bed.Recipient(attempts: 1), Ct);
-
-        Assert.Single(bed.Store.Retries);
-        Assert.Empty(bed.Store.Stops);
-        Assert.Empty(bed.Bed.Meta.TemplateSends);
     }
 
     [Fact]

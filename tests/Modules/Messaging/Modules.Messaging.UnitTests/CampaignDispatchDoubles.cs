@@ -102,6 +102,15 @@ internal sealed class FakeDispatchStore : ICampaignDispatchStore
         return Task.CompletedTask;
     }
 
+    public List<(ClaimedRecipient Recipient, DateTimeOffset NextAttemptAt)> Deferred { get; } = [];
+
+    public Task DeferAsync(ClaimedRecipient recipient, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken)
+    {
+        Order.Add("defer");
+        Deferred.Add((recipient, nextAttemptAt));
+        return Task.CompletedTask;
+    }
+
     public Task SkipAsync(ClaimedRecipient recipient, string code, CancellationToken cancellationToken)
     {
         Order.Add("skip");
@@ -159,12 +168,22 @@ internal sealed class DispatchBed
 
     public ClaimedRecipient Recipient(
         int attempts = 1, string name = "Laura Gómez", string? waId = "573001234567", string? userId = "CO.573001234567", Guid? messageId = null,
-        string category = "MARKETING", IReadOnlyDictionary<string, CampaignParameter>? parameters = null) =>
-        new(
-            Guid.CreateVersion7(), CampaignId, Bed.TenantId, Guid.CreateVersion7(), name, waId, userId, attempts, messageId, ConversationId: null, Bed.ConnectionId,
+        string category = "MARKETING", IReadOnlyDictionary<string, CampaignParameter>? parameters = null,
+        bool active = true, bool optOut = false, bool inDirectory = true)
+    {
+        // R6: antes de mandar una de marketing el worker vuelve a mirar la ficha, así que el cliente tiene que existir en el directorio.
+        var customerId = Guid.CreateVersion7();
+        if (inDirectory)
+        {
+            Bed.Customers.Contacts[customerId] = new MessagingCustomerContact(customerId, name, waId is null ? null : "+" + waId, userId, active, optOut);
+        }
+
+        return new ClaimedRecipient(
+            Guid.CreateVersion7(), CampaignId, Bed.TenantId, customerId, name, waId, userId, attempts, messageId, ConversationId: null, Bed.ConnectionId,
             "promo", "es", category,
             parameters ?? new Dictionary<string, CampaignParameter> { ["1"] = CampaignParameter.CustomerName, ["2"] = CampaignParameter.Text("A1") },
             Bed.MemberId);
+    }
 
     public static MessagingCustomerContact Contact(
         string name = "Laura", string? phone = "+573001234567", string? userId = null, bool active = true, bool optOut = false) =>

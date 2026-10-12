@@ -336,12 +336,22 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     /// <summary>Spec 2026-10-11 §5.1: lo que responde la lista de plantillas, y cuántas veces se pidió.</summary>
     public MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>> NextTemplates { get; set; } = new([], null);
 
-    public int TemplateListCalls { get; private set; }
+    private int _templateListCalls;
 
-    public Task<MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    public int TemplateListCalls => _templateListCalls;
+
+    /// <summary>Retiene la respuesta de la lista hasta que la prueba lo suelte: sirve para ver cuántas llamadas se juntan en vuelo.</summary>
+    public Func<Task>? BeforeTemplateList { get; set; }
+
+    public async Task<MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
     {
-        TemplateListCalls++;
-        return Task.FromResult(NextTemplates);
+        Interlocked.Increment(ref _templateListCalls);
+        if (BeforeTemplateList is { } gate)
+        {
+            await gate();
+        }
+
+        return NextTemplates;
     }
 
     public List<SentTemplate> TemplateSends { get; } = [];

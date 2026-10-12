@@ -20,11 +20,13 @@ public sealed class MessageTemplateCatalogTests
 
     private sealed record Rig(MessageTemplateCatalog Catalog, FakeWhatsAppClient Meta, FakeConnectionDirectory Connections);
 
-    private static Rig NewRig(params JsonElement[] templates)
+    private static Rig NewRig(params JsonElement[] templates) => NewRig(TimeProvider.System, templates);
+
+    private static Rig NewRig(TimeProvider time, params JsonElement[] templates)
     {
         var meta = new FakeWhatsAppClient { NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>(templates, null) };
         var connections = new FakeConnectionDirectory();
-        return new Rig(new MessageTemplateCatalog(connections, meta, new MemoryCache(new MemoryCacheOptions())), meta, connections);
+        return new Rig(new MessageTemplateCatalog(connections, meta, new MemoryCache(new MemoryCacheOptions()), time), meta, connections);
     }
 
     [Fact]
@@ -93,17 +95,86 @@ public sealed class MessageTemplateCatalogTests
     }
 
     [Fact]
-    public async Task AListMetaDoesNotAnswerIsUnavailableAndIsNotCached()
+    public async Task AListMetaDoesNotAnswerIsUnavailableAndIsNotCachedAsACatalogOnlyAsAShortFailure()
     {
-        var rig = NewRig();
+        var time = new ManualTimeProvider();
+        var rig = NewRig(time);
         rig.Meta.NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, "timeout"));
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct));
         rig.Meta.NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>([Template("a")], null);
+        time.Advance(MessageTemplateCatalog.FailureLifetime + TimeSpan.FromSeconds(1));
         var retried = await rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct);
 
         Assert.Equal(MessagingErrorCodes.TemplatesUnavailable, error.Code);
         Assert.Equal("a", Assert.Single(retried).Name);
         Assert.Equal(2, rig.Meta.TemplateListCalls);
+    }
+
+    [Fact]
+    public void TheFailureLifetimeIsThirtySeconds() => Assert.Equal(TimeSpan.FromSeconds(30), MessageTemplateCatalog.FailureLifetime);
+
+    [Fact]
+    public async Task AFailureIsRememberedForThirtySecondsSoAnOutageIsNotHammered()
+    {
+        // R4: sin esto, cada destinatario de un lote le pregunta a una Meta caída y cada pregunta espera su timeout.
+        var time = new ManualTimeProvider();
+        var rig = NewRig(time);
+        rig.Meta.NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, "timeout"));
+
+        for (var index = 0; index < 5; index++)
+        {
+            var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct));
+            Assert.Equal(MessagingErrorCodes.TemplatesUnavailable, error.Code);
+        }
+
+        Assert.Equal(1, rig.Meta.TemplateListCalls);
+    }
+
+    [Fact]
+    public async Task ARefreshIgnoresTheRememberedFailure()
+    {
+        var time = new ManualTimeProvider();
+        var rig = NewRig(time);
+        rig.Meta.NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, "timeout"));
+        await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct));
+        rig.Meta.NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>([Template("a")], null);
+
+        var catalog = await rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: true, Ct);
+
+        Assert.Equal("a", Assert.Single(catalog).Name);
+    }
+
+    [Fact]
+    public async Task ConcurrentReadsOfTheSameConnectionShareASingleMetaCall()
+    {
+        // R4: single-flight por (tenant, conexión): ocho destinatarios en paralelo no son ocho listas.
+        var rig = NewRig(new ManualTimeProvider(), Template("a"));
+        var release = new TaskCompletionSource();
+        rig.Meta.BeforeTemplateList = () => release.Task;
+
+        var reads = Enumerable.Range(0, 8).Select(_ => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct)).ToArray();
+        release.SetResult();
+        var catalogs = await Task.WhenAll(reads);
+
+        Assert.Equal(1, rig.Meta.TemplateListCalls);
+        Assert.All(catalogs, catalog => Assert.Equal("a", Assert.Single(catalog).Name));
+    }
+
+    [Fact]
+    public async Task ConcurrentReadsDuringAnOutageShareTheSameFailure()
+    {
+        var rig = NewRig(new ManualTimeProvider());
+        rig.Meta.NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, "timeout"));
+        var release = new TaskCompletionSource();
+        rig.Meta.BeforeTemplateList = () => release.Task;
+
+        var reads = Enumerable.Range(0, 8)
+            .Select(_ => Assert.ThrowsAsync<MessagingDomainException>(() => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct)))
+            .ToArray();
+        release.SetResult();
+        await Task.WhenAll(reads);
+
+        Assert.Equal(1, rig.Meta.TemplateListCalls);
     }
 }
