@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Campaigns;
 using Modules.Messaging.Infrastructure.Media;
 using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
@@ -69,6 +71,14 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<MediaTransfer>();
         services.AddScoped<MediaCopyProcessor>();
         services.AddHostedService<MediaCopyWorker>();
+        // Spec 2026-10-11 §6.3: el worker de campañas. El cubo de ritmo es un singleton (el estado es del proceso); el despachador y su
+        // persistencia, scoped. TimeProvider.System sólo si nadie registró otro.
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton(provider => new CampaignRateLimiter(
+            provider.GetRequiredService<IOptions<MessagingCampaignOptions>>().Value.MessagesPerSecond, provider.GetRequiredService<TimeProvider>(), Task.Delay));
+        services.AddScoped<ICampaignDispatchStore, CampaignDispatchStore>();
+        services.AddScoped<CampaignDispatcher>();
+        services.AddHostedService<CampaignDispatchWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
@@ -76,6 +86,10 @@ public static class MessagingInfrastructureExtensions
             .Bind(configuration.GetSection(MessagingWebhookOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<MessagingWebhookOptions>, MessagingWebhookOptionsValidator>();
+        services.AddOptions<MessagingCampaignOptions>()
+            .Bind(configuration.GetSection(MessagingCampaignOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<MessagingCampaignOptions>, MessagingCampaignOptionsValidator>();
         services.AddOptions<MessagingWorkerOptions>().Bind(configuration.GetSection(MessagingWorkerOptions.SectionName));
         services.AddOptions<MessagingSearchOptions>().Bind(configuration.GetSection(MessagingSearchOptions.SectionName));
 
