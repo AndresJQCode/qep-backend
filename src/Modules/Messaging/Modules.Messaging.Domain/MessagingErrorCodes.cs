@@ -50,4 +50,20 @@ public static class MessagingErrorCodes
     /// <summary>Agregado al implementar E3 (el spec no lo nombra): el dominio de <c>Campaign</c> es la última línea de defensa de las
     /// reglas de entrada que el validador ya marca por campo; llegar acá sería un hueco del validador. Es un 422 como los demás.</summary>
     public const string CampaignInvalid = "messaging.campaign.invalid";
+
+    /// <summary>Spec 2026-10-12 §3.2: el atajo no cumple <c>^[a-z0-9-]{2,32}$</c> después de recortarlo y pasarlo a minúsculas.</summary>
+    public const string QuickReplyInvalidShortcut = "messaging.quick_reply.invalid_shortcut";
+
+    /// <summary>§3.2: el cuerpo, recortado, está vacío o pasa de 4096 caracteres.</summary>
+    public const string QuickReplyInvalidBody = "messaging.quick_reply.invalid_body";
+
+    /// <summary>§3.2 y D-Q3: un <c>{…}</c> que no es <c>{nombre}</c>, <c>{asesor}</c> ni <c>{empresa}</c>.</summary>
+    public const string QuickReplyUnknownVariable = "messaging.quick_reply.unknown_variable";
+
+    /// <summary>§3.4: otra respuesta del tenant ya usa ese atajo (<c>IX_quick_replies_tenant_shortcut</c>). 422, como
+    /// <c>catalog.product.code_taken</c>.</summary>
+    public const string QuickReplyShortcutTaken = "messaging.quick_reply.shortcut_taken";
+
+    /// <summary>§3.3: la respuesta no existe en el tenant (404). Un id de otro tenant responde igual.</summary>
+    public const string QuickReplyNotFound = "messaging.quick_reply.not_found";
 }
