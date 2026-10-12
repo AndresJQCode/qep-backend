@@ -948,6 +948,15 @@ git -C $B log -1 --format=%B
 - Create: `src/Modules/Messaging/Modules.Messaging.Application/QuickReplies.cs` (sólo la parte de validación: `IQuickReplyInput`, `QuickReplyMessages`, `QuickReplyInputValidator<T>`)
 - Create: `tests/Modules/Messaging/Modules.Messaging.UnitTests/QuickReplyValidatorsTests.cs`
 
+**Decisión del owner (2026-10-12): `{asesor}` nunca sale con el correo.** `IMessagingMemberNames.FindAsync` cae al correo cuando la membresía no tiene `DisplayName` (es para `sentBy` en el hilo, que lo ve el equipo). `{asesor}` lo lee el **cliente** por WhatsApp, así que sin nombre va `""`. Esta tarea agrega al puerto un método aparte, sin tocar el comportamiento de `FindAsync`:
+
+- Modify: `src/Modules/Messaging/Modules.Messaging.Application/IMessagingMemberNames.cs` — agregar
+  `Task<string?> FindDisplayNameAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);`
+  con el comentario: «Sólo el `DisplayName` de la membresía, sin caer al correo: lo usa `{asesor}`, que llega al cliente (spec 2026-10-12, decisión del owner). `null` si no hay membresía en el tenant o no tiene nombre.»
+- Modify: `src/Bootstrapper/MessagingMemberNames.cs` — implementarlo con `memberships.ListByIdsAsync(new TenantId(tenantId), [new MembershipId(memberId)], cancellationToken)` y devolver `DisplayName` si no es `IsNullOrWhiteSpace`, si no `null`. **No** llama a `users.GetEmailAsync`.
+- Modify: `tests/Modules/Messaging/Modules.Messaging.UnitTests/MessagingTestBed.cs` — `FakeMemberNames` implementa el método nuevo: `Task.FromResult<string?>(id == memberId ? "Andrés" : null)`.
+- Test (RED primero, en `tests/Bootstrapper/Bootstrapper.UnitTests/MessagingMemberNamesTests.cs`, creándolo si no existe, con el mismo estilo de dobles que `MessagingTenantNamesTests`): `FindDisplayNameReturnsTheMembershipName`, `FindDisplayNameNeverFallsBackToTheEmail` (membresía con `DisplayName` vacío y usuario con correo → `null`) y `FindDisplayNameIsNullForAnotherTenantsMembership`.
+
 Nota: en esta tarea **no** se agregan comandos ni consultas. `CompositionRootTests.EveryCommandAndQueryHasItsHandlerRegistered` exige que cada uno tenga su handler registrado, así que cada comando nace en la misma tarea que su handler (Tasks 5 y 6). El validador base es genérico y se prueba con un input de prueba.
 
 **Interfaces:**
@@ -1536,8 +1545,8 @@ public sealed class ListQuickRepliesHandler(
         var asesor = string.Empty;
         if (await callerMembership.FindAsync(query.TenantId, cancellationToken) is { } memberId)
         {
-            var names = await memberNames.FindAsync(query.TenantId, [memberId], cancellationToken);
-            asesor = names.GetValueOrDefault(memberId, string.Empty);
+            // FindDisplayNameAsync y no FindAsync: {asesor} llega al cliente y nunca lleva el correo (decisión del owner, Task 4).
+            asesor = await memberNames.FindDisplayNameAsync(query.TenantId, memberId, cancellationToken) ?? string.Empty;
         }
 
         var empresa = await tenantNames.FindAsync(query.TenantId, cancellationToken) ?? string.Empty;
@@ -2158,7 +2167,7 @@ Sin commit en este paso. El handoff lleva: los seis commits (`git log --oneline 
 - **`SaveQuickReplyRequest` con `string?`:** §3.6 lo declara con `string Shortcut, string Body`. Con no-nullables, un cuerpo sin esos campos lo rechazaría el binder (400) antes del validador; con `string?` sale 422 `validation.failed` con `errors.shortcut`/`errors.body`, que es lo que el formulario sabe pintar. El JSON es el mismo.
 - **La variable desconocida también la marca el validador:** §3.2 pone `messaging.quick_reply.unknown_variable` como código de dominio, y §3.3 pide que el validador repita «las reglas de formato». Se incluyó la regla de variables en el validador: así el 422 trae `errors.body` con la variable culpable. Consecuencia: `invalid_shortcut`, `invalid_body` y `unknown_variable` quedan como última línea de defensa del agregado (mismo papel que `messaging.campaign.invalid`) y por HTTP sale `validation.failed`. El código de dominio que sí llega al frontend es `shortcut_taken`.
 - **Normalización del atajo con `Trim()`:** §3.1 dice «en minúsculas y sin `/`». Además se recortan los espacios de los lados (`" Horarios "` → `horarios`); los internos siguen siendo inválidos. La `/` inicial se **rechaza**, no se quita, como pide §3.7.
-- **`{asesor}` puede salir con el correo:** §3.3 dice «Sin nombre → `""`», pero el adaptador existente de `IMessagingMemberNames` (`MessagingMemberNames`) devuelve `Membership.DisplayName ?? correo`. Se usa tal cual: una membresía sin `display_name` resuelve `{asesor}` con su correo; sólo sale `""` si quien llama no tiene membresía activa. **Para el owner:** si el correo no debe llegar al cliente, hace falta un método nuevo en el puerto que devuelva sólo `DisplayName`; no se hizo para no cambiar `sentBy.displayName`.
+- **`{asesor}` sin nombre va vacío, nunca con el correo** (decisión del owner, 2026-10-12): `MessagingMemberNames.FindAsync` cae al correo, así que la Task 4 agrega `IMessagingMemberNames.FindDisplayNameAsync`, que sólo devuelve `DisplayName`. Cumple §3.3 tal como está escrito.
 - **`IMessagingTenantNames` no era estrictamente necesario:** `Modules.Messaging.Application` ya referencia `Modules.Tenancy.Application` (por `IMembershipDirectory`, `ITenantModules`), donde vive `ITenantDirectory`. Se creó el puerto igual, como pide §3.3: mantiene la lectura detrás de una interfaz propia del módulo y su adaptador es una línea.
 - **Otro tenant: 403 por ruta, 404 por id:** «Otro tenant → 403, nunca 404» se aplica a la ruta (tenant de la ruta distinto del de quien llama). Un id que existe en otro tenant pedido bajo la ruta propia responde 404 `not_found`, igual que uno inexistente (precedente `ConversationsApiTests`, `ownRouteForeignId`): el 404 no confirma que el id exista.
 - **`POST` sin `Location`:** no hay `GET` de una sola respuesta; se devuelve `201` con el `QuickReplyDto` y sin cabecera, como el envío de texto.
