@@ -96,3 +96,30 @@ public interface ICustomerAudienceRepository
     Task MarkMarketingOptOutAsync(
         Guid tenantId, Guid customerId, MarketingConsentSource source, DateTimeOffset occurredAt, CancellationToken cancellationToken);
 }
+
+/// <summary>Nombre y color (por su nombre de contrato: <c>blue</c>) de una etiqueta, para quien la nombra sin ser Customers.</summary>
+public sealed record CustomerTagRef(Guid Id, string Name, string Color);
+
+/// <summary>
+/// Spec 2026-10-11 §6.2 (E3): las etiquetas del tenant entre las pedidas, para el detalle de una campaña. Adaptador en Bootstrapper hacia
+/// Messaging, que no referencia Customers. La de otro tenant y la borrada no aparecen: el detalle las omite.
+/// </summary>
+public interface ICustomerTagLookup
+{
+    Task<IReadOnlyList<CustomerTagRef>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken);
+}
+
+public sealed class CustomerTagLookup(ICustomerTagRepository tags) : ICustomerTagLookup
+{
+    public async Task<IReadOnlyList<CustomerTagRef>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(tagIds);
+        if (tagIds.Count == 0)
+        {
+            return [];
+        }
+
+        var found = await tags.ListByIdsAsync(tenantId, [.. tagIds.Select(id => new TagId(id))], cancellationToken);
+        return [.. found.Select(tag => new CustomerTagRef(tag.Id.Value, tag.Name, tag.Color.ToWireValue()))];
+    }
+}

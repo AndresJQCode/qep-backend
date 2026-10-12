@@ -584,6 +584,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
         services.AddScoped<ICommandHandler<SendTemplateMessageCommand, MessageDto>, SendTemplateMessageHandler>();
         services.AddScoped<ICommandHandler<StartConversationCommand, StartConversationResult>, StartConversationHandler>();
+        // Messaging (spec 2026-10-11 §6.2): campañas. Cada handler a mano: sin registro, 500.
+        services.AddScoped<IQueryHandler<ListCampaignsQuery, CampaignPageDto<CampaignSummaryDto>>, ListCampaignsHandler>();
+        services.AddScoped<IQueryHandler<GetCampaignQuery, CampaignDetailDto>, GetCampaignHandler>();
+        services.AddScoped<IQueryHandler<ListCampaignRecipientsQuery, CampaignPageDto<CampaignRecipientDto>>, ListCampaignRecipientsHandler>();
+        services.AddScoped<IQueryHandler<PreviewAudienceQuery, AudiencePreviewDto>, PreviewAudienceHandler>();
+        services.AddScoped<ICommandHandler<CreateCampaignCommand, CampaignDetailDto>, CreateCampaignHandler>();
+        services.AddScoped<ICommandHandler<UpdateCampaignCommand, CampaignDetailDto>, UpdateCampaignHandler>();
+        services.AddScoped<ICommandHandler<DeleteCampaignCommand, bool>, DeleteCampaignHandler>();
+        services.AddScoped<ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>, LaunchCampaignHandler>();
+        services.AddScoped<ICommandHandler<CancelCampaignCommand, CampaignDetailDto>, CancelCampaignHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
@@ -868,7 +878,10 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-09 (Mensajería), decisión 5: la bandeja de WhatsApp. De núcleo; el
                 // módulo messaging lo revisa cada handler. El rol vive en código: sin migración.
                 MessagingPermissions.ConversationRead,
-                MessagingPermissions.ConversationManage
+                MessagingPermissions.ConversationManage,
+                // Spec 2026-10-11 §6.4 y decisión 16: las campañas llegan a miles de personas en nombre de la empresa
+                // y el costo es por mensaje; de fábrica sólo en admin (no en advisor: P2 del spec).
+                MessagingPermissions.CampaignManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1336,6 +1349,14 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-11 §6.4: núcleo como las otras dos de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.CampaignManage,
+            "Gestionar campañas de WhatsApp",
+            "Permite crear, programar, lanzar y cancelar campañas de plantillas de WhatsApp a etiquetas o clientes; cada mensaje tiene costo.",
+            "Messaging",
+            "high",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1627,7 +1648,10 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationRead))
             .AddPolicy(
                 MessagingPermissions.ConversationManage,
-                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage));
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage))
+            .AddPolicy(
+                MessagingPermissions.CampaignManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.CampaignManage));
     }
 
     private static void AddPermissionRequirement(

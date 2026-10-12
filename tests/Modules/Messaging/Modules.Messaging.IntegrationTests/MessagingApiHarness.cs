@@ -60,6 +60,9 @@ internal static class MessagingApiHarness
     public static readonly string[] ManagePermissions =
         [MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage];
 
+    /// <summary>Spec 2026-10-11 §6.4: sólo el admin de fábrica; ni la bandeja ni el asesor llevan este permiso.</summary>
+    public static readonly string[] CampaignPermissions = [MessagingPermissions.CampaignManage];
+
     public static string ConversationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/conversations";
 
     public static string ConversationUrl(Guid tenantId, Guid conversationId) => $"{ConversationsUrl(tenantId)}/{conversationId}";
@@ -191,6 +194,7 @@ internal static class MessagingApiHarness
             // Los workers no corren solos durante una prueba: la prueba llama DrainAsync.
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             builder.ConfigureTestServices(services =>
             {

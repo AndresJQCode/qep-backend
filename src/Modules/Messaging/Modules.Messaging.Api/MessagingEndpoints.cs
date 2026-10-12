@@ -168,6 +168,9 @@ public static class MessagingEndpoints
             .Produces<AssigneesDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // Spec 2026-10-11 §6.2: campañas, con su propio permiso (decisión 16).
+        group.MapCampaignEndpoints();
+
         return endpoints;
     }
 

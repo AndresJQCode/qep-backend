@@ -60,6 +60,10 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IOutboundMessages, OutboundMessages>();
         // Spec 2026-10-11 §5.1: el catálogo de plantillas aprobadas, 5 minutos por (tenant, conexión) en IMemoryCache.
         services.AddScoped<IMessageTemplates, MessageTemplateCatalog>();
+        // Spec 2026-10-11 §6: las campañas. El agregado con tracking, las lecturas con sus contadores y el armado de los DTO.
+        services.AddScoped<ICampaignRepository, CampaignRepository>();
+        services.AddScoped<ICampaignQueries, CampaignQueries>();
+        services.AddScoped<CampaignMapper>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

@@ -61,11 +61,37 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
 
     public Task ReplaceUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public IAsyncEnumerable<MessagingCustomerContact> ListAudienceAsync(
-        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+    /// <summary>Spec 2026-10-11 §4.4: la audiencia que devuelve <see cref="ListAudienceAsync"/>, ya sin duplicados y en el orden del puerto.</summary>
+    public List<MessagingCustomerContact> Audience { get; } = [];
+
+    public async IAsyncEnumerable<MessagingCustomerContact> ListAudienceAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        foreach (var contact in Audience)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return contact;
+        }
+
+        await Task.CompletedTask;
+    }
+
+    public MessagingAudienceCount NextCount { get; set; } = new(0, 0, 0, 0);
+
+    public List<(IReadOnlyCollection<Guid> TagIds, IReadOnlyCollection<Guid> CustomerIds)> CountCalls { get; } = [];
 
     public Task<MessagingAudienceCount> CountAudienceAsync(
-        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+        Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        CountCalls.Add((tagIds, customerIds));
+        return Task.FromResult(NextCount);
+    }
+
+    public List<MessagingTagRef> Tags { get; } = [];
+
+    public Task<IReadOnlyList<MessagingTagRef>> FindTagsAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessagingTagRef>>(Tags.Where(tag => tagIds.Contains(tag.Id)).ToList());
 }
 
 internal sealed record OpenCall(Guid ConnectionId, MessagingCustomerContact Contact, Guid? AssignedMemberId, Guid? ActorUserId);

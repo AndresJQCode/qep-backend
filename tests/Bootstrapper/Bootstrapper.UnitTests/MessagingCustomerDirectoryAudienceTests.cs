@@ -68,8 +68,28 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             throw new NotSupportedException();
     }
 
-    private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp) =>
-        new(new FakePhones(), whatsApp, NullLogger<MessagingCustomerDirectory>.Instance);
+    private sealed class FakeTagLookup : ICustomerTagLookup
+    {
+        public List<CustomerTagRef> Tags { get; } = [];
+
+        public Task<IReadOnlyList<CustomerTagRef>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<CustomerTagRef>>(Tags.Where(tag => tagIds.Contains(tag.Id)).ToList());
+    }
+
+    private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null) =>
+        new(new FakePhones(), whatsApp, tags ?? new FakeTagLookup(), NullLogger<MessagingCustomerDirectory>.Instance);
+
+    [Fact]
+    public async Task FindTagsMapsToTheMessagingRecordAndSkipsWhatDoesNotExist()
+    {
+        var tags = new FakeTagLookup();
+        var live = Guid.NewGuid();
+        tags.Tags.Add(new CustomerTagRef(live, "Mayoristas", "blue"));
+
+        var found = await AdapterOver(new FakeWhatsApp(), tags).FindTagsAsync(Tenant, [live, Guid.NewGuid()], TestContext.Current.CancellationToken);
+
+        Assert.Equal([new MessagingTagRef(live, "Mayoristas", "blue")], found);
+    }
 
     [Fact]
     public async Task FindContactMapsToTheMessagingRecordOrNull()

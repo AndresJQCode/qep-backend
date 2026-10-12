@@ -167,13 +167,30 @@ public sealed class CompositionRootTests
 
     /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec de
     /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
-    /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09 y las dos de Customers
-    /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>) del spec 2026-10-11.</summary>
+    /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
+    /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>) y <c>messaging.campaign.manage</c>
+    /// del spec 2026-10-11.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFiftyConstants()
+    public void PermissionDiscoveryFindsTheFiftyOneConstants()
     {
-        // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3).
-        Assert.Equal(50, PermissionConstants().Length);
+        // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4).
+        Assert.Equal(51, PermissionConstants().Length);
+    }
+
+    /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
+    /// una campaña llega a miles de personas en nombre de la empresa y el costo es por mensaje.</summary>
+    [Fact]
+    public void OnlyTheAdminRoleCarriesTheCampaignPermissionAsCore()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Contains(MessagingPermissions.CampaignManage, catalog.PermissionsFor("admin"));
+        Assert.DoesNotContain(MessagingPermissions.CampaignManage, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(MessagingPermissions.CampaignManage, catalog.PermissionsFor("billing"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.CampaignManage);
+        Assert.Equal("Messaging", definition.Category);
+        Assert.Empty(definition.RequiredModules!);
     }
 
     /// <summary>

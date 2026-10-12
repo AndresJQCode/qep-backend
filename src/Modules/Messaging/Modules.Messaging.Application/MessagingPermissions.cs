@@ -11,4 +11,8 @@ public static class MessagingPermissions
 {
     public const string ConversationRead = "messaging.conversation.read";
     public const string ConversationManage = "messaging.conversation.manage";
+
+    /// <summary>Spec 2026-10-11 §6.4 y decisión 16: crear, lanzar y cancelar campañas. De núcleo y de fábrica sólo en <c>admin</c>:
+    /// una campaña llega a miles de personas en nombre de la empresa y el costo es por mensaje.</summary>
+    public const string CampaignManage = "messaging.campaign.manage";
 }

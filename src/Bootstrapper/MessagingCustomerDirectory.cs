@@ -7,7 +7,7 @@ namespace Bootstrapper;
 
 /// <summary>§6.5: el wa_id de Meta son los dígitos del E.164; se traduce en las dos direcciones acá.</summary>
 internal sealed partial class MessagingCustomerDirectory(
-    ICustomerPhoneDirectory phones, ICustomerWhatsAppDirectory whatsApp, ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
+    ICustomerPhoneDirectory phones, ICustomerWhatsAppDirectory whatsApp, ICustomerTagLookup tagLookup, ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
 {
     /// <summary>El tope de <c>FindPhonesByNameAsync</c> (spec §6.5); el puerto de Customers no tiene default.</summary>
     public const int NameCap = 200;
@@ -63,6 +63,9 @@ internal sealed partial class MessagingCustomerDirectory(
         var count = await whatsApp.CountAudienceAsync(tenantId, tagIds, customerIds, cancellationToken);
         return new MessagingAudienceCount(count.Total, count.Inactive, count.OptedOut, count.WithoutWhatsApp);
     }
+
+    public async Task<IReadOnlyList<MessagingTagRef>> FindTagsAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
+        [.. (await tagLookup.FindAsync(tenantId, tagIds, cancellationToken)).Select(tag => new MessagingTagRef(tag.Id, tag.Name, tag.Color))];
 
     public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         whatsApp.MarkMarketingOptOutAsync(tenantId, customerId, cancellationToken);

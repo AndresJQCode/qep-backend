@@ -92,6 +92,129 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Messaging.Domain.Campaign", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid[]>("AudienceCustomerIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("audience_customer_ids");
+
+                    b.Property<DateTimeOffset?>("AudienceFrozenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("audience_frozen_at");
+
+                    b.Property<Guid[]>("AudienceTagIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("audience_tag_ids");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_member_id");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Parameters")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("parameters");
+
+                    b.Property<DateTimeOffset?>("ScheduledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("scheduled_at");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TemplateCategory")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("template_category");
+
+                    b.Property<string>("TemplateLanguage")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("template_language");
+
+                    b.Property<string>("TemplateName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("template_name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "ScheduledAt" }, "IX_campaigns_scheduled")
+                        .HasFilter("status = 'Scheduled'");
+
+                    b.HasIndex(new[] { "Status" }, "IX_campaigns_sending")
+                        .HasFilter("status = 'Sending'");
+
+                    b.HasIndex(new[] { "TenantId", "CreatedAt" }, "IX_campaigns_tenant_created")
+                        .IsDescending(false, true);
+
+                    b.ToTable("campaigns", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_campaigns_audience", "cardinality(audience_tag_ids) + cardinality(audience_customer_ids) > 0");
+
+                            t.HasCheckConstraint("CK_campaigns_customers_cap", "cardinality(audience_customer_ids) <= 500");
+
+                            t.HasCheckConstraint("CK_campaigns_status", "status IN ('Draft','Scheduled','Sending','Completed','Cancelled','Failed')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Messaging.Domain.Conversation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -262,6 +385,98 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_conversations_status", "status IN ('Open','Resolved')");
 
                             t.HasCheckConstraint("CK_conversations_unread", "unread_count >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempts");
+
+                    b.Property<Guid>("CampaignId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("campaign_id");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("CustomerName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("customer_name");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("WaId")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("wa_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "CampaignId", "CustomerId" }, "IX_campaign_recipients_campaign_customer")
+                        .IsUnique();
+
+                    b.HasIndex(new[] { "CampaignId", "Status" }, "IX_campaign_recipients_campaign_status");
+
+                    b.HasIndex(new[] { "NextAttemptAt" }, "IX_campaign_recipients_due")
+                        .HasFilter("status IN ('Pending','Sending')");
+
+                    b.ToTable("campaign_recipients", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_campaign_recipients_status", "status IN ('Pending','Sending','Sent','Failed','Skipped')");
                         });
                 });
 
@@ -505,6 +720,16 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasFilter("processed_at IS NULL");
 
                     b.ToTable("webhook_deliveries", "messaging");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>
+                {
+                    b.HasOne("Modules.Messaging.Domain.Campaign", null)
+                        .WithMany()
+                        .HasForeignKey("CampaignId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_campaign_recipients_campaign");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.MessageMediaRecord", b =>

@@ -241,8 +241,11 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
     public Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Sender);
 
+    /// <summary>Spec 2026-10-11 §6.2: los nombres de las conexiones (Active o no); sin entrada, «Conexión eliminada».</summary>
+    public Dictionary<Guid, string> Names { get; } = [];
+
     public Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>(Names));
 
     /// <summary>Spec 2026-10-11 §5.1: <c>null</c> = conexión que no está Active (o de otro tenant).</summary>
     public MessagingTemplateSource? TemplateSource { get; set; } = new("222", "token");

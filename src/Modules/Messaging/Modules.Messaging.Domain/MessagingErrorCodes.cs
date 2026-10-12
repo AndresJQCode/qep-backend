@@ -37,4 +37,17 @@ public static class MessagingErrorCodes
     /// <summary>Agregado al implementar E2 (el spec no lo nombra): Meta no contestó la lista de plantillas, así que no hay catálogo
     /// contra el cual validar ni nada que mostrar. Es un 422 como <see cref="ConnectionUnavailable"/>: reintentar es seguro.</summary>
     public const string TemplatesUnavailable = "messaging.templates.unavailable";
+
+    /// <summary>Spec 2026-10-11 §6.2: la campaña no existe en el tenant (404).</summary>
+    public const string CampaignNotFound = "messaging.campaign.not_found";
+
+    /// <summary>§6.2: sólo un borrador se edita o se borra (409).</summary>
+    public const string CampaignNotEditable = "messaging.campaign.not_editable";
+
+    /// <summary>§6.2: sólo una campaña programada o enviándose se cancela (409).</summary>
+    public const string CampaignNotCancellable = "messaging.campaign.not_cancellable";
+
+    /// <summary>Agregado al implementar E3 (el spec no lo nombra): el dominio de <c>Campaign</c> es la última línea de defensa de las
+    /// reglas de entrada que el validador ya marca por campo; llegar acá sería un hueco del validador. Es un 422 como los demás.</summary>
+    public const string CampaignInvalid = "messaging.campaign.invalid";
 }

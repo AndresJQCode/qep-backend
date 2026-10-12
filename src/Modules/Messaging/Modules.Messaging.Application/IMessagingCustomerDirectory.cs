@@ -17,6 +17,10 @@ public sealed record MessagingCustomerContact(
 /// y a eso se le resta <c>OptedOut</c> sólo si la plantilla es <c>MARKETING</c>.</summary>
 public sealed record MessagingAudienceCount(int Total, int Inactive, int OptedOut, int WithoutWhatsApp);
 
+/// <summary>Spec 2026-10-11 §6.2: una etiqueta como la dibuja el detalle de una campaña. <c>Color</c> viaja por nombre
+/// (<c>gray</c>, <c>blue</c>…), igual que <c>TagDto</c> de Customers.</summary>
+public sealed record MessagingTagRef(Guid Id, string Name, string Color);
+
 /// <summary>Spec 2026-10-09 §6.5: los clientes de QEP por teléfono, con adaptador en Bootstrapper sobre
 /// <c>ICustomerPhoneDirectory</c> (Messaging no referencia Customers). El <c>waId</c> de Meta son los
 /// dígitos del E.164; el adaptador traduce. «Nombres y clientes» de §7.6: una consulta por página.</summary>
@@ -56,6 +60,10 @@ public interface IMessagingCustomerDirectory
     /// <summary>§4.4: el conteo de la misma audiencia que <see cref="ListAudienceAsync"/>.</summary>
     Task<MessagingAudienceCount> CountAudienceAsync(
         Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §6.2: nombre y color de las etiquetas del tenant entre las pedidas. Una borrada (o de otro tenant) no
+    /// aparece: el detalle de la campaña la omite.</summary>
+    Task<IReadOnlyList<MessagingTagRef>> FindTagsAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken);
 
     /// <summary>§4.4 y decisión 10: Meta respondió 131050. Idempotente; el origen queda en <c>meta</c>.</summary>
     Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
