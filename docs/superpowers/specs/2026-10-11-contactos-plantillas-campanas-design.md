@@ -205,7 +205,8 @@ Bajo `/api/v1/tenants/{tenantId:guid}/messaging`.
 
 | Método y ruta | Permiso | Cuerpo | Respuesta |
 | --- | --- | --- | --- |
-| `GET /connections/{connectionId}/templates?refresh=` | `messaging.conversation.read` | — | `200 MessageTemplateDto[]`: sólo `APPROVED`, ordenadas por nombre e idioma |
+| `GET /connections` | `messaging.conversation.read` | — | `200 MessagingConnectionDto[]`: `{ id, name, displayPhoneNumber }`, sólo las conexiones `whatsapp-cloud` **activas** del tenant, por nombre. Lo usan la conversación nueva y las campañas. Sin él, la pantalla tendría que leer Integrations, cuyo permiso es de admin (agregado el 2026-10-11 al implementar E2) |
+| `GET /connections/{connectionId}/templates?refresh=` | `messaging.conversation.read` | — | `200 MessageTemplateDto[]`: sólo `APPROVED`, ordenadas por nombre e idioma. `buttons[]` = `{ type: "QuickReply"\|"Url"\|"PhoneNumber"\|"Other", text, url? }` |
 | `POST /conversations/{conversationId}/messages/template` | `messaging.conversation.manage` | `{ clientId, name, language, parameters: { [key]: string } }` | `201 MessageDto` |
 | `POST /conversations` | `messaging.conversation.manage` | `{ clientId, connectionId, customerId, template: { name, language, parameters } }` | `201 { conversation: ConversationSummary, message: MessageDto }` |
 
