@@ -37,4 +37,11 @@ internal sealed class MessagingMemberNames(IMembershipRepository memberships, IU
 
         return names;
     }
+
+    public async Task<string?> FindDisplayNameAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken)
+    {
+        var scoped = await memberships.ListByIdsAsync(new TenantId(tenantId), [new MembershipId(memberId)], cancellationToken);
+        var name = scoped.Count > 0 ? scoped[0].DisplayName : null;
+        return string.IsNullOrWhiteSpace(name) ? null : name;
+    }
 }
