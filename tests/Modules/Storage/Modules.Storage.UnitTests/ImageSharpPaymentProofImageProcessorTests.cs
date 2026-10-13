@@ -94,6 +94,21 @@ public sealed class ImageSharpPaymentProofImageProcessorTests
         Assert.Equal("storage.image.invalid", error.Code);
     }
 
+    // TIFF concentra los vectores de los avisos de ImageSharp 3.1.12 que el contenido subido puede
+    // alcanzar: un TIFF válido, aunque llegue con MIME de imagen, tiene que fallar como inválida.
+    [Fact]
+    public async Task AValidTiffIsRejectedAsInvalid()
+    {
+        using var image = new Image<Rgba32>(16, 16, Color.CornflowerBlue);
+        await using var tiff = new MemoryStream();
+        await image.SaveAsTiffAsync(tiff, TestContext.Current.CancellationToken);
+
+        var error = await Assert.ThrowsAsync<StorageDomainException>(() =>
+            _processor.ProcessAsync(tiff.ToArray(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("storage.image.invalid", error.Code);
+    }
+
     // D1: un PDF queda tal cual; sólo las imágenes se procesan.
     [Theory]
     [InlineData("image/jpeg", true)]
